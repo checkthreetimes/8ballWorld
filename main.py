@@ -1685,55 +1685,9 @@ def init_db():
         claimed_by INTEGER DEFAULT NULL
     )""")
 
-    # Migration — add new v13 columns if they don't exist
-    new_columns = [
-        ("class_path", "TEXT DEFAULT NULL"),
-        ("all_skills", "TEXT DEFAULT '[]'"),
-        ("equipped_weapon", "TEXT DEFAULT NULL"),
-        ("equipped_armor", "TEXT DEFAULT NULL"),
-        ("equipped_shield", "TEXT DEFAULT NULL"),
-        ("equipped_accessory", "TEXT DEFAULT NULL"),
-        ("invincible_until", "TEXT DEFAULT NULL"),
-        ("distracted_until", "TEXT DEFAULT NULL"),
-        ("entangled_until", "TEXT DEFAULT NULL"),
-        ("frozen_until", "TEXT DEFAULT NULL"),
-        ("stunned_until", "TEXT DEFAULT NULL"),
-        ("vanish_until", "TEXT DEFAULT NULL"),
-        ("bleed_until", "TEXT DEFAULT NULL"),
-        ("bleed_damage", "INTEGER DEFAULT 0"),
-        ("bleed_last_tick", "TEXT DEFAULT NULL"),
-        ("hexed_until", "TEXT DEFAULT NULL"),
-        ("weakened_until", "TEXT DEFAULT NULL"),
-        ("blessed_until", "TEXT DEFAULT NULL"),
-        ("healing_blocked_until", "TEXT DEFAULT NULL"),
-        ("revival_blocked_until", "TEXT DEFAULT NULL"),
-        ("silenced_until", "TEXT DEFAULT NULL"),
-        ("temp_hp_bonus", "INTEGER DEFAULT 0"),
-        ("temp_hp_until", "TEXT DEFAULT NULL"),
-        ("recent_attackers", "TEXT DEFAULT '[]'"),
-        ("contract_target", "INTEGER DEFAULT NULL"),
-        ("contract_until", "TEXT DEFAULT NULL"),
-        ("charging_killshot", "INTEGER DEFAULT 0"),
-        ("steady_aim_target", "INTEGER DEFAULT NULL"),
-        ("steady_aim_stacks", "INTEGER DEFAULT 0"),
-        ("mark_first_hit", "INTEGER DEFAULT 1"),
-        ("deadeye_kill_bonus", "INTEGER DEFAULT 0"),
-        ("spell_cast_count", "INTEGER DEFAULT 0"),
-        ("holy_field_until", "TEXT DEFAULT NULL"),
-        ("devotion_charge", "INTEGER DEFAULT 0"),
-        ("explore_count_today", "INTEGER DEFAULT 0"),
-        ("explore_date", "TEXT DEFAULT NULL"),
-        ("shop_discount_until", "TEXT DEFAULT NULL"),
-    ]
-    for col, definition in new_columns:
-        try:
-            c.execute(f"ALTER TABLE players ADD COLUMN {col} {definition}")
-        except Exception:
-            pass
-
     conn.commit()
     conn.close()
-    
+
 # ── DB HELPERS ────────────────────────────────────────────────────────────────
 def _get(table, user_id):
     conn = sqlite3.connect(DB_PATH)
@@ -1839,7 +1793,7 @@ def new_player(s):
         "user_id": s["user_id"], "username": s["username"],
         "hp": max_hp_for_level(slvl), "max_hp": max_hp_for_level(slvl),
         "exp": 0, "level": slvl, "total_exp": safe_int(s.get("total_exp")),
-        "gold": max (50, slvl * 10), "wins": 0, "losses": 0,
+        "gold": max(50, slvl * 10), "wins": 0, "losses": 0,
         "quests_done": 0, "heals_given": 0, "dodges": 0,
         "crafts_done": 0, "perm_dmg_bonus": 0,
         "titles": json.dumps(["The Newcomer"]),
@@ -2279,30 +2233,26 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if get_player(user.id):
-        await send_group(update, f"⚔️ You're already in {WORLD_NAME}! Use /stats.", delay=9); return
+        await send_group(update, f"⚔️ You're already in {WORLD_NAME}! Use /stats."); return
     s = get_or_create_shadow(user.id, user.first_name)
     if s.get("ascended"):
-        await send_group(update, f"⚔️ You're already in {WORLD_NAME}! Use /stats.", delay=9); return
+        await send_group(update, "You've already ascended!"); return
     p = new_player(s)
     slvl = p["shadow_level_at_ascension"]
-    bonus_stats = slvl // 5
     await send_group(update,
         f"⚔️ *{user.first_name} has ASCENDED into {WORLD_NAME}!*\n\n"
-        f"Level {slvl} legacy carries over:\n"
+        f"Level {slvl} shadow legacy converted:\n"
         f"⭐ Starting Level: *{p['level']}*\n"
         f"❤️ HP: {p['hp']} | 💰 Gold: {p['gold']}\n"
         f"💡 Stat Points: *{p['stat_points']}*\n\n"
-        f"Next steps:\n"
-        f"⚔️ /class — choose your class at Level 5\n"
-        f"📊 /allocate — spend stat points\n"
-        f"🎁 /daily — claim your daily reward\n"
-        f"🗺️ /quest — go on a quest\n"
-        f"🗺️ /explore — send yourself on an expedition\n"
-        f"🎒 Starter pack: 2x Health Potions in your inventory!", delay=30)
-    asyncio.create_task(announce(context.bot, update.effective_chat.id,
-        f"⚔️ *{user.first_name}* has ASCENDED! "
-        f"Level {slvl} → RPG! 🎱", permanent=True))
-    
+        f"⚔️ Choose your class at Level 5 with /class\n"
+        f"📊 Spend stat points with /allocate\n"
+        f"🎁 Claim your daily reward with /daily", permanent=False)
+    asyncio.create_task(announce(
+        context.bot, update.effective_chat.id,
+        f"⚔️ *{user.first_name}* has ASCENDED! Level {slvl} → RPG Level {p['level']}! 🎱",
+        permanent=True))
+
 # ── STATS ─────────────────────────────────────────────────────────────────────
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -6050,7 +6000,6 @@ async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚔️ /class — choose your class at Level 5\n"
         f"📊 /allocate — spend stat points\n"
         f"🎁 /daily — claim your daily reward\n"
-        f"🎒 Starter pack: 2x Health Potions in your inventory!\n"
         f"🗺️ /quest — go on a quest\n"
         f"🗺️ /explore — send yourself on an expedition", delay=30)
     asyncio.create_task(announce(context.bot, update.effective_chat.id,
