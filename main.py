@@ -233,9 +233,9 @@ CLASS_TREE = {
         "skills":[
             {"tier":2,"unlock":10,"name":"Bloodlust",
              "passive":"Each hit landed restores 5 HP.",
-             "active":"Double Strike","type":"multihit",
-             "desc":"Hit twice. Each hit has independent crit chance. If both crit, Bloodlust heal triples.",
-             "passive_key":"bloodlust","hits":2},
+             "active":"Triple Strike","type":"multihit",
+             "desc":"Hit three times. Second hit 70%, third hit 50%. Each has independent crit. If all three crit, Bloodlust heal triples.",
+             "passive_key":"bloodlust","hits":3,"mults":[1.0, 0.70, 0.50]},
         ]
     },
     "crusader": {
@@ -1271,6 +1271,11 @@ def is_revival_blocked(p): return _ts_active(p, "revival_blocked_until")
 def is_silenced(p):      return _ts_active(p, "silenced_until")
 def is_rooted(p):        return is_entangled(p) or is_frozen(p)
 def cannot_attack(p):    return is_stunned(p) or is_rooted(p) or is_vanished(p)
+def is_poisoned(p): return _ts_active(p, "poison_until")
+def is_burning(p):  return _ts_active(p, "burn_until")
+def has_ward(p):    return _ts_active(p, "ward_until")
+def is_exposed(p):  return _ts_active(p, "exposed_until")
+def is_branded(p):  return _ts_active(p, "branded_until")
 
 def check_cooldown(ts, secs):
     if not ts: return True
@@ -1300,6 +1305,11 @@ def get_active_statuses(p):
     if is_frozen(p):          statuses.append("🧊 Frozen (can't attack)")
     if is_stunned(p):         statuses.append("⚡ Stunned (miss next attack)")
     if is_vanished(p):        statuses.append("👻 Vanished (untargetable)")
+    if is_poisoned(p):    statuses.append(f"🐍 Poisoned ({p.get('poison_damage',6)} dmg/30s)")
+    if is_burning(p):     statuses.append(f"🔥 Burning ({p.get('burn_damage',8)} dmg/20s)")
+    if has_ward(p):       statuses.append("✨ Holy Ward (next hit -40%)")
+    if is_exposed(p):     statuses.append("🗡️ Exposed (+15% dmg taken)")
+    if is_branded(p):     statuses.append("🔥 Branded (next attack -30%)")
     if is_bleeding(p):        statuses.append(f"🩸 Bleeding ({p.get('bleed_damage',10)} dmg/30s)")
     if is_hexed(p):           statuses.append("💀 Hexed (-25% damage)")
     if is_blessed(p):         statuses.append("✨ Blessed (+10% all stats)")
@@ -1412,6 +1422,115 @@ def calc_max_hp(p):
     temp   = safe_int(p.get("temp_hp_bonus")) if _ts_active(p, "temp_hp_until") else 0
     return base + acc_hp + temp
 
+TIER_THRESHOLDS = {1: 5, 2: 10, 3: 30, 4: 60, 5: 100}
+ 
+def get_class_tier(p):
+    """Return current class tier 1-5 based on unlock level."""
+    cls = get_player_class(p)
+    if not cls: return 0
+    unlock = cls.get("skills", [{}])[0].get("unlock", 5)
+    for tier, lvl in sorted(TIER_THRESHOLDS.items(), reverse=True):
+        if unlock >= lvl: return tier
+    return 1
+ 
+def get_proc_chance(base_pct, p):
+    """Return proc chance scaled by class tier."""
+    tier = get_class_tier(p)
+    return base_pct + (tier * 0.03)
+ 
+def calc_proc_effect(attacker, defender, dmg):
+    """
+    Roll for class-specific proc on normal /attack.
+    Returns (proc_triggered, proc_message, extra_dmg).
+    Mutates attacker/defender state if proc fires.
+    """
+    cls = get_player_class(attacker)
+    if not cls: return False, "", 0
+ 
+    line = cls.get("line")
+    path = attacker.get("class_path")
+    now  = datetime.now()
+ 
+    # ── WARRIOR PATH A — Blessed Strike ──────────────────────
+    if line == "warrior" and path == "A":
+        chance = get_proc_chance(0.10, attacker)
+        if random.random() < chance:
+            defender["burn_until"]  = (now + timedelta(minutes=3)).isoformat()
+            defender["burn_damage"] = 10
+            return True, "⚔️ *Blessed Strike!* Holy fire ignites — 10 dmg/30s!", 0
+ 
+    # ── WARRIOR PATH B — Double Strike ───────────────────────
+    elif line == "warrior" and path == "B":
+        chance = get_proc_chance(0.15, attacker)
+        if random.random() < chance:
+            extra = round(dmg * 0.60)
+            extra = calc_defense(defender, extra)
+            defender["hp"] = max(0, defender["hp"] - extra)
+            return True, f"⚔️ *Double Strike!* A second blow lands for {extra} dmg!", extra
+ 
+    # ── MAGE PATH A — Arcane Burn ─────────────────────────────
+    elif line == "mage" and path == "A":
+        chance = get_proc_chance(0.12, attacker)
+        if random.random() < chance:
+            defender["burn_until"]  = (now + timedelta(seconds=80)).isoformat()
+            defender["burn_damage"] = 8
+            return True, "🔥 *Arcane Burn!* Magical fire clings to the wound!", 0
+ 
+    # ── MAGE PATH B — Soul Drain ──────────────────────────────
+    elif line == "mage" and path == "B":
+        chance = get_proc_chance(0.12, attacker)
+        if random.random() < chance:
+            steal = round(dmg * 0.15)
+            attacker["hp"] = min(calc_max_hp(attacker), attacker["hp"] + steal)
+            return True, f"🌑 *Soul Drain!* Stole {steal} HP from the wound!", 0
+ 
+    # ── THIEF PATH A — Poison Strike ─────────────────────────
+    elif line == "thief" and path == "A":
+        chance = get_proc_chance(0.15, attacker)
+        if random.random() < chance:
+            defender["poison_until"]  = (now + timedelta(minutes=5)).isoformat()
+            defender["poison_damage"] = 6
+            return True, "🐍 *Poison Strike!* The blade was coated in poison!", 0
+ 
+    # ── THIEF PATH B — Exposed ────────────────────────────────
+    elif line == "thief" and path == "B":
+        chance = get_proc_chance(0.15, attacker)
+        if random.random() < chance:
+            defender["exposed_until"] = (now + timedelta(minutes=2)).isoformat()
+            return True, "🗡️ *Exposed!* A vital point was struck — +15% dmg taken!", 0
+ 
+    # ── ARCHER PATH A — Pin Down ──────────────────────────────
+    elif line == "archer" and path == "A":
+        chance = get_proc_chance(0.12, attacker)
+        if random.random() < chance:
+            defender["distracted_until"] = (now + timedelta(seconds=30)).isoformat()
+            return True, "🏹 *Pin Down!* The arrow grazes their shoulder — distracted!", 0
+ 
+    # ── ARCHER PATH B — Headshot ──────────────────────────────
+    elif line == "archer" and path == "B":
+        chance = get_proc_chance(0.12, attacker)
+        if random.random() < chance:
+            extra = round(dmg * 0.75)  # total becomes 1.75x
+            extra = calc_defense(defender, extra)
+            defender["hp"] = max(0, defender["hp"] - extra)
+            return True, f"🎯 *Headshot!* Clean hit for {extra} bonus dmg!", extra
+ 
+    # ── PRIEST PATH A — Holy Ward (on attack) ────────────────
+    elif line == "priest" and path == "A":
+        chance = get_proc_chance(0.20, attacker)
+        if random.random() < chance:
+            attacker["ward_until"] = (now + timedelta(minutes=2)).isoformat()
+            return True, "✨ *Holy Ward!* Divine light shields the faithful!", 0
+ 
+    # ── PRIEST PATH B — Holy Brand ────────────────────────────
+    elif line == "priest" and path == "B":
+        chance = get_proc_chance(0.15, attacker)
+        if random.random() < chance:
+            defender["branded_until"] = (now + timedelta(minutes=2)).isoformat()
+            return True, "🔥 *Holy Brand!* Branded by judgment — next attack weakened!", 0
+ 
+    return False, "", 0
+
 def calc_attack_damage(attacker, weather=None):
     base      = random.randint(1, 10)
     weapon    = get_weapon_atk(attacker)
@@ -1493,7 +1612,18 @@ def calc_defense(defender, dmg):
             return 0  # blocked entirely
 
     total = min(0.80, def_reduction + armor_reduction)
-    return max(1, round(dmg * (1 - total)))
+    final = max(1, round(dmg * (1 - total)))
+ 
+    # Exposed debuff — target takes +15% more damage
+    if _ts_active(defender, "exposed_until"):
+        final = round(final * 1.15)
+ 
+    # Branded — attacker's next strike deals 30% less (checked on attacker)
+    if _ts_active(defender, "branded_until"):
+        final = round(final * 0.70)
+        defender["branded_until"] = None  # consumed on hit
+ 
+    return final
 
 def check_miss(attacker, defender):
     """Returns True if attack misses."""
@@ -1630,6 +1760,15 @@ def init_db():
         distracted_until TEXT DEFAULT NULL,
         entangled_until TEXT DEFAULT NULL,
         frozen_until TEXT DEFAULT NULL,
+        poison_until TEXT DEFAULT NULL,
+        poison_damage INTEGER DEFAULT 0,
+        poison_last_tick TEXT DEFAULT NULL,
+        burn_until TEXT DEFAULT NULL,
+        burn_damage INTEGER DEFAULT 0,
+        burn_last_tick TEXT DEFAULT NULL,
+        ward_until TEXT DEFAULT NULL,
+        exposed_until TEXT DEFAULT NULL,
+        branded_until TEXT DEFAULT NULL,
         stunned_until TEXT DEFAULT NULL,
         vanish_until TEXT DEFAULT NULL,
         bleed_until TEXT DEFAULT NULL,
@@ -2735,10 +2874,27 @@ async def _execute_skill(update, context, p, sk):
     elif stype == "smite":
         dmg = get_stat(p,"WIS") * 3
     elif stype == "multihit":
-        hits = sk.get("hits",2)
-        mult = sk.get("mult",0.8)
-        dmg  = sum(round(calc_attack_damage(p,w)*mult) for _ in range(hits))
-        lines.append(f"⚡ {hits}-hit combo! Total: {dmg}")
+        hits  = sk.get("hits", 2)
+        mults = sk.get("mults", [sk.get("mult", 0.8)] * hits)
+        total_dmg = 0
+        hit_log   = []
+        all_crit  = True
+        for i, m in enumerate(mults):
+            h = round(calc_attack_damage(p, w) * m)
+            if check_crit(p):
+                h = apply_crit(p, h)
+                hit_log.append(f"💥{h}")
+            else:
+                hit_log.append(str(h))
+                all_crit = False
+            total_dmg += h
+        dmg = total_dmg
+        combo_str = " + ".join(hit_log)
+        lines.append(f"⚡ *{hits}-hit combo!* [{combo_str}] = {dmg} total")
+        if all_crit and sk.get("passive_key") == "bloodlust":
+            heal = 15  # triple bloodlust heal
+            p["hp"] = min(calc_max_hp(p), p["hp"] + heal)
+            lines.append(f"🩸 *All crits! Bloodlust surge!* +{heal} HP")
     else:
         dmg = round(base * sk.get("mult",1.0))
 
@@ -3326,8 +3482,28 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"⚡ *{d['username']}* reflects {reflect} damage back!")
 
     dmg = calc_defense(d, dmg)
+
+    # Holy Ward — Priest Path A passive proc on being hit
+    cls_d_ward = get_player_class(d)
+    if cls_d_ward and cls_d_ward.get("line") == "priest" and d.get("class_path") == "A":
+        ward_chance = get_proc_chance(0.15, d)
+        if not _ts_active(d, "ward_until") and random.random() < ward_chance:
+            d["ward_until"] = (datetime.now() + timedelta(minutes=2)).isoformat()
+            dmg = round(dmg * 0.60)
+            lines.append("✨ *Holy Ward procs!* Damage reduced by 40%!")
+
+    # Apply existing ward if active
+    if _ts_active(d, "ward_until"):
+        dmg = round(dmg * 0.60)
+        d["ward_until"] = None
+        lines.append("✨ *Holy Ward absorbs the hit!* -40% damage.")
+    
     lifesteal = apply_lifesteal(a, dmg)
     if lifesteal: lines.append(f"🩸 Lifesteal: +{lifesteal} HP")
+
+    # Class proc effect
+    proc_fired, proc_msg, proc_extra = calc_proc_effect(a, d, dmg)
+    if proc_fired: lines.append(proc_msg)
 
     d["hp"] = max(0, d["hp"] - dmg)
     lines.insert(0, f"⚔️ *{a['username']}* strikes *{d['username']}* for *{dmg} damage!*")
@@ -5255,13 +5431,51 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(announce(context.bot, chat_id,
             f"🏆 *{user.first_name}* hit a *500 message streak!* +800 EXP! 🎱"))
 
-    # Bleed tick
-    if p and is_bleeding(p):
-        tick_dmg = check_bleed_tick(p)
-        if tick_dmg > 0 and p["hp"] == 0:
-            set_status(p, "defeated_until", 21600)
-            asyncio.create_task(announce(context.bot, chat_id,
-                f"🩸 *{p['username']}* bled out! Defeated for 6 hours."))
+
+    if p:
+        # Bleed tick
+        if is_bleeding(p):
+            tick_dmg = check_bleed_tick(p)
+            if tick_dmg and p["hp"] <= 0:
+                p["defeated_until"] = (datetime.now()+timedelta(hours=6)).isoformat()
+                asyncio.create_task(announce(context.bot, chat_id,
+                    f"🩸 *{p['username']}* bled out and is defeated for 6 hours!",
+                    permanent=True))
+            if tick_dmg: save_player(p)
+ 
+        # Poison tick
+        if _ts_active(p, "poison_until"):
+            last = p.get("poison_last_tick")
+            now2 = datetime.now()
+            if not last or (now2 - datetime.fromisoformat(last)).total_seconds() >= 30:
+                pdmg = safe_int(p.get("poison_damage"), 6)
+                p["hp"] = max(0, p["hp"] - pdmg)
+                p["poison_last_tick"] = now2.isoformat()
+                if p["hp"] <= 0:
+                    p["defeated_until"] = (now2+timedelta(hours=6)).isoformat()
+                    asyncio.create_task(announce(context.bot, chat_id,
+                        f"🐍 *{p['username']}* succumbed to poison! Defeated for 6 hours!",
+                        permanent=True))
+                save_player(p)
+ 
+        # Burn tick
+        if _ts_active(p, "burn_until"):
+            last = p.get("burn_last_tick")
+            now2 = datetime.now()
+            if not last or (now2 - datetime.fromisoformat(last)).total_seconds() >= 20:
+                bdmg = safe_int(p.get("burn_damage"), 8)
+                p["hp"] = max(0, p["hp"] - bdmg)
+                p["burn_last_tick"] = now2.isoformat()
+                if p["hp"] <= 0:
+                    p["defeated_until"] = (now2+timedelta(hours=6)).isoformat()
+                    asyncio.create_task(announce(context.bot, chat_id,
+                        f"🔥 *{p['username']}* burned out! Defeated for 6 hours!",
+                        permanent=True))
+                save_player(p)
+ 
+        # Holy Ward auto-proc on getting hit (Priest Path A)
+        # NOTE: this is checked inside attack_cmd when defender is a Priest Path A
+        # No tick needed here — it's a reactive proc
 
     # Apply shadow EXP
     s["passive_cooldowns"] = json.dumps(cds_s)
@@ -5461,8 +5675,11 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Update recent attackers
     update_recent_attackers(d, au.id)
 
+    proc_fired, proc_msg, proc_extra = calc_proc_effect(a, d, dmg_after_def)
+
     action = f"⚔️ *{a['username']}* → *{d['username']}* for *{dmg_after_def} dmg*{crit_note}{reflect_note}"
-    if healed: action += f" | 🩸 +{healed} HP"
+    if healed:     action += f" | 🩸 +{healed} HP"
+    if proc_fired: action += f"\n{proc_msg}"
 
     # Check defeat
     lvl_msgs = []
@@ -5613,6 +5830,12 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update, msg, delay=30)
 
 # ── STATS ─────────────────────────────────────────────────────────────────────
+def _exp_bar(current, needed, length=10):
+    pct    = min(1.0, current / max(1, needed))
+    filled = round(pct * length)
+    bar    = "█" * filled + "░" * (length - filled)
+    return f"✨ [{bar}] {current:,}/{needed:,} EXP ({int(pct*100)}%)"
+
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     p = get_player(user.id); s = get_shadow(user.id)
@@ -5673,8 +5896,8 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚔️ *{p['username']}*{defeated_str}{recovering}\n"
         f"🏅 *{p['active_title']}* | {get_tier(p['level'])['name']} | 🏰 {guild_text}\n"
         f"🌍 {WORLD_NAME} — _{w['name']}_\n{status_str}\n\n"
-        f"❤️ HP: {p['hp']}/{p['max_hp']} | ⭐ Level {p['level']} | "
-        f"✨ {p['exp']:,}/{exp_for_level(p['level']):,} EXP\n"
+        f"❤️ HP: {p['hp']}/{p['max_hp']} | ⭐ Level {p['level']}\n"
+        f"{_exp_bar(p['exp'], exp_for_level(p['level']))}\n"
         f"🏆 Lifetime: *{safe_int(p.get('total_exp')):,}* EXP\n"
         f"💰 Gold: {p['gold']} | ⚔️ W/L: {p['wins']}/{p.get('losses',0)}\n"
         f"🗺️ Quests: {p['quests_done']} | 🔨 Crafts: {safe_int(p.get('crafts_done'))}\n\n"
