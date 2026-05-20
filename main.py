@@ -1793,7 +1793,7 @@ def new_player(s):
         "user_id": s["user_id"], "username": s["username"],
         "hp": max_hp_for_level(slvl), "max_hp": max_hp_for_level(slvl),
         "exp": 0, "level": slvl, "total_exp": safe_int(s.get("total_exp")),
-        "gold": slvl * 10, "wins": 0, "losses": 0,
+        "gold": max (50, slvl * 10), "wins": 0, "losses": 0,
         "quests_done": 0, "heals_given": 0, "dodges": 0,
         "crafts_done": 0, "perm_dmg_bonus": 0,
         "titles": json.dumps(["The Newcomer"]),
@@ -1802,7 +1802,7 @@ def new_player(s):
         "all_skills": json.dumps([]),
         "stat_points": slvl * 3 + slvl // 5,
         "stats": json.dumps(DEFAULT_STATS.copy()),
-        "inventory": json.dumps([]),
+        "inventory": json.dumps(["Health Potion", "Health Potion"]),
         "passive_cooldowns": json.dumps({}),
         "equipped_weapon": None, "equipped_armor": None,
         "equipped_shield": None, "equipped_accessory": None,
@@ -2235,9 +2235,9 @@ async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if get_player(user.id):
         await send_group(update, f"⚔️ You're already in {WORLD_NAME}! Use /stats."); return
     s = get_or_create_shadow(user.id, user.first_name)
-    if s.get("ascended"):
-        await send_group(update, "You've already ascended!"); return
-    p = new_player(s)
+if s.get("ascended"):
+    await send_group(update, f"⚔️ You're already in {WORLD_NAME}! Use /stats.", delay=9); return
+p = new_player(s)
     slvl = p["shadow_level_at_ascension"]
     await send_group(update,
         f"⚔️ *{user.first_name} has ASCENDED into {WORLD_NAME}!*\n\n"
@@ -6000,6 +6000,7 @@ async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚔️ /class — choose your class at Level 5\n"
         f"📊 /allocate — spend stat points\n"
         f"🎁 /daily — claim your daily reward\n"
+        f"🎒 Starter pack: 2x Health Potions in your inventory!\n"
         f"🗺️ /quest — go on a quest\n"
         f"🗺️ /explore — send yourself on an expedition", delay=30)
     asyncio.create_task(announce(context.bot, update.effective_chat.id,
