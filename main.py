@@ -2279,26 +2279,30 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if get_player(user.id):
-        await send_group(update, f"⚔️ You're already in {WORLD_NAME}! Use /stats."); return
+        await send_group(update, f"⚔️ You're already in {WORLD_NAME}! Use /stats.", delay=9); return
     s = get_or_create_shadow(user.id, user.first_name)
-if s.get("ascended"):
-    await send_group(update, f"⚔️ You're already in {WORLD_NAME}! Use /stats.", delay=9); return
-p = new_player(s)
+    if s.get("ascended"):
+        await send_group(update, f"⚔️ You're already in {WORLD_NAME}! Use /stats.", delay=9); return
+    p = new_player(s)
     slvl = p["shadow_level_at_ascension"]
+    bonus_stats = slvl // 5
     await send_group(update,
         f"⚔️ *{user.first_name} has ASCENDED into {WORLD_NAME}!*\n\n"
-        f"Level {slvl} shadow legacy converted:\n"
+        f"Level {slvl} legacy carries over:\n"
         f"⭐ Starting Level: *{p['level']}*\n"
         f"❤️ HP: {p['hp']} | 💰 Gold: {p['gold']}\n"
         f"💡 Stat Points: *{p['stat_points']}*\n\n"
-        f"⚔️ Choose your class at Level 5 with /class\n"
-        f"📊 Spend stat points with /allocate\n"
-        f"🎁 Claim your daily reward with /daily", permanent=False)
-    asyncio.create_task(announce(
-        context.bot, update.effective_chat.id,
-        f"⚔️ *{user.first_name}* has ASCENDED! Level {slvl} → RPG Level {p['level']}! 🎱",
-        permanent=True))
-
+        f"Next steps:\n"
+        f"⚔️ /class — choose your class at Level 5\n"
+        f"📊 /allocate — spend stat points\n"
+        f"🎁 /daily — claim your daily reward\n"
+        f"🗺️ /quest — go on a quest\n"
+        f"🗺️ /explore — send yourself on an expedition\n"
+        f"🎒 Starter pack: 2x Health Potions in your inventory!", delay=30)
+    asyncio.create_task(announce(context.bot, update.effective_chat.id,
+        f"⚔️ *{user.first_name}* has ASCENDED! "
+        f"Level {slvl} → RPG! 🎱", permanent=True))
+    
 # ── STATS ─────────────────────────────────────────────────────────────────────
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
