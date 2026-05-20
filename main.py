@@ -1685,9 +1685,55 @@ def init_db():
         claimed_by INTEGER DEFAULT NULL
     )""")
 
+    # Migration — add new v13 columns if they don't exist
+    new_columns = [
+        ("class_path", "TEXT DEFAULT NULL"),
+        ("all_skills", "TEXT DEFAULT '[]'"),
+        ("equipped_weapon", "TEXT DEFAULT NULL"),
+        ("equipped_armor", "TEXT DEFAULT NULL"),
+        ("equipped_shield", "TEXT DEFAULT NULL"),
+        ("equipped_accessory", "TEXT DEFAULT NULL"),
+        ("invincible_until", "TEXT DEFAULT NULL"),
+        ("distracted_until", "TEXT DEFAULT NULL"),
+        ("entangled_until", "TEXT DEFAULT NULL"),
+        ("frozen_until", "TEXT DEFAULT NULL"),
+        ("stunned_until", "TEXT DEFAULT NULL"),
+        ("vanish_until", "TEXT DEFAULT NULL"),
+        ("bleed_until", "TEXT DEFAULT NULL"),
+        ("bleed_damage", "INTEGER DEFAULT 0"),
+        ("bleed_last_tick", "TEXT DEFAULT NULL"),
+        ("hexed_until", "TEXT DEFAULT NULL"),
+        ("weakened_until", "TEXT DEFAULT NULL"),
+        ("blessed_until", "TEXT DEFAULT NULL"),
+        ("healing_blocked_until", "TEXT DEFAULT NULL"),
+        ("revival_blocked_until", "TEXT DEFAULT NULL"),
+        ("silenced_until", "TEXT DEFAULT NULL"),
+        ("temp_hp_bonus", "INTEGER DEFAULT 0"),
+        ("temp_hp_until", "TEXT DEFAULT NULL"),
+        ("recent_attackers", "TEXT DEFAULT '[]'"),
+        ("contract_target", "INTEGER DEFAULT NULL"),
+        ("contract_until", "TEXT DEFAULT NULL"),
+        ("charging_killshot", "INTEGER DEFAULT 0"),
+        ("steady_aim_target", "INTEGER DEFAULT NULL"),
+        ("steady_aim_stacks", "INTEGER DEFAULT 0"),
+        ("mark_first_hit", "INTEGER DEFAULT 1"),
+        ("deadeye_kill_bonus", "INTEGER DEFAULT 0"),
+        ("spell_cast_count", "INTEGER DEFAULT 0"),
+        ("holy_field_until", "TEXT DEFAULT NULL"),
+        ("devotion_charge", "INTEGER DEFAULT 0"),
+        ("explore_count_today", "INTEGER DEFAULT 0"),
+        ("explore_date", "TEXT DEFAULT NULL"),
+        ("shop_discount_until", "TEXT DEFAULT NULL"),
+    ]
+    for col, definition in new_columns:
+        try:
+            c.execute(f"ALTER TABLE players ADD COLUMN {col} {definition}")
+        except Exception:
+            pass
+
     conn.commit()
     conn.close()
-
+    
 # ── DB HELPERS ────────────────────────────────────────────────────────────────
 def _get(table, user_id):
     conn = sqlite3.connect(DB_PATH)
