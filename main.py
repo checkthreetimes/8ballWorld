@@ -2781,6 +2781,8 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p and not s:
         await send_group(update,
             "No profile yet — just start chatting to build your level!", delay=9); return
+    if p: p["username"] = user.first_name
+    if s: s["username"] = user.first_name
     if not p:
         tier = get_tier(s["level"])
         await send_group(update,
