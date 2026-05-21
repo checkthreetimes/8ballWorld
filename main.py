@@ -1825,6 +1825,26 @@ def init_db():
     )""")
 
     conn.commit()
+
+    # Migrate existing tables — add columns introduced in v13
+    migrations = [
+        ("players", "poison_until",      "TEXT DEFAULT NULL"),
+        ("players", "poison_damage",     "INTEGER DEFAULT 0"),
+        ("players", "poison_last_tick",  "TEXT DEFAULT NULL"),
+        ("players", "burn_until",        "TEXT DEFAULT NULL"),
+        ("players", "burn_damage",       "INTEGER DEFAULT 0"),
+        ("players", "burn_last_tick",    "TEXT DEFAULT NULL"),
+        ("players", "ward_until",        "TEXT DEFAULT NULL"),
+        ("players", "exposed_until",     "TEXT DEFAULT NULL"),
+        ("players", "branded_until",     "TEXT DEFAULT NULL"),
+    ]
+    for table, col, definition in migrations:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
     conn.close()
 
 # ── DB HELPERS ────────────────────────────────────────────────────────────────
