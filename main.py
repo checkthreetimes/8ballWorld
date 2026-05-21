@@ -2623,18 +2623,14 @@ async def check_idle_reward(user, s, p, bot, chat_id):
             item_found = get_random_item_by_rarity(rarity)
             break
 
-    # Build return message
-    away_int = int(away)
-    if away < 48:
-        hours_str = f"{away_int}hr" if away_int == 1 else f"{away_int}hrs"
-    else:
-        days = int(away / 24)
-        hours_str = f"{days}d"
+    # Build flavor
+    line = get_class_line(p) if p else None
+    flavor = IDLE_FLAVOR.get(line, IDLE_FLAVOR[None])
+    hours_str = f"{int(away)}h" if away < 48 else f"{int(away/24)}d"
 
-    msg = (f"🎱 *{user.first_name}* returns after {hours_str}\n"
-           f"💰 +{gold_reward} gold\n"
-           f"✨ +{exp_reward} EXP")
-
+    msg = (f"🌅 *{user.first_name}* returns after *{hours_str}* away "
+           f"— _{flavor}_\n\n"
+           f"💰 +{gold_reward} gold | ✨ +{exp_reward} EXP")
     if item_found:
         rarity_tag = ""
         for pool in [WEAPONS, ARMORS, ACCESSORIES]:
@@ -2642,7 +2638,7 @@ async def check_idle_reward(user, s, p, bot, chat_id):
                 r = pool[item_found].get("rarity","")
                 rarity_tag = RARITY_EMOJI.get(r,"")
                 break
-        msg += f"\n🎒 {rarity_tag} *{item_found}*!"
+        msg += f"\n🎒 Found: {rarity_tag} *{item_found}*!"
 
     if p:
         p["gold"] = p.get("gold", 0) + gold_reward
@@ -5665,10 +5661,13 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             card_text = build_arena_card(arena)
             if arena.get("msg_id"):
                 try:
-                    await update.get_bot().edit_message_text(
-                        chat_id=chat_id, message_id=arena["msg_id"],
-                        text=card_text[:4096], parse_mode="Markdown")
+                    await update.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
                 except Exception: pass
+            try:
+                msg = await update.get_bot().send_message(
+                    chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown")
+                arena["msg_id"] = msg.message_id
+            except Exception: pass
             return
 
         action = context.args[0].lower() if context.args else "attack"
@@ -6165,11 +6164,13 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         card_text = build_arena_card(arena)
         if arena.get("msg_id"):
             try:
-                await update.get_bot().edit_message_text(
-                    chat_id=chat_id, message_id=arena["msg_id"],
-                    text=card_text[:4096], parse_mode="Markdown")
-            except Exception:
-                pass
+                await update.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
+            except Exception: pass
+        try:
+            msg = await update.get_bot().send_message(
+                chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown")
+            arena["msg_id"] = msg.message_id
+        except Exception: pass
         return
 
     # Challenge initiation
@@ -6629,7 +6630,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*/train* — Train (30min)\n"
         "*/quest* — Go on a quest (1hr)\n"
         "*/explore* — Expedition (1hr, 2x/day)\n"
-        "*/pool* — Take a pool shot (1min cooldown)\n"
+        "*/pool* — Take a pool shot (8s cooldown)\n"
         "*/dungeon* — Solo dungeon crawl (1x/day)\n"
         "   `/dungeon` | `/dungeon hard` | `/dungeon legendary`\n"
         "*/shop* — Daily shop\n"
@@ -6812,8 +6813,8 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if last_pool:
         try:
             elapsed = (datetime.now() - datetime.fromisoformat(last_pool)).total_seconds()
-            if elapsed < 60:
-                remaining = int(60 - elapsed)
+            if elapsed < 8:
+                remaining = int(8 - elapsed)
                 await send_group(update, f"🎱 Cooldown: {remaining}s", delay=5)
                 return
         except Exception:
