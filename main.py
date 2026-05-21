@@ -35,6 +35,7 @@ pending_duels      = {}   # challenger_id -> {target_id, wager, chat_id, expires
 active_arenas      = {}   # chat_id -> arena state
 pending_guild_reqs = {}   # guild_id -> [requests]
 explore_timers     = {}   # user_id -> asyncio task
+active_dungeons    = {}   # user_id -> asyncio task
 
 # ── SEND HELPERS ──────────────────────────────────────────────────────────────
 async def _auto_delete(bot, chat_id, msg_id, delay):
@@ -1315,6 +1316,191 @@ IDLE_FLAVOR = {
     None:       "returning from a long journey",
 }
 
+# ── DUNGEON CONSTANTS ─────────────────────────────────────────────────────────
+DUNGEON_THEMES = [
+    {
+        "name": "The Sunken Vaults",
+        "desc": "Ancient treasure halls buried beneath a flooded city.",
+        "enemy_prefix": ["Drowned","Waterlogged","Barnacled","Tide-Cursed"],
+        "trap_flavor": ["a pressure plate beneath inches of dark water",
+                        "a rusted portcullis rigged to drop",
+                        "flooding pipes hidden in the walls",
+                        "a current strong enough to sweep you into the dark"],
+        "room_flavor": ["The walls weep saltwater.",
+                        "Somewhere deeper, water drips in an endless rhythm.",
+                        "The floor is slick and cold beneath your feet.",
+                        "Pale fish dart through cracks in the stone."],
+        "boss_name": "The Vault Warden",
+        "boss_desc": "A colossus of barnacle and bone, guardian of everything that sank.",
+    },
+    {
+        "name": "The Ashen Crypts",
+        "desc": "The burial grounds of a civilization that burned itself to nothing.",
+        "enemy_prefix": ["Charred","Cinder","Smoldering","Ash-Born"],
+        "trap_flavor": ["jets of flame erupting from the floor",
+                        "a tripwire connected to a wall of fire",
+                        "superheated air that burns the lungs",
+                        "pools of liquid fire hidden under gray ash"],
+        "room_flavor": ["The air smells of old smoke and older death.",
+                        "Gray ash coats every surface like fresh snow.",
+                        "The heat is oppressive and constant.",
+                        "Blackened bones line the walls in neat rows."],
+        "boss_name": "The Cinder Patriarch",
+        "boss_desc": "A scorched titan still burning from within, refusing to die.",
+    },
+    {
+        "name": "The Forsaken Citadel",
+        "desc": "A military fortress abandoned mid-siege. Both sides lost.",
+        "enemy_prefix": ["Spectral","Siege-Cursed","Hollow","Battleborn"],
+        "trap_flavor": ["a crossbow mounted to the wall still loaded",
+                        "a floor section rigged to collapse into darkness",
+                        "old siege oil that ignites on contact with air",
+                        "a portcullis that slams without warning"],
+        "room_flavor": ["Weapons still hang on the walls, rusted but intact.",
+                        "The echoes of a battle that ended centuries ago linger here.",
+                        "Banners hang in tatters from the vaulted ceiling.",
+                        "Arrow shafts protrude from every wooden surface."],
+        "boss_name": "The Siege Commander",
+        "boss_desc": "A general who refused to retreat even in death.",
+    },
+    {
+        "name": "The Verdant Labyrinth",
+        "desc": "A dungeon reclaimed by something ancient and alive.",
+        "enemy_prefix": ["Vine-Choked","Root-Twisted","Spore-Touched","Feral"],
+        "trap_flavor": ["carnivorous vines dropping from the ceiling",
+                        "spore clouds that cloud the mind",
+                        "root systems that erupt from the floor",
+                        "a pit concealed beneath a carpet of living moss"],
+        "room_flavor": ["The stone is barely visible beneath layers of growth.",
+                        "Something breathes here. You can feel it.",
+                        "Bioluminescent fungi cast everything in pale blue light.",
+                        "The labyrinth shifts — the walls have moved since you passed them."],
+        "boss_name": "The Root Mind",
+        "boss_desc": "A hive intelligence woven from a thousand years of growth.",
+    },
+    {
+        "name": "The Shattered Observatory",
+        "desc": "A tower of arcane research that tore itself apart at the peak of its power.",
+        "enemy_prefix": ["Fractured","Void-Touched","Rift-Born","Unbound"],
+        "trap_flavor": ["unstable arcane nodes that discharge on proximity",
+                        "a rift in space that pulls at anything nearby",
+                        "gravity inverting without warning",
+                        "time distortions that age you rapidly then snap back"],
+        "room_flavor": ["Reality here is thin. You can see through the walls to somewhere else.",
+                        "Books orbit the ceiling slowly, still open to their last page.",
+                        "The floor is translucent. Something massive moves beneath it.",
+                        "You hear conversations that happened in this room long ago."],
+        "boss_name": "The Unbound Archivist",
+        "boss_desc": "A scholar who unlocked something that unlocked them back.",
+    },
+    {
+        "name": "The Rusted Underbelly",
+        "desc": "Industrial depths of a forgotten machine city, still running.",
+        "enemy_prefix": ["Clockwork","Steam-Wreathed","Corroded","Iron-Boned"],
+        "trap_flavor": ["gears that engage and crush without warning",
+                        "steam vents at scalding pressure",
+                        "a conveyor that leads into grinding machinery",
+                        "magnetic floors that snatch weapons from your grip"],
+        "room_flavor": ["The machines have no purpose anyone can identify. They run anyway.",
+                        "Steam fills every corridor at knee height.",
+                        "The noise is constant. You stop being able to hear yourself think.",
+                        "Pipes sweat rust-colored water onto everything."],
+        "boss_name": "The Foreman Construct",
+        "boss_desc": "The machine that manages all the other machines. It found you unauthorized.",
+    },
+    {
+        "name": "The Pale Wastes",
+        "desc": "Frozen halls carved into a glacier that should not exist this far south.",
+        "enemy_prefix": ["Frost-Bitten","Glacial","Ice-Forged","Pale"],
+        "trap_flavor": ["ice sheets that shatter into razor shards underfoot",
+                        "a wind corridor that freezes exposed skin instantly",
+                        "hidden crevasses disguised by snow",
+                        "stalactites rigged to drop by vibration"],
+        "room_flavor": ["Your breath fogs in great white clouds.",
+                        "Something is preserved in the ice wall. It looks back.",
+                        "The silence here is total and wrong.",
+                        "The cold has a weight to it, like it's alive."],
+        "boss_name": "The Glacier King",
+        "boss_desc": "Ancient beyond reckoning. The cold bends to its will.",
+    },
+    {
+        "name": "The Bloodmarked Sanctum",
+        "desc": "A holy site corrupted so completely it became its own inverse.",
+        "enemy_prefix": ["Corrupted","Tainted","Blasphemous","Hollow-Faithful"],
+        "trap_flavor": ["consecrated ground that burns the faithless",
+                        "a bell toll that shatters concentration and causes damage",
+                        "an altar that demands tribute in HP",
+                        "holy water turned acidic in the corruption"],
+        "room_flavor": ["The prayers carved in the walls have been scratched out and replaced.",
+                        "Candles burn black here.",
+                        "The geometry of this place does not match what a sane architect would build.",
+                        "You feel watched by something that disapproves of you deeply."],
+        "boss_name": "The Fallen High Confessor",
+        "boss_desc": "Once the most devoted servant of the light. Now its greatest enemy.",
+    },
+]
+
+DUNGEON_LOOT = {
+    "normal": {
+        "monster":   [("Health Potion",0.30),("Dragon Scale",0.12),
+                      ("Rusty Shiv",0.08),("Wooden Prayer Beads",0.08)],
+        "treasure":  [("Super Health Potion",0.20),("Dragon Scale",0.20),
+                      ("Fox Tail Ring",0.08),("Bloodstone Band",0.08),
+                      ("Militia Falchion",0.06)],
+        "mini_boss": [("Dragon Scale",0.40),("Enchanting Scroll",0.10),
+                      ("Mega Health Potion",0.15),("Whisper Coin",0.06)],
+        "boss":      [("Dragon Scale",0.50),("Enchanting Scroll",0.20),
+                      ("Revival Charm",0.10),("Warmaster's Clasp",0.05)],
+        "completion_bonus": {"exp": 800, "gold": 200},
+    },
+    "hard": {
+        "monster":   [("Super Health Potion",0.15),("Dragon Scale",0.20),
+                      ("Serrated Kujang",0.07),("Militia Falchion",0.07)],
+        "treasure":  [("Dragon Scale",0.30),("Enchanting Scroll",0.15),
+                      ("Mega Health Potion",0.10),("Whisper Coin",0.07),
+                      ("Warmaster's Clasp",0.05),("Owl Medallion",0.05)],
+        "mini_boss": [("Dragon Scale",0.50),("Enchanting Scroll",0.25),
+                      ("Revival Charm",0.10),("Blacksteel Bastard Sword",0.05)],
+        "boss":      [("Dragon Scale",0.60),("Enchanting Scroll",0.30),
+                      ("Revival Charm",0.15),("Giantslayer Zweihander",0.04),
+                      ("Astral Conduit Rod",0.04),("Twin Serpent Ring",0.04)],
+        "completion_bonus": {"exp": 1800, "gold": 450},
+    },
+    "legendary": {
+        "monster":   [("Dragon Scale",0.30),("Enchanting Scroll",0.10),
+                      ("Mega Health Potion",0.12),("Revival Charm",0.05)],
+        "treasure":  [("Dragon Scale",0.40),("Enchanting Scroll",0.25),
+                      ("Revival Charm",0.12),("Cinder Heart Pendant",0.05),
+                      ("Deathwhisper Amulet",0.04),("Eye of the Storm",0.04)],
+        "mini_boss": [("Dragon Scale",0.60),("Enchanting Scroll",0.35),
+                      ("Giantslayer Zweihander",0.05),("Voidweave Mantle",0.05),
+                      ("Twin Serpent Ring",0.05)],
+        "boss":      [("Dragon Scale",0.70),("Enchanting Scroll",0.40),
+                      ("Worldcleaver",0.02),("Nullstar Scepter",0.02),
+                      ("Godshard Splinter",0.02),("Last Breath Locket",0.02),
+                      ("Infinity Loop",0.02)],
+        "completion_bonus": {"exp": 4000, "gold": 1000},
+    },
+}
+
+ROOM_STAT_CHECKS = {
+    "monster":  {"primary": "combat_power", "threshold": 0.65},
+    "trap":     {"primary": "AGI", "secondary": "DEX", "threshold": 0.55,
+                 "class_bonus": {"thief": 0.20, "archer": 0.15}},
+    "treasure": {"primary": "LUK", "threshold": 0.50,
+                 "class_bonus": {"thief": 0.15}},
+    "puzzle":   {"primary": "INT", "secondary": "WIS", "threshold": 0.55,
+                 "class_bonus": {"mage": 0.20, "priest": 0.15}},
+    "rest":     {"primary": "WIS", "threshold": 0.60},
+    "merchant": {"primary": "LUK"},
+    "altar":    {"primary": "WIS", "threshold": 0.60,
+                 "class_bonus": {"priest": 0.40}},
+    "ambush":   {"primary": "AGI", "threshold": 0.55,
+                 "class_bonus": {"archer": 0.25, "thief": 0.20}},
+    "mini_boss":{"primary": "combat_power", "threshold": 0.55},
+    "boss":     {"primary": "combat_power", "threshold": 0.50},
+}
+
 KEYWORD_TRIGGERS = [
     {"pattern":r"\b(8ball|8ballin|rack|felt|cue|billiards|pool table|corner pocket|break shot|chalk up)\b",
      "exp":60,"gold_chance":0.30,"cooldown":45,"key":"billiards"},
@@ -2049,6 +2235,7 @@ def init_db():
         ("players", "LUK",          "INTEGER DEFAULT 5"),
         ("players", "enhancements", "TEXT DEFAULT '{}'"),
         ("players", "enchants",     "TEXT DEFAULT '{}'"),
+        ("players", "last_dungeon", "TEXT DEFAULT NULL"),
     ]
     for table, col, definition in migrations_v14:
         try:
@@ -2109,7 +2296,8 @@ def save_player(p):
         "last_daily","last_quest","last_train","last_explore",
         "explore_count_today","explore_date","shop_discount_until",
         "guild_id","prestige_count","shadow_level_at_ascension","created_at",
-        "DEX","LUK","enhancements","enchants"
+        "DEX","LUK","enhancements","enchants",
+        "last_dungeon"
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -2915,6 +3103,13 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_healing_blocked(t) and not target_is_dead:
         await send_group(update,
             f"🚫 *{t['username']}* cannot be healed right now (Void Collapse active).", delay=9); return
+
+    # Block non-priest potions on defeated targets
+    if is_defeated(t) and get_class_line(h) != "priest":
+        await send_group(update,
+            f"❌ *{t['username']}* is defeated — potions can't revive them!\n"
+            f"Use a *Revival Charm* from your inventory, or ask a Priest.", delay=9)
+        return
 
     cid = h.get("class_id","")
     is_priest_healer = cid in HEALER_CLASSES
@@ -3878,16 +4073,50 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     inv.remove(item); p["inventory"] = json.dumps(inv)
     msg = f"✅ Used *{item}*. "
     if item == "Health Potion":
+        if is_defeated(p):
+            inv.append(item); p["inventory"] = json.dumps(inv)
+            save_player(p)
+            await send_group(update,
+                "❌ You're defeated — potions won't help.\n"
+                "Use a *Revival Charm* to revive yourself, or wait for a Priest.", delay=9)
+            return
         p["hp"] = min(p["max_hp"], p["hp"]+50); msg += f"❤️ +50 HP ({p['hp']}/{p['max_hp']})"
     elif item == "Super Health Potion":
+        if is_defeated(p):
+            inv.append(item); p["inventory"] = json.dumps(inv)
+            save_player(p)
+            await send_group(update,
+                "❌ You're defeated — potions won't help.\n"
+                "Use a *Revival Charm* to revive yourself, or wait for a Priest.", delay=9)
+            return
         p["hp"] = min(p["max_hp"], p["hp"]+100); msg += f"❤️ +100 HP ({p['hp']}/{p['max_hp']})"
     elif item == "Mega Health Potion":
+        if is_defeated(p):
+            inv.append(item); p["inventory"] = json.dumps(inv)
+            save_player(p)
+            await send_group(update,
+                "❌ You're defeated — potions won't help.\n"
+                "Use a *Revival Charm* to revive yourself, or wait for a Priest.", delay=9)
+            return
         p["hp"] = min(p["max_hp"], p["hp"]+200); msg += f"❤️ +200 HP ({p['hp']}/{p['max_hp']})"
     elif item == "Revival Charm":
+        if not is_defeated(p):
+            inv.append(item); p["inventory"] = json.dumps(inv)
+            save_player(p)
+            await send_group(update,
+                "You're not defeated — save your Revival Charm for when you need it!", delay=9)
+            return
+        if is_revival_blocked(p):
+            inv.append(item); p["inventory"] = json.dumps(inv)
+            save_player(p)
+            await send_group(update,
+                "☠️ You have been condemned by a Zealot — you cannot be revived!\n"
+                "Only a *Saint's Absolution* can lift this curse.", delay=9)
+            return
         p["defeated_until"] = None
-        p["invincible_until"] = (datetime.now()+timedelta(hours=1)).isoformat()
-        p["hp"] = p["max_hp"]//2
-        msg += f"💚 Revived! {p['hp']} HP. 1hr invincibility granted."
+        p["hp"] = p["max_hp"] // 2
+        set_status(p, "invincible_until", 3600)
+        msg += f"💚 Revived at {p['hp']} HP! 1 hour invincibility granted."
     else:
         msg += "_(No direct effect — used as crafting material or quest item)_"
     save_player(p)
@@ -4536,6 +4765,7 @@ async def cooldowns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = datetime.now().strftime("%Y-%m-%d")
     exp_count = safe_int(p.get("explore_count_today")) if p.get("explore_date")==today else 0
     lines.append(f"🗺️ Explore: {exp_count}/2 today")
+    lines.append(f"🏰 Dungeon: {time_remaining(p.get('last_dungeon'), 86400)}")
     if is_defeated(p):
         end  = datetime.fromisoformat(p["defeated_until"])
         diff = end - datetime.now()
@@ -4793,6 +5023,14 @@ def calc_combat_power(p):
                          if get_enchant(p, p.get(sk) or "")])
     enchant_val = enchant_count * 30
     return level_val + stat_total + weapon_val + armor_val + skill_val + enchant_val
+
+def calc_dungeon_cp(p):
+    sd = safe_stats(p)
+    return (p["level"] * 8
+            + sum(sd.values())
+            + get_weapon_atk(p) * 3
+            + get_armor_def(p) * 2
+            + len(sjl(p.get("all_skills"),[])) * 30)
 
 async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -5579,6 +5817,401 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"_HP changes are arena-only — your real HP is safe._\n\n"
         f"Challenge expires in 5 minutes.", permanent=False, delay=300)
 
+# ── DUNGEON ───────────────────────────────────────────────────────────────────
+def _resolve_dungeon_room(p, room_type, theme, diff, room_num, hp_remaining, class_line):
+    check       = ROOM_STAT_CHECKS.get(room_type, {})
+    threshold   = check.get("threshold", 0.60)
+    primary_key = check.get("primary", "combat_power")
+    if primary_key == "combat_power":
+        stat_val = calc_dungeon_cp(p)
+        stat_mod = min(0.30, stat_val / 2000)
+    else:
+        stat_val = get_stat(p, primary_key)
+        sec = check.get("secondary")
+        if sec: stat_val = max(stat_val, get_stat(p, sec))
+        stat_mod = min(0.25, stat_val / 200)
+    class_bonus    = check.get("class_bonus", {}).get(class_line, 0)
+    success_chance = min(0.92, threshold + stat_mod + class_bonus)
+    roll    = random.random()
+    crit    = roll < success_chance * 0.35
+    success = crit or roll < success_chance
+
+    enemy_name  = (random.choice(theme["enemy_prefix"]) + " " +
+                   random.choice(["Sentry","Lurker","Revenant","Warden",
+                                  "Shade","Brute","Keeper","Hollow"]))
+    trap_desc   = random.choice(theme["trap_flavor"])
+    room_flavor = random.choice(theme["room_flavor"])
+
+    setup_pools = {
+        "monster":  [f"A {enemy_name} lurches from the shadows.",
+                     f"You round a corner and find a {enemy_name} waiting.",
+                     f"The {enemy_name} drops from the ceiling without warning.",
+                     f"Something moves in the dark ahead — a {enemy_name}.",
+                     f"The {enemy_name} was already watching you enter.",
+                     f"You hear it before you see it. A {enemy_name} in the passage.",
+                     f"It smells you first. The {enemy_name} charges.",
+                     f"A {enemy_name} blocks the only path forward."],
+        "trap":     [f"The corridor looks clear until {trap_desc}.",
+                     f"You feel the floor shift — {trap_desc}.",
+                     f"Something about the room is wrong. Then {trap_desc} proves it.",
+                     f"You notice {trap_desc} a moment too late.",
+                     f"The passage narrows just as {trap_desc} activates."],
+        "treasure": ["A chest sits in the center of the room. Old iron, heavy lock.",
+                     "Something valuable was stashed here by someone who expected to return.",
+                     "The chest is half-buried under fallen stone. Someone tried to hide it.",
+                     "A cache wedged into a niche in the wall. Easy to miss. You didn't.",
+                     "A locked chest sits on a stone plinth like it was left for you."],
+        "puzzle":   ["The door ahead has no handle. Only symbols carved in a pattern that almost makes sense.",
+                     "A mechanism of interlocking rings blocks the passage.",
+                     "The room reconfigures itself as you enter. Pathways shift.",
+                     "An inscription demands you solve something before you pass.",
+                     "Three levers, no markings. The wrong combination triggers something bad.",
+                     "The floor tiles are a pressure sequence. Step wrong and something happens."],
+        "rest":     ["A small alcove off the main corridor. Dry, defensible, quiet.",
+                     "Someone camped here before you. Their fire ring is cold but you restart it.",
+                     "Not ideal. But you've slept in worse places.",
+                     "A natural chamber — wide enough to breathe in.",
+                     "The dungeon offers a rare moment of silence. You take it."],
+        "altar":    ["A stone altar dominates the room. Old carvings. Something dried on the surface.",
+                     "The altar pulses with a light that has no source.",
+                     "Offerings have been left here recently. Someone else has been through.",
+                     "The altar is intact while everything around it is rubble.",
+                     "A shrine to something that has no name in any language you know."],
+        "ambush":   [f"The room seems clear. Then the walls start moving — a {enemy_name}.",
+                     f"You walk into it. A coordinated ambush. Two {enemy_name}s from either side.",
+                     f"They were in the ceiling. {enemy_name}s, plural. Dropping together.",
+                     f"A second {enemy_name} you didn't see. The first was a distraction.",
+                     f"The passage narrows right as the {enemy_name}s spring their trap."],
+        "merchant": ["A hooded figure sits cross-legged on a bedroll with wares. Inside a dungeon.",
+                     "You smell pipe smoke before you see them — a merchant, impossibly calm.",
+                     "A small stall set up in an alcove. The merchant nods like they expected you.",
+                     "Someone has been down here long enough to set up shop. They look comfortable."],
+        "mini_boss":[f"The room is too large and too quiet. Then you see why — a {enemy_name} Champion.",
+                     f"It heard you coming three rooms back. The {enemy_name} Lord was ready.",
+                     f"This one is different. Bigger. Smarter. A {enemy_name} Alpha.",
+                     f"You smell it before you see it. A {enemy_name} Warlord. Old and mean.",
+                     f"The {enemy_name} Sovereign hasn't moved. Waiting for you to go first."],
+    }
+    setup = random.choice(setup_pools.get(room_type, [f"Room {room_num}."]))
+
+    if crit and success:
+        outcome = random.choice([
+            "You handle it perfectly. Textbook execution from start to finish.",
+            "Better than you had any right to expect. Clean and efficient.",
+            "Everything lands. This one goes in the memory as a good run.",
+            "You read it before it started. The outcome was never in doubt.",
+            "The kind of moment that makes it worth doing this.",
+        ])
+    elif success:
+        outcome = random.choice([
+            "You get through it. Not gracefully, but through.",
+            "It costs you something but less than it could have.",
+            "A workable result. You've had worse.",
+            "Done. You move on.",
+            "Good enough. The next room awaits.",
+            "You manage it. That's all that matters down here.",
+        ])
+    else:
+        outcome = random.choice([
+            "It gets more of you than you wanted. You push through.",
+            "Not your finest moment. You survive it.",
+            "You take the hit and keep moving. No other option.",
+            "The dungeon wins this exchange. You absorb it and press on.",
+            "A rough one. You'll feel this in the later rooms.",
+        ])
+
+    class_additions = {
+        "warrior": ["Your armor absorbs the worst of it.",
+                    "Battlefield instinct carries you through.",
+                    "You've trained for rooms exactly like this."],
+        "mage":    ["Arcane awareness gives you a half-second advantage.",
+                    "You analyze it before committing. That saves you.",
+                    "The magic bends slightly in your favor."],
+        "thief":   ["You find the angle nobody else would have thought to look for.",
+                    "Quick hands and quicker thinking.",
+                    "The shadows cooperate. They usually do."],
+        "archer":  ["Distance and patience. Your two best tools.",
+                    "You read the room from the entrance before stepping in.",
+                    "You never let it get close enough to be a real problem."],
+        "priest":  ["Faith steadies your hand when sense might have failed.",
+                    "The light holds. It always holds.",
+                    "You endure. That's what the path demands."],
+    }
+    class_add = ""
+    if random.random() < 0.35 and class_line in class_additions:
+        class_add = " " + random.choice(class_additions[class_line])
+
+    narrative = f"{room_flavor} {setup} {outcome}{class_add}"
+
+    exp_ranges = {
+        "normal":    {"monster":(80,120),"trap":(30,60),"treasure":(20,40),
+                      "puzzle":(60,100),"rest":(0,0),"merchant":(0,0),
+                      "altar":(40,80),"ambush":(50,90),"mini_boss":(180,220)},
+        "hard":      {"monster":(150,200),"trap":(60,100),"treasure":(40,70),
+                      "puzzle":(100,160),"rest":(0,0),"merchant":(0,0),
+                      "altar":(80,130),"ambush":(90,140),"mini_boss":(380,420)},
+        "legendary": {"monster":(250,350),"trap":(100,160),"treasure":(70,110),
+                      "puzzle":(180,260),"rest":(0,0),"merchant":(0,0),
+                      "altar":(150,220),"ambush":(160,240),"mini_boss":(680,720)},
+    }
+    exp_range = exp_ranges.get(diff, exp_ranges["normal"]).get(room_type, (0, 0))
+    base_exp = random.randint(*exp_range) if exp_range[1] > 0 else 0
+    if not success: base_exp = round(base_exp * 0.3)
+    if crit: base_exp = round(base_exp * 1.5)
+
+    gold = 0
+    if success and room_type in ("monster","treasure","mini_boss"):
+        gold_ranges = {"normal":(10,40),"hard":(25,80),"legendary":(60,180)}
+        gr = gold_ranges.get(diff, (10,40))
+        gold = random.randint(*gr)
+
+    item = None
+    if success and room_type in ("monster","treasure","mini_boss"):
+        loot_table = DUNGEON_LOOT.get(diff, {}).get(room_type, [])
+        luk_bonus  = get_stat(p, "LUK") * 0.003
+        for item_name, chance in loot_table:
+            if random.random() < min(chance + luk_bonus, 0.95):
+                item = item_name; break
+
+    hp_cost = 0
+    if not success:
+        dmg_ranges = {"normal":(10,25),"hard":(20,45),"legendary":(35,70)}
+        hp_cost = random.randint(*dmg_ranges.get(diff, (10,25)))
+        if room_type in ("trap","ambush"): hp_cost = round(hp_cost * 1.4)
+        if class_line == "warrior":        hp_cost = round(hp_cost * 0.75)
+
+    return {"type": room_type, "narrative": narrative, "success": success,
+            "crit": crit, "exp": base_exp, "gold": gold, "item": item,
+            "hp_cost": hp_cost}
+
+
+def _resolve_dungeon_boss(p, theme, diff, class_line):
+    cp = calc_dungeon_cp(p)
+    boss_thresholds = {"normal": 800, "hard": 1600, "legendary": 3000}
+    threshold = boss_thresholds.get(diff, 800)
+    success_chance = min(0.88, 0.45 + (cp / (threshold * 3.5)))
+    roll    = random.random()
+    epic    = roll < success_chance * 0.25
+    success = epic or roll < success_chance
+
+    intro = random.choice([
+        f"The final door opens into a chamber built for something that should not exist.",
+        f"The {theme['boss_name']}'s chamber is vast. It has been here a very long time.",
+        f"You hear it breathing before the door is fully open.",
+        f"The {theme['boss_name']} doesn't move when you enter. It watches.",
+        f"Everything in the dungeon led here. The {theme['boss_name']} is the reason.",
+    ])
+    if epic:
+        outcome = random.choice([
+            (f"A perfect fight. You understand the {theme['boss_name']}'s pattern by the second "
+             f"exchange and dismantle it methodically. It falls and does not rise."),
+            (f"The {theme['boss_name']} is everything its reputation promised. You're better. "
+             f"Faster than it expects. The chamber goes quiet when it falls."),
+            (f"You've faced worse. The {theme['boss_name']} underestimates you in the first "
+             f"exchange and never gets a chance to correct the mistake."),
+        ])
+    elif success:
+        outcome = random.choice([
+            (f"The {theme['boss_name']} is every bit the threat the dungeon promised. "
+             f"You give everything. A long brutal exchange. You're still standing. Barely."),
+            (f"It takes several attempts to find the pattern. When you do, the "
+             f"{theme['boss_name']} falls on your terms, not its own."),
+            (f"You go in hard and don't let up. The {theme['boss_name']} is stronger "
+             f"than anything else in this dungeon. So are you, today."),
+            (f"A war of attrition. The {theme['boss_name']} has endurance. You have more. "
+             f"When it drops the silence is absolute."),
+        ])
+    else:
+        outcome = random.choice([
+            (f"The {theme['boss_name']} is too much. You get through two phases before "
+             f"it drives you back. Not a defeat — a tactical retreat."),
+            (f"It outpaces you. Not by much, but enough. You leave with your life "
+             f"and a clear picture of what needs to improve."),
+            (f"The {theme['boss_name']} has fought hundreds like you. It shows. "
+             f"You survive the encounter and carry the lesson home."),
+        ])
+
+    exp_rewards  = {"normal": 350, "hard": 700, "legendary": 1400}
+    gold_rewards = {"normal": 80,  "hard": 200, "legendary": 500}
+    exp  = exp_rewards.get(diff, 350)  if success else round(exp_rewards.get(diff, 350)  * 0.20)
+    gold = gold_rewards.get(diff, 80)  if success else 0
+    item = None
+    if success:
+        loot_table = DUNGEON_LOOT.get(diff, {}).get("boss", [])
+        luk_bonus  = get_stat(p, "LUK") * 0.004
+        for item_name, chance in loot_table:
+            if random.random() < min(chance + luk_bonus, 0.95):
+                item = item_name; break
+
+    return {"type": "boss", "narrative": f"{intro}\n\n{outcome}",
+            "success": success, "crit": epic,
+            "exp": exp, "gold": gold, "item": item}
+
+
+def _build_dungeon_recap(p, theme, diff, results, total_exp, total_gold,
+                         items_found, run_failed, lmsgs):
+    lines = [
+        f"🏰 *{p['username']} returns from {theme['name']}*",
+        f"_{theme['desc']}_",
+        "━━━━━━━━━━━━━━━━",
+    ]
+    emoji_map = {
+        "monster":"⚔️","trap":"⚠️","treasure":"💰","puzzle":"🔮",
+        "rest":"🌿","merchant":"🛍️","altar":"🕯️","ambush":"🗡️",
+        "mini_boss":"💀","boss":"🎱",
+    }
+    room_num = 0
+    for result in results:
+        if result["type"] == "defeat":
+            lines.append(f"\n💀 *RETREAT*\n_{result['narrative']}_")
+            break
+        room_num += 1
+        emoji    = emoji_map.get(result["type"], "🚪")
+        crit_tag = " ✨" if result.get("crit")    else ""
+        fail_tag = " ❌" if not result.get("success") else ""
+        if result["type"] == "boss":
+            room_label = f"*⚔️ Final Boss — {theme['boss_name']}{crit_tag}{fail_tag}*"
+        else:
+            room_label = (f"*Room {room_num} — "
+                          f"{result['type'].replace('_',' ').title()}{crit_tag}{fail_tag}*")
+        lines.append(f"\n{emoji} {room_label}")
+        lines.append(f"_{result['narrative']}_")
+        rewards = []
+        if result.get("exp"):      rewards.append(f"+{result['exp']} EXP")
+        if result.get("gold"):     rewards.append(f"+{result['gold']}g")
+        if result.get("item"):
+            rt = ""
+            for pool in [WEAPONS, ARMORS, ACCESSORIES, CONSUMABLES, SHIELDS]:
+                if result["item"] in pool:
+                    rt = RARITY_EMOJI.get(pool[result["item"]].get("rarity",""), "")
+                    break
+            rewards.append(f"🎒 {rt} {result['item']}")
+        if result.get("hp_cost"):  rewards.append(f"❤️ -{result['hp_cost']} HP")
+        if rewards: lines.append("  " + " | ".join(rewards))
+
+    lines.append("\n━━━━━━━━━━━━━━━━")
+    if not run_failed:
+        lines.append(f"✅ *Dungeon Complete — {diff.capitalize()}*\n")
+    else:
+        lines.append("🏃 *Dungeon Abandoned — retreated alive*\n")
+    lines.append("🏆 *Total Rewards:*")
+    lines.append(f"✨ +{total_exp:,} EXP | 💰 +{total_gold:,} gold")
+    for item in items_found:
+        rt = ""
+        for pool in [WEAPONS, ARMORS, ACCESSORIES, CONSUMABLES, SHIELDS]:
+            if item in pool:
+                rt = RARITY_EMOJI.get(pool[item].get("rarity",""), "")
+                break
+        lines.append(f"🎒 {rt} *{item}*")
+    if lmsgs:
+        lines.append("")
+        lines.extend(lmsgs)
+    return "\n".join(lines)[:4096]
+
+
+async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    chat_id = update.effective_chat.id
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if is_defeated(p):
+        await send_group(update, "💀 You're too beaten up to enter a dungeon!", delay=9); return
+    if not check_cooldown(p.get("last_dungeon"), 86400):
+        await send_group(update,
+            f"⏳ Dungeon cooldown: {time_remaining(p.get('last_dungeon'), 86400)}", delay=9); return
+    if user.id in active_dungeons:
+        await send_group(update, "🏰 You're already in a dungeon! Wait for your return.", delay=9); return
+
+    diff = "normal"
+    if context.args:
+        arg = context.args[0].lower()
+        if arg in ("hard","h"):             diff = "hard"
+        elif arg in ("legendary","l","leg"): diff = "legendary"
+
+    level_reqs = {"normal": 1, "hard": 15, "legendary": 40}
+    if p["level"] < level_reqs[diff]:
+        await send_group(update,
+            f"❌ *{diff.capitalize()}* dungeons require Level {level_reqs[diff]}. "
+            f"You're Level {p['level']}.", delay=9); return
+
+    theme = random.choice(DUNGEON_THEMES)
+    room_distributions = {
+        "normal":    ["monster","trap","treasure","puzzle","rest"],
+        "hard":      ["monster","trap","treasure","puzzle","rest","monster","mini_boss"],
+        "legendary": ["monster","trap","treasure","puzzle","rest",
+                      "ambush","merchant","altar","monster","mini_boss"],
+    }
+    rooms = room_distributions[diff].copy()
+    random.shuffle(rooms)
+    timers        = {"normal": 2700, "hard": 3600, "legendary": 5400}
+    timer_display = {"normal": "45 minutes", "hard": "1 hour", "legendary": "90 minutes"}
+
+    p["last_dungeon"] = datetime.now().isoformat()
+    save_player(p)
+    cls      = get_player_class(p)
+    cls_name = cls["name"] if cls else "Adventurer"
+    await send_group(update,
+        f"🏰 *{user.first_name}* enters *{theme['name']}!*\n\n"
+        f"_{theme['desc']}_\n\n"
+        f"⚔️ Class: {cls_name} | 📊 Level {p['level']}\n"
+        f"🎯 Difficulty: *{diff.capitalize()}*\n"
+        f"🚪 {len(rooms)} rooms + final boss\n\n"
+        f"_Results in {timer_display[diff]}._",
+        permanent=True, delay=300)
+
+    async def run_dungeon():
+        await asyncio.sleep(timers[diff])
+        active_dungeons.pop(user.id, None)
+        fp = get_player(user.id)
+        if not fp: return
+        results      = []
+        total_exp    = 0
+        total_gold   = 0
+        items_found  = []
+        hp_remaining = fp["max_hp"]
+        run_failed   = False
+        line = get_class_line(fp)
+        for i, room_type in enumerate(rooms, 1):
+            if run_failed: break
+            result = _resolve_dungeon_room(
+                fp, room_type, theme, diff, i, hp_remaining, line)
+            hp_remaining = max(1, hp_remaining - result.get("hp_cost", 0))
+            total_exp  += result.get("exp", 0)
+            total_gold += result.get("gold", 0)
+            if result.get("item"): items_found.append(result["item"])
+            results.append(result)
+            if hp_remaining <= 1 and not result.get("success"):
+                run_failed = True
+                results.append({"type":"defeat","narrative":(
+                    f"Room {i+1} would have finished you. "
+                    f"You make the call to retreat while you still can. "
+                    f"The dungeon lets you go. This time.")})
+        if not run_failed:
+            boss_result = _resolve_dungeon_boss(fp, theme, diff, line)
+            total_exp  += boss_result.get("exp", 0)
+            total_gold += boss_result.get("gold", 0)
+            if boss_result.get("item"): items_found.append(boss_result["item"])
+            results.append(boss_result)
+            bonus = DUNGEON_LOOT[diff]["completion_bonus"]
+            total_exp  += bonus["exp"]
+            total_gold += bonus["gold"]
+        lmsgs, leveled = add_exp(fp, total_exp)
+        fp["gold"] = fp.get("gold", 0) + total_gold
+        for item in items_found: add_item(fp, item)
+        save_player(fp)
+        recap = _build_dungeon_recap(
+            fp, theme, diff, results, total_exp, total_gold,
+            items_found, run_failed, lmsgs)
+        await announce(context.bot, chat_id, recap, permanent=True)
+        if leveled and fp["level"] % 10 == 0:
+            asyncio.create_task(announce(context.bot, chat_id,
+                f"🎉 *{fp['username']}* reached *Level {fp['level']}* "
+                f"from the depths of *{theme['name']}*! 🏰", permanent=True))
+
+    task = asyncio.create_task(run_dungeon())
+    active_dungeons[user.id] = task
+
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update,
         f"⚔️ *{WORLD_NAME} v14 — Commands*\n\n"
@@ -5597,6 +6230,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*/train* — Train (30min)\n"
         "*/quest* — Go on a quest (1hr)\n"
         "*/explore* — Expedition (1hr, 2x/day)\n"
+        "*/dungeon* — Solo dungeon crawl (1x/day)\n"
+        "   `/dungeon` | `/dungeon hard` | `/dungeon legendary`\n"
         "*/shop* — Daily shop\n"
         "*/inventory* — Your items\n"
         "*/equip [item]* — Equip gear\n"
@@ -6007,13 +6642,14 @@ def main():
     app.add_handler(CommandHandler("enhance",   enhance_cmd))
     app.add_handler(CommandHandler("enchant",   enchant_cmd))
 
-    # Combat
+    # Combat & Dungeons
     app.add_handler(CommandHandler("duel",      duel_cmd))
     app.add_handler(CommandHandler("arena",     arena_cmd))
     app.add_handler(CommandHandler("attack",    attack_cmd))
     app.add_handler(CommandHandler("heal",      heal_cmd))
     app.add_handler(CommandHandler("boss",      boss_cmd))
     app.add_handler(CommandHandler("strike",    strike_cmd))
+    app.add_handler(CommandHandler("dungeon",   dungeon_cmd))
 
     # Guild
     app.add_handler(CommandHandler("guild",     guild_cmd))
