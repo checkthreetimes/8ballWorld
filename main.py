@@ -3931,7 +3931,7 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p["guild_id"] = None; save_player(p)
         await send_group(update, "You've left your guild.", delay=9)
 
-# ── SKILL MENU (inline buttons) ───────────────────────────────────────────────
+# ── SKILL ─────────────────────────────────────────────────────────────────────
 async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
@@ -3943,61 +3943,47 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not all_skills:
         await send_group(update, "No skills unlocked yet.", delay=9); return
 
-    if not update.message.reply_to_message and not context.args:
-        # Show skill menu with inline buttons
-        lines = [f"🔮 *{p['username']}'s Skills:*\n"]
+    replying = update.message.reply_to_message is not None
+
+    # Resolve which skill to use from args (name or number)
+    sk = None
+    if context.args:
+        arg = " ".join(context.args)
+        if arg.isdigit():
+            idx = int(arg) - 1
+            if 0 <= idx < len(all_skills):
+                sk = all_skills[idx]
+        if not sk:
+            sk = next((s for s in all_skills if s["name"].lower() == arg.lower()), None)
+        if not sk:
+            await send_group(update, f"No skill matching *{arg}*. Use /skill to see your skills.", delay=9); return
+
+    if not replying:
+        # Just show the skill list
+        base_est = 5 + get_weapon_atk(p) + get_stat(p, get_primary_stat(p))//2 + p["level"]//2
+        lines = [f"🔮 *{p['username']}'s Skills*\n"]
         if cls:
             lines.append(f"🔹 *Passive — {cls['name']}:* {cls['skills'][0]['passive']}\n")
-        keyboard = []
-        for sk in all_skills:
-            # Estimate damage for display
-            base_est = 5 + get_weapon_atk(p) + get_stat(p, get_primary_stat(p))//2 + p["level"]//2
-            mult = sk.get("mult", 1.0)
+        for i, s in enumerate(all_skills, 1):
+            mult = s.get("mult", 1.0)
             dmg_est = round(base_est * mult) if mult else "varies"
-            lines.append(
-                f"🔸 *{sk['name']}*\n"
-                f"   {sk['desc']}\n"
-                f"   Est. damage: ~{dmg_est}\n")
-            keyboard.append([InlineKeyboardButton(
-                f"Use {sk['name']}", callback_data=f"skill_{sk['name'][:30]}")])
-        markup = InlineKeyboardMarkup(keyboard)
-        await send_group(update, "\n".join(lines), reply_markup=markup, delay=30); return
+            lines.append(f"*{i}.* *{s['name']}* — {s['desc']}\n   Est. damage: ~{dmg_est}")
+        lines.append("\n_Reply to a target's message with /skill to use your skill, or /skill [name/number] to pick one._")
+        await send_group(update, "\n".join(lines), delay=30); return
 
-    # Direct use — find skill to use
-    if context.args:
-        skill_name = " ".join(context.args)
-        sk = next((s for s in all_skills if s["name"].lower() == skill_name.lower()), None)
-        if not sk:
-            await send_group(update, f"You don't have a skill named *{skill_name}*.", delay=9); return
-    else:
-        sk = all_skills[0]  # default to first skill if replying
+    # Replying to a target — pick skill
+    if sk is None:
+        if len(all_skills) == 1:
+            sk = all_skills[0]
+        else:
+            # Show numbered selection prompt
+            lines = [f"🔮 Choose a skill to use:\n"]
+            for i, s in enumerate(all_skills, 1):
+                lines.append(f"*{i}.* *{s['name']}* — {s['desc']}")
+            lines.append("\n_Reply to the same message again with /skill [name or number]._")
+            await send_group(update, "\n".join(lines), delay=20); return
 
     await _execute_skill(update, context, p, sk)
-
-async def skill_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if not query.data.startswith("skill_"): return
-    skill_name = query.data[6:]
-    user = query.from_user; p = get_player(user.id)
-    if not p:
-        await query.answer("Use /ascend first!", show_alert=True); return
-    all_skills = sjl(p.get("all_skills"), [])
-    sk = next((s for s in all_skills if s["name"].startswith(skill_name)), None)
-    if not sk:
-        await query.answer("Skill not found!", show_alert=True); return
-    NO_TARGET_TYPES = ("self_heal","group_heal","mass_cleanse","dmg_reduction_buff","self_heal_buff")
-    if sk.get("type") in NO_TARGET_TYPES:
-        await query.answer()
-        class FakeUpdate:
-            effective_user = user
-            effective_chat = query.message.chat
-            message = query.message
-            get_bot = lambda self: query.get_bot()
-        await _execute_skill(FakeUpdate(), context, p, sk)
-    else:
-        await query.answer(
-            f"Reply to your target's message and use /skill {sk['name']} to strike!",
-            show_alert=True)
 
 async def _execute_skill(update, context, p, sk):
     """Core skill execution logic."""
@@ -4782,7 +4768,6 @@ def main():
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(rank_callback,  pattern="^rank_p_"))
-    app.add_handler(CallbackQueryHandler(skill_callback, pattern="^skill_"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
