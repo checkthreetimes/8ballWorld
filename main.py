@@ -4389,10 +4389,20 @@ async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── PASSIVE MESSAGE HANDLER ───────────────────────────────────────────────────
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text: return
-    user    = update.effective_user
+    if not update.message: return
+    user = update.effective_user
+    if not user or user.is_bot: return
     chat_id = update.effective_chat.id
-    text    = update.message.text.lower()
+    text    = (update.message.text or "").lower()
+
+    # Non-text messages (stickers, photos, etc.) — track shadow profile but skip keyword triggers
+    if not update.message.text:
+        s = get_or_create_shadow(user.id, user.first_name)
+        s["username"]      = user.first_name
+        s["message_count"] = s.get("message_count", 0) + 1
+        s["last_seen"]     = datetime.now().isoformat()
+        save_shadow(s)
+        return
 
     # Random events — every 2500 messages
     message_counters[chat_id] = message_counters.get(chat_id, 0) + 1
@@ -4759,7 +4769,7 @@ def main():
     app.add_handler(CallbackQueryHandler(skill_callback, pattern="^skill_"))
 
     # Passive
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
 
     print(f"🎱 {WORLD_NAME} v13 is running...")
     app.run_polling(poll_interval=0.3)
