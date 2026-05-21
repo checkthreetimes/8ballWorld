@@ -36,6 +36,7 @@ active_arenas      = {}   # chat_id -> arena state
 pending_guild_reqs = {}   # guild_id -> [requests]
 explore_timers     = {}   # user_id -> asyncio task
 active_dungeons    = {}   # user_id -> asyncio task
+_wipe_confirm      = {}   # admin_id -> timestamp
 
 # ── SEND HELPERS ──────────────────────────────────────────────────────────────
 async def _auto_delete(bot, chat_id, msg_id, delay):
@@ -1148,23 +1149,23 @@ def get_daily_shop():
 
 # ── BOSSES ────────────────────────────────────────────────────────────────────
 BOSSES = {
-    "1 ball": {"name":"The 1 Ball","hp":1200,"max_hp":1200,"dmg_min":45,"dmg_max":80,
-               "exp":800,"gold":150,"title":"One Ball Slayer","desc":"The loneliest ball — now furious.",
+    "1 ball": {"name":"The 1 Ball","hp":1200,"max_hp":1200,"dmg_min":68,"dmg_max":120,
+               "exp":2000,"gold":150,"title":"One Ball Slayer","desc":"The loneliest ball — now furious.",
                "loot_table":[("Super Health Potion","uncommon"),("Dragon Scale","uncommon"),("Iron Scale Vest","uncommon")]},
-    "3 ball": {"name":"The 3 Ball","hp":2000,"max_hp":2000,"dmg_min":70,"dmg_max":110,
-               "exp":1600,"gold":300,"title":"Three Ball Slayer","desc":"A red wrecking ball.",
+    "3 ball": {"name":"The 3 Ball","hp":2000,"max_hp":2000,"dmg_min":105,"dmg_max":165,
+               "exp":4000,"gold":300,"title":"Three Ball Slayer","desc":"A red wrecking ball.",
                "loot_table":[("Mega Health Potion","rare"),("Dragon Scale","uncommon"),("Falconwing Recurve Bow","rare")]},
-    "5 ball": {"name":"The 5 Ball","hp":3000,"max_hp":3000,"dmg_min":95,"dmg_max":140,
-               "exp":2500,"gold":500,"title":"Five Ball Slayer","desc":"Orange and merciless.",
+    "5 ball": {"name":"The 5 Ball","hp":3000,"max_hp":3000,"dmg_min":143,"dmg_max":210,
+               "exp":7000,"gold":500,"title":"Five Ball Slayer","desc":"Orange and merciless.",
                "loot_table":[("Revival Charm","rare"),("Cursed Ebony Staff","rare"),("Whisper Coin","rare")]},
-    "7 ball": {"name":"The 7 Ball","hp":4500,"max_hp":4500,"dmg_min":120,"dmg_max":180,
-               "exp":4000,"gold":800,"title":"Seven Ball Slayer","desc":"Maroon and relentless.",
+    "7 ball": {"name":"The 7 Ball","hp":4500,"max_hp":4500,"dmg_min":180,"dmg_max":270,
+               "exp":12000,"gold":800,"title":"Seven Ball Slayer","desc":"Maroon and relentless.",
                "loot_table":[("Giantslayer Zweihander","epic"),("Voidweave Mantle","epic"),("Twin Serpent Ring","epic")]},
-    "8 ball": {"name":"The 8 Ball","hp":8000,"max_hp":8000,"dmg_min":150,"dmg_max":250,
-               "exp":8000,"gold":2000,"title":"8Ball Champion","desc":"Black as the Corner Pocket itself.",
+    "8 ball": {"name":"The 8 Ball","hp":8000,"max_hp":8000,"dmg_min":225,"dmg_max":375,
+               "exp":20000,"gold":2000,"title":"8Ball Champion","desc":"Black as the Corner Pocket itself.",
                "loot_table":[("Worldcleaver","legendary"),("Singularity Robe","legendary"),("Infinity Loop","legendary")]},
-    "void":   {"name":"The Void Ball","hp":15000,"max_hp":15000,"dmg_min":250,"dmg_max":400,
-               "exp":20000,"gold":5000,"title":"Void Slayer","desc":"A secret boss from beyond the table.","secret":True,
+    "void":   {"name":"The Void Ball","hp":15000,"max_hp":15000,"dmg_min":375,"dmg_max":600,
+               "exp":50000,"gold":5000,"title":"Void Slayer","desc":"A secret boss from beyond the table.","secret":True,
                "loot_table":[("Godshard Splinter","legendary"),("Last Breath Locket","legendary"),("Mark of the Void","legendary")]},
 }
 
@@ -1708,8 +1709,21 @@ def get_accessory_bonus(p, stat):
     acc = get_equipped_accessory(p)
     if not acc: return 0
     effect = acc.get("effect", {})
-    if stat in effect: return effect[stat]
-    if stat == "all_stats" and "all_stats" in effect: return effect["all_stats"]
+
+    # Direct stat match
+    if stat in effect:
+        return effect[stat]
+
+    # all_stats applies to every stat
+    if stat in ("STR","DEF","AGI","INT","WIS","DEX","LUK") and "all_stats" in effect:
+        return effect["all_stats"]
+
+    # primary_stat — applies only to the player's primary class stat
+    if "primary_stat" in effect:
+        primary = get_primary_stat(p)
+        if stat == primary:
+            return effect["primary_stat"]
+
     return 0
 
 def can_equip_weapon(p, weapon_name):
@@ -1768,17 +1782,19 @@ def get_class_path(p):
 
 # ── STAT & DAMAGE CALCULATIONS ────────────────────────────────────────────────
 def get_stat(p, stat):
-    base  = safe_stats(p).get(stat, 5)
+    defaults = {"STR":5,"DEF":0,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5}
+    base  = safe_stats(p).get(stat, defaults.get(stat, 5))
     acc   = get_accessory_bonus(p, stat)
     all_s = get_accessory_bonus(p, "all_stats")
-    blessed_bonus = 1 if is_blessed(p) else 0  # flat +1 per stat when blessed (simplified)
+    blessed_bonus = 1 if is_blessed(p) else 0
     return base + acc + all_s + blessed_bonus
 
 def calc_max_hp(p):
-    base  = max_hp_for_level(p["level"])
+    base   = max_hp_for_level(p["level"])
     acc_hp = get_accessory_bonus(p, "hp")
+    enc_hp = get_enchant_bonus(p, "max_hp")
     temp   = safe_int(p.get("temp_hp_bonus")) if _ts_active(p, "temp_hp_until") else 0
-    return base + acc_hp + temp
+    return base + acc_hp + enc_hp + temp
 
 TIER_THRESHOLDS = {1: 5, 2: 10, 3: 30, 4: 60, 5: 100}
  
@@ -2244,7 +2260,27 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    migrations_v15 = [
+        ("players",         "last_pool",    "TEXT DEFAULT NULL"),
+        ("shadow_profiles", "last_pool",    "TEXT DEFAULT NULL"),
+        ("shadow_profiles", "pending_items","TEXT DEFAULT '[]'"),
+    ]
+    for table, col, definition in migrations_v15:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
     conn.close()
+
+    # Clear stale explore locks on startup
+    conn3 = sqlite3.connect(DB_PATH)
+    c3 = conn3.cursor()
+    cutoff = (datetime.now() - timedelta(hours=2)).isoformat()
+    c3.execute("UPDATE players SET explore_count_today=0 WHERE last_explore < ?", (cutoff,))
+    conn3.commit()
+    conn3.close()
 
 # ── DB HELPERS ────────────────────────────────────────────────────────────────
 def _get(table, user_id):
@@ -2263,12 +2299,13 @@ def save_shadow(s):
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO shadow_profiles
         (user_id,username,level,exp,total_exp,message_count,
-         passive_cooldowns,ascended,last_seen)
-        VALUES(?,?,?,?,?,?,?,?,?)""",
+         passive_cooldowns,ascended,last_seen,last_pool,pending_items)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
         (s["user_id"],s["username"],s["level"],s["exp"],
          safe_int(s.get("total_exp")),s.get("message_count",0),
          s.get("passive_cooldowns","{}"),s.get("ascended",0),
-         datetime.now().isoformat()))
+         datetime.now().isoformat(),s.get("last_pool"),
+         s.get("pending_items","[]")))
     conn.commit(); conn.close()
 
 def save_player(p):
@@ -2297,7 +2334,7 @@ def save_player(p):
         "explore_count_today","explore_date","shop_discount_until",
         "guild_id","prestige_count","shadow_level_at_ascension","created_at",
         "DEX","LUK","enhancements","enchants",
-        "last_dungeon"
+        "last_dungeon","last_pool"
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -2392,6 +2429,12 @@ def new_player(s):
         "shadow_level_at_ascension": slvl,
         "created_at": datetime.now().isoformat(),
     }
+    # Transfer any pending items from shadow profile
+    s_pending = sjl(s.get("pending_items"), [])
+    if s_pending:
+        p["inventory"] = json.dumps(
+            sjl(p.get("inventory"), []) + s_pending)
+        s["pending_items"] = json.dumps([])
     save_player(p)
     s["ascended"] = 1; save_shadow(s)
     return p
@@ -2645,6 +2688,18 @@ async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         icon  = "⚔️" if e["type"] == "rpg" else "👤"
         badge = medals.get(pos, f"#{pos}")
         return f"{badge} {icon} *{e['username']}* — Lv {e['level']} | {e['total_exp']:,} EXP"
+
+    if context.args and context.args[0].lower() == "wins":
+        conn2 = sqlite3.connect(DB_PATH); conn2.row_factory = sqlite3.Row; c2 = conn2.cursor()
+        c2.execute("SELECT username, wins, losses, level FROM players ORDER BY wins DESC LIMIT 20")
+        rows2 = c2.fetchall(); conn2.close()
+        medals2 = {1:"🥇",2:"🥈",3:"🥉"}
+        lines2 = ["⚔️ *Top 20 — PVP Wins*\n"]
+        for i2, row2 in enumerate(rows2, 1):
+            badge2 = medals2.get(i2, f"#{i2}")
+            wl2 = f"{row2['wins']}W / {row2['losses']}L"
+            lines2.append(f"{badge2} *{row2['username']}* — {wl2} | Lv {row2['level']}")
+        await send_group(update, "\n".join(lines2), permanent=True); return
 
     if context.args and context.args[0].lower() == "me":
         pos = next((i+1 for i,e in enumerate(all_entries) if e["user_id"]==user.id), None)
@@ -3183,12 +3238,25 @@ def _exp_bar(current, needed, length=10):
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    p = get_player(user.id); s = get_shadow(user.id)
+
+    # Determine target — self or replied-to player
+    viewing_other = False
+    if update.message.reply_to_message:
+        target_uid = update.message.reply_to_message.from_user.id
+        if target_uid != user.id:
+            viewing_other = True
+        else:
+            target_uid = user.id
+    else:
+        target_uid = user.id
+
+    p = get_player(target_uid)
+    s = get_shadow(target_uid)
     if not p and not s:
         await send_group(update,
             "No profile yet — just start chatting to build your level!", delay=9); return
-    if p: p["username"] = user.first_name
-    if s: s["username"] = user.first_name
+    if p and not viewing_other: p["username"] = user.first_name
+    if s and not viewing_other: s["username"] = user.first_name
     if not p:
         tier = get_tier(s["level"])
         await send_group(update,
@@ -3200,11 +3268,20 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"_Send /ascend in a private chat to enter the RPG!_",
             permanent=False, delay=9); return
 
-    if s: sync_levels(p, s); save_player(p); save_shadow(s)
+    if s and not viewing_other: sync_levels(p, s); save_player(p); save_shadow(s)
 
     # Auto-clear bad defeated state
     if is_defeated(p) and p["hp"] > 0:
         p["defeated_until"] = None; save_player(p)
+
+    # Silent DEF point refund — DEF is now gear-only
+    sd_check = safe_stats(p)
+    if sd_check.get("DEF", 0) > 0:
+        refund_def = sd_check["DEF"]
+        sd_check["DEF"] = 0
+        p["stats"] = json.dumps(sd_check)
+        p["stat_points"] = safe_int(p.get("stat_points")) + refund_def
+        save_player(p)
 
     w   = get_weather()
     inv = Counter(sjl(p.get("inventory"), []))
@@ -3222,6 +3299,10 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cls_name  = cls["name"] if cls else ("*Choose at Lv 5!* — /class" if p["level"] >= 5 else "Unlocks at Lv 5")
     path_str  = f" | Path {p.get('class_path','?')}" if p.get("class_path") else ""
     stats_d   = safe_stats(p)
+    # Compute effective stats (base + accessory bonuses) for display
+    eff_stats = {}
+    for st in ["STR","DEF","AGI","INT","WIS","DEX","LUK"]:
+        eff_stats[st] = get_stat(p, st)
     sp        = safe_int(p.get("stat_points"))
     statuses  = get_active_statuses(p)
     status_str = "\n" + " | ".join(statuses) if statuses else ""
@@ -3233,7 +3314,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     weap = gear_line(p, "equipped_weapon")
     armo = gear_line(p, "equipped_armor")
     shld = gear_line(p, "equipped_shield")
-    acc  = gear_line(p, "equipped_accessory")
+    acc_gear = gear_line(p, "equipped_accessory")
 
     cp = calc_combat_power(p)
 
@@ -3241,27 +3322,67 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     all_skills = sjl(p.get("all_skills"), [])
     skill_names = [sk["name"] for sk in all_skills] if all_skills else ["None yet"]
 
-    await send_group(update,
+    # Real max HP (includes accessory and enchant bonuses)
+    real_max = calc_max_hp(p)
+    if real_max != p["max_hp"] and not viewing_other:
+        p["max_hp"] = real_max
+        if p["hp"] > real_max: p["hp"] = real_max
+        save_player(p)
+
+    # Accessory bonus note
+    acc_obj = get_equipped_accessory(p)
+    acc_bonus_line = ""
+    if acc_obj:
+        effects = acc_obj.get("effect", {})
+        bonus_parts = []
+        for k, v in effects.items():
+            if k == "all_stats":       bonus_parts.append(f"+{v} all stats")
+            elif k in ("STR","DEF","AGI","INT","WIS","DEX","LUK"): bonus_parts.append(f"+{v} {k}")
+            elif k == "atk":           bonus_parts.append(f"+{v} ATK")
+            elif k == "hp":            bonus_parts.append(f"+{v} max HP")
+            elif k == "dodge_bonus":   bonus_parts.append(f"+{int(v*100)}% dodge")
+            elif k == "crit_bonus":    bonus_parts.append(f"+{int(v*100)}% crit")
+            elif k == "heal_bonus":    bonus_parts.append(f"+{int(v*100)}% healing")
+            elif k == "primary_stat":  bonus_parts.append(f"+{v} {get_primary_stat(p)}")
+        if bonus_parts:
+            acc_name = p.get("equipped_accessory", "")
+            enc = get_enchant(p, acc_name) if acc_name else None
+            enc_note = f" ✨{enc['id'].capitalize()}" if enc else ""
+            acc_bonus_line = f"\n💍 _{', '.join(bonus_parts)}{enc_note}_"
+
+    header_line = (
+        f"👤 *{p['username']}'s Stats*{defeated_str}{recovering}\n"
+        if viewing_other else
         f"⚔️ *{p['username']}*{defeated_str}{recovering}\n"
-        f"🏅 *{p['active_title']}* | {get_tier(p['level'])['name']} | 🏰 {guild_text}\n"
+    )
+
+    msg = (
+        header_line
+        + f"🏅 *{p['active_title']}* | {get_tier(p['level'])['name']} | 🏰 {guild_text}\n"
         f"🌍 {WORLD_NAME} — _{w['name']}_\n{status_str}\n\n"
-        f"❤️ HP: {p['hp']}/{p['max_hp']} | ⭐ Level {p['level']}\n"
+        f"❤️ HP: {p['hp']}/{real_max} | ⭐ Level {p['level']}\n"
         f"{_exp_bar(p['exp'], exp_for_level(p['level']))}\n"
         f"🏆 Lifetime: *{safe_int(p.get('total_exp')):,}* EXP\n"
         f"💰 Gold: {p['gold']} | ⚔️ W/L: {p['wins']}/{p.get('losses',0)}\n"
         f"🗺️ Quests: {p['quests_done']} | 🔨 Crafts: {safe_int(p.get('crafts_done'))}\n"
         f"⚡ Combat Power: *{cp}*\n\n"
         f"🧙 Class: {cls_name}{path_str}\n"
-        f"📊 STR:{stats_d.get('STR',5)} AGI:{stats_d.get('AGI',5)} INT:{stats_d.get('INT',5)} "
-        f"WIS:{stats_d.get('WIS',5)} DEX:{stats_d.get('DEX',5)} LUK:{stats_d.get('LUK',5)}\n"
-        f"🛡️ Armor DEF: {get_armor_def(p)} (from gear)"
-        + (f" | 💡 {sp} pts (/allocate)" if sp > 0 else "") + "\n"
+        f"📊 STR:{eff_stats['STR']} DEF:{eff_stats['DEF']} "
+        f"AGI:{eff_stats['AGI']} INT:{eff_stats['INT']} "
+        f"WIS:{eff_stats['WIS']} DEX:{eff_stats['DEX']} LUK:{eff_stats['LUK']}\n"
+        + acc_bonus_line
+        + f"\n🛡️ Armor DEF: {get_armor_def(p)} (from gear)"
+        + (f" | 💡 {sp} pts (/allocate)" if sp > 0 and not viewing_other else "") + "\n"
         f"🔮 Skills: {', '.join(skill_names)}\n\n"
         f"⚔️ Weapon: {weap}\n"
         f"🛡️ Armor: {armo} | 🔰 Shield: {shld}\n"
-        f"💍 Accessory: {acc}\n"
-        f"🎒 Inventory: {inv_text}\n"
-        f"🏅 Titles: {', '.join(safe_titles(p))}",
+        f"💍 Accessory: {acc_gear}\n"
+    )
+    if not viewing_other:
+        msg += f"🎒 Inventory: {inv_text}\n"
+    msg += f"🏅 Titles: {', '.join(safe_titles(p))}"
+
+    await send_group(update, msg,
         permanent=True)
 
 # ── BOSS ──────────────────────────────────────────────────────────────────────
@@ -3291,7 +3412,8 @@ async def raid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_raids[chat_id] = {
         "party":[{"id":user.id,"name":user.first_name}],
         "in_progress":False,"wave":0,"tier":None,
-        "enemy":None,"enemy_hp":0,"enemy_max_hp":0
+        "enemy":None,"enemy_hp":0,"enemy_max_hp":0,
+        "expires": (datetime.now() + timedelta(minutes=15)).isoformat(),
     }
     await send_group(update,
         f"🏰 *RAID LOBBY!*\n\n*{user.first_name}* is forming a party.\n"
@@ -3302,6 +3424,10 @@ async def raidstart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id not in active_raids:
         await send_group(update, "No raid lobby! Use /raid."); return
     raid = active_raids[chat_id]
+    if not raid.get("in_progress"):
+        if datetime.now() > datetime.fromisoformat(raid.get("expires", datetime.now().isoformat())):
+            active_raids.pop(chat_id, None)
+            await send_group(update, "⏰ Raid lobby expired. Use /raid to start a new one."); return
     if raid.get("in_progress"):
         await send_group(update, "Raid already started!"); return
     if len(raid["party"]) < 2:
@@ -3329,6 +3455,9 @@ async def raidstrike_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "No active raid!"); return
     raid = active_raids[chat_id]
     if not raid.get("in_progress"):
+        if datetime.now() > datetime.fromisoformat(raid.get("expires", datetime.now().isoformat())):
+            active_raids.pop(chat_id, None)
+            await send_group(update, "⏰ Raid lobby expired. Use /raid to start a new one."); return
         await send_group(update, "Raid hasn't started! Use /raidstart."); return
     if user.id not in [u["id"] for u in raid["party"]]:
         await send_group(update, "You're not in this raid!"); return
@@ -3656,9 +3785,10 @@ async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if random.random() < 0.10:
         item = random.choice(["Health Potion","Super Health Potion","Mega Health Potion"])
         add_item(p, item)
-    lmsgs, leveled = add_exp(p, 200)
+    daily_exp = 200 + (p["level"] * 10)
+    lmsgs, leveled = add_exp(p, daily_exp)
     save_player(p)
-    msg = f"🎁 *Daily Reward!*\n\n✨ +200 EXP | 💰 +{gold} Gold"
+    msg = f"🎁 *Daily Reward!*\n\n✨ +{daily_exp} EXP | 💰 +{gold} Gold"
     if item: msg += f" | 🎒 *{item}* (lucky drop!)"
     else:    msg += f"\n_(No potion today — check the /shop)_"
     if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
@@ -3998,7 +4128,37 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if not context.args:
-        await send_group(update, "Usage: `/equip [item name]`", delay=9); return
+        weap = p.get("equipped_weapon") or "None"
+        armr = p.get("equipped_armor")  or "None"
+        shld = p.get("equipped_shield") or "None"
+        acc_e = p.get("equipped_accessory") or "None"
+
+        def _gear_summary_line(slot, name, pool):
+            if name == "None": return f"{slot}: None"
+            enh = get_enhancement(p, name)
+            enc = get_enchant(p, name)
+            enh_str = f" *+{enh}*" if enh else ""
+            enc_str = f" ✨_{enc['id'].capitalize()}_" if enc else ""
+            d = pool.get(name, {})
+            stat_val = d.get("atk") or d.get("def", 0)
+            stat_label = "ATK" if "atk" in d else "DEF"
+            rarity = RARITY_EMOJI.get(d.get("rarity",""), "")
+            return f"{slot}: {rarity} *{name}*{enh_str}{enc_str} (+{stat_val} {stat_label})"
+
+        lines = [f"🎽 *{p['username']}'s Gear:*\n",
+                 _gear_summary_line("⚔️ Weapon",  weap, WEAPONS),
+                 _gear_summary_line("🛡️ Armor",   armr, ARMORS),
+                 _gear_summary_line("🔰 Shield",  shld, SHIELDS)]
+        if acc_e != "None":
+            acc_data = ACCESSORIES.get(acc_e, {})
+            rarity = RARITY_EMOJI.get(acc_data.get("rarity",""), "")
+            enc = get_enchant(p, acc_e)
+            enc_str = f" ✨_{enc['id'].capitalize()}_" if enc else ""
+            lines.append(f"💍 Accessory: {rarity} *{acc_e}*{enc_str} — _{acc_data.get('desc','')}_")
+        else:
+            lines.append("💍 Accessory: None")
+        lines.append(f"\n`/equip [item name]` to equip from inventory.")
+        await send_group(update, "\n".join(lines), delay=20); return
     item_name = " ".join(context.args)
     inv = sjl(p.get("inventory"), [])
     if item_name not in inv:
@@ -4127,7 +4287,56 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if not context.args:
-        await send_group(update, "Usage: `/sell [item name]`", delay=9); return
+        await send_group(update, "Usage: `/sell [item name]` or `/sell all [rarity]`", delay=9); return
+
+    if context.args[0].lower() == "all":
+        inv = sjl(p.get("inventory"), [])
+        if not inv:
+            await send_group(update, "Your inventory is empty.", delay=9); return
+        rarity_filter = None
+        if len(context.args) > 1:
+            rf = context.args[1].lower()
+            if rf in ("common","uncommon","rare","epic","legendary"):
+                rarity_filter = rf
+        sold_items = []; total_gold = 0; remaining_inv = []
+        equipped = [p.get("equipped_weapon"), p.get("equipped_armor"),
+                    p.get("equipped_shield"), p.get("equipped_accessory")]
+        for item_s in inv:
+            item_rarity = None; item_price = 0
+            for pool_s in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS]:
+                if item_s in pool_s:
+                    item_rarity = pool_s[item_s].get("rarity","common")
+                    rarity_prices = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
+                    item_price = rarity_prices.get(item_rarity, 20)
+                    break
+            if item_price == 0:
+                for pool_c in [CONSUMABLES]:
+                    if item_s in pool_c:
+                        item_rarity = "consumable"
+                        item_price = pool_c[item_s].get("sell", 10)
+                        break
+            should_sell = False
+            if rarity_filter:
+                if rarity_filter == item_rarity: should_sell = True
+            else:
+                if item_s not in equipped: should_sell = True
+            if should_sell and item_price > 0:
+                sold_items.append(item_s); total_gold += item_price
+            else:
+                remaining_inv.append(item_s)
+        if not sold_items:
+            await send_group(update,
+                f"Nothing to sell{' of that rarity' if rarity_filter else ''}.", delay=9); return
+        p["inventory"] = json.dumps(remaining_inv)
+        p["gold"] = p.get("gold", 0) + total_gold
+        save_player(p)
+        from collections import Counter as _Counter
+        sold_summary = _Counter(sold_items)
+        summary_str = ", ".join(f"{k} x{v}" for k, v in sold_summary.items())
+        await send_group(update,
+            f"💰 *Bulk Sold!*\n_{summary_str}_\n\nEarned *{total_gold}g* | Balance: {p['gold']}g",
+            delay=20); return
+
     item = " ".join(context.args)
     inv  = sjl(p.get("inventory"), [])
     if item not in inv:
@@ -4208,7 +4417,7 @@ async def strike_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Boss counterattack (80% chance, lethal)
     alive = [u for u in boss_dict["participants"]
              if not is_defeated(get_player(u["id"]))]
-    if alive and boss_dict["hp"] > 0 and random.random() < 0.80:
+    if alive and boss_dict["hp"] > 0 and random.random() < 0.90:
         target = random.choice(alive)
         tp = get_player(target["id"])
         if tp:
@@ -4457,6 +4666,121 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sk = next((s for s in all_skills if s["name"].lower() == arg.lower()), None)
         if not sk:
             await send_group(update, f"No skill matching *{arg}*. Use /skill to see your skills.", delay=9); return
+
+    # Boss fight check — if there's an active boss and no reply target, skill hits the boss
+    chat_id = update.effective_chat.id
+    boss_dict = active_bosses.get(chat_id) or secret_boss_active.get(chat_id)
+    is_secret_boss = chat_id in secret_boss_active
+    if boss_dict and not update.message.reply_to_message:
+        if sk is None:
+            if len(all_skills) == 1:
+                sk = all_skills[0]
+            else:
+                lines = [f"🔮 Choose a skill to use against *{boss_dict['data']['name']}*:\n"]
+                for i, s in enumerate(all_skills, 1):
+                    lines.append(f"*{i}.* *{s['name']}* — {s['desc']}")
+                lines.append("\n_Use /skill [name or number]_")
+                await send_group(update, "\n".join(lines), delay=20); return
+
+        if user.id not in [u["id"] for u in boss_dict["participants"]]:
+            boss_dict["participants"].append({"id": user.id, "name": user.first_name, "dmg": 0})
+        participant = next(u for u in boss_dict["participants"] if u["id"] == user.id)
+
+        w = get_weather()
+        stype = sk.get("type", "damage")
+        lines = [f"⚡ *{user.first_name}* uses *{sk['name']}* on *{boss_dict['data']['name']}*!"]
+
+        if stype in ("self_heal", "group_heal", "mass_cleanse",
+                     "dmg_reduction_buff", "self_heal_buff", "revive_heal"):
+            if stype == "self_heal":
+                heal = round(get_stat(p, "WIS") * sk.get("mult", 3.0))
+                p["hp"] = min(p["max_hp"], p["hp"] + heal)
+                lines.append(f"💚 Healed self for *{heal} HP*!")
+            elif stype == "self_heal_buff":
+                heal = round(p["max_hp"] * 0.30)
+                p["hp"] = min(p["max_hp"], p["hp"] + heal)
+                lines.append(f"💚 *Rally!* +{heal} HP restored.")
+            dmg = 0
+        else:
+            mult = sk.get("mult", 1.0) or 1.0
+            hits = sk.get("hits", 1)
+            if hits and hits > 1:
+                total = 0; hit_log = []
+                for _ in range(hits):
+                    h = round(calc_attack_damage(p, w) * mult)
+                    if check_crit(p): h = apply_crit(p, h); hit_log.append(f"💥{h}")
+                    else: hit_log.append(str(h))
+                    total += h
+                dmg = total
+                lines.append(f"⚡ {hits}-hit combo! [{' + '.join(hit_log)}] = {dmg}")
+            elif stype in ("freeze_nuke", "execute_nuke", "holy_nuke", "fear_kill"):
+                stat_key = sk.get("stat", get_primary_stat(p))
+                dmg = round(get_stat(p, stat_key) * sk.get("mult", 3.0))
+                lines.append(f"💥 *{sk['name']}!* {dmg} damage!")
+            elif stype in ("drain", "drain_kill", "hp_drain"):
+                drain_pct = sk.get("drain_pct", 0.30)
+                dmg = round(boss_dict["hp"] * drain_pct)
+                heal = round(dmg * sk.get("heal_pct", 0.50))
+                p["hp"] = min(p["max_hp"], p["hp"] + heal)
+                lines.append(f"🩸 *{sk['name']}!* Drained {dmg} HP! Healed {heal}.")
+            else:
+                dmg = round(calc_attack_damage(p, w) * mult)
+            if stype not in ("multihit", "multi_hit") and hits == 1 and check_crit(p):
+                dmg = apply_crit(p, dmg)
+                lines.append("💥 *CRITICAL HIT!*")
+            boss_dict["hp"] = max(0, boss_dict["hp"] - dmg)
+            participant["dmg"] += dmg
+            lines.append(f"❤️ Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}")
+
+        # Boss counter-attack
+        alive = [u for u in boss_dict["participants"]
+                 if not is_defeated(get_player(u["id"]))]
+        if alive and boss_dict["hp"] > 0 and random.random() < 0.90:
+            target = random.choice(alive)
+            tp = get_player(target["id"])
+            if tp:
+                bdmg = calc_defense(tp, random.randint(
+                    boss_dict["data"]["dmg_min"], boss_dict["data"]["dmg_max"]))
+                tp["hp"] = max(0, tp["hp"] - bdmg)
+                if tp["hp"] == 0:
+                    tp["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
+                    lines.append(f"💀 *{boss_dict['data']['name']}* kills *{target['name']}*!")
+                else:
+                    lines.append(f"💥 Boss hits *{target['name']}* for {bdmg}!")
+                save_player(tp)
+
+        if boss_dict["hp"] <= 0:
+            data = boss_dict["data"]
+            if is_secret_boss: secret_boss_active.pop(chat_id, None)
+            else: active_bosses.pop(chat_id, None)
+            lines.append(f"\n🏆 *{data['name']} DEFEATED by {sk['name']}!*\n")
+            w2 = get_weather()
+            for u in boss_dict["participants"]:
+                pp = get_player(u["id"])
+                if not pp: continue
+                pp["gold"] = pp.get("gold", 0) + data["gold"]
+                loot = roll_loot_table(data.get("loot_table", []))
+                if loot:
+                    add_item(pp, loot)
+                    r = ""
+                    for pool in [WEAPONS, ARMORS, ACCESSORIES]:
+                        if loot in pool:
+                            r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), "")
+                            break
+                    lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
+                if award_title(pp, data["title"]):
+                    lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
+                lmsgs, leveled = add_exp(pp, data["exp"], w2)
+                save_player(pp)
+                lines.append(f"✅ *{pp['username']}* — +{data['exp']:,} EXP | +{data['gold']} Gold")
+                if leveled and pp["level"] % 10 == 0:
+                    asyncio.create_task(announce(context.bot, chat_id,
+                        f"🎉 *{pp['username']}* reached *Level {pp['level']}*! 🏆",
+                        permanent=True))
+
+        save_player(p)
+        await send_group(update, "\n".join(lines), delay=30)
+        return
 
     # Open-world PVP check — offensive skills are arena-only
     if replying and update.message.reply_to_message:
@@ -4769,10 +5093,13 @@ async def cooldowns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
+    s_cd = get_shadow(user.id)
+    pool_ts = p.get("last_pool") or (s_cd.get("last_pool") if s_cd else None)
     lines = [f"⏳ *{p['username']}'s Cooldowns:*\n",
              f"🎁 Daily:   {time_remaining(p.get('last_daily'), 86400)}",
              f"🗺️ Quest:   {time_remaining(p.get('last_quest'), 3600)}",
-             f"🏋️ Train:   {time_remaining(p.get('last_train'), 1800)}"]
+             f"🏋️ Train:   {time_remaining(p.get('last_train'), 1800)}",
+             f"🎱 Pool:    {time_remaining(pool_ts, 60)}"]
     today = datetime.now().strftime("%Y-%m-%d")
     exp_count = safe_int(p.get("explore_count_today")) if p.get("explore_date")==today else 0
     lines.append(f"🗺️ Explore: {exp_count}/2 today")
@@ -4826,7 +5153,8 @@ async def trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "seller_id": user.id, "seller_name": user.first_name,
         "item": item, "price": price,
         "target_username": target_str.lower(),
-        "created_at": datetime.now().isoformat()
+        "created_at": datetime.now().isoformat(),
+        "expires": (datetime.now() + timedelta(minutes=30)).isoformat(),
     }
     await send_group(update,
         f"📦 *Trade Offer Posted!*\n\n"
@@ -4836,8 +5164,6 @@ async def trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def accept_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
     # Find a trade targeted at this user
     trade = None; seller_id = None
     for sid, t in pending_trades.items():
@@ -4846,6 +5172,33 @@ async def accept_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             trade = t; seller_id = sid; break
     if not trade:
         await send_group(update, "No trade offer found for you!", delay=9); return
+    if datetime.now() > datetime.fromisoformat(trade.get("expires", datetime.now().isoformat())):
+        pending_trades.pop(seller_id, None)
+        await send_group(update, "❌ That trade offer has expired.", delay=9); return
+    # Non-ascended player — store item in shadow profile pending_items
+    if not p:
+        s_acc = get_shadow(user.id)
+        if not s_acc:
+            await send_group(update, "You don't have a profile yet.", delay=9); return
+        if trade["price"] > 0:
+            await send_group(update,
+                "You need to /ascend before you can pay for items. "
+                "Ask the seller to offer it for free.", delay=9); return
+        pending = sjl(s_acc.get("pending_items"), [])
+        pending.append(trade["item"])
+        s_acc["pending_items"] = json.dumps(pending)
+        save_shadow(s_acc)
+        seller = get_player(trade["seller_id"])
+        if seller:
+            s_inv = sjl(seller.get("inventory"),[])
+            if trade["item"] in s_inv:
+                s_inv.remove(trade["item"])
+                seller["inventory"] = json.dumps(s_inv)
+                save_player(seller)
+        pending_trades.pop(seller_id, None)
+        await send_group(update,
+            f"✅ *{trade['item']}* is waiting for you when you `/ascend`!", delay=15)
+        return
     if p.get("gold",0) < trade["price"]:
         await send_group(update,
             f"❌ Need {trade['price']}g, have {p.get('gold',0)}g.", delay=9); return
@@ -5051,6 +5404,19 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_defeated(p):
         await send_group(update, "💀 You're defeated — can't duel!", delay=9); return
 
+    # Reply-to-message shortcut: replying to a challenge message counts as /duel accept
+    if update.message.reply_to_message and (not context.args or context.args[0].lower() != "accept"):
+        replied_uid = update.message.reply_to_message.from_user.id
+        if replied_uid != user.id:
+            duel_check = pending_duels.get(replied_uid)
+            if duel_check and duel_check["target_id"] == user.id and duel_check["chat_id"] == chat_id:
+                if datetime.now() < datetime.fromisoformat(duel_check["expires"]):
+                    context.args = ["accept"]
+                else:
+                    pending_duels.pop(replied_uid, None)
+                    await send_group(update, "⏰ That duel challenge has already expired.", delay=9)
+                    return
+
     if context.args and context.args[0].lower() == "accept":
         duel = None; challenger_id = None
         for cid, d in list(pending_duels.items()):
@@ -5188,6 +5554,22 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
+
+    # Reply-to-message shortcut: replying to a challenge message counts as /arena accept
+    if update.message.reply_to_message and (not context.args or context.args[0].lower() != "accept"):
+        replied_uid = update.message.reply_to_message.from_user.id
+        if replied_uid != user.id:
+            arena_check = active_arenas.get(chat_id)
+            if (arena_check
+                    and arena_check["status"] == "waiting"
+                    and arena_check["p1_id"] == replied_uid
+                    and arena_check["p2_id"] == user.id):
+                if datetime.now() < datetime.fromisoformat(arena_check["expires"]):
+                    context.args = ["accept"]
+                else:
+                    active_arenas.pop(chat_id, None)
+                    await send_group(update, "⏰ That arena challenge has already expired.", delay=9)
+                    return
 
     # /arena accept
     if context.args and context.args[0].lower() == "accept":
@@ -6229,25 +6611,28 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👤 *Everyone:*\n"
         "*/rank* — Leaderboard (paginated)\n"
         "*/rank me* — Your position\n"
+        "*/rank wins* — Top 20 PVP wins\n"
         "*/stats* — Full profile\n"
         "*/ascend* — Enter the RPG (private chat)\n\n"
         "📱 *RPG:*\n"
         "*/class* — Choose class (Lv 5)\n"
         "*/prestige* — Choose path (Lv 10)\n"
         "*/allocate STR 5* — Spend stat points\n"
+        "*/resetstats* — Refund all stat points and start fresh\n"
         "*/skill* — View and use your skills\n"
         "*/daily* — Daily reward (24hr)\n"
         "*/cooldowns* — Check timers\n"
         "*/train* — Train (30min)\n"
         "*/quest* — Go on a quest (1hr)\n"
         "*/explore* — Expedition (1hr, 2x/day)\n"
+        "*/pool* — Take a pool shot (1min cooldown)\n"
         "*/dungeon* — Solo dungeon crawl (1x/day)\n"
         "   `/dungeon` | `/dungeon hard` | `/dungeon legendary`\n"
         "*/shop* — Daily shop\n"
         "*/inventory* — Your items\n"
         "*/equip [item]* — Equip gear\n"
         "*/use [item]* — Use consumable\n"
-        "*/sell [item]* — Sell for gold\n"
+        "*/sell [item]* — Sell for gold | `/sell all [rarity]`\n"
         "*/trade @user [item] [price]* — Trade\n"
         "*/accept* — Accept a trade offer\n"
         "*/decline* — Decline a trade offer\n"
@@ -6269,11 +6654,300 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💬 *Chat earns EXP. Level-ups announced at x10. Secrets lurk...* 🎱",
         delay=30)
 
+# ── POOL ACTIVITY ─────────────────────────────────────────────────────────────
+POOL_SHOTS = [
+    {"id":"scratch","weight":40,"rarity":"common",
+     "text":"Scratch. Cue ball drops into the corner pocket. Rookie mistake.",
+     "exp":15,"gold":0,"loot":None},
+    {"id":"rail_kiss","weight":40,"rarity":"common",
+     "text":"Rail kiss, no pocket. The felt absorbs the hit and gives nothing back.",
+     "exp":20,"gold":0,"loot":None},
+    {"id":"cluster_stuck","weight":40,"rarity":"common",
+     "text":"You crack the cluster but nothing drops. The rack laughs at you.",
+     "exp":20,"gold":2,"loot":None},
+    {"id":"thin_cut","weight":38,"rarity":"common",
+     "text":"Thin cut on the 3 ball. It grazes the pocket and rolls away.",
+     "exp":25,"gold":3,"loot":None},
+    {"id":"safe_play","weight":38,"rarity":"common",
+     "text":"You play safe. Smart. Boring. The table respects it.",
+     "exp":30,"gold":5,"loot":None},
+    {"id":"solid_pot","weight":35,"rarity":"common",
+     "text":"Clean pot on the 2 ball. Nothing fancy, just good fundamentals.",
+     "exp":35,"gold":5,"loot":None},
+    {"id":"two_ball_run","weight":35,"rarity":"common",
+     "text":"Two ball run before the pattern breaks. You'll take it.",
+     "exp":40,"gold":8,"loot":[("Health Potion",0.08)]},
+    {"id":"long_pot","weight":33,"rarity":"common",
+     "text":"Long pot, full length of the table. The satisfying thud of a good hit.",
+     "exp":45,"gold":8,"loot":[("Health Potion",0.10)]},
+    {"id":"three_cushion","weight":30,"rarity":"common",
+     "text":"Three cushion shot, exactly as planned. Nobody saw it but you know.",
+     "exp":50,"gold":10,"loot":[("Health Potion",0.12)]},
+    {"id":"position_play","weight":30,"rarity":"common",
+     "text":"Perfect position play. You pot the ball and land exactly where you wanted.",
+     "exp":55,"gold":12,"loot":[("Health Potion",0.12),("Copper Loop",0.05)]},
+    {"id":"break_and_run","weight":20,"rarity":"uncommon",
+     "text":"Break and run. Four balls drop on the break and you clear the table from there.",
+     "exp":80,"gold":20,"loot":[("Super Health Potion",0.12),("Pebble of Focus",0.08)]},
+    {"id":"masse_shot","weight":20,"rarity":"uncommon",
+     "text":"Massé shot curves around the cluster perfectly. The crowd would have gone wild.",
+     "exp":85,"gold":22,"loot":[("Super Health Potion",0.15),("Tin Charm",0.08)]},
+    {"id":"bank_pot","weight":18,"rarity":"uncommon",
+     "text":"Bank pot off the far cushion drops clean. Calculated.",
+     "exp":90,"gold":25,"loot":[("Super Health Potion",0.15),("Dragon Scale",0.06)]},
+    {"id":"combo_pot","weight":18,"rarity":"uncommon",
+     "text":"Combo pot — cue ball kisses the 5, sends the 7 into the corner. Beautiful.",
+     "exp":95,"gold":28,"loot":[("Super Health Potion",0.15),("Dragon Scale",0.08)]},
+    {"id":"five_ball_run","weight":16,"rarity":"uncommon",
+     "text":"Five ball run. Your focus is absolute. The table offers no resistance.",
+     "exp":100,"gold":30,"loot":[("Dragon Scale",0.12),("Frayed Rope Band",0.08)]},
+    {"id":"called_shot","weight":16,"rarity":"uncommon",
+     "text":"Called shot — 6 ball, side pocket, two cushions. You called it. It dropped.",
+     "exp":110,"gold":35,"loot":[("Dragon Scale",0.15),("Fox Tail Ring",0.05)]},
+    {"id":"century_break","weight":14,"rarity":"uncommon",
+     "text":"Century break. You stop counting at twelve balls. The table is yours.",
+     "exp":120,"gold":40,"loot":[("Dragon Scale",0.18),("Bloodstone Band",0.06)]},
+    {"id":"maximum_break","weight":8,"rarity":"rare",
+     "text":"Maximum break. Every ball. Every pocket. The felt bows to your command.",
+     "exp":200,"gold":80,"loot":[("Dragon Scale",0.30),("Enchanting Scroll",0.12),("Whisper Coin",0.06)]},
+    {"id":"trick_shot","weight":8,"rarity":"rare",
+     "text":"Trick shot — cue behind the back, jump shot over the cluster, corner pocket. "
+            "You don't even watch it drop. You already knew.",
+     "exp":220,"gold":90,"loot":[("Dragon Scale",0.30),("Enchanting Scroll",0.15),("Warmaster's Clasp",0.04)]},
+    {"id":"ghost_ball","weight":7,"rarity":"rare",
+     "text":"Ghost ball method on an impossible cut. The cue ball threads a gap "
+            "that shouldn't exist. The 8 drops. You breathe.",
+     "exp":240,"gold":100,"loot":[("Dragon Scale",0.35),("Enchanting Scroll",0.18),("Owl Medallion",0.04)]},
+    {"id":"full_rack_clear","weight":6,"rarity":"rare",
+     "text":"Full rack clear on the break. All fifteen balls. One shot. "
+            "The table is empty before the echo dies.",
+     "exp":280,"gold":120,"loot":[("Dragon Scale",0.40),("Enchanting Scroll",0.20),
+                                   ("Revival Charm",0.08),("Phantom Loop",0.04)]},
+    {"id":"void_pocket","weight":3,"rarity":"epic",
+     "text":"The cue ball rolls toward a pocket that wasn't there a moment ago. "
+            "A void pocket. The ball disappears. Something falls out of the table "
+            "that was never inside it.",
+     "exp":500,"gold":200,"loot":[("Dragon Scale",0.60),("Enchanting Scroll",0.35),
+                                   ("Revival Charm",0.15),("Cinder Heart Pendant",0.05),
+                                   ("Eye of the Storm",0.04)]},
+    {"id":"eight_ball_break","weight":3,"rarity":"epic",
+     "text":"8 ball on the break. Dead center. Corner pocket. "
+            "The felt goes silent. Something ancient stirs beneath the table.",
+     "exp":600,"gold":250,"loot":[("Dragon Scale",0.65),("Enchanting Scroll",0.40),
+                                   ("Deathwhisper Amulet",0.05),("Aegis Talisman",0.04)]},
+    {"id":"corner_pocket_singularity","weight":1,"rarity":"legendary",
+     "text":"The corner pocket opens. Not just opens — becomes. "
+            "Every ball on the table rolls toward it simultaneously without being struck. "
+            "They vanish one by one. The table is left perfectly bare. "
+            "You didn't do that. Or maybe you did. The chalk dust settles. "
+            "Something was left behind.",
+     "exp":1200,"gold":500,"loot":[("Dragon Scale",0.80),("Enchanting Scroll",0.60),
+                                    ("Godshard Splinter",0.03),("Infinity Loop",0.03),
+                                    ("Last Breath Locket",0.03)]},
+]
+
+POOL_CLASS_FLAVOR = {
+    "warrior": [
+        "Your grip on the cue is iron.",
+        "You approach every shot like a battle. It works.",
+        "Discipline over finesse. It gets results.",
+    ],
+    "mage": [
+        "You calculated the angles before you touched the cue.",
+        "Physics is just applied magic.",
+        "You whispered something to the cue ball. It listened.",
+    ],
+    "thief": [
+        "You found an angle nobody else was looking at.",
+        "The table didn't see you coming. It never does.",
+        "Quick hands, quiet confidence.",
+    ],
+    "archer": [
+        "Range and precision. Same principles, different equipment.",
+        "You sighted the pocket like a target. Clean release.",
+        "Patience paid off. It always does.",
+    ],
+    "priest": [
+        "Something guided your hand. You'll take it.",
+        "Faith and geometry are closer than most people think.",
+        "The light favors the prepared.",
+    ],
+}
+
+def roll_pool_shot():
+    total_weight = sum(s["weight"] for s in POOL_SHOTS)
+    roll = random.randint(0, total_weight - 1)
+    cumulative = 0
+    for shot in POOL_SHOTS:
+        cumulative += shot["weight"]
+        if roll < cumulative:
+            return shot
+    return POOL_SHOTS[0]
+
+def roll_pool_shot_with_luk(p):
+    shot = roll_pool_shot()
+    luk = get_stat(p, "LUK")
+    upgrade_chance = luk * 0.003
+    if random.random() < upgrade_chance:
+        tier_order = ["common","uncommon","rare","epic","legendary"]
+        current_idx = tier_order.index(shot["rarity"])
+        if current_idx < len(tier_order) - 1:
+            next_rarity = tier_order[current_idx + 1]
+            upgraded = [s for s in POOL_SHOTS if s["rarity"] == next_rarity]
+            if upgraded:
+                shot = random.choice(upgraded)
+    return shot
+
+async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    s = get_or_create_shadow(user.id, user.first_name)
+    p = get_player(user.id) if s.get("ascended") else None
+
+    last_pool = p.get("last_pool") if p else s.get("last_pool")
+    if last_pool:
+        try:
+            elapsed = (datetime.now() - datetime.fromisoformat(last_pool)).total_seconds()
+            if elapsed < 60:
+                remaining = int(60 - elapsed)
+                await send_group(update, f"🎱 Cooldown: {remaining}s", delay=5)
+                return
+        except Exception:
+            pass
+
+    shot = roll_pool_shot_with_luk(p) if p else roll_pool_shot()
+
+    flavor = ""
+    if p and random.random() < 0.25:
+        line = get_class_line(p)
+        options = POOL_CLASS_FLAVOR.get(line, [])
+        if options:
+            flavor = " " + random.choice(options)
+
+    rarity_prefix = {
+        "common":"🎱","uncommon":"🎯","rare":"🔵","epic":"🟣","legendary":"🟡",
+    }.get(shot["rarity"], "🎱")
+
+    item_found = None
+    if shot.get("loot") and p:
+        item_found = roll_loot_table(shot["loot"])
+        if item_found:
+            add_item(p, item_found)
+
+    exp_gain  = shot["exp"]
+    gold_gain = shot["gold"]
+
+    if p:
+        p["gold"] = p.get("gold", 0) + gold_gain
+        p["last_pool"] = datetime.now().isoformat()
+        lmsgs, leveled = add_exp(p, exp_gain)
+        save_player(p)
+        if leveled and p["level"] % 10 == 0:
+            asyncio.create_task(announce(context.bot, chat_id,
+                f"🎉 *{p['username']}* reached *Level {p['level']}*! 🎱",
+                permanent=True))
+    else:
+        s["last_pool"] = datetime.now().isoformat()
+        lmsgs, leveled = add_shadow_exp(s, exp_gain)
+        save_shadow(s)
+
+    lines = [f"{rarity_prefix} *{user.first_name}*"]
+    lines.append(f"_{shot['text']}{flavor}_")
+    lines.append("")
+    if exp_gain > 0: lines.append(f"✨ +{exp_gain} EXP")
+    if gold_gain > 0: lines.append(f"💰 +{gold_gain} gold")
+    if item_found:
+        rarity_tag = ""
+        for pool3 in [WEAPONS, ARMORS, ACCESSORIES, CONSUMABLES]:
+            if item_found in pool3:
+                r = pool3[item_found].get("rarity", "")
+                rarity_tag = RARITY_EMOJI.get(r, "")
+                break
+        lines.append(f"🎒 {rarity_tag} *{item_found}*!")
+
+    key = (chat_id, user.id)
+    old_id = last_bot_message.get(key)
+    if old_id:
+        try:
+            await update.get_bot().delete_message(chat_id=chat_id, message_id=old_id)
+        except Exception:
+            pass
+
+    msg_obj = await update.get_bot().send_message(
+        chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown")
+    last_bot_message[key] = msg_obj.message_id
+    asyncio.create_task(_auto_delete(update.get_bot(), chat_id, msg_obj.message_id, 9))
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+# ── RESETSTATS ────────────────────────────────────────────────────────────────
+async def resetstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    sd = safe_stats(p)
+    base_defaults = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
+
+    total_allocated = 0
+    for stat, base in base_defaults.items():
+        current = sd.get(stat, base)
+        if current > base:
+            total_allocated += (current - base)
+
+    def_points = sd.get("DEF", 0)
+    if def_points > 0:
+        total_allocated += def_points
+
+    new_stats = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
+
+    cid = p.get("class_id")
+    if cid:
+        base_line = CLASS_TREE.get(cid, {}).get("line")
+        if base_line:
+            base_cls = CLASS_TREE.get(base_line, {})
+            for stat, bonus in base_cls.get("stat_bonus", {}).items():
+                if stat in new_stats:
+                    new_stats[stat] = new_stats.get(stat, 5) + bonus
+        current_cls = CLASS_TREE.get(cid, {})
+        for stat, bonus in current_cls.get("stat_bonus", {}).items():
+            if stat in new_stats:
+                new_stats[stat] = new_stats.get(stat, 5) + bonus
+
+    refunded = total_allocated + safe_int(p.get("stat_points"))
+    p["stats"] = json.dumps(new_stats)
+    p["stat_points"] = refunded
+    save_player(p)
+
+    await send_group(update,
+        f"🔄 *Stat Reset Complete!*\n\n"
+        f"All allocated stat points have been refunded.\n"
+        f"💡 *{refunded} points* returned to your pool.\n\n"
+        f"DEF is now gear-only — armor and shields provide your defense.\n\n"
+        f"Use `/allocate` to redistribute your points.\n"
+        f"Current stats after class bonuses:\n"
+        f"STR:{new_stats['STR']} AGI:{new_stats['AGI']} "
+        f"INT:{new_stats['INT']} WIS:{new_stats['WIS']} "
+        f"DEX:{new_stats['DEX']} LUK:{new_stats['LUK']}",
+        delay=60)
+
 # ── WIPE (admin only) ─────────────────────────────────────────────────────────
 async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != ADMIN_ID:
         await send_group(update, "❌ Admin only.", delay=9); return
+
+    last = _wipe_confirm.get(user.id)
+    if not last or (datetime.now() - datetime.fromisoformat(last)).total_seconds() > 30:
+        _wipe_confirm[user.id] = datetime.now().isoformat()
+        await send_group(update,
+            "⚠️ *Are you sure?* This wipes ALL player data.\n"
+            "Type /wipe again within 30 seconds to confirm.", delay=30)
+        return
+
+    _wipe_confirm.pop(user.id, None)
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("DROP TABLE IF EXISTS shadow_profiles")
     c.execute("DROP TABLE IF EXISTS players")
@@ -6297,6 +6971,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
     user = update.effective_user
     if not user or user.is_bot: return
+    if update.message.text and update.message.text.startswith("/"):
+        return
     chat_id = update.effective_chat.id
     text    = (update.message.text or "").lower()
 
@@ -6312,6 +6988,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Random events — every 2500 messages
     message_counters[chat_id] = message_counters.get(chat_id, 0) + 1
     cnt = message_counters[chat_id]
+
+    # Periodic cleanup every 500 messages
+    if cnt % 500 == 0:
+        now_iso = datetime.now().isoformat()
+        expired_trades = [uid for uid, t in pending_trades.items()
+                          if t.get("expires", now_iso) < now_iso]
+        for uid in expired_trades:
+            pending_trades.pop(uid, None)
+        expired_raids = [cid for cid, r in active_raids.items()
+                         if not r.get("in_progress")
+                         and r.get("expires", now_iso) < now_iso]
+        for cid in expired_raids:
+            active_raids.pop(cid, None)
+
     if cnt % 2500 == 0 and chat_id not in active_events:
         roll = random.random()
         if roll < 0.70:   freq = "common"
@@ -6420,17 +7110,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cds_s["streak_50"] = True; shadow_exp += 150
             if p: rpg_exp += 150
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🔥 *{user.first_name}* hit a *50 message streak!* +150 EXP!"))
+                f"🔥 *{user.first_name}* hit a *50 message streak!* +150 EXP!",
+                permanent=True))
         if dm >= 100 and not cds_s.get("streak_100"):
             cds_s["streak_100"] = True; shadow_exp += 300; rpg_gold += 30
             if p: rpg_exp += 300
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🔥 *{user.first_name}* hit a *100 message streak!* +300 EXP!"))
+                f"🔥 *{user.first_name}* hit a *100 message streak!* +300 EXP!",
+                permanent=True))
         if dm >= 500 and not cds_s.get("streak_500"):
             cds_s["streak_500"] = True; shadow_exp += 800
             if p: rpg_exp += 800
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🏆 *{user.first_name}* hit a *500 message streak!* +800 EXP! 🎱"))
+                f"🏆 *{user.first_name}* hit a *500 message streak!* +800 EXP! 🎱",
+                permanent=True))
 
     # Apply shadow EXP
     s["passive_cooldowns"] = json.dumps(cds_s)
@@ -6632,6 +7325,7 @@ def main():
     app.add_handler(CommandHandler("class",     class_cmd))
     app.add_handler(CommandHandler("prestige",  prestige_cmd))
     app.add_handler(CommandHandler("allocate",  allocate_cmd))
+    app.add_handler(CommandHandler("resetstats", resetstats_cmd))
     app.add_handler(CommandHandler("skill",     skill_cmd))
     app.add_handler(CommandHandler("title",     title_cmd))
 
@@ -6640,6 +7334,7 @@ def main():
     app.add_handler(CommandHandler("train",     train_cmd))
     app.add_handler(CommandHandler("quest",     quest_cmd))
     app.add_handler(CommandHandler("explore",   explore_cmd))
+    app.add_handler(CommandHandler("pool",      pool_cmd))
 
     # Economy
     app.add_handler(CommandHandler("shop",      shop_cmd))
@@ -6681,7 +7376,8 @@ def main():
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
 
-    print(f"🎱 {WORLD_NAME} v13 is running...")
+    explore_timers.clear()
+    print(f"🎱 {WORLD_NAME} v15 is running...")
     app.run_polling(poll_interval=0.3)
 
 if __name__ == "__main__":
