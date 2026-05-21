@@ -4424,6 +4424,17 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not cls:
         await send_group(update, "No class yet! Use /class at Level 5.", delay=9); return
     all_skills = sjl(p.get("all_skills"), [])
+    # Sync: add any skills from current class that the player qualifies for but is missing
+    skill_names = {s["name"] for s in all_skills}
+    changed = False
+    for sk in cls.get("skills", []):
+        if sk["name"] not in skill_names and p["level"] >= sk.get("unlock", 5):
+            all_skills.append(sk)
+            skill_names.add(sk["name"])
+            changed = True
+    if changed:
+        p["all_skills"] = json.dumps(all_skills)
+        save_player(p)
     if not all_skills:
         await send_group(update, "No skills unlocked yet.", delay=9); return
 
