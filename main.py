@@ -2455,9 +2455,13 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         check_titles(d)
         # Shadowstep primed: grant bonus damage on next attack after dodging
         cls_d_miss = get_player_class(d)
-        if cls_d_miss and cls_d_miss.get("passive_key") == "shadowstep":
-            cds_d = safe_cds(d); cds_d["shadowstep_primed"] = "1"
-            d["passive_cooldowns"] = json.dumps(cds_d)
+        if cls_d_miss:
+            pk_d_miss = cls_d_miss.get("passive_key","")
+            if pk_d_miss == "shadowstep":
+                cds_d = safe_cds(d); cds_d["shadowstep_primed"] = "1"
+                d["passive_cooldowns"] = json.dumps(cds_d)
+            if pk_d_miss == "deaths_shadow":
+                d["hp"] = min(d["max_hp"], d["hp"] + 10)
         save_player(d); save_player(a)
         await update_combat_card(update.get_bot(), chat, d,
             f"🌀 *{a['username']}* missed *{d['username']}*!")
@@ -2522,6 +2526,16 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 dmg = round(dmg * 1.25)
                 a["mark_first_hit"] = 0
                 extra_notes.append("🎯 *First strike bonus!* +25%!")
+
+        # Trailblazer: first attack each day deals double damage
+        if pk_a == "trailblazer":
+            today = datetime.now().strftime("%Y-%m-%d")
+            cds_tb = safe_cds(a)
+            if cds_tb.get("trailblazer_date") != today:
+                dmg *= 2
+                cds_tb["trailblazer_date"] = today
+                a["passive_cooldowns"] = json.dumps(cds_tb)
+                extra_notes.append("🌅 *Trailblazer!* First strike of the day — double damage!")
 
         # Steady aim tracking
         if pk_a == "steady_aim":
@@ -3932,6 +3946,8 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message and not context.args:
         # Show skill menu with inline buttons
         lines = [f"🔮 *{p['username']}'s Skills:*\n"]
+        if cls:
+            lines.append(f"🔹 *Passive — {cls['name']}:* {cls['skills'][0]['passive']}\n")
         keyboard = []
         for sk in all_skills:
             # Estimate damage for display
@@ -3960,18 +3976,18 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def skill_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     if not query.data.startswith("skill_"): return
     skill_name = query.data[6:]
     user = query.from_user; p = get_player(user.id)
-    if not p: return
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
     all_skills = sjl(p.get("all_skills"), [])
     sk = next((s for s in all_skills if s["name"].startswith(skill_name)), None)
     if not sk:
         await query.answer("Skill not found!", show_alert=True); return
-    # For offensive skills, prompt for target
-    if sk.get("type") in ("self_heal","group_heal","mass_cleanse","dmg_reduction_buff"):
-        # No target needed
+    NO_TARGET_TYPES = ("self_heal","group_heal","mass_cleanse","dmg_reduction_buff","self_heal_buff")
+    if sk.get("type") in NO_TARGET_TYPES:
+        await query.answer()
         class FakeUpdate:
             effective_user = user
             effective_chat = query.message.chat
