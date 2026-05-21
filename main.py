@@ -29,9 +29,10 @@ secret_boss_active = {}
 active_events      = {}   # chat_id -> event dict
 active_raids       = {}   # chat_id -> raid dict
 active_drakes      = {}   # chat_id -> drake dict
-combat_cards       = {}   # chat_id -> {target_id, msg_id, attackers[]}
 message_counters   = {}   # chat_id -> int
 pending_trades     = {}   # user_id -> trade dict
+pending_duels      = {}   # challenger_id -> {target_id, wager, chat_id, expires}
+active_arenas      = {}   # chat_id -> arena state
 pending_guild_reqs = {}   # guild_id -> [requests]
 explore_timers     = {}   # user_id -> asyncio task
 
@@ -90,7 +91,9 @@ def sjl(v, d):
     except: return d
 
 def safe_inv(p):    return sjl(p.get("inventory"), [])
-def safe_stats(p):  return sjl(p.get("stats"), {"STR":5,"DEF":5,"AGI":5,"INT":5,"WIS":5})
+def safe_stats(p):
+    return sjl(p.get("stats"),
+               {"STR":5,"DEF":0,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5})
 def safe_titles(p): return sjl(p.get("titles"), ["The Newcomer"])
 def safe_cds(p):    return sjl(p.get("passive_cooldowns"), {})
 def safe_int(v, d=0):
@@ -146,7 +149,7 @@ def get_tier(level):
 PAGE_SIZE = 15
 
 # ── CLASS TREE ────────────────────────────────────────────────────────────────
-DEFAULT_STATS = {"STR":5,"DEF":5,"AGI":5,"INT":5,"WIS":5}
+DEFAULT_STATS = {"STR":5,"DEF":0,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5}
 
 # path: "A" or "B"
 # primary_stat: used for damage scaling
@@ -166,6 +169,11 @@ CLASS_TREE = {
              "active":"Shield Bash","type":"stun",
              "desc":"30% chance to stun target — they miss their next attack.",
              "passive_key":"iron_will"},
+            {"tier":1,"unlock":5,"name":"Defensive Stance",
+             "passive":"Reduce incoming damage by 5 when HP is above 70%.",
+             "active":"Brace","type":"def_buff",
+             "desc":"Gain +10 DEF for 2 minutes.",
+             "passive_key":"defensive_stance"},
         ]
     },
     "page": {
@@ -180,6 +188,11 @@ CLASS_TREE = {
              "active":"Consecrate","type":"dmg_field",
              "desc":"Deal damage + create a holy field for 30 min — enemies who attack you take WIS x2 holy damage back.",
              "passive_key":"holy_stance"},
+            {"tier":2,"unlock":10,"name":"Shield Wall",
+             "passive":"Reduce physical damage by 5 when shield is equipped.",
+             "active":"Shield Wall","type":"def_buff",
+             "desc":"Negate the next hit completely (lasts 90 seconds).",
+             "passive_key":"shield_wall"},
         ]
     },
     "squire": {
@@ -236,6 +249,11 @@ CLASS_TREE = {
              "active":"Triple Strike","type":"multihit",
              "desc":"Hit three times. Second hit 70%, third hit 50%. Each has independent crit. If all three crit, Bloodlust heal triples.",
              "passive_key":"bloodlust","hits":3,"mults":[1.0, 0.70, 0.50]},
+            {"tier":2,"unlock":10,"name":"Battle Cry",
+             "passive":"Gain +3 STR for 1 minute after each kill.",
+             "active":"Battle Cry","type":"self_heal_buff",
+             "desc":"Restore 20 HP and gain +5 STR for 2 minutes.",
+             "passive_key":"battle_cry"},
         ]
     },
     "crusader": {
@@ -293,6 +311,11 @@ CLASS_TREE = {
              "active":"Fireball","type":"spell",
              "desc":"INT-scaled burst damage.",
              "passive_key":"arcane_mind"},
+            {"tier":1,"unlock":5,"name":"Arcane Shield",
+             "passive":"10% chance to absorb a hit entirely with a mana barrier.",
+             "active":"Mana Barrier","type":"heal_shield",
+             "desc":"Absorb up to INT x2 incoming damage for 1 minute.",
+             "passive_key":"arcane_shield"},
         ]
     },
     "arcanist": {
@@ -307,6 +330,11 @@ CLASS_TREE = {
              "active":"Chain Lightning","type":"bounce_spell",
              "desc":"Hits target + bounces to 2 nearby active players dealing 50% damage each.",
              "passive_key":"spell_surge"},
+            {"tier":2,"unlock":10,"name":"Arcane Pulse",
+             "passive":"INT x0.1 bonus damage on every spell.",
+             "active":"Arcane Pulse","type":"spell",
+             "desc":"INT x2 arcane damage. Cannot be resisted.",
+             "passive_key":"arcane_pulse"},
         ]
     },
     "sorcerer": {
@@ -363,6 +391,11 @@ CLASS_TREE = {
              "active":"Hex","type":"debuff",
              "desc":"Curse target — they deal 25% less damage for 2 minutes.",
              "passive_key":"cursed_blade"},
+            {"tier":2,"unlock":10,"name":"Shadow Hex",
+             "passive":"Hexed targets take 5% extra damage from all sources.",
+             "active":"Shadow Hex","type":"debuff",
+             "desc":"Reduce target ATK and DEF by 5 for 3 minutes.",
+             "passive_key":"shadow_hex"},
         ]
     },
     "warlock": {
@@ -409,7 +442,7 @@ CLASS_TREE = {
     },
     # ── THIEF ─────────────────────────────────────────────────────────────────
     "thief": {
-        "name":"Thief","primary_stat":"AGI","line":"thief",
+        "name":"Thief","primary_stat":"LUK","line":"thief",
         "weapon_types":["dagger","throwing_star"],
         "armor_type":"thief_armor",
         "desc":"Fast, sneaky, lethal. Strike before they see you coming.",
@@ -420,10 +453,15 @@ CLASS_TREE = {
              "active":"Backstab","type":"crit_dmg",
              "desc":"180% damage. Guaranteed crit if target has not attacked yet.",
              "passive_key":"quick_hands","mult":1.8},
+            {"tier":1,"unlock":5,"name":"Feint",
+             "passive":"5% chance each hit causes target to miss their next attack.",
+             "active":"Feint","type":"acc_debuff_only",
+             "desc":"Target has 40% miss chance for their next attack.",
+             "passive_key":"feint"},
         ]
     },
     "rogue": {
-        "name":"Rogue","primary_stat":"AGI","line":"thief","path":"A",
+        "name":"Rogue","primary_stat":"LUK","line":"thief","path":"A",
         "weapon_types":["dagger"],
         "armor_type":"thief_armor",
         "desc":"Evasion and shadows. Hard to hit, deadly when you do.",
@@ -434,10 +472,15 @@ CLASS_TREE = {
              "active":"Smoke Screen","type":"dodge_buff",
              "desc":"Next attack against you automatically misses. Lasts 2 minutes.",
              "passive_key":"evasion"},
+            {"tier":2,"unlock":10,"name":"Nimble",
+             "passive":"AGI x0.5 bonus dodge chance.",
+             "active":"Dash","type":"dodge_buff",
+             "desc":"Gain +20% dodge for 1 minute.",
+             "passive_key":"nimble"},
         ]
     },
     "shadow": {
-        "name":"Shadow","primary_stat":"AGI","line":"thief","path":"A",
+        "name":"Shadow","primary_stat":"LUK","line":"thief","path":"A",
         "weapon_types":["dagger"],
         "armor_type":"thief_armor",
         "desc":"You are the darkness. Every dodge fuels destruction.",
@@ -451,7 +494,7 @@ CLASS_TREE = {
         ]
     },
     "phantom": {
-        "name":"Phantom","primary_stat":"AGI","line":"thief","path":"A",
+        "name":"Phantom","primary_stat":"LUK","line":"thief","path":"A",
         "weapon_types":["dagger"],
         "armor_type":"thief_armor",
         "desc":"More ghost than person. Attacks pass through you.",
@@ -465,7 +508,7 @@ CLASS_TREE = {
         ]
     },
     "wraith": {
-        "name":"Wraith","primary_stat":"AGI","line":"thief","path":"A",
+        "name":"Wraith","primary_stat":"LUK","line":"thief","path":"A",
         "weapon_types":["dagger"],
         "armor_type":"thief_armor",
         "desc":"Death made flesh. Every dodge restores, every kill protects.",
@@ -479,7 +522,7 @@ CLASS_TREE = {
         ]
     },
     "cutthroat": {
-        "name":"Cutthroat","primary_stat":"AGI","line":"thief","path":"B",
+        "name":"Cutthroat","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
         "desc":"First strike, last strike. Mark them and end them.",
@@ -490,10 +533,15 @@ CLASS_TREE = {
              "active":"Cheap Shot","type":"silence",
              "desc":"150% damage. Target cannot use /skill for 60 seconds.",
              "passive_key":"marked","mult":1.5},
+            {"tier":2,"unlock":10,"name":"Throat Cut",
+             "passive":"5% chance each hit silences target for 10 seconds.",
+             "active":"Throat Cut","type":"silence",
+             "desc":"100% damage. Target cannot use /skill for 30 seconds.",
+             "passive_key":"throat_cut","mult":1.0},
         ]
     },
     "assassin": {
-        "name":"Assassin","primary_stat":"AGI","line":"thief","path":"B",
+        "name":"Assassin","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
         "desc":"Executioner of the weak. Low HP targets never survive.",
@@ -507,7 +555,7 @@ CLASS_TREE = {
         ]
     },
     "blade_master": {
-        "name":"Blade Master","primary_stat":"AGI","line":"thief","path":"B",
+        "name":"Blade Master","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
         "desc":"A storm of blades. Every attack has a chance to hit twice.",
@@ -521,7 +569,7 @@ CLASS_TREE = {
         ]
     },
     "specialist": {
-        "name":"Specialist","primary_stat":"AGI","line":"thief","path":"B",
+        "name":"Specialist","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
         "desc":"The professional. Every debuff lingers, every kill profits.",
@@ -536,7 +584,7 @@ CLASS_TREE = {
     },
     # ── ARCHER ────────────────────────────────────────────────────────────────
     "archer": {
-        "name":"Archer","primary_stat":"AGI","line":"archer",
+        "name":"Archer","primary_stat":"DEX","line":"archer",
         "weapon_types":["bow","crossbow"],
         "armor_type":"archer_armor",
         "desc":"Precise and deadly at range. Never miss a shot that matters.",
@@ -547,10 +595,15 @@ CLASS_TREE = {
              "active":"Aimed Shot","type":"pierce_dodge",
              "desc":"140% damage. Ignores dodge completely.",
              "passive_key":"eagle_eye","mult":1.4},
+            {"tier":1,"unlock":5,"name":"Warning Shot",
+             "passive":"First attack each fight reduces target AGI by 2 for 1 minute.",
+             "active":"Warning Shot","type":"dmg_acc_debuff",
+             "desc":"80% damage. Target has 20% increased miss chance for 2 minutes.",
+             "passive_key":"warning_shot","mult":0.8},
         ]
     },
     "scout": {
-        "name":"Scout","primary_stat":"AGI","line":"archer","path":"A",
+        "name":"Scout","primary_stat":"DEX","line":"archer","path":"A",
         "weapon_types":["bow"],
         "armor_type":"archer_armor",
         "desc":"Intelligence and disruption. Control the battlefield.",
@@ -561,10 +614,15 @@ CLASS_TREE = {
              "active":"Distract","type":"miss_debuff",
              "desc":"Target has 30% increased miss chance for 3 minutes.",
              "passive_key":"trailblazer"},
+            {"tier":2,"unlock":10,"name":"Keen Sight",
+             "passive":"DEX x0.5 bonus accuracy on all attacks.",
+             "active":"Mark Target","type":"dmg_acc_debuff",
+             "desc":"Reduce target dodge by 15% for 2 minutes.",
+             "passive_key":"keen_sight"},
         ]
     },
     "ranger": {
-        "name":"Ranger","primary_stat":"AGI","line":"archer","path":"A",
+        "name":"Ranger","primary_stat":"DEX","line":"archer","path":"A",
         "weapon_types":["bow"],
         "armor_type":"archer_armor",
         "desc":"Nature's guardian. Reduced damage, locked-down enemies.",
@@ -578,7 +636,7 @@ CLASS_TREE = {
         ]
     },
     "warden": {
-        "name":"Warden","primary_stat":"AGI","line":"archer","path":"A",
+        "name":"Warden","primary_stat":"DEX","line":"archer","path":"A",
         "weapon_types":["bow"],
         "armor_type":"archer_armor",
         "desc":"Protector of allies. Intercepts hits, rains arrows on crowds.",
@@ -592,7 +650,7 @@ CLASS_TREE = {
         ]
     },
     "strider": {
-        "name":"Strider","primary_stat":"AGI","line":"archer","path":"A",
+        "name":"Strider","primary_stat":"DEX","line":"archer","path":"A",
         "weapon_types":["bow"],
         "armor_type":"archer_armor",
         "desc":"Unstoppable pathfinder. No root can hold you. Retribution is swift.",
@@ -606,7 +664,7 @@ CLASS_TREE = {
         ]
     },
     "bounty_hunter": {
-        "name":"Bounty Hunter","primary_stat":"AGI","line":"archer","path":"B",
+        "name":"Bounty Hunter","primary_stat":"DEX","line":"archer","path":"B",
         "weapon_types":["crossbow"],
         "armor_type":"archer_armor",
         "desc":"Every target has a price. You always collect.",
@@ -617,10 +675,15 @@ CLASS_TREE = {
              "active":"Execution Order","type":"bounty",
              "desc":"Place a bounty on any player. First to defeat them gets 500 gold. You get 250 gold regardless.",
              "passive_key":"marked_for_death"},
+            {"tier":2,"unlock":10,"name":"Tracker",
+             "passive":"Can see target cooldowns via /stats mention.",
+             "active":"Cripple","type":"miss_debuff",
+             "desc":"Reduce target AGI by 5 and apply 25% miss chance for 2 minutes.",
+             "passive_key":"tracker"},
         ]
     },
     "sharpshooter": {
-        "name":"Sharpshooter","primary_stat":"AGI","line":"archer","path":"B",
+        "name":"Sharpshooter","primary_stat":"DEX","line":"archer","path":"B",
         "weapon_types":["crossbow"],
         "armor_type":"archer_armor",
         "desc":"Consistency is power. Every hit builds toward devastation.",
@@ -634,7 +697,7 @@ CLASS_TREE = {
         ]
     },
     "sniper": {
-        "name":"Sniper","primary_stat":"AGI","line":"archer","path":"B",
+        "name":"Sniper","primary_stat":"DEX","line":"archer","path":"B",
         "weapon_types":["crossbow"],
         "armor_type":"archer_armor",
         "desc":"One shot, one kill. Crits hit harder than anyone else.",
@@ -648,7 +711,7 @@ CLASS_TREE = {
         ]
     },
     "deadeye": {
-        "name":"Deadeye","primary_stat":"AGI","line":"archer","path":"B",
+        "name":"Deadeye","primary_stat":"DEX","line":"archer","path":"B",
         "weapon_types":["crossbow"],
         "armor_type":"archer_armor",
         "desc":"The final form. Every kill makes you deadlier forever.",
@@ -674,6 +737,11 @@ CLASS_TREE = {
              "active":"Holy Light","type":"revive_heal",
              "desc":"Heal target for WIS x5 HP. Works on defeated players — revives them.",
              "passive_key":"mending_aura"},
+            {"tier":1,"unlock":5,"name":"Mend",
+             "passive":"Regen 3 HP every 10 minutes passively.",
+             "active":"Mend","type":"self_heal",
+             "desc":"Restore WIS x2 HP to yourself.",
+             "passive_key":"mend"},
         ]
     },
     "cleric": {
@@ -688,6 +756,11 @@ CLASS_TREE = {
              "active":"Blessing","type":"dmg_reduction_buff",
              "desc":"Grant target 1 hour of damage reduction (15% less damage taken).",
              "passive_key":"divine_grace"},
+            {"tier":2,"unlock":10,"name":"Renew",
+             "passive":"Heals you cast leave a regen buff — 5 HP per 30s for 5 minutes.",
+             "active":"Renew","type":"regen",
+             "desc":"Apply regen to target: restore WIS HP every 30 seconds for 5 minutes.",
+             "passive_key":"renew"},
         ]
     },
     "bishop": {
@@ -744,6 +817,11 @@ CLASS_TREE = {
              "active":"Smite","type":"holy_dmg",
              "desc":"WIS x3 holy damage. Deals double against players who have recently defeated others.",
              "passive_key":"dark_sense"},
+            {"tier":2,"unlock":10,"name":"Holy Fervor",
+             "passive":"WIS x0.1 bonus damage on holy attacks.",
+             "active":"Holy Fervor","type":"self_heal_buff",
+             "desc":"Gain +5 WIS and restore 15 HP for 2 minutes.",
+             "passive_key":"holy_fervor"},
         ]
     },
     "exorcist": {
@@ -1026,6 +1104,37 @@ SHOP_POOL = [
     {"item":"Dragon Scale","price":300,"desc":"Crafting material."},
     {"item":"Enchanting Scroll","price":500,"desc":"Enchant gear. Future use."},
 ]
+ENHANCE_COSTS = {1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:18, 9:23, 10:30}
+ENHANCE_RATES = {1:1.00, 2:0.95, 3:0.90, 4:0.85, 5:0.75,
+                 6:0.65, 7:0.55, 8:0.45, 9:0.35, 10:0.25}
+
+ENCHANT_EFFECTS = {
+    "weapon": [
+        {"id":"lifesteal",    "desc":"Each hit restores 3 HP",          "type":"lifesteal_flat","val":3},
+        {"id":"flaming",      "desc":"10% chance to burn on hit (5 dmg/20s for 1min)","type":"burn_proc","val":5},
+        {"id":"keen",         "desc":"+8% crit chance",                 "type":"crit_bonus","val":0.08},
+        {"id":"heavy",        "desc":"+5 flat damage per hit",          "type":"flat_dmg","val":5},
+        {"id":"vampiric",     "desc":"Kills restore 15 HP",             "type":"kill_heal","val":15},
+        {"id":"swift",        "desc":"+5% dodge chance",                "type":"dodge_bonus","val":0.05},
+    ],
+    "armor": [
+        {"id":"reinforced",   "desc":"+8 DEF",                         "type":"armor_def","val":8},
+        {"id":"thorned",      "desc":"Reflect 5 dmg to attacker",      "type":"reflect_flat","val":5},
+        {"id":"warded",       "desc":"+10% healing received",           "type":"heal_bonus","val":0.10},
+        {"id":"resilient",    "desc":"+15 max HP",                     "type":"max_hp","val":15},
+        {"id":"hardened",     "desc":"5% chance to fully block a hit", "type":"block_chance","val":0.05},
+        {"id":"quickened",    "desc":"+4% dodge",                      "type":"dodge_bonus","val":0.04},
+    ],
+    "accessory": [
+        {"id":"amplified",    "desc":"+3 to all stats",                "type":"all_stats","val":3},
+        {"id":"golden",       "desc":"+10% gold from all sources",     "type":"gold_bonus","val":0.10},
+        {"id":"soulbound",    "desc":"+5% EXP from all sources",       "type":"exp_bonus","val":0.05},
+        {"id":"fortified",    "desc":"+20 max HP",                     "type":"max_hp","val":20},
+        {"id":"empowered",    "desc":"+5 ATK",                         "type":"atk","val":5},
+        {"id":"mystical",     "desc":"+6 to primary class stat",       "type":"primary_stat","val":6},
+    ],
+}
+
 _shop_cache = {"items":None,"date":None}
 def get_daily_shop():
     today = datetime.now().strftime("%Y-%m-%d")
@@ -1341,14 +1450,73 @@ def get_equipped_accessory(p):
     if not name: return None
     return ACCESSORIES.get(name)
 
+def get_enchant(p, item_name):
+    if not item_name: return None
+    return sjl(p.get("enchants"), {}).get(item_name)
+
+def set_enchant(p, item_name, effect):
+    enchants = sjl(p.get("enchants"), {})
+    enchants[item_name] = effect
+    p["enchants"] = json.dumps(enchants)
+
+def get_enchant_bonus(p, stat):
+    total = 0
+    for slot_key in ["equipped_weapon","equipped_armor","equipped_shield","equipped_accessory"]:
+        name = p.get(slot_key)
+        if not name: continue
+        enchant = get_enchant(p, name)
+        if not enchant: continue
+        if enchant.get("type") == stat:
+            total += enchant.get("val", 0)
+    return total
+
+def get_enhancement(p, item_name):
+    return sjl(p.get("enhancements"), {}).get(item_name, 0)
+
+def set_enhancement(p, item_name, level):
+    enh = sjl(p.get("enhancements"), {})
+    enh[item_name] = level
+    p["enhancements"] = json.dumps(enh)
+
+def get_enhance_bonus(p, item_name):
+    return get_enhancement(p, item_name) * 2
+
 def get_weapon_atk(p):
     w = get_equipped_weapon(p)
-    return w["atk"] if w else 0
+    if not w: return 0
+    name = p.get("equipped_weapon")
+    base = w["atk"] + get_enhance_bonus(p, name)
+    enchant = get_enchant(p, name)
+    if enchant and enchant.get("type") == "flat_dmg":
+        base += enchant["val"]
+    if enchant and enchant.get("type") == "atk":
+        base += enchant["val"]
+    return base
 
 def get_armor_def(p):
-    a = get_equipped_armor(p)
-    s = get_equipped_shield(p)
-    return (a["def"] if a else 0) + (s["def"] if s else 0)
+    a = get_equipped_armor(p); s = get_equipped_shield(p)
+    a_name = p.get("equipped_armor"); s_name = p.get("equipped_shield")
+    a_val = (a["def"] + get_enhance_bonus(p, a_name)) if a else 0
+    s_val = (s["def"] + get_enhance_bonus(p, s_name)) if s else 0
+    a_enc = get_enchant(p, a_name) if a_name else None
+    if a_enc and a_enc.get("type") == "armor_def": a_val += a_enc["val"]
+    s_enc = get_enchant(p, s_name) if s_name else None
+    if s_enc and s_enc.get("type") == "armor_def": s_val += s_enc["val"]
+    return a_val + s_val
+
+def gear_line(p, slot_key):
+    """Return a display string for an equipped item slot with +enh and ✨enchant tags."""
+    name = p.get(slot_key)
+    if not name:
+        return "None"
+    enh   = get_enhancement(p, name)
+    enc   = get_enchant(p, name)
+    parts = [name]
+    if enh:
+        parts.append(f"+{enh}")
+    if enc:
+        parts.append(f"✨{enc.get('id','?').capitalize()}")
+    return " ".join(parts)
 
 def get_accessory_bonus(p, stat):
     acc = get_equipped_accessory(p)
@@ -1361,16 +1529,20 @@ def get_accessory_bonus(p, stat):
 def can_equip_weapon(p, weapon_name):
     w = WEAPONS.get(weapon_name)
     if not w: return False, "Unknown weapon."
-    cls = get_player_class_id(p)
-    cls_data = CLASS_TREE.get(cls, {})
-    base_line = cls_data.get("line")
+    cls_id = p.get("class_id")
+    if not cls_id: return False, "Choose a class first."
+    cls_data = CLASS_TREE.get(cls_id, {})
+    line = cls_data.get("line")
     weapon_class = w.get("class")
-    if weapon_class != base_line:
+    if weapon_class != line:
         return False, f"Only {weapon_class.capitalize()} classes can use this."
     weapon_type = w.get("type")
     allowed = cls_data.get("weapon_types", [])
     if weapon_type not in allowed:
-        return False, f"Your current class path cannot use {weapon_type} weapons."
+        path = p.get("class_path","")
+        return False, (f"Your current class ({cls_data['name']}) cannot use "
+                       f"{weapon_type} weapons. "
+                       f"{'Path A uses one-handed weapons.' if path == 'A' else 'Path B uses two-handed weapons.'}")
     return True, ""
 
 def can_equip_armor(p, armor_name):
@@ -1536,13 +1708,19 @@ def calc_attack_damage(attacker, weather=None):
     weapon    = get_weapon_atk(attacker)
     perm      = safe_int(attacker.get("perm_dmg_bonus"))
     acc_atk   = get_accessory_bonus(attacker, "atk")
+    acc_atk  += get_enchant_bonus(attacker, "atk")
+    acc_atk  += get_enchant_bonus(attacker, "flat_dmg")
     stats     = safe_stats(attacker)
     primary   = get_primary_stat(attacker)
     stat_val  = get_stat(attacker, primary)
     stat_bonus = stat_val // 2
     level_bonus = attacker["level"] // 2
+    dex_val   = get_stat(attacker, "DEX")
+    luk_val   = get_stat(attacker, "LUK")
+    dex_bonus = dex_val // 3
+    luk_bonus = luk_val // 5
 
-    raw = base + weapon + perm + acc_atk + stat_bonus + level_bonus
+    raw = base + weapon + perm + acc_atk + stat_bonus + level_bonus + dex_bonus + luk_bonus
 
     # Weather
     if weather: raw = round(raw * weather.get("dmg_mod", 1.0))
@@ -1610,6 +1788,9 @@ def calc_defense(defender, dmg):
     if get_accessory_bonus(defender, "block_chance"):
         if random.random() < get_accessory_bonus(defender, "block_chance"):
             return 0  # blocked entirely
+    enc_block = get_enchant_bonus(defender, "block_chance")
+    if enc_block and random.random() < enc_block:
+        return 0
 
     total = min(0.80, def_reduction + armor_reduction)
     final = max(1, round(dmg * (1 - total)))
@@ -1631,12 +1812,19 @@ def check_miss(attacker, defender):
     if is_vanished(defender):    return True
     if cannot_attack(attacker):  return True
 
-    # Base dodge from AGI
-    agi = get_stat(defender, "AGI")
-    dodge = min(0.40, agi * 0.008)
+    # Base dodge — line-specific
+    cls_d_line = get_class_line(defender)
+    if cls_d_line == "archer":
+        dodge_stat = get_stat(defender, "DEX")
+    elif cls_d_line == "thief":
+        dodge_stat = get_stat(defender, "LUK")
+    else:
+        dodge_stat = get_stat(defender, "AGI")
+    dodge = min(0.40, dodge_stat * 0.008)
 
     # Accessory dodge bonus
     dodge += get_accessory_bonus(defender, "dodge_bonus")
+    dodge += get_enchant_bonus(defender, "dodge_bonus")
 
     # Class passives
     cls_d = get_player_class(defender)
@@ -1661,10 +1849,19 @@ def check_miss(attacker, defender):
     return random.random() < dodge
 
 def check_crit(attacker):
-    agi = get_stat(attacker, "AGI")
-    base_crit = min(0.45, agi * 0.008)
-    base_crit += get_accessory_bonus(attacker, "crit_bonus")
     cls = get_player_class(attacker)
+    line = cls.get("line") if cls else None
+    if line == "thief":
+        stat_val = get_stat(attacker, "LUK")
+        base_crit = min(0.50, stat_val * 0.010)
+    elif line == "archer":
+        stat_val = get_stat(attacker, "DEX")
+        base_crit = min(0.45, stat_val * 0.009)
+    else:
+        stat_val = get_stat(attacker, "AGI")
+        base_crit = min(0.40, stat_val * 0.008)
+    base_crit += get_accessory_bonus(attacker, "crit_bonus")
+    base_crit += get_enchant_bonus(attacker, "crit_bonus")
     if cls and cls.get("passive_key") == "quick_hands":
         base_crit += 0.15
     return random.random() < base_crit
@@ -1678,8 +1875,7 @@ def apply_crit(attacker, dmg):
 
 def apply_lifesteal(attacker, dmg):
     cls = get_player_class(attacker)
-    if not cls: return 0
-    pk = cls.get("passive_key","")
+    pk = cls.get("passive_key","") if cls else ""
     healed = 0
     if pk == "soul_pact":
         healed = round(dmg * 0.20)
@@ -1687,6 +1883,9 @@ def apply_lifesteal(attacker, dmg):
         healed = 5
     if get_accessory_bonus(attacker, "lifesteal_flat"):
         healed += get_accessory_bonus(attacker, "lifesteal_flat")
+    enc_heal = get_enchant_bonus(attacker, "lifesteal_flat")
+    if enc_heal:
+        healed += enc_heal
     if healed:
         attacker["hp"] = min(calc_max_hp(attacker), attacker["hp"] + healed)
     return healed
@@ -1845,6 +2044,19 @@ def init_db():
         except sqlite3.OperationalError:
             pass  # column already exists
 
+    migrations_v14 = [
+        ("players", "DEX",          "INTEGER DEFAULT 5"),
+        ("players", "LUK",          "INTEGER DEFAULT 5"),
+        ("players", "enhancements", "TEXT DEFAULT '{}'"),
+        ("players", "enchants",     "TEXT DEFAULT '{}'"),
+    ]
+    for table, col, definition in migrations_v14:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
     conn.close()
 
 # ── DB HELPERS ────────────────────────────────────────────────────────────────
@@ -1896,7 +2108,8 @@ def save_player(p):
         "holy_field_until","devotion_charge",
         "last_daily","last_quest","last_train","last_explore",
         "explore_count_today","explore_date","shop_discount_until",
-        "guild_id","prestige_count","shadow_level_at_ascension","created_at"
+        "guild_id","prestige_count","shadow_level_at_ascension","created_at",
+        "DEX","LUK","enhancements","enchants"
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -2152,58 +2365,7 @@ def get_recent_attackers(p):
             if (now - datetime.fromisoformat(r["ts"])).total_seconds() < 1800]
 
 # ── COMBAT CARD ───────────────────────────────────────────────────────────────
-def build_combat_card(target, attackers_info, finished=False):
-    hp_bar_len = 10
-    hp_pct = target["hp"] / max(1, target["max_hp"])
-    filled  = round(hp_pct * hp_bar_len)
-    bar     = "█" * filled + "░" * (hp_bar_len - filled)
-    status  = "💀 DEFEATED" if target["hp"] <= 0 else f"❤️ {target['hp']}/{target['max_hp']}"
-    header  = "⚔️ *OPEN PVP — FINISHED*" if finished else "⚔️ *OPEN PVP*"
-    lines   = [
-        header,
-        "━━━━━━━━━━━━━━━━",
-        f"🎯 Target: *{target['username']}*",
-        f"{status}  [{bar}]",
-    ]
-    statuses = get_active_statuses(target)
-    if statuses:
-        lines.append("  " + " | ".join(statuses))
-    lines.append("━━━━━━━━━━━━━━━━")
-    if attackers_info:
-        lines.append("⚔️ Attackers:")
-        for info in attackers_info[-5:]:  # show last 5 actions
-            lines.append(f"  {info}")
-    return "\n".join(lines)
-
-async def update_combat_card(bot, chat_id, target, action_line, finished=False):
-    card = combat_cards.get(chat_id, {})
-    if card.get("target_id") != target["user_id"]:
-        # New fight — reset card
-        combat_cards[chat_id] = {
-            "target_id": target["user_id"],
-            "msg_id": None,
-            "actions": [],
-        }
-        card = combat_cards[chat_id]
-
-    card["actions"].append(action_line)
-    text = build_combat_card(target, card["actions"], finished)
-
-    if card["msg_id"]:
-        try:
-            await bot.edit_message_text(
-                chat_id=chat_id, message_id=card["msg_id"],
-                text=text[:4096], parse_mode="Markdown")
-            return
-        except Exception:
-            pass  # fall through to send new
-
-    try:
-        msg = await bot.send_message(
-            chat_id=chat_id, text=text[:4096], parse_mode="Markdown")
-        card["msg_id"] = msg.message_id
-    except Exception:
-        pass
+# combat_cards removed in v14 — using inline send+auto-delete instead
 
 # ── IDLE REWARDS ──────────────────────────────────────────────────────────────
 async def check_idle_reward(user, s, p, bot, chat_id):
@@ -2446,7 +2608,21 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", permanent=True))
         check_titles(a); check_titles(d)
         save_player(a); save_player(d)
-        await update_combat_card(update.get_bot(), chat, d, action, finished=(d["hp"] <= 0))
+        if d["hp"] > 0:
+            hp_pct = d["hp"] / max(1, d["max_hp"])
+            filled = round(hp_pct * 10)
+            bar = "█" * filled + "░" * (10 - filled)
+            action += f"\n❤️ {d['username']}: *{d['hp']}/{d['max_hp']}* [{bar}]"
+        if lvl_msgs:
+            action += "\n\n" + "\n".join(lvl_msgs)
+        try:
+            await update.message.delete()
+        except Exception: pass
+        try:
+            msg = await update.get_bot().send_message(
+                chat_id=chat, text=action[:4096], parse_mode="Markdown")
+            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 30))
+        except Exception: pass
         return
 
     # ── Miss check ────────────────────────────────────────────────────────────
@@ -2463,8 +2639,15 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if pk_d_miss == "deaths_shadow":
                 d["hp"] = min(d["max_hp"], d["hp"] + 10)
         save_player(d); save_player(a)
-        await update_combat_card(update.get_bot(), chat, d,
-            f"🌀 *{a['username']}* missed *{d['username']}*!")
+        miss_text = f"🌀 *{a['username']}* swings at *{d['username']}* — *MISS!*"
+        try:
+            await update.message.delete()
+        except Exception: pass
+        try:
+            msg = await update.get_bot().send_message(
+                chat_id=chat, text=miss_text, parse_mode="Markdown")
+            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 15))
+        except Exception: pass
         return
 
     # ── Damage ────────────────────────────────────────────────────────────────
@@ -2550,8 +2733,15 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if random.random() < 0.30:
             extra_notes.append("😵 Distracted — shot went wide!")
             save_player(a); save_player(d)
-            await update_combat_card(update.get_bot(), chat, d,
-                f"😵 *{a['username']}* was *Distracted* and missed *{d['username']}*!")
+            dist_text = f"😵 *{a['username']}* was *Distracted* and missed *{d['username']}*!"
+            try:
+                await update.message.delete()
+            except Exception: pass
+            try:
+                msg = await update.get_bot().send_message(
+                    chat_id=chat, text=dist_text, parse_mode="Markdown")
+                asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 15))
+            except Exception: pass
             return
 
     # Defender class passives (pre-defense)
@@ -2679,8 +2869,29 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     check_titles(a); check_titles(d)
     save_player(a); save_player(d)
-    await update_combat_card(update.get_bot(), chat, d, action,
-                             finished=(d["hp"] <= 0))
+
+    if d["hp"] > 0:
+        hp_pct = d["hp"] / max(1, d["max_hp"])
+        filled = round(hp_pct * 10)
+        bar = "█" * filled + "░" * (10 - filled)
+        action += f"\n❤️ {d['username']}: *{d['hp']}/{d['max_hp']}* [{bar}]"
+
+    statuses = get_active_statuses(d)
+    if statuses:
+        action += "\n" + " | ".join(statuses)
+
+    if lvl_msgs:
+        action += "\n\n" + "\n".join(lvl_msgs)
+
+    try:
+        await update.message.delete()
+    except Exception: pass
+    try:
+        msg = await update.get_bot().send_message(
+            chat_id=chat, text=action[:4096], parse_mode="Markdown")
+        asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 30))
+    except Exception: pass
+
 # ── HEAL ──────────────────────────────────────────────────────────────────────
 async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hu = update.effective_user
@@ -2823,15 +3034,17 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     defeated_str = " *(Defeated — 0 HP)*" if is_defeated(p) else ""
     recovering   = " *(Still Recovering)*" if is_invincible(p) else ""
 
-    # Gear display
-    weap = p.get("equipped_weapon") or "None"
-    armo = p.get("equipped_armor")  or "None"
-    shld = p.get("equipped_shield") or "None"
-    acc  = p.get("equipped_accessory") or "None"
+    # Gear display with enhancement and enchant tags
+    weap = gear_line(p, "equipped_weapon")
+    armo = gear_line(p, "equipped_armor")
+    shld = gear_line(p, "equipped_shield")
+    acc  = gear_line(p, "equipped_accessory")
+
+    cp = calc_combat_power(p)
 
     # Skills
     all_skills = sjl(p.get("all_skills"), [])
-    skill_names = [s["name"] for s in all_skills] if all_skills else ["None yet"]
+    skill_names = [sk["name"] for sk in all_skills] if all_skills else ["None yet"]
 
     await send_group(update,
         f"⚔️ *{p['username']}*{defeated_str}{recovering}\n"
@@ -2841,14 +3054,17 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{_exp_bar(p['exp'], exp_for_level(p['level']))}\n"
         f"🏆 Lifetime: *{safe_int(p.get('total_exp')):,}* EXP\n"
         f"💰 Gold: {p['gold']} | ⚔️ W/L: {p['wins']}/{p.get('losses',0)}\n"
-        f"🗺️ Quests: {p['quests_done']} | 🔨 Crafts: {safe_int(p.get('crafts_done'))}\n\n"
+        f"🗺️ Quests: {p['quests_done']} | 🔨 Crafts: {safe_int(p.get('crafts_done'))}\n"
+        f"⚡ Combat Power: *{cp}*\n\n"
         f"🧙 Class: {cls_name}{path_str}\n"
-        f"📊 STR:{stats_d.get('STR',5)} DEF:{stats_d.get('DEF',5)} "
-        f"AGI:{stats_d.get('AGI',5)} INT:{stats_d.get('INT',5)} WIS:{stats_d.get('WIS',5)}"
+        f"📊 STR:{stats_d.get('STR',5)} AGI:{stats_d.get('AGI',5)} INT:{stats_d.get('INT',5)} "
+        f"WIS:{stats_d.get('WIS',5)} DEX:{stats_d.get('DEX',5)} LUK:{stats_d.get('LUK',5)}\n"
+        f"🛡️ Armor DEF: {get_armor_def(p)} (from gear)"
         + (f" | 💡 {sp} pts (/allocate)" if sp > 0 else "") + "\n"
         f"🔮 Skills: {', '.join(skill_names)}\n\n"
-        f"⚔️ Weapon: {weap} | 🛡️ Armor: {armo}\n"
-        f"🔰 Shield: {shld} | 💍 Accessory: {acc}\n"
+        f"⚔️ Weapon: {weap}\n"
+        f"🛡️ Armor: {armo} | 🔰 Shield: {shld}\n"
+        f"💍 Accessory: {acc}\n"
         f"🎒 Inventory: {inv_text}\n"
         f"🏅 Titles: {', '.join(safe_titles(p))}",
         permanent=True)
@@ -3056,17 +3272,21 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for stat, bonus in cls.get("stat_bonus",{}).items():
         sd[stat] = sd.get(stat,5) + bonus
     p["stats"] = json.dumps(sd)
-    # Unlock tier 1 skill
-    sk = cls["skills"][0]
-    p["all_skills"] = json.dumps([sk])
+    # Unlock ALL tier-1 skills
+    all_tier1 = [sk for sk in cls.get("skills",[]) if sk.get("tier",1) == 1]
+    if not all_tier1:
+        all_tier1 = cls["skills"][:1]
+    p["all_skills"] = json.dumps(all_tier1)
     save_player(p)
+    sk = all_tier1[0]
+    skill_lines = "\n".join(f"🔸 *{s['name']}* — {s['desc']}" for s in all_tier1)
     asyncio.create_task(announce(context.bot, update.effective_chat.id,
         f"⚔️ *{p['username']}* has chosen *{cls['name']}*!"))
     await send_group(update,
         f"⚔️ *{user.first_name}* is now a *{cls['name']}*!\n\n"
         f"_{cls['desc']}_\n\n"
         f"🔹 Passive: {sk['passive']}\n"
-        f"🔸 Active: *{sk['name']}* — {sk['desc']}\n\n"
+        f"{skill_lines}\n\n"
         f"At *Level 10*, use /prestige to choose your path (A or B).",
         delay=30)
 
@@ -3191,18 +3411,21 @@ async def allocate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     sp = safe_int(p.get("stat_points")); sd = safe_stats(p)
-    STAT_NAMES = ["STR","DEF","AGI","INT","WIS"]
+    STAT_NAMES = ["STR","AGI","INT","WIS","DEX","LUK"]
     cls = get_player_class(p)
     rec = cls["primary_stat"] + " recommended" if cls else "Free to allocate"
     if not context.args or len(context.args) < 2:
         await send_group(update,
             f"📊 *Stat Allocation* — *{sp}* points available\n\n"
-            f"STR:{sd['STR']} DEF:{sd['DEF']} AGI:{sd['AGI']} INT:{sd['INT']} WIS:{sd['WIS']}\n\n"
+            f"STR:{sd.get('STR',5)} AGI:{sd.get('AGI',5)} INT:{sd.get('INT',5)} "
+            f"WIS:{sd.get('WIS',5)} DEX:{sd.get('DEX',5)} LUK:{sd.get('LUK',5)}\n\n"
             f"📌 STR — Attack damage (Warrior)\n"
-            f"📌 DEF — Damage reduction\n"
-            f"📌 AGI — Dodge & crit (Thief/Archer)\n"
+            f"📌 AGI — Dodge & crit\n"
             f"📌 INT — Spell damage (Mage)\n"
-            f"📌 WIS — Heal power (Priest)\n\n"
+            f"📌 WIS — Heal power (Priest)\n"
+            f"📌 DEX — Accuracy & crit (Archer)\n"
+            f"📌 LUK — Crit & gold bonus (Thief)\n"
+            f"📌 DEF — From gear only (cannot allocate)\n\n"
             f"🧭 {rec}\n\nUsage: `/allocate STR 5`", delay=30); return
     stat = context.args[0].upper()
     if stat not in STAT_NAMES:
@@ -3315,7 +3538,10 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = random.choice(pool)
     item_found = roll_loot_table(q.get("loot_table",[]))
     if item_found: add_item(p, item_found)
-    p["gold"] = p.get("gold",0) + q["gold"]
+    luk_val = get_stat(p, "LUK")
+    gold_bonus_pct = luk_val * 0.002
+    gold = round(q["gold"] * (1 + gold_bonus_pct))
+    p["gold"] = p.get("gold",0) + gold
     p["quests_done"] = p.get("quests_done",0) + 1
     gid = p.get("guild_id")
     if gid and str(gid) != "None":
@@ -3323,7 +3549,7 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if g: add_guild_exp(g, 20); save_guild(g)
     lmsgs, leveled = add_exp(p, q["exp"], w)
     new_t = check_titles(p); save_player(p)
-    msg = f"🗺️ *Quest — {q['tier']}*\n\n{q['text']}\n\n✨ +{q['exp']} EXP | 💰 +{q['gold']} Gold"
+    msg = f"🗺️ *Quest — {q['tier']}*\n\n{q['text']}\n\n✨ +{q['exp']} EXP | 💰 +{gold} Gold"
     if item_found:
         rarity = ""
         for pool2 in [WEAPONS,ARMORS,ACCESSORIES,CONSUMABLES]:
@@ -3528,21 +3754,48 @@ async def inventory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     inv = Counter(sjl(p.get("inventory"), []))
-    if not inv:
-        await send_group(update, "🎒 Your inventory is empty!", delay=9); return
+    equipped = {
+        p.get("equipped_weapon"), p.get("equipped_armor"),
+        p.get("equipped_shield"), p.get("equipped_accessory"),
+    }
     lines = [f"🎒 *{p['username']}'s Inventory:*\n"]
-    for item, count in inv.items():
-        desc = ""
-        for pool in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS, CONSUMABLES]:
-            if item in pool:
-                d = pool[item]
-                if "atk" in d:   desc = f"+{d['atk']} ATK"
-                elif "def" in d: desc = f"+{d['def']} DEF"
-                elif "desc" in d: desc = d["desc"]
-                rarity = RARITY_EMOJI.get(d.get("rarity",""),"")
-                break
-        lines.append(f"{rarity} *{item}* x{count} — _{desc}_")
-    lines.append("\n_/equip [item] to equip | /sell [item] to sell | /use [item] to use_")
+    # Show equipped gear first
+    eq_header = False
+    for slot_key, emoji in [
+        ("equipped_weapon","⚔️"), ("equipped_armor","🛡️"),
+        ("equipped_shield","🔰"), ("equipped_accessory","💍"),
+    ]:
+        name = p.get(slot_key)
+        if not name: continue
+        if not eq_header:
+            lines.append("*— Equipped —*")
+            eq_header = True
+        enh = get_enhancement(p, name)
+        enc = get_enchant(p, name)
+        tags = []
+        if enh: tags.append(f"+{enh}")
+        if enc: tags.append(f"✨{enc.get('id','?').capitalize()}")
+        tag_str = " " + " ".join(tags) if tags else ""
+        lines.append(f"{emoji} {name}{tag_str} _(equipped)_")
+    if eq_header:
+        lines.append("")
+    if inv:
+        lines.append("*— Bag —*")
+        for item, count in inv.items():
+            desc = ""; rarity = ""
+            for pool in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS, CONSUMABLES]:
+                if item in pool:
+                    d = pool[item]
+                    if "atk" in d:   desc = f"+{d['atk']} ATK"
+                    elif "def" in d: desc = f"+{d['def']} DEF"
+                    elif "desc" in d: desc = d["desc"]
+                    rarity = RARITY_EMOJI.get(d.get("rarity",""),"")
+                    break
+            lines.append(f"{rarity} *{item}* x{count} — _{desc}_")
+    else:
+        if not eq_header:
+            await send_group(update, "🎒 Your inventory is empty!", delay=9); return
+    lines.append("\n_/equip [item] | /enhance [item] | /enchant [item] | /sell [item] | /use [item]_")
     await send_group(update, "\n".join(lines), delay=30)
 
 async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3945,6 +4198,11 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not all_skills:
         await send_group(update, "No skills unlocked yet.", delay=9); return
 
+    OPEN_WORLD_ALLOWED_SKILL_TYPES = {
+        "self_heal", "group_heal", "mass_cleanse", "dmg_reduction_buff",
+        "revive_heal", "self_heal_buff", "regen", "heal_shield",
+    }
+
     replying = update.message.reply_to_message is not None
 
     # Resolve which skill to use from args (name or number)
@@ -3960,17 +4218,43 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not sk:
             await send_group(update, f"No skill matching *{arg}*. Use /skill to see your skills.", delay=9); return
 
+    # Open-world PVP check — offensive skills are arena-only
+    if replying and update.message.reply_to_message:
+        du = update.message.reply_to_message.from_user
+        if du.id != user.id:
+            sk_check = sk
+            if sk_check is None:
+                if context.args:
+                    arg = " ".join(context.args)
+                    if arg.isdigit():
+                        idx = int(arg) - 1
+                        if 0 <= idx < len(all_skills): sk_check = all_skills[idx]
+                    if not sk_check:
+                        sk_check = next((s for s in all_skills if s["name"].lower() == arg.lower()), None)
+                else:
+                    sk_check = all_skills[0] if len(all_skills) == 1 else None
+            if sk_check and sk_check.get("type") not in OPEN_WORLD_ALLOWED_SKILL_TYPES:
+                await send_group(update,
+                    "⚔️ Offensive skills are *arena-only*.\n"
+                    "In open PVP, just use /attack — your class procs fire automatically!\n"
+                    "Challenge someone to `/arena` for turn-based combat.",
+                    delay=15)
+                return
+
     if not replying:
         # Just show the skill list
         base_est = 5 + get_weapon_atk(p) + get_stat(p, get_primary_stat(p))//2 + p["level"]//2
-        lines = [f"🔮 *{p['username']}'s Skills*\n"]
+        lines = [f"🔮 *{p['username']}'s Skills*\n",
+                 f"_Skills are used in /arena turn-based combat._\n",
+                 f"_In open PVP, your class procs fire automatically on /attack._\n"]
         if cls:
             lines.append(f"🔹 *Passive — {cls['name']}:* {cls['skills'][0]['passive']}\n")
         for i, s in enumerate(all_skills, 1):
             mult = s.get("mult", 1.0)
             dmg_est = round(base_est * mult) if mult else "varies"
             lines.append(f"*{i}.* *{s['name']}* — {s['desc']}\n   Est. damage: ~{dmg_est}")
-        lines.append("\n_Reply to a target's message with /skill to use your skill, or /skill [name/number] to pick one._")
+        lines.append("\n_To use offensive skills, challenge someone to `/arena`._\n"
+                     "_Support skills (heals, buffs) work anywhere._")
         await send_group(update, "\n".join(lines), delay=30); return
 
     # Replying to a target — pick skill
@@ -4215,12 +4499,23 @@ async def _execute_skill(update, context, p, sk):
 
     check_titles(p); check_titles(d)
     save_player(p); save_player(d)
-    if lvl_msgs: lines.extend(lvl_msgs)
-    await update_combat_card(context.bot, chat_id, d,
-        f"⚡ *{p['username']}* used *{sk['name']}* for {dmg} dmg",
-        finished=(d["hp"]<=0))
+    full = "\n".join(lines)
+    if lvl_msgs: full += "\n\n" + "\n".join(lvl_msgs)
+    if d["hp"] > 0:
+        hp_pct = d["hp"] / max(1, d["max_hp"])
+        filled = round(hp_pct * 10)
+        bar = "█" * filled + "░" * (10 - filled)
+        full += f"\n❤️ {d['username']}: *{d['hp']}/{d['max_hp']}* [{bar}]"
+    statuses = get_active_statuses(d)
+    if statuses:
+        full += "\n" + " | ".join(statuses)
     try: await update.message.delete()
     except: pass
+    try:
+        msg = await context.bot.send_message(
+            chat_id=chat_id, text=full[:4096], parse_mode="Markdown")
+        asyncio.create_task(_auto_delete(context.bot, chat_id, msg.message_id, 30))
+    except Exception: pass
 
 # ── MISC COMMANDS ─────────────────────────────────────────────────────────────
 async def weather_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4331,9 +4626,962 @@ async def accept_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"*{user.first_name}* bought *{trade['item']}* from *{trade['seller_name']}* "
         f"for *{trade['price']}g*!", delay=15)
 
+async def decline_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    trade = pending_trades.pop(user.id, None)
+    if not trade:
+        await send_group(update, "No pending trade to decline.", delay=9); return
+    await send_group(update, f"❌ Trade declined.", delay=9)
+
+# ── ENHANCE ───────────────────────────────────────────────────────────────────
+async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    if not context.args:
+        lines = ["⚒️ *Enhancement Status:*\n"]
+        for slot_label, slot_key in [
+                ("Weapon", "equipped_weapon"),
+                ("Armor",  "equipped_armor"),
+                ("Shield", "equipped_shield")]:
+            name = p.get(slot_key)
+            if not name: continue
+            lv   = get_enhancement(p, name)
+            stars = "⭐" * lv if lv else "none"
+            if lv < 10:
+                cost = ENHANCE_COSTS[lv + 1]
+                rate = int(ENHANCE_RATES[lv + 1] * 100)
+                nxt  = f"+{lv+1} | Cost: {cost} Dragon Scale(s) | {rate}% success"
+            else:
+                nxt = "MAX"
+            lines.append(f"*{slot_label}:* {name} +{lv} {stars}\n  Next: {nxt}")
+        inv = sjl(p.get("inventory"), [])
+        lines.append(f"\n🐉 Dragon Scales: {inv.count('Dragon Scale')}")
+        lines.append("`/enhance weapon` | `/enhance armor` | `/enhance shield`")
+        await send_group(update, "\n".join(lines), delay=30); return
+
+    slot = context.args[0].lower()
+    slot_map = {
+        "weapon": ("equipped_weapon", "ATK"),
+        "armor":  ("equipped_armor",  "DEF"),
+        "shield": ("equipped_shield", "DEF"),
+    }
+    if slot not in slot_map:
+        await send_group(update, "Usage: /enhance weapon | armor | shield", delay=9); return
+
+    slot_key, stat_label = slot_map[slot]
+    item_name = p.get(slot_key)
+    if not item_name:
+        await send_group(update, f"No {slot} equipped!", delay=9); return
+
+    current = get_enhancement(p, item_name)
+    if current >= 10:
+        await send_group(update, f"*{item_name}* is already at +10 MAX!", delay=9); return
+
+    next_lv = current + 1
+    cost    = ENHANCE_COSTS[next_lv]
+    rate    = ENHANCE_RATES[next_lv]
+
+    inv = sjl(p.get("inventory"), [])
+    if inv.count("Dragon Scale") < cost:
+        await send_group(update,
+            f"❌ Need {cost} Dragon Scale(s), have {inv.count('Dragon Scale')}.\n"
+            f"Dragon Scales drop from bosses, explores, and quests.", delay=9); return
+
+    for _ in range(cost):
+        inv.remove("Dragon Scale")
+    p["inventory"] = json.dumps(inv)
+
+    if random.random() < rate:
+        set_enhancement(p, item_name, next_lv)
+        bonus = get_enhance_bonus(p, item_name)
+        save_player(p)
+        await send_group(update,
+            f"⚒️ *Enhancement Success!*\n\n"
+            f"*{item_name}* → *+{next_lv}* {'⭐' * next_lv}\n"
+            f"+{bonus} {stat_label} total from enhancement\n"
+            f"Used {cost} Dragon Scale(s).", delay=20)
+    else:
+        if current >= 6:
+            set_enhancement(p, item_name, current - 1)
+            save_player(p)
+            await send_group(update,
+                f"💔 *Enhancement Failed!*\n\n"
+                f"*{item_name}* dropped from +{current} to +{current - 1}!\n"
+                f"Used {cost} Dragon Scale(s). Try again.", delay=20)
+        else:
+            save_player(p)
+            await send_group(update,
+                f"💔 *Enhancement Failed!*\n\n"
+                f"*{item_name}* stays at +{current}.\n"
+                f"Used {cost} Dragon Scale(s). Try again.", delay=20)
+
+# ── ENCHANT ───────────────────────────────────────────────────────────────────
+async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    if not context.args:
+        lines = ["✨ *Enchanting Status:*\n"]
+        for slot_label, slot_key in [
+                ("Weapon",    "equipped_weapon"),
+                ("Armor",     "equipped_armor"),
+                ("Shield",    "equipped_shield"),
+                ("Accessory", "equipped_accessory")]:
+            name = p.get(slot_key)
+            if not name: continue
+            enc = get_enchant(p, name)
+            enc_str = f"*{enc['id'].capitalize()}* — {enc['desc']}" if enc else "None"
+            lines.append(f"*{slot_label}:* {name}\n  Enchant: {enc_str}")
+        inv = sjl(p.get("inventory"), [])
+        lines.append(f"\n📜 Enchanting Scrolls: {inv.count('Enchanting Scroll')}")
+        lines.append("`/enchant weapon` | `/enchant armor` | "
+                     "`/enchant shield` | `/enchant accessory`")
+        await send_group(update, "\n".join(lines), delay=30); return
+
+    slot = context.args[0].lower()
+    slot_map = {
+        "weapon":    ("equipped_weapon",    "weapon"),
+        "armor":     ("equipped_armor",     "armor"),
+        "shield":    ("equipped_shield",    "armor"),
+        "accessory": ("equipped_accessory", "accessory"),
+    }
+    if slot not in slot_map:
+        await send_group(update,
+            "Usage: /enchant weapon | armor | shield | accessory", delay=9); return
+
+    slot_key, effect_pool_key = slot_map[slot]
+    item_name = p.get(slot_key)
+    if not item_name:
+        await send_group(update, f"No {slot} equipped!", delay=9); return
+
+    inv = sjl(p.get("inventory"), [])
+    if "Enchanting Scroll" not in inv:
+        await send_group(update,
+            "❌ You need an *Enchanting Scroll*.\n"
+            "They drop from explores, quests, and the shop.", delay=9); return
+
+    inv.remove("Enchanting Scroll")
+    p["inventory"] = json.dumps(inv)
+
+    pool = ENCHANT_EFFECTS.get(effect_pool_key, [])
+    effect = random.choice(pool)
+    old_enc = get_enchant(p, item_name)
+    set_enchant(p, item_name, effect)
+    save_player(p)
+
+    old_str = f"\n_Replaced: {old_enc['id'].capitalize()}_" if old_enc else ""
+    await send_group(update,
+        f"✨ *Enchanted!*\n\n"
+        f"*{item_name}* gained: *{effect['id'].capitalize()}*\n"
+        f"_{effect['desc']}_"
+        f"{old_str}", delay=20)
+
+# ── DUEL ──────────────────────────────────────────────────────────────────────
+def calc_combat_power(p):
+    sd = safe_stats(p)
+    stat_total = sum(sd.values())
+    weapon_val = get_weapon_atk(p) * 3
+    armor_val  = get_armor_def(p) * 2
+    level_val  = p["level"] * 10
+    skill_count = len(sjl(p.get("all_skills"), []))
+    skill_val   = skill_count * 50
+    enchant_count = len([1 for sk in ["equipped_weapon","equipped_armor",
+                                      "equipped_shield","equipped_accessory"]
+                         if get_enchant(p, p.get(sk) or "")])
+    enchant_val = enchant_count * 30
+    return level_val + stat_total + weapon_val + armor_val + skill_val + enchant_val
+
+async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    chat_id = update.effective_chat.id
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if is_defeated(p):
+        await send_group(update, "💀 You're defeated — can't duel!", delay=9); return
+
+    if context.args and context.args[0].lower() == "accept":
+        duel = None; challenger_id = None
+        for cid, d in list(pending_duels.items()):
+            if d["target_id"] == user.id and d["chat_id"] == chat_id:
+                if datetime.now() < datetime.fromisoformat(d["expires"]):
+                    duel = d; challenger_id = cid; break
+                else:
+                    pending_duels.pop(cid, None)
+        if not duel:
+            await send_group(update, "No pending duel challenge for you!", delay=9); return
+        challenger = get_player(challenger_id)
+        if not challenger:
+            pending_duels.pop(challenger_id, None)
+            await send_group(update, "Challenger not found.", delay=9); return
+        wager = duel["wager"]
+        if wager > 0 and p["gold"] < wager:
+            await send_group(update,
+                f"❌ You need {wager}g for the wager. Have {p['gold']}g.", delay=9); return
+        if wager > 0 and challenger["gold"] < wager:
+            pending_duels.pop(challenger_id, None)
+            await send_group(update, "Challenger can no longer afford the wager.", delay=9); return
+        pending_duels.pop(challenger_id, None)
+        cp_a = calc_combat_power(challenger)
+        cp_b = calc_combat_power(p)
+        total = cp_a + cp_b
+        winner = challenger if random.random() < (cp_a / total) else p
+        loser  = p if winner["user_id"] == challenger["user_id"] else challenger
+        if wager > 0:
+            winner["gold"] = winner.get("gold",0) + wager
+            loser["gold"]  = max(0, loser.get("gold",0) - wager)
+        winner["wins"] = winner.get("wins",0) + 1
+        save_player(winner); save_player(loser)
+        lines = [
+            f"⚔️ *DUEL — {challenger['username']} vs {p['username']}*",
+            f"━━━━━━━━━━━━━━━━",
+            f"🔢 {challenger['username']} CP: *{cp_a:,}*",
+            f"🔢 {p['username']} CP: *{cp_b:,}*",
+            f"━━━━━━━━━━━━━━━━",
+        ]
+        advantage = abs(cp_a - cp_b)
+        if advantage < total * 0.05:
+            lines.append("⚡ *Perfectly matched!* It could have gone either way...")
+        elif winner["user_id"] == challenger["user_id"]:
+            lines.append(f"📈 {challenger['username']} had the edge — *{cp_a - cp_b:,} CP advantage!*")
+        else:
+            lines.append(f"📈 {p['username']} had the edge — *{cp_b - cp_a:,} CP advantage!*")
+        lines.append(f"\n🏆 *{winner['username']}* wins the duel!")
+        if wager > 0:
+            lines.append(f"💰 +{wager}g collected from {loser['username']}.")
+        await send_group(update, "\n".join(lines), permanent=True, delay=60)
+        return
+
+    if not update.message.reply_to_message:
+        await send_group(update,
+            "Reply to a player's message to challenge them!\n"
+            "`/duel` — free duel\n"
+            "`/duel 100` — duel with 100g wager", delay=9); return
+    du = update.message.reply_to_message.from_user
+    if du.id == user.id:
+        await send_group(update, "Can't duel yourself!", delay=9); return
+    tp = get_player(du.id)
+    if not tp:
+        await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+    wager = 0
+    if context.args:
+        try: wager = max(0, int(context.args[0]))
+        except: pass
+    if wager > 0 and p["gold"] < wager:
+        await send_group(update,
+            f"❌ Need {wager}g for this wager. Have {p['gold']}g.", delay=9); return
+    pending_duels[user.id] = {
+        "target_id": du.id, "wager": wager,
+        "chat_id": chat_id,
+        "expires": (datetime.now() + timedelta(minutes=5)).isoformat()
+    }
+    cp_self = calc_combat_power(p)
+    wager_str = f" for *{wager}g*" if wager > 0 else " (no wager)"
+    await send_group(update,
+        f"⚔️ *{user.first_name}* challenges *{du.first_name}* to a duel{wager_str}!\n\n"
+        f"🔢 {user.first_name}'s CP: *{cp_self:,}*\n\n"
+        f"_{du.first_name}: type `/duel accept` to accept. Expires in 5 minutes._",
+        permanent=False, delay=60)
+
+# ── ARENA ─────────────────────────────────────────────────────────────────────
+def _arena_state():
+    return {
+        "atk_mod": 1.0, "def_mod": 1.0,
+        "dot_type": None, "dot_dmg": 0, "dot_turns": 0,
+        "acc_debuff": False, "acc_debuff_pct": 0.0,
+        "charge_ready": False, "charge_mult": 1.0,
+        "shield_turns": 0, "shield_pct": 0.0,
+        "buff_turns": 0, "debuff_turns": 0,
+        "taunt": False, "skip_turns": 0,
+        "heal_block_turns": 0, "bind_turns": 0,
+        "skill_block_turns": 0,
+        "regen_hp": 0, "regen_turns": 0,
+        "reflect_on_hit": 0, "reflect_turns": 0,
+        "reflect_dot": 0, "reflect_dot_turns": 0,
+        "next_atk_bonus": 1.0,
+        "amplify_pct": 1.0,
+        "miss_next_enemy": False,
+        "ambush_bonus": 1.0,
+        "mark_bonus": 1.0, "mark_attacks": 0,
+        "extra_dmg_per_hit": 0, "extra_dmg_turns": 0,
+    }
+
+def build_arena_card(arena):
+    p1 = arena["p1"]; p2 = arena["p2"]
+    hp1 = arena["p1_hp"]; hp2 = arena["p2_hp"]
+    max1 = arena["p1_max"]; max2 = arena["p2_max"]
+    def bar(hp, mx, length=8):
+        pct = hp / max(1, mx)
+        filled = round(pct * length)
+        return "█" * filled + "░" * (length - filled)
+    turn_name = p1["username"] if arena["turn"] == arena["p1_id"] else p2["username"]
+    lines = [
+        f"🎪 *ARENA — Round {arena['round']}*",
+        f"━━━━━━━━━━━━━━━━",
+        f"⚔️ {p1['username']} [{bar(hp1,max1)}] {hp1}/{max1} HP",
+        f"⚔️ {p2['username']} [{bar(hp2,max2)}] {hp2}/{max2} HP",
+        f"━━━━━━━━━━━━━━━━",
+    ]
+    if arena["status"] == "done":
+        winner = p1["username"] if hp1 > 0 else p2["username"]
+        lines.append(f"🏆 *{winner} WINS!*")
+    else:
+        lines.append(f"⏳ *{turn_name}'s turn*")
+        lines.append("Use `/arena attack`, `/arena skill [1/name]`, or `/arena item [name]`")
+    for entry in arena["log"][-5:]:
+        lines.append(f"  {entry}")
+    return "\n".join(lines)
+
+async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    chat_id = update.effective_chat.id
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    # /arena accept
+    if context.args and context.args[0].lower() == "accept":
+        arena = active_arenas.get(chat_id)
+        if not arena or arena["status"] != "waiting":
+            await send_group(update, "No pending arena challenge here!", delay=9); return
+        if arena["p2_id"] != user.id:
+            await send_group(update, "This challenge isn't for you!", delay=9); return
+        if datetime.now() > datetime.fromisoformat(arena["expires"]):
+            active_arenas.pop(chat_id, None)
+            await send_group(update, "Challenge expired.", delay=9); return
+        wager = arena["wager"]
+        if wager > 0 and p["gold"] < wager:
+            await send_group(update, f"❌ Need {wager}g. Have {p['gold']}g.", delay=9); return
+        p1 = get_player(arena["p1_id"])
+        if not p1:
+            active_arenas.pop(chat_id, None); return
+        arena["p1"] = p1; arena["p2"] = p
+        arena["p1_hp"]  = p1["max_hp"]; arena["p2_hp"]  = p["max_hp"]
+        arena["p1_max"] = p1["max_hp"]; arena["p2_max"] = p["max_hp"]
+        arena["p1_items"] = dict(Counter(sjl(p1.get("inventory"),[])))
+        arena["p2_items"] = dict(Counter(sjl(p.get("inventory"),[])))
+        arena["turn"]   = arena["p1_id"]
+        arena["round"]  = 1
+        arena["status"] = "active"
+        arena["log"]    = ["⚔️ Arena battle begins!"]
+        card_text = build_arena_card(arena)
+        try:
+            msg = await update.get_bot().send_message(
+                chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown")
+            arena["msg_id"] = msg.message_id
+        except Exception:
+            arena["msg_id"] = None
+        return
+
+    # Active arena turn handling
+    arena = active_arenas.get(chat_id)
+    if arena and arena["status"] == "active":
+        if arena["turn"] != user.id:
+            await send_group(update, "It's not your turn!", delay=5); return
+        is_p1 = (user.id == arena["p1_id"])
+        attacker_data  = arena["p1"] if is_p1 else arena["p2"]
+        defender_data  = arena["p2"] if is_p1 else arena["p1"]
+        atk_hp_key     = "p1_hp" if is_p1 else "p2_hp"
+        def_hp_key     = "p2_hp" if is_p1 else "p1_hp"
+        atk_max_key    = "p1_max" if is_p1 else "p2_max"
+        def_max_key    = "p2_max" if is_p1 else "p1_max"
+        atk_items_key  = "p1_items" if is_p1 else "p2_items"
+        atk_state_key  = "p1_state" if is_p1 else "p2_state"
+        def_state_key  = "p2_state" if is_p1 else "p1_state"
+        atk_name  = attacker_data["username"]
+        def_name  = defender_data["username"]
+        atk_state = arena[atk_state_key]
+        def_state = arena[def_state_key]
+        log_entry = ""
+
+        # Turn-start effects for the ACTING player
+        if atk_state["dot_turns"] > 0:
+            arena[atk_hp_key] = max(0, arena[atk_hp_key] - atk_state["dot_dmg"])
+            atk_state["dot_turns"] -= 1
+            arena["log"].append(f"🩸 {atk_name} takes {atk_state['dot_dmg']} from {atk_state['dot_type']}!")
+            if atk_state["dot_turns"] == 0:
+                atk_state["dot_type"] = None; atk_state["dot_dmg"] = 0
+        if atk_state["regen_turns"] > 0:
+            arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + atk_state["regen_hp"])
+            atk_state["regen_turns"] -= 1
+            arena["log"].append(f"💚 {atk_name} regenerates {atk_state['regen_hp']} HP!")
+        if atk_state["buff_turns"] > 0:
+            atk_state["buff_turns"] -= 1
+            if atk_state["buff_turns"] == 0: atk_state["atk_mod"] = 1.0
+        if atk_state["debuff_turns"] > 0:
+            atk_state["debuff_turns"] -= 1
+            if atk_state["debuff_turns"] == 0:
+                atk_state["def_mod"] = 1.0; atk_state["acc_debuff"] = False; atk_state["acc_debuff_pct"] = 0.0
+        for timer_key in ["heal_block_turns","bind_turns","skill_block_turns","extra_dmg_turns"]:
+            if atk_state.get(timer_key, 0) > 0:
+                atk_state[timer_key] -= 1
+        if atk_state.get("reflect_turns", 0) > 0:
+            atk_state["reflect_turns"] -= 1
+            if atk_state["reflect_turns"] == 0: atk_state["reflect_on_hit"] = 0
+        if atk_state.get("reflect_dot_turns", 0) > 0:
+            atk_state["reflect_dot_turns"] -= 1
+            if atk_state["reflect_dot_turns"] == 0: atk_state["reflect_dot"] = 0
+        if atk_state.get("skip_turns", 0) > 0:
+            atk_state["skip_turns"] -= 1
+            arena["log"].append(f"⚡ {atk_name} is stunned — turn skipped!")
+            arena["turn"] = arena["p2_id"] if is_p1 else arena["p1_id"]
+            arena["round"] += 1
+            card_text = build_arena_card(arena)
+            if arena.get("msg_id"):
+                try:
+                    await update.get_bot().edit_message_text(
+                        chat_id=chat_id, message_id=arena["msg_id"],
+                        text=card_text[:4096], parse_mode="Markdown")
+                except Exception: pass
+            return
+
+        action = context.args[0].lower() if context.args else "attack"
+
+        if atk_state.get("bind_turns", 0) > 0 and action in ("skill","item"):
+            await send_group(update, "⛓️ You are bound — only `/arena attack` is available!", delay=5); return
+        if action == "skill" and atk_state.get("skill_block_turns", 0) > 0:
+            await send_group(update, "🤐 You're silenced — no skills this turn!", delay=5); return
+
+        w = get_weather()
+        skip_turn_after = False
+
+        if action == "attack":
+            dmg = calc_attack_damage(attacker_data, w)
+            dmg = round(dmg * atk_state["atk_mod"])
+            if atk_state.get("mark_attacks", 0) > 0:
+                dmg = round(dmg * atk_state.get("mark_bonus", 1.0))
+                atk_state["mark_attacks"] -= 1
+                if atk_state["mark_attacks"] == 0: atk_state["mark_bonus"] = 1.0
+            if atk_state.get("ambush_bonus", 1.0) > 1.0:
+                dmg = round(dmg * atk_state["ambush_bonus"])
+                atk_state["ambush_bonus"] = 1.0
+                arena["log"].append(f"🌑 *Ambush!* Bonus damage!")
+            if atk_state.get("next_atk_bonus", 1.0) > 1.0:
+                dmg = round(dmg * atk_state["next_atk_bonus"])
+                atk_state["next_atk_bonus"] = 1.0
+            if atk_state.get("charge_ready"):
+                dmg = round(dmg * atk_state.get("charge_mult", 2.0))
+                atk_state["charge_ready"] = False; atk_state["charge_mult"] = 1.0
+                arena["log"].append(f"💥 *CHARGED STRIKE!*")
+            if atk_state.get("acc_debuff") and random.random() < atk_state.get("acc_debuff_pct", 0.40):
+                arena["log"].append(f"😵 {atk_name} missed — accuracy debuffed!")
+                dmg = 0
+            if def_state.get("miss_next_enemy"):
+                def_state["miss_next_enemy"] = False
+                arena["log"].append(f"🌫️ {def_name}'s evasion causes {atk_name} to miss!")
+                dmg = 0
+            if dmg > 0 and check_crit(attacker_data):
+                dmg = apply_crit(attacker_data, dmg)
+                log_entry = f"💥 CRIT! {atk_name} hits {def_name} for *{dmg}*!"
+            else:
+                log_entry = f"⚔️ {atk_name} hits {def_name} for *{dmg}*." if dmg > 0 else f"🌀 {atk_name} missed!"
+            if dmg > 0:
+                dmg = round(dmg * def_state.get("def_mod", 1.0))
+                dmg = round(dmg * def_state.get("amplify_pct", 1.0))
+                if def_state.get("extra_dmg_turns", 0) > 0:
+                    dmg += def_state.get("extra_dmg_per_hit", 0)
+                if def_state["shield_turns"] > 0:
+                    dmg = round(dmg * (1 - def_state["shield_pct"]))
+                    def_state["shield_turns"] -= 1
+                    if def_state["shield_turns"] == 0: def_state["shield_pct"] = 0.0
+                if def_state.get("reflect_on_hit", 0) > 0 and def_state.get("reflect_turns", 0) > 0:
+                    arena[atk_hp_key] = max(0, arena[atk_hp_key] - def_state["reflect_on_hit"])
+                    arena["log"].append(f"⚡ {def_name} reflects {def_state['reflect_on_hit']} dmg!")
+                if def_state.get("bind_turns", 0) > 0:
+                    dmg = round(dmg * def_state.get("bind_dmg_mod", 1.0))
+            arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+
+        elif action == "skill":
+            skills = sjl(attacker_data.get("all_skills"), [])
+            sk = None
+            if len(context.args) > 1:
+                arg = " ".join(context.args[1:])
+                if arg.isdigit():
+                    idx = int(arg) - 1
+                    if 0 <= idx < len(skills): sk = skills[idx]
+                if not sk:
+                    sk = next((s for s in skills if s["name"].lower() == arg.lower()), None)
+            if not sk and skills:
+                sk = skills[0]
+            if not sk:
+                await send_group(update, "No skill found.", delay=5); return
+            stype = sk.get("type", "damage")
+            base_dmg = calc_attack_damage(attacker_data, w)
+            base_dmg = round(base_dmg * atk_state["atk_mod"])
+            dmg = 0
+
+            if stype == "atk_buff":
+                atk_state["atk_mod"] = sk.get("atk_mod", 1.40)
+                atk_state["buff_turns"] = sk.get("buff_turns", 3)
+                log_entry = f"💪 {atk_name} uses *{sk['name']}*! ATK ×{sk.get('atk_mod',1.4)} for {sk.get('buff_turns',3)} turns."
+            elif stype in ("def_buff","dmg_reduction_buff"):
+                def_mod = sk.get("def_mod", 0.65)
+                atk_state["def_mod"] = def_mod
+                atk_state["buff_turns"] = sk.get("buff_turns", 2)
+                log_entry = f"🛡️ {atk_name} uses *{sk['name']}*! Damage reduced for {sk.get('buff_turns',2)} turns."
+            elif stype in ("self_heal","revive_heal"):
+                if atk_state.get("heal_block_turns", 0) > 0:
+                    arena["log"].append(f"🚫 {atk_name} cannot be healed!")
+                    log_entry = f"🚫 {atk_name}'s healing is blocked!"
+                else:
+                    stat_name = sk.get("stat","WIS")
+                    heal_mult = sk.get("mult", sk.get("wis_mult", 4.0))
+                    heal_flat = sk.get("heal_flat", 0)
+                    heal = round(get_stat(attacker_data, stat_name) * heal_mult) + heal_flat
+                    arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
+                    log_entry = f"💚 {atk_name} uses *{sk['name']}*! Restored {heal} HP."
+            elif stype == "heal_shield":
+                if atk_state.get("heal_block_turns", 0) <= 0:
+                    stat_name = sk.get("stat","WIS")
+                    heal = round(get_stat(attacker_data, stat_name) * sk.get("heal_mult", 2.0)) + sk.get("heal_flat", 0)
+                    arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
+                atk_state["shield_pct"] = sk.get("shield_pct", 0.35)
+                atk_state["shield_turns"] = sk.get("shield_turns", 2)
+                log_entry = f"🛡️ {atk_name} uses *{sk['name']}*! Shield + heal applied."
+            elif stype == "dmg_shield":
+                dmg = round(base_dmg * sk.get("dmg_mult", 1.0))
+                if def_state["shield_turns"] > 0:
+                    dmg = round(dmg * (1 - def_state["shield_pct"]))
+                    def_state["shield_turns"] -= 1
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                atk_state["shield_pct"] = sk.get("shield_pct", 0.30)
+                atk_state["shield_turns"] = sk.get("shield_turns", 2)
+                log_entry = f"⚔️🛡️ {atk_name} uses *{sk['name']}*! {dmg} dmg + shield!"
+            elif stype == "stun":
+                dmg = round(base_dmg * sk.get("dmg_mult", 0.80))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                if random.random() < sk.get("stun_chance", 0.75):
+                    def_state["skip_turns"] = def_state.get("skip_turns", 0) + 1
+                    log_entry = f"💫 {atk_name} uses *{sk['name']}*! {dmg} dmg + STUN!"
+                else:
+                    log_entry = f"⚔️ {atk_name} uses *{sk['name']}*! {dmg} dmg. (Stun missed)"
+            elif stype == "stun_dmg":
+                stat_name = sk.get("stat","WIS")
+                dmg = round(get_stat(attacker_data, stat_name) * sk.get("mult", 2.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                if random.random() < sk.get("stun_chance", 0.40):
+                    def_state["skip_turns"] = def_state.get("skip_turns", 0) + 1
+                    log_entry = f"💫 {atk_name} uses *{sk['name']}*! {dmg} dmg + STUN!"
+                else:
+                    log_entry = f"⚔️ {atk_name} uses *{sk['name']}*! {dmg} dmg."
+            elif stype == "def_shred":
+                dmg = round(base_dmg * sk.get("dmg_mult", 0.80))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                def_state["def_mod"] = sk.get("def_mod", 0.60)
+                def_state["debuff_turns"] = sk.get("debuff_turns", 3)
+                log_entry = f"🩹 {atk_name} uses *{sk['name']}*! {dmg} dmg + DEF shred!"
+            elif stype == "multi_hit":
+                hits = sk.get("hits", 3); mult = sk.get("dmg_mult", 0.60)
+                total_dmg = 0
+                for _ in range(hits):
+                    h = round(base_dmg * mult)
+                    if check_crit(attacker_data): h = apply_crit(attacker_data, h)
+                    total_dmg += h
+                arena[def_hp_key] = max(0, arena[def_hp_key] - total_dmg)
+                log_entry = f"⚡ {atk_name} uses *{sk['name']}*! {hits} hits for *{total_dmg}* total!"
+            elif stype in ("charge_nuke","charge_pierce","charge_execute","charge_multihit"):
+                atk_state["charge_ready"] = True
+                atk_state["charge_mult"] = sk.get("charge_mult", sk.get("mult", 2.0))
+                log_entry = f"🔋 {atk_name} is *charging*! Next attack hits at ×{atk_state['charge_mult']}!"
+            elif stype == "charge_heal_shield":
+                atk_state["charge_ready"] = True
+                atk_state["charge_mult"] = 1.0
+                atk_state["charge_heal_pct"] = sk.get("heal_pct", 0.60)
+                atk_state["charge_shield_pct"] = sk.get("shield_pct", 0.40)
+                atk_state["charge_shield_turns"] = sk.get("shield_turns", 2)
+                log_entry = f"🙏 {atk_name} is *channeling*! Next turn: massive heal + shield."
+            elif stype in ("dmg_dot","guaranteed_crit_bleed"):
+                if stype == "guaranteed_crit_bleed":
+                    dmg = apply_crit(attacker_data, round(base_dmg * sk.get("dmg_mult", 1.80)))
+                else:
+                    stat_n = sk.get("stat")
+                    if stat_n:
+                        dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 3.0))
+                    else:
+                        dmg = round(base_dmg * sk.get("dmg_mult", 0.90))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                def_state["dot_type"] = sk.get("dot_type","poison")
+                def_state["dot_dmg"]  = sk.get("dot_dmg", 8)
+                def_state["dot_turns"] = sk.get("dot_turns", 3)
+                log_entry = f"☠️ {atk_name} uses *{sk['name']}*! {dmg} dmg + {def_state['dot_type']} DOT!"
+            elif stype == "hp_drain":
+                drain = round(arena[def_hp_key] * sk.get("drain_pct", 0.35))
+                heal  = round(drain * sk.get("heal_pct", 0.50))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - drain)
+                if atk_state.get("heal_block_turns", 0) <= 0:
+                    arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
+                log_entry = f"🧛 {atk_name} uses *{sk['name']}*! Drained {drain} HP, healed {heal}!"
+            elif stype == "lifesteal":
+                dmg = round(base_dmg * sk.get("dmg_mult", 1.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                heal = round(dmg * sk.get("steal_pct", 0.25))
+                if atk_state.get("heal_block_turns", 0) <= 0:
+                    arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
+                log_entry = f"🩸 {atk_name} uses *{sk['name']}*! {dmg} dmg, +{heal} HP!"
+            elif stype == "crit_execute":
+                threshold = sk.get("execute_threshold", 0.50)
+                hp_pct = arena[def_hp_key] / max(1, arena[def_max_key])
+                mult = sk.get("execute_mult", 1.80) if hp_pct < threshold else sk.get("dmg_mult", 1.20)
+                dmg = apply_crit(attacker_data, round(base_dmg * mult))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                tag = " *(EXECUTE!)*" if hp_pct < threshold else " *(CRIT!)*"
+                log_entry = f"💥 {atk_name} uses *{sk['name']}*!{tag} {dmg} dmg!"
+            elif stype == "dual_buff_debuff":
+                atk_state["atk_mod"] = sk.get("atk_mod", 1.60)
+                atk_state["buff_turns"] = sk.get("buff_turns", 2)
+                def_state["atk_mod"] = sk.get("enemy_atk_mod", 0.80)
+                def_state["debuff_turns"] = sk.get("debuff_turns", 2)
+                log_entry = f"📢 {atk_name} uses *{sk['name']}*! ATK up + enemy ATK down!"
+            elif stype == "dmg_acc_debuff":
+                dmg = round(base_dmg * sk.get("dmg_mult", 1.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                def_state["acc_debuff"] = True
+                def_state["acc_debuff_pct"] = sk.get("acc_debuff_pct", 0.40)
+                def_state["debuff_turns"] = sk.get("debuff_turns", 2)
+                log_entry = f"🎯 {atk_name} uses *{sk['name']}*! {dmg} dmg + accuracy debuff!"
+            elif stype == "acc_debuff_only":
+                def_state["acc_debuff"] = True
+                def_state["acc_debuff_pct"] = sk.get("acc_debuff_pct", 0.50)
+                def_state["debuff_turns"] = sk.get("debuff_turns", 1)
+                log_entry = f"👻 {atk_name} uses *{sk['name']}*! Enemy accuracy reduced!"
+            elif stype == "mark_buff":
+                atk_state["mark_bonus"] = sk.get("mark_bonus", 1.30)
+                atk_state["mark_attacks"] = sk.get("mark_attacks", 3)
+                log_entry = f"🎯 {atk_name} uses *{sk['name']}*! Next {sk.get('mark_attacks',3)} attacks ×{sk.get('mark_bonus',1.3)}!"
+            elif stype == "atk_buff_recoil":
+                atk_state["atk_mod"] = sk.get("atk_mod", 1.50)
+                atk_state["buff_turns"] = sk.get("buff_turns", 2)
+                self_dmg = sk.get("self_dmg", 15)
+                arena[atk_hp_key] = max(0, arena[atk_hp_key] - self_dmg)
+                log_entry = f"💉 {atk_name} uses *{sk['name']}*! ATK boosted but -{self_dmg} HP!"
+            elif stype == "dot_aura":
+                stat_n = sk.get("stat","WIS")
+                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 2.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                atk_state["reflect_dot"] = sk.get("reflect_dot", 6)
+                atk_state["reflect_dot_turns"] = sk.get("reflect_turns", 3)
+                log_entry = f"🔥 {atk_name} uses *{sk['name']}*! {dmg} dmg + radiance aura!"
+            elif stype == "dot_on_attack":
+                atk_state["reflect_on_hit"] = sk.get("reflect_on_hit", 10)
+                atk_state["reflect_turns"] = sk.get("reflect_turns", 3)
+                log_entry = f"⚡ {atk_name} uses *{sk['name']}*! Static field charged — {sk.get('reflect_on_hit',10)} dmg on hit!"
+            elif stype == "atk_debuff":
+                dmg = round(base_dmg * sk.get("dmg_mult", 0.70))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                def_state["atk_mod"] = sk.get("enemy_atk_mod", 0.70)
+                def_state["debuff_turns"] = sk.get("debuff_turns", 3)
+                log_entry = f"💀 {atk_name} uses *{sk['name']}*! {dmg} dmg + enemy ATK reduced!"
+            elif stype == "dodge_buff":
+                atk_state["miss_next_enemy"] = sk.get("dodge_next", True)
+                atk_state["next_atk_bonus"] = sk.get("next_atk_bonus", 1.40)
+                log_entry = f"🌫️ {atk_name} uses *{sk['name']}*! Next hit on them misses, next attack boosted!"
+            elif stype == "silence_dmg":
+                dmg = round(base_dmg * sk.get("dmg_mult", 0.90))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                def_state["skill_block_turns"] = sk.get("skill_block_turns", 2)
+                log_entry = f"🤐 {atk_name} uses *{sk['name']}*! {dmg} dmg + silenced for {sk.get('skill_block_turns',2)} turns!"
+            elif stype == "regen":
+                atk_state["regen_hp"] = sk.get("regen_hp", 12)
+                atk_state["regen_turns"] = sk.get("regen_turns", 3)
+                log_entry = f"🌿 {atk_name} uses *{sk['name']}*! Regenerating {sk.get('regen_hp',12)} HP/turn for {sk.get('regen_turns',3)} turns."
+            elif stype == "crit_followup":
+                dmg = round(base_dmg * sk.get("dmg_mult", 0.70))
+                if check_crit(attacker_data):
+                    dmg = apply_crit(attacker_data, dmg)
+                    followup = round(base_dmg * sk.get("followup_mult", 1.20))
+                    arena[def_hp_key] = max(0, arena[def_hp_key] - dmg - followup)
+                    log_entry = f"🌑 {atk_name} uses *{sk['name']}*! CRIT {dmg} + Shadowstep {followup}!"
+                    dmg += followup
+                else:
+                    arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                    log_entry = f"🌑 {atk_name} uses *{sk['name']}*! {dmg} dmg."
+            elif stype == "vanish_ambush":
+                def_state["miss_next_enemy"] = True
+                atk_state["ambush_bonus"] = sk.get("ambush_bonus", 1.80)
+                log_entry = f"👻 {atk_name} *vanishes*! Next enemy attack misses + ambush ready!"
+            elif stype == "pierce_dodge":
+                dmg = round(base_dmg * sk.get("dmg_mult", 1.40))
+                dmg = round(dmg * def_state.get("def_mod", 1.0))
+                dmg = round(dmg * def_state.get("amplify_pct", 1.0))
+                if def_state["shield_turns"] > 0:
+                    dmg = round(dmg * (1 - def_state["shield_pct"]))
+                    def_state["shield_turns"] -= 1
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                log_entry = f"🏹 {atk_name} uses *{sk['name']}*! Piercing shot for {dmg} dmg!"
+            elif stype == "crit_conditional":
+                force_crit = sk.get("first_turn_crit") and arena["round"] <= 2
+                dmg = round(base_dmg * sk.get("dmg_mult", 1.80))
+                if force_crit or check_crit(attacker_data):
+                    dmg = apply_crit(attacker_data, dmg)
+                    log_entry = f"🗡️ {atk_name} uses *{sk['name']}*! CRIT {dmg} dmg!"
+                else:
+                    log_entry = f"🗡️ {atk_name} uses *{sk['name']}*! {dmg} dmg."
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+            elif stype == "dodge_counter":
+                atk_state["miss_next_enemy"] = sk.get("dodge_next", True)
+                counter_dmg = round(base_dmg * sk.get("counter_mult", 0.60))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - counter_dmg)
+                dmg = counter_dmg
+                log_entry = f"💨 {atk_name} uses *{sk['name']}*! Dodge set + counter {counter_dmg}!"
+            elif stype == "hp_percentage_nuke":
+                dmg = round(arena[def_hp_key] * sk.get("pct", 0.50))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                if sk.get("heal_block_turns", 0) > 0:
+                    def_state["heal_block_turns"] = sk["heal_block_turns"]
+                log_entry = f"💀 {atk_name} uses *{sk['name']}*! Ripped {dmg} HP instantly!"
+            elif stype == "dmg_heal_block":
+                stat_n = sk.get("stat","INT")
+                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 3.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                def_state["heal_block_turns"] = sk.get("block_turns", 3)
+                log_entry = f"🚫 {atk_name} uses *{sk['name']}*! {dmg} dmg + heal blocked!"
+            elif stype == "strip_heal_block":
+                stat_n = sk.get("stat","WIS")
+                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 2.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                def_state["atk_mod"] = 1.0; def_state["buff_turns"] = 0
+                def_state["shield_turns"] = 0
+                def_state["heal_block_turns"] = sk.get("heal_block_turns", 2)
+                log_entry = f"✝️ {atk_name} uses *{sk['name']}*! {dmg} dmg + buffs stripped + heal blocked!"
+            elif stype == "amplify_debuff":
+                def_state["extra_dmg_per_hit"] = sk.get("extra_dmg_per_hit", 8)
+                def_state["extra_dmg_turns"] = sk.get("debuff_turns", 3)
+                log_entry = f"🔍 {atk_name} uses *{sk['name']}*! {def_name} takes +{sk.get('extra_dmg_per_hit',8)} per hit for {sk.get('debuff_turns',3)} turns."
+            elif stype == "full_bind":
+                def_state["bind_turns"] = sk.get("bind_turns", 3)
+                def_state["bind_dmg_mod"] = sk.get("dmg_reduction", 0.70)
+                log_entry = f"⛓️ {atk_name} uses *{sk['name']}*! {def_name} bound for {sk.get('bind_turns',3)} turns!"
+            elif stype == "cleanse_nuke_buff":
+                stat_n = sk.get("stat","WIS")
+                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 5.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                for field in ["dot_type","dot_dmg","dot_turns","acc_debuff","debuff_turns","heal_block_turns","bind_turns","skill_block_turns"]:
+                    if field in ("dot_type",): atk_state[field] = None
+                    elif field in ("acc_debuff",): atk_state[field] = False
+                    else: atk_state[field] = 0
+                atk_state["atk_mod"] = sk.get("atk_buff", 1.20)
+                atk_state["buff_turns"] = sk.get("buff_turns", 3)
+                log_entry = f"✨ {atk_name} uses *{sk['name']}*! {dmg} dmg + cleansed + buffed!"
+            elif stype == "everything_debuff_nuke":
+                stat_n = sk.get("stat","WIS")
+                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 8.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                def_state["atk_mod"] = 1.0; def_state["buff_turns"] = 0; def_state["shield_turns"] = 0
+                def_state["dot_type"] = sk.get("dot_type","bleed"); def_state["dot_dmg"] = sk.get("dot_dmg",10); def_state["dot_turns"] = sk.get("dot_turns",3)
+                def_state["acc_debuff"] = True; def_state["acc_debuff_pct"] = sk.get("acc_debuff", 0.30); def_state["debuff_turns"] = sk.get("dot_turns",3)
+                def_state["heal_block_turns"] = sk.get("heal_block_turns", 2)
+                def_state["atk_mod"] = sk.get("atk_debuff", 0.75)
+                log_entry = f"💀 {atk_name} uses *{sk['name']}*! {dmg} MASSIVE dmg + all debuffs!"
+            elif stype == "ignore_def_stat":
+                stat_n = sk.get("stat","DEX")
+                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 2.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                log_entry = f"🎯 {atk_name} uses *{sk['name']}*! Piercing {dmg} dmg (ignores DEF)!"
+            elif stype == "ignore_def_nuke":
+                stat_n = sk.get("stat","STR")
+                combo_stats = sk.get("stat_combo", [stat_n])
+                combo_val = sum(get_stat(attacker_data, s) for s in combo_stats)
+                dmg = round(combo_val * sk.get("mult", 6.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                log_entry = f"⚔️ {atk_name} uses *{sk['name']}*! Unstoppable {dmg} dmg!"
+            elif stype == "nuke_debuff":
+                stat_n = sk.get("stat","DEX")
+                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 5.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                if arena[def_hp_key] > 0 and sk.get("survive_debuff"):
+                    def_state["atk_mod"] = sk["survive_debuff"]
+                    def_state["debuff_turns"] = 99
+                log_entry = f"🏹 {atk_name} uses *{sk['name']}*! {dmg} dmg!"
+            elif stype == "dmg_multi_debuff":
+                dmg = round(base_dmg * sk.get("dmg_mult", 0.60))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                def_state["acc_debuff"] = True; def_state["acc_debuff_pct"] = sk.get("acc_mod", 0.50)
+                def_state["atk_mod"] = sk.get("atk_mod", 0.80); def_state["debuff_turns"] = sk.get("debuff_turns", 2)
+                log_entry = f"🎯 {atk_name} uses *{sk['name']}*! {dmg} dmg + multi-debuff!"
+            elif stype == "amplify_debuff_no_dmg":
+                def_state["amplify_pct"] = sk.get("amplify_pct", 1.25)
+                def_state["debuff_turns"] = sk.get("debuff_turns", 3)
+                log_entry = f"🔍 {atk_name} uses *{sk['name']}*! {def_name} takes 25% more damage for {sk.get('debuff_turns',3)} turns!"
+            elif stype == "stat_nuke":
+                stat_n = sk.get("stat","INT")
+                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 2.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                log_entry = f"🔮 {atk_name} uses *{sk['name']}*! {dmg} dmg!"
+            elif stype == "surge_hit":
+                dmg = round(base_dmg * sk.get("dmg_mult", 1.20))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                log_entry = f"💥 {atk_name} uses *{sk['name']}*! {dmg} dmg!"
+                if random.random() < sk.get("surge_chance", 0.30):
+                    surge_dmg = round(base_dmg * sk.get("surge_mult", 0.60))
+                    arena[def_hp_key] = max(0, arena[def_hp_key] - surge_dmg)
+                    log_entry += f" SURGE! +{surge_dmg}!"
+            elif stype == "dmg_debuff_chance":
+                stat_n = sk.get("stat","INT")
+                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 1.5))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                if random.random() < sk.get("hex_chance", 0.25):
+                    def_state["atk_mod"] = sk.get("hex_mod", 0.80)
+                    def_state["debuff_turns"] = sk.get("hex_turns", 2)
+                    log_entry = f"🌑 {atk_name} uses *{sk['name']}*! {dmg} dmg + HEX!"
+                else:
+                    log_entry = f"🌑 {atk_name} uses *{sk['name']}*! {dmg} dmg."
+            elif stype == "multi_hit_proc":
+                hits = sk.get("hits", 4); mult = sk.get("dmg_mult", 0.50)
+                total_dmg = 0; proc_fired = False
+                for i in range(hits):
+                    h = round(base_dmg * mult)
+                    total_dmg += h
+                    if i == 0 and random.random() < sk.get("proc_chance", 0.30):
+                        def_state["skip_turns"] = def_state.get("skip_turns", 0) + 1
+                        proc_fired = True
+                arena[def_hp_key] = max(0, arena[def_hp_key] - total_dmg)
+                log_entry = f"🏹 {atk_name} uses *{sk['name']}*! {total_dmg} dmg!"
+                if proc_fired: log_entry += " PIN!"
+            elif stype == "crit_announce":
+                dmg = round(base_dmg * sk.get("dmg_mult", 1.10))
+                if check_crit(attacker_data):
+                    dmg = apply_crit(attacker_data, dmg)
+                    log_entry = f"💥 *HEADSHOT!* {atk_name} deals {dmg} dmg!"
+                else:
+                    log_entry = f"🎯 {atk_name} uses *{sk['name']}*! {dmg} dmg."
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+            elif stype == "execute_buff":
+                stat_n = sk.get("stat","AGI")
+                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 4.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                log_entry = f"⚔️ {atk_name} uses *{sk['name']}*! {dmg} dmg!"
+                if arena[def_hp_key] <= 0 and sk.get("kill_atk_bonus"):
+                    atk_state["atk_mod"] = 1.0 + sk["kill_atk_bonus"]
+                    atk_state["buff_turns"] = 99
+                    log_entry += " KILL BONUS — ATK surged!"
+            elif stype == "undodgeable_execute":
+                stat_n = sk.get("stat","AGI")
+                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 6.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                log_entry = f"💀 {atk_name} uses *{sk['name']}*! Unavoidable {dmg} dmg!"
+            elif stype == "risky_hit":
+                if random.random() < sk.get("miss_chance", 0.20):
+                    log_entry = f"💨 {atk_name} uses *{sk['name']}*! MISSED the wild swing!"
+                    dmg = 0
+                else:
+                    dmg = round(base_dmg * sk.get("dmg_mult", 1.50))
+                    arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                    log_entry = f"💥 {atk_name} uses *{sk['name']}*! Reckless {dmg} dmg!"
+            elif stype == "stun_nuke":
+                stat_n = sk.get("stat","WIS")
+                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 2.0))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                if random.random() < sk.get("stun_chance", 0.35):
+                    def_state["skip_turns"] = def_state.get("skip_turns", 0) + 1
+                    log_entry = f"🌑 {atk_name} uses *{sk['name']}*! {dmg} dmg + STUN!"
+                else:
+                    log_entry = f"🌑 {atk_name} uses *{sk['name']}*! {dmg} dmg."
+            else:
+                dmg = round(base_dmg * sk.get("dmg_mult", sk.get("mult", 1.2)))
+                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+                log_entry = f"⚡ {atk_name} uses *{sk['name']}*! {dmg} dmg."
+
+        elif action == "item":
+            if len(context.args) < 2:
+                await send_group(update, "Usage: /arena item [item name]", delay=5); return
+            item_name = " ".join(context.args[1:])
+            items = arena[atk_items_key]
+            if not items.get(item_name, 0):
+                await send_group(update, f"You don't have *{item_name}* in your arena kit.", delay=5); return
+            if atk_state.get("heal_block_turns", 0) > 0 and "Potion" in item_name:
+                arena["log"].append(f"🚫 {atk_name}'s healing is blocked!")
+                await send_group(update, "Your healing is blocked!", delay=5); return
+            items[item_name] -= 1
+            if items[item_name] <= 0: del items[item_name]
+            if "Health Potion" in item_name or "Potion" in item_name:
+                heal_val = {"Health Potion":50,"Super Health Potion":100,"Mega Health Potion":200}.get(item_name,50)
+                arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal_val)
+                log_entry = f"🧪 {atk_name} drinks *{item_name}*! +{heal_val} HP."
+            else:
+                log_entry = f"🎒 {atk_name} used *{item_name}*."
+        else:
+            await send_group(update, "Use: `/arena attack`, `/arena skill [number]`, `/arena item [name]`", delay=5); return
+
+        if log_entry:
+            arena["log"].append(log_entry)
+
+        if arena["p1_hp"] <= 0 or arena["p2_hp"] <= 0:
+            arena["status"] = "done"
+            winner_id = arena["p1_id"] if arena["p1_hp"] > 0 else arena["p2_id"]
+            loser_id  = arena["p2_id"] if winner_id == arena["p1_id"] else arena["p1_id"]
+            wp = get_player(winner_id); lp = get_player(loser_id)
+            wager = arena["wager"]
+            if wp and lp:
+                if wager > 0:
+                    wp["gold"] = wp.get("gold",0) + wager
+                    lp["gold"] = max(0, lp.get("gold",0) - wager)
+                wp["wins"] = wp.get("wins",0) + 1
+                exp_gain = 50 + wp["level"] * 5
+                add_exp(wp, exp_gain)
+                save_player(wp); save_player(lp)
+            w_name = arena["p1"]["username"] if arena["p1_hp"] > 0 else arena["p2"]["username"]
+            arena["log"].append(f"🏆 *{w_name}* wins the arena!")
+            active_arenas.pop(chat_id, None)
+        else:
+            arena["turn"] = arena["p2_id"] if is_p1 else arena["p1_id"]
+            arena["round"] += 1
+
+        card_text = build_arena_card(arena)
+        if arena.get("msg_id"):
+            try:
+                await update.get_bot().edit_message_text(
+                    chat_id=chat_id, message_id=arena["msg_id"],
+                    text=card_text[:4096], parse_mode="Markdown")
+            except Exception:
+                pass
+        return
+
+    # Challenge initiation
+    if not update.message.reply_to_message:
+        await send_group(update,
+            "⚔️ *Arena — Turn-based PvP*\n\n"
+            "Reply to a player's message to challenge them!\n"
+            "`/arena` — free fight\n"
+            "`/arena 200` — fight with 200g wager\n\n"
+            "Each turn: `/arena attack`, `/arena skill [1-7]`, `/arena item [name]`",
+            delay=30); return
+
+    du = update.message.reply_to_message.from_user
+    if du.id == user.id:
+        await send_group(update, "Can't challenge yourself!", delay=9); return
+    tp = get_player(du.id)
+    if not tp:
+        await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+    if chat_id in active_arenas:
+        await send_group(update, "An arena fight is already active here!", delay=9); return
+    wager = 0
+    if context.args:
+        try: wager = max(0, int(context.args[0]))
+        except: pass
+    if wager > 0 and p["gold"] < wager:
+        await send_group(update, f"❌ Need {wager}g for the wager. Have {p['gold']}g.", delay=9); return
+
+    active_arenas[chat_id] = {
+        "p1_id": user.id, "p2_id": du.id,
+        "p1": None, "p2": None,
+        "p1_hp": 0, "p2_hp": 0, "p1_max": 0, "p2_max": 0,
+        "turn": user.id, "round": 0, "log": [], "msg_id": None,
+        "wager": wager, "status": "waiting",
+        "p1_items": {}, "p2_items": {},
+        "p1_state": _arena_state(), "p2_state": _arena_state(),
+        "expires": (datetime.now() + timedelta(minutes=5)).isoformat(),
+    }
+    wager_str = f" for *{wager}g*" if wager > 0 else " (no wager)"
+    await send_group(update,
+        f"🎪 *{user.first_name}* challenges *{du.first_name}* to an Arena fight{wager_str}!\n\n"
+        f"_{du.first_name}: type `/arena accept` to begin._\n"
+        f"_HP changes are arena-only — your real HP is safe._\n\n"
+        f"Challenge expires in 5 minutes.", permanent=False, delay=300)
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update,
-        f"⚔️ *{WORLD_NAME} v13 — Commands*\n\n"
+        f"⚔️ *{WORLD_NAME} v14 — Commands*\n\n"
         "👤 *Everyone:*\n"
         "*/rank* — Leaderboard (paginated)\n"
         "*/rank me* — Your position\n"
@@ -4356,14 +5604,20 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*/sell [item]* — Sell for gold\n"
         "*/trade @user [item] [price]* — Trade\n"
         "*/accept* — Accept a trade offer\n"
+        "*/decline* — Decline a trade offer\n"
         "*/title [name]* — Equip a title\n"
         "*/weather* — Table conditions\n\n"
         "⚔️ *Combat:*\n"
         "*/attack* — Reply + /attack to strike\n"
         "*/heal* — Reply + /heal (needs potion)\n"
-        "*/skill* — Reply + /skill to use ability\n"
+        "*/skill* — View skills (arena-only for offense)\n"
         "*/boss [name]* — Start boss fight\n"
-        "*/strike* — Attack active boss\n\n"
+        "*/strike* — Attack active boss\n"
+        "*/duel @user [wager]* — Quick CP-based duel\n"
+        "*/arena @user [wager]* — Turn-based arena fight\n\n"
+        "⚒️ *Gear Upgrades:*\n"
+        "*/enhance [weapon/armor/shield]* — Enhance gear (Dragon Scales)\n"
+        "*/enchant [weapon/armor/shield/accessory]* — Enchant gear (Scrolls)\n\n"
         "🏰 *Guild:*\n"
         "*/guild* — All guild commands\n\n"
         "💬 *Chat earns EXP. Level-ups announced at x10. Secrets lurk...* 🎱",
@@ -4384,8 +5638,9 @@ async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Clear memory state
     active_bosses.clear(); secret_boss_active.clear()
     active_events.clear(); active_raids.clear()
-    combat_cards.clear(); message_counters.clear()
+    message_counters.clear()
     pending_trades.clear(); pending_guild_reqs.clear()
+    pending_duels.clear(); active_arenas.clear()
     await send_group(update,
         "🗑️ *Database wiped and reset.*\n"
         "All players, guilds, and data cleared.\n"
@@ -4748,8 +6003,13 @@ def main():
     app.add_handler(CommandHandler("sell",      sell_cmd))
     app.add_handler(CommandHandler("trade",     trade_cmd))
     app.add_handler(CommandHandler("accept",    accept_trade_cmd))
+    app.add_handler(CommandHandler("decline",   decline_trade_cmd))
+    app.add_handler(CommandHandler("enhance",   enhance_cmd))
+    app.add_handler(CommandHandler("enchant",   enchant_cmd))
 
     # Combat
+    app.add_handler(CommandHandler("duel",      duel_cmd))
+    app.add_handler(CommandHandler("arena",     arena_cmd))
     app.add_handler(CommandHandler("attack",    attack_cmd))
     app.add_handler(CommandHandler("heal",      heal_cmd))
     app.add_handler(CommandHandler("boss",      boss_cmd))
