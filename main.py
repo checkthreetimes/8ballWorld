@@ -2628,9 +2628,9 @@ async def check_idle_reward(user, s, p, bot, chat_id):
     flavor = IDLE_FLAVOR.get(line, IDLE_FLAVOR[None])
     hours_str = f"{int(away)}h" if away < 48 else f"{int(away/24)}d"
 
-    msg = (f"🌅 *{user.first_name}* returns after *{hours_str}* away "
-           f"— _{flavor}_\n\n"
-           f"💰 +{gold_reward} gold | ✨ +{exp_reward} EXP")
+    msg = (f"🎱 *{user.first_name}* returns after *{hours_str}* away\n"
+           f"💰 +{gold_reward} gold\n"
+           f"✨ +{exp_reward} EXP")
     if item_found:
         rarity_tag = ""
         for pool in [WEAPONS, ARMORS, ACCESSORIES]:
@@ -2638,7 +2638,7 @@ async def check_idle_reward(user, s, p, bot, chat_id):
                 r = pool[item_found].get("rarity","")
                 rarity_tag = RARITY_EMOJI.get(r,"")
                 break
-        msg += f"\n🎒 Found: {rarity_tag} *{item_found}*!"
+        msg += f"\n🎒 +{rarity_tag} *{item_found}*"
 
     if p:
         p["gold"] = p.get("gold", 0) + gold_reward
