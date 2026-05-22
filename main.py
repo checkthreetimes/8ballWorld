@@ -4112,18 +4112,6 @@ def _exp_bar(current, needed, length=10):
     bar    = "█" * filled + "░" * (length - filled)
     return f"✨ [{bar}] {current:,}/{needed:,} EXP ({int(pct*100)}%)"
 
-def _paginate_lines_10(header, lines):
-    size = 10
-    total_pages = max(1, -(-len(lines) // size))  # ceiling div
-    pages = []
-    for i in range(total_pages):
-        chunk = list(lines[i*size:(i+1)*size])
-        while len(chunk) < size:
-            chunk.append("")
-        pages.append(f"{header}  -  Page {i+1}/{total_pages}\n\n" + "\n".join(chunk))
-    return pages
-
-
 def _build_stats_pages(p, viewing_name=None):
     real_max     = calc_max_hp(p)
     defeated_str = " *(Defeated)*" if is_defeated(p) else ""
@@ -4145,7 +4133,11 @@ def _build_stats_pages(p, viewing_name=None):
         if g:
             glvl = safe_int(g.get("level"), 1)
             perk = GUILD_PERKS.get(glvl, {})
-            guild_str = f"{g['name']} (Lv{glvl} +{int(perk.get('exp_bonus',0)*100)}% EXP)"
+            guild_str = g['name']
+
+    exp_cur  = safe_int(p.get("exp"))
+    exp_need = exp_for_level(p["level"])
+    exp_pct  = int(exp_cur / max(1, exp_need) * 100)
 
     weap_name = p.get("equipped_weapon") or "None"
     armr_name = p.get("equipped_armor") or "None"
@@ -4160,48 +4152,69 @@ def _build_stats_pages(p, viewing_name=None):
 
     inv = Counter(sjl(p.get("inventory"), []))
     inv_lines = [
-        f"  {RARITY_EMOJI.get(WEAPONS.get(k,ARMORS.get(k,ACCESSORIES.get(k,CONSUMABLES.get(k,{})))).get('rarity',''),'⚪')} {k} x{v}"
+        f"{RARITY_EMOJI.get(WEAPONS.get(k,ARMORS.get(k,ACCESSORIES.get(k,CONSUMABLES.get(k,{})))).get('rarity',''),'⚪')} {k} x{v}"
         for k, v in inv.items()
-    ] or ["  Empty"]
+    ] or ["Empty"]
 
-    lines = [
+    title_list = safe_titles(p)
+
+    # Page 1 - Profile
+    page1_lines = [
         f"🎱 *{name}*{defeated_str}{recovering}",
         f"🏅 {p['active_title']}",
-        f"{tier['emoji']} Level {p['level']}  -  {tier['name']}",
+        f"{tier['name']}  -  Level {p['level']}",
         f"🏰 {guild_str}",
         f"🌍 {w['name']}",
+        "",
         f"❤️ HP: {p['hp']}/{real_max}",
-        f"{_exp_bar(p['exp'], exp_for_level(p['level']))}",
+        f"✨ {exp_cur:,}/{exp_need:,} EXP ({exp_pct}%)",
         f"🏆 Lifetime EXP: {safe_int(p.get('total_exp')):,}",
         f"💰 Gold: {p['gold']}",
         f"⚔️ Wins: {p['wins']}   Losses: {p.get('losses',0)}",
+    ]
+
+    # Page 2 - Class & Stats
+    page2_lines = [
+        f"🧙 *{cls_name}*{path_str}",
         "",
-        f"🧙 Class: {cls_name}{path_str}",
-        f"📊 STR {eff['STR']}  |  AGI {eff['AGI']}  |  INT {eff['INT']}",
-        f"      WIS {eff['WIS']}  |  DEX {eff['DEX']}  |  LUK {eff['LUK']}",
+        f"STR: {eff['STR']}",
+        f"AGI: {eff['AGI']}",
+        f"INT: {eff['INT']}",
+        f"WIS: {eff['WIS']}",
+        f"DEX: {eff['DEX']}",
+        f"LUK: {eff['LUK']}",
         f"🛡️ DEF: {get_armor_def(p)} (from gear)",
-        f"💡 {sp} stat pts to spend  -  /allocate" if sp > 0 else "",
-        "",
-        f"🎽 *Gear*",
+    ]
+    if cp > 0:
+        page2_lines += ["", f"⚡ Combat Power: *{cp:,}*"]
+    if sp > 0:
+        page2_lines.append(f"💡 {sp} stat pt{'s' if sp != 1 else ''} to spend  -  /allocate")
+    if statuses:
+        page2_lines += ["", "⚠️ *Active Effects*"] + [f"  {st}" for st in statuses]
+
+    # Page 3 - Gear
+    page3_lines = [
         f"⚔️ {quick_gear(weap_name)}",
         f"🛡️ {quick_gear(armr_name)}",
         f"🔰 {quick_gear(shld_name)}",
         f"💍 {quick_gear(acc_name)}",
-        f"_/gear for full details_",
-        f"⚡ Combat Power: *{cp:,}*" if cp > 0 else "",
         "",
+        f"_/gear for full enhancement + enchant details_",
     ]
 
-    if statuses:
-        lines += ["⚠️ *Active Effects*"] + [f"  {st}" for st in statuses]
-    else:
-        lines += ["_No active effects_"]
+    # Page 4 - Inventory
+    page4_lines = ["🎒 *Inventory*", ""] + inv_lines + ["", "_/inventory for paginated full view_"]
 
-    lines += ["", "🎒 *Inventory*"] + inv_lines
-    lines += ["", "_/inventory for paginated full view_"]
-    lines += ["", "🏅 *Titles*"] + ([f"  {t}" for t in safe_titles(p)] or ["  None"])
+    # Page 5 - Titles
+    page5_lines = ["🏅 *Titles*", ""] + ([f"  {t}" for t in title_list] or ["  None"])
 
-    return _paginate_lines_10(f"🎱 *{name}  -  Stats*", lines)
+    return [
+        "\n".join(page1_lines),
+        "\n".join(page2_lines),
+        "\n".join(page3_lines),
+        "\n".join(page4_lines),
+        "\n".join(page5_lines),
+    ]
 
 
 async def _send_stats_page(target, target_uid: int, page: int, edit: bool = False,
@@ -4216,14 +4229,17 @@ async def _send_stats_page(target, target_uid: int, page: int, edit: bool = Fals
         return
 
     pages = _build_stats_pages(p, viewing_name=caller_name)
+    PAGE_LABELS = ["Profile", "Stats", "Gear", "Inventory", "Titles"]
     total = len(pages)
     page  = max(1, min(page, total))
     text  = pages[page - 1]
     row   = []
     if page > 1:
-        row.append(InlineKeyboardButton("◀ Prev", callback_data=f"stats_p_{target_uid}_{page-1}"))
+        label = PAGE_LABELS[page - 2] if page - 2 < len(PAGE_LABELS) else str(page - 1)
+        row.append(InlineKeyboardButton(f"◀ {label}", callback_data=f"stats_p_{target_uid}_{page-1}"))
     if page < total:
-        row.append(InlineKeyboardButton("Next ▶", callback_data=f"stats_p_{target_uid}_{page+1}"))
+        label = PAGE_LABELS[page] if page < len(PAGE_LABELS) else str(page + 1)
+        row.append(InlineKeyboardButton(f"{label} ▶", callback_data=f"stats_p_{target_uid}_{page+1}"))
     markup = InlineKeyboardMarkup([row]) if row else None
     if edit:
         await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
@@ -4788,7 +4804,7 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔮 Your Skills:\n" + "\n".join(skill_lines) if skill_lines else "None yet",
             delay=30); return
     if not context.args:
-        lines = ["⚔️ *Choose your starting class!*\n`/class [name]`\n"]
+        lines = ["⚔️ *Choose your starting class!*\n"]
         for cid in BASE_CLASSES:
             cls = CLASS_TREE[cid]
             sk  = cls["skills"][0]
@@ -4796,7 +4812,8 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"*{cls['name']}*  -  {cls['desc']}\n"
                 f"  📈 Primary: {cls['primary_stat']}\n"
                 f"  🔹 {sk['passive']}\n"
-                f"  🔸 {sk['name']}: {sk['desc']}\n")
+                f"  🔸 {sk['name']}: {sk['desc']}\n"
+                f"  /class {cid}\n")
         await send_group(update, "\n".join(lines), delay=30); return
 
     chosen = context.args[0].lower()
@@ -4824,6 +4841,83 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{skill_lines}\n\n"
         f"At *Level 10*, use /prestige to choose your path (A or B).",
         delay=30)
+
+# ── CLASS RESET ───────────────────────────────────────────────────────────────
+def _calc_applied_class_bonuses(p):
+    """Return total stat bonuses applied through all class advancements so far."""
+    cid   = p.get("class_id")
+    if not cid:
+        return {}
+    cls   = CLASS_TREE.get(cid, {})
+    line  = cls.get("line") or cid
+    path  = p.get("class_path")
+    level = safe_int(p.get("level", 1))
+    total = {}
+
+    def _add(class_key):
+        for stat, val in CLASS_TREE.get(class_key, {}).get("stat_bonus", {}).items():
+            total[stat] = total.get(stat, 0) + val
+
+    # Base class (chosen at Lv5)
+    if line in BASE_CLASSES:
+        _add(line)
+
+    # Path advancements applied based on level thresholds
+    if path:
+        path_list = CLASS_PATHS.get(line, {}).get(path, [])
+        for threshold, idx in [(10, 0), (30, 1), (60, 2), (100, 3)]:
+            if level >= threshold and idx < len(path_list):
+                _add(path_list[idx])
+
+    return total
+
+
+async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if not p.get("class_id"):
+        await send_group(update, "You don't have a class yet  -  use /class to pick one.", delay=9); return
+
+    cls      = get_player_class(p)
+    cls_name = cls["name"] if cls else "Unknown"
+    path_str = f" (Path {p['class_path']})" if p.get("class_path") else ""
+    cost     = 300
+
+    if not context.args or context.args[0].lower() != "confirm":
+        await send_group(update,
+            f"⚠️ *Class Reset*\n\n"
+            f"Current class: *{cls_name}*{path_str}\n\n"
+            f"This will:\n"
+            f"  - Remove your class and path\n"
+            f"  - Remove all class skills\n"
+            f"  - Reverse class stat bonuses\n"
+            f"  - Keep your level, allocated stat points, gear, and gold\n\n"
+            f"Cost: *{cost}g*\n\n"
+            f"Type /resetclass confirm to proceed.", delay=20); return
+
+    if safe_int(p.get("gold")) < cost:
+        await send_group(update,
+            f"Not enough gold! Need {cost}g, you have {p.get('gold',0)}g.", delay=9); return
+
+    # Subtract all applied class stat bonuses
+    bonuses = _calc_applied_class_bonuses(p)
+    sd = safe_stats(p)
+    for stat, val in bonuses.items():
+        sd[stat] = max(0, sd.get(stat, 0) - val)
+    p["stats"]      = json.dumps(sd)
+    p["class_id"]   = None
+    p["class_path"] = None
+    p["all_skills"] = json.dumps([])
+    p["gold"]       = safe_int(p.get("gold")) - cost
+    save_player(p)
+
+    await send_group(update,
+        f"🔄 *{user.first_name}* has reset their class.\n\n"
+        f"Class bonuses from *{cls_name}* have been reversed.\n"
+        f"Use /class to choose a new class.",
+        delay=15)
+
 
 # ── PRESTIGE (path selection at Lv 10, auto-advance after) ───────────────────
 async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -8341,6 +8435,7 @@ HELP_PAGES = [
         "*/prestige*  -  Pick your specialization path at Lv 10\n"
         "*/allocate STR 5*  -  Spend stat points (STR/INT/AGI/LUK/WIS/DEX)\n"
         "*/resetstats*  -  Refund all stat points and reallocate fresh\n"
+        "*/resetclass confirm*  -  Reset class + path (300g, keeps level + allocated points)\n"
         "*/skill*  -  View + use your class skill (costs SP)\n"
         "*/title [name]*  -  Equip a title for passive stat bonuses"
     ),
@@ -8442,7 +8537,7 @@ async def _send_help_page(target, page: int, edit: bool = False):
     if edit:
         await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
     else:
-        await send_group(target, text, delay=20, reply_markup=markup)
+        await send_group(target, text, delay=60, reply_markup=markup)
 
 async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -9297,7 +9392,8 @@ def main():
     app.add_handler(CommandHandler("class",     class_cmd))
     app.add_handler(CommandHandler("prestige",  prestige_cmd))
     app.add_handler(CommandHandler("allocate",  allocate_cmd))
-    app.add_handler(CommandHandler("resetstats", resetstats_cmd))
+    app.add_handler(CommandHandler("resetstats",  resetstats_cmd))
+    app.add_handler(CommandHandler("resetclass",  resetclass_cmd))
     app.add_handler(CommandHandler("skill",     skill_cmd))
     app.add_handler(CommandHandler("title",     title_cmd))
 
