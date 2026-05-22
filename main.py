@@ -96,7 +96,7 @@ def safe_inv(p):    return sjl(p.get("inventory"), [])
 def safe_stats(p):
     return sjl(p.get("stats"),
                {"STR":5,"DEF":0,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5})
-def safe_titles(p): return sjl(p.get("titles"), ["The Newcomer"])
+def safe_titles(p): return sjl(p.get("titles"), ["Fresh Rack"])
 def safe_cds(p):    return sjl(p.get("passive_cooldowns"), {})
 def safe_int(v, d=0):
     try: return int(v or d)
@@ -106,12 +106,12 @@ def safe_int(v, d=0):
 WORLD_NAME = "The World of 8Ball"
 
 WEATHER_TABLE = [
-    {"name":"Freshly Felted",     "desc":"The table is pristine.",          "exp_mod":1.20,"dmg_mod":1.00},
-    {"name":"High Humidity",      "desc":"The felt is damp and slow.",      "exp_mod":1.00,"dmg_mod":0.90},
-    {"name":"Perfect Conditions", "desc":"Everything is in balance.",       "exp_mod":1.10,"dmg_mod":1.10},
-    {"name":"Chalk Dust Storm",   "desc":"Visibility is low.",              "exp_mod":0.90,"dmg_mod":1.15},
-    {"name":"The Break Hour",     "desc":"Energy surges through the felt.", "exp_mod":1.30,"dmg_mod":1.20,"secret_eligible":True},
-    {"name":"Dead Cloth",         "desc":"The felt is worn and sluggish.",  "exp_mod":0.85,"dmg_mod":0.85},
+    {"name":"Fresh Cloth",        "desc":"The table is pristine. A new cloth, tight and fast.",          "exp_mod":1.20,"dmg_mod":1.00},
+    {"name":"Dead Cloth",         "desc":"The felt is damp and slow. Every shot dies early.",             "exp_mod":1.00,"dmg_mod":0.90},
+    {"name":"Tournament Ready",   "desc":"The table is set for championship play. Everything is in balance.", "exp_mod":1.10,"dmg_mod":1.10},
+    {"name":"Chalk Haze",         "desc":"Chalk dust hangs in the air. Visibility is low. Instinct takes over.", "exp_mod":0.90,"dmg_mod":1.15},
+    {"name":"The Action Hour",    "desc":"Something shifts. The felt teems with energy. High stakes incoming.", "exp_mod":1.30,"dmg_mod":1.20,"secret_eligible":True},
+    {"name":"Worn Felt",          "desc":"The cloth is threadbare and sluggish. Nothing moves like it should.", "exp_mod":0.85,"dmg_mod":0.85},
 ]
 _weather_cache = {"weather":None,"set_at":None}
 def get_weather():
@@ -137,11 +137,11 @@ def exp_for_level(level):
 def max_hp_for_level(level): return 100 + (level - 1) * 15
 
 RANK_TIERS = [
-    {"name":"👑 Legends",   "emoji":"👑","min":75,"max":100},
-    {"name":"⚔️ Veterans",  "emoji":"⚔️","min":50,"max":74},
-    {"name":"🔥 Rising",    "emoji":"🔥","min":25,"max":49},
-    {"name":"💬 Active",    "emoji":"💬","min":10,"max":24},
-    {"name":"🌱 Newcomers", "emoji":"🌱","min":1,  "max":9},
+    {"name":"👑 Hall of Fame",         "emoji":"👑","min":75,"max":100},
+    {"name":"🎱 Tournament Players",   "emoji":"🎱","min":50,"max":74},
+    {"name":"🔥 On the Rise",          "emoji":"🔥","min":25,"max":49},
+    {"name":"💬 Regular Players",      "emoji":"💬","min":10,"max":24},
+    {"name":"🌱 Fresh Racks",          "emoji":"🌱","min":1,  "max":9},
 ]
 def get_tier(level):
     for t in RANK_TIERS:
@@ -160,10 +160,10 @@ DEFAULT_STATS = {"STR":5,"DEF":0,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5}
 CLASS_TREE = {
     # ── WARRIOR ──────────────────────────────────────────────────────────────
     "warrior": {
-        "name":"Warrior","primary_stat":"STR","line":"warrior",
+        "name":"Breaker","primary_stat":"STR","line":"warrior",
         "weapon_types":["sword_1h","sword_2h"],
         "armor_type":"warrior_armor",
-        "desc":"A master of the blade. Tough, relentless, built to endure.",
+        "desc":"A force at the break. Built to scatter racks and dominate the table.",
         "stat_bonus":{"STR":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Iron Will",
@@ -179,10 +179,10 @@ CLASS_TREE = {
         ]
     },
     "page": {
-        "name":"Page","primary_stat":"STR","line":"warrior","path":"A",
+        "name":"Enforcer","primary_stat":"STR","line":"warrior","path":"A",
         "weapon_types":["sword_1h","shield"],
         "armor_type":"warrior_armor",
-        "desc":"A holy knight in training. Defense and devotion.",
+        "desc":"The break is just the beginning. Every hit is a statement.",
         "stat_bonus":{"STR":1,"DEF":2},
         "skills":[
             {"tier":2,"unlock":10,"name":"Holy Stance",
@@ -198,10 +198,10 @@ CLASS_TREE = {
         ]
     },
     "squire": {
-        "name":"Squire","primary_stat":"STR","line":"warrior","path":"A",
+        "name":"Vanguard","primary_stat":"STR","line":"warrior","path":"A",
         "weapon_types":["sword_1h","shield"],
         "armor_type":"warrior_armor",
-        "desc":"Devoted to the holy path. Each blow fuels the next.",
+        "desc":"Controls the table by controlling the shot order. Nothing happens by accident.",
         "stat_bonus":{"STR":2,"DEF":2},
         "skills":[
             {"tier":3,"unlock":30,"name":"Devotion",
@@ -212,38 +212,38 @@ CLASS_TREE = {
         ]
     },
     "knight": {
-        "name":"Knight","primary_stat":"STR","line":"warrior","path":"A",
+        "name":"Bank Knight","primary_stat":"STR","line":"warrior","path":"A",
         "weapon_types":["sword_1h","shield"],
         "armor_type":"warrior_armor",
-        "desc":"A true knight. Near-unbreakable defense and rallying power.",
+        "desc":"Owns the table. Other players are just guests.",
         "stat_bonus":{"STR":3,"DEF":3},
         "skills":[
             {"tier":4,"unlock":60,"name":"Bulwark",
              "passive":"15% chance to completely block any incoming hit.",
              "active":"Rally","type":"self_heal_buff",
-             "desc":"Restore 30% of your own HP. Grant all guild members in chat +15% damage for 10 minutes.",
+             "desc":"Restore 30% of your own HP. Grant all hall members in chat +15% damage for 10 minutes.",
              "passive_key":"bulwark"},
         ]
     },
     "paladin": {
-        "name":"Paladin","primary_stat":"STR","line":"warrior","path":"A",
+        "name":"Godbank","primary_stat":"STR","line":"warrior","path":"A",
         "weapon_types":["sword_1h","shield"],
         "armor_type":"warrior_armor",
-        "desc":"The pinnacle of the holy knight. Divine judgment incarnate.",
+        "desc":"The pinnacle of pure power pool. Every shot is a clinic.",
         "stat_bonus":{"STR":4,"DEF":4,"WIS":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Divine Judgment",
              "passive":"All holy skills deal 25% more damage.",
              "active":"Wrath of the Fallen","type":"holy_nuke",
-             "desc":"Massive STR+DEF+WIS x3 combined hit. On kill: all guild members in chat gain +20% damage for 30 minutes.",
+             "desc":"Massive STR+DEF+WIS x3 combined hit. On kill: all hall members in chat gain +20% damage for 30 minutes.",
              "passive_key":"divine_judgment"},
         ]
     },
     "fighter": {
-        "name":"Fighter","primary_stat":"STR","line":"warrior","path":"B",
+        "name":"Hall Fighter","primary_stat":"STR","line":"warrior","path":"B",
         "weapon_types":["sword_2h"],
         "armor_type":"warrior_armor",
-        "desc":"Raw aggression. Every hit heals, every kill fuels the next.",
+        "desc":"Takes the hit so the team doesn't have to. Unmovable.",
         "stat_bonus":{"STR":3},
         "skills":[
             {"tier":2,"unlock":10,"name":"Bloodlust",
@@ -259,10 +259,10 @@ CLASS_TREE = {
         ]
     },
     "crusader": {
-        "name":"Crusader","primary_stat":"STR","line":"warrior","path":"B",
+        "name":"Pocket Knight","primary_stat":"STR","line":"warrior","path":"B",
         "weapon_types":["sword_2h"],
         "armor_type":"warrior_armor",
-        "desc":"A charging force of nature. Unstoppable momentum.",
+        "desc":"Locks down the table. Nothing gets through that shouldn't.",
         "stat_bonus":{"STR":4,"DEF":1},
         "skills":[
             {"tier":3,"unlock":30,"name":"Warcry",
@@ -273,10 +273,10 @@ CLASS_TREE = {
         ]
     },
     "hero": {
-        "name":"Hero","primary_stat":"STR","line":"warrior","path":"B",
+        "name":"Pool Slayer","primary_stat":"STR","line":"warrior","path":"B",
         "weapon_types":["sword_2h"],
         "armor_type":"warrior_armor",
-        "desc":"A living legend. Cannot be one-shotted. Rampage is inevitable.",
+        "desc":"The cushion is their weapon. Consistent, relentless, unbreakable.",
         "stat_bonus":{"STR":5,"DEF":2},
         "skills":[
             {"tier":4,"unlock":60,"name":"Unbreakable",
@@ -287,10 +287,10 @@ CLASS_TREE = {
         ]
     },
     "warlord": {
-        "name":"Warlord","primary_stat":"STR","line":"warrior","path":"B",
+        "name":"8ball Lord","primary_stat":"STR","line":"warrior","path":"B",
         "weapon_types":["sword_2h"],
         "armor_type":"warrior_armor",
-        "desc":"The apex predator. Every kill makes you stronger.",
+        "desc":"The Lord of 8ball",
         "stat_bonus":{"STR":6,"DEF":3},
         "skills":[
             {"tier":5,"unlock":100,"name":"Conqueror",
@@ -302,10 +302,10 @@ CLASS_TREE = {
     },
     # ── MAGE ─────────────────────────────────────────────────────────────────
     "mage": {
-        "name":"Mage","primary_stat":"INT","line":"mage",
+        "name":"Baizer","primary_stat":"INT","line":"mage",
         "weapon_types":["wand","staff"],
         "armor_type":"mage_armor",
-        "desc":"Wielder of arcane power. Intelligence is the deadliest weapon.",
+        "desc":"Reads angles others can't see. The table is a puzzle only they can solve.",
         "stat_bonus":{"INT":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Arcane Mind",
@@ -321,10 +321,10 @@ CLASS_TREE = {
         ]
     },
     "arcanist": {
-        "name":"Arcanist","primary_stat":"INT","line":"mage","path":"A",
+        "name":"Trickster","primary_stat":"INT","line":"mage","path":"A",
         "weapon_types":["wand"],
         "armor_type":"mage_armor",
-        "desc":"Pure arcane power. Spells surge and chain.",
+        "desc":"Shots that shouldn't work. They always work.",
         "stat_bonus":{"INT":3},
         "skills":[
             {"tier":2,"unlock":10,"name":"Spell Surge",
@@ -340,10 +340,10 @@ CLASS_TREE = {
         ]
     },
     "sorcerer": {
-        "name":"Sorcerer","primary_stat":"INT","line":"mage","path":"A",
+        "name":"Reader","primary_stat":"INT","line":"mage","path":"A",
         "weapon_types":["wand"],
         "armor_type":"mage_armor",
-        "desc":"Every third spell is catastrophic.",
+        "desc":"Sees three shots ahead. The geometry is already solved.",
         "stat_bonus":{"INT":4},
         "skills":[
             {"tier":3,"unlock":30,"name":"Arcane Mastery",
@@ -354,10 +354,10 @@ CLASS_TREE = {
         ]
     },
     "archmage": {
-        "name":"Archmage","primary_stat":"INT","line":"mage","path":"A",
+        "name":"Mystic","primary_stat":"INT","line":"mage","path":"A",
         "weapon_types":["wand"],
         "armor_type":"mage_armor",
-        "desc":"Magic flows through you. Attackers pay in kind.",
+        "desc":"The table obeys. Nobody's quite sure why.",
         "stat_bonus":{"INT":5,"AGI":1},
         "skills":[
             {"tier":4,"unlock":60,"name":"Mana Overload",
@@ -371,7 +371,7 @@ CLASS_TREE = {
         "name":"Sage","primary_stat":"INT","line":"mage","path":"A",
         "weapon_types":["wand"],
         "armor_type":"mage_armor",
-        "desc":"Ancient wisdom made lethal. Spells cut through all resistance.",
+        "desc":"Ancient knowledge of every angle, every cushion, every possibility.",
         "stat_bonus":{"INT":6,"WIS":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Eternal Wisdom",
@@ -382,10 +382,10 @@ CLASS_TREE = {
         ]
     },
     "hexblade": {
-        "name":"Hexblade","primary_stat":"INT","line":"mage","path":"B",
+        "name":"Shark","primary_stat":"INT","line":"mage","path":"B",
         "weapon_types":["staff"],
         "armor_type":"mage_armor",
-        "desc":"Dark magic fused with steel. Curses that linger.",
+        "desc":"A hustler with an edge. The mark never sees it coming.",
         "stat_bonus":{"INT":2,"STR":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Cursed Blade",
@@ -401,10 +401,10 @@ CLASS_TREE = {
         ]
     },
     "warlock": {
-        "name":"Warlock","primary_stat":"INT","line":"mage","path":"B",
+        "name":"Hex Shooter","primary_stat":"INT","line":"mage","path":"B",
         "weapon_types":["staff"],
         "armor_type":"mage_armor",
-        "desc":"A pact with darkness. Life drains into power.",
+        "desc":"Curses the table in their favor. Legal? Technically.",
         "stat_bonus":{"INT":3,"WIS":1},
         "skills":[
             {"tier":3,"unlock":30,"name":"Soul Pact",
@@ -415,10 +415,10 @@ CLASS_TREE = {
         ]
     },
     "lich": {
-        "name":"Lich","primary_stat":"INT","line":"mage","path":"B",
+        "name":"Rail Wraith","primary_stat":"INT","line":"mage","path":"B",
         "weapon_types":["staff"],
         "armor_type":"mage_armor",
-        "desc":"Undead sorcerer. Death cannot hold you.",
+        "desc":"Death doesn't stop a Rail Wraith. Neither does a bad rack.",
         "stat_bonus":{"INT":4,"WIS":2},
         "skills":[
             {"tier":4,"unlock":60,"name":"Undying",
@@ -429,10 +429,10 @@ CLASS_TREE = {
         ]
     },
     "void_mage": {
-        "name":"Void Mage","primary_stat":"INT","line":"mage","path":"B",
+        "name":"Blackball","primary_stat":"INT","line":"mage","path":"B",
         "weapon_types":["staff"],
         "armor_type":"mage_armor",
-        "desc":"Master of the void. Reality itself bends to your will.",
+        "desc":"The last ball on the table. The one that decides everything.",
         "stat_bonus":{"INT":6,"AGI":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Void Rift",
@@ -444,10 +444,10 @@ CLASS_TREE = {
     },
     # ── THIEF ─────────────────────────────────────────────────────────────────
     "thief": {
-        "name":"Thief","primary_stat":"LUK","line":"thief",
+        "name":"Shark","primary_stat":"LUK","line":"thief",
         "weapon_types":["dagger","throwing_star"],
         "armor_type":"thief_armor",
-        "desc":"Fast, sneaky, lethal. Strike before they see you coming.",
+        "desc":"Silent, precise, dangerous. In the water before you know it.",
         "stat_bonus":{"AGI":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Quick Hands",
@@ -463,10 +463,10 @@ CLASS_TREE = {
         ]
     },
     "rogue": {
-        "name":"Rogue","primary_stat":"LUK","line":"thief","path":"A",
+        "name":"Sneak","primary_stat":"LUK","line":"thief","path":"A",
         "weapon_types":["dagger"],
         "armor_type":"thief_armor",
-        "desc":"Evasion and shadows. Hard to hit, deadly when you do.",
+        "desc":"Gets in, gets out, pockets something on the way.",
         "stat_bonus":{"AGI":3},
         "skills":[
             {"tier":2,"unlock":10,"name":"Evasion",
@@ -482,10 +482,10 @@ CLASS_TREE = {
         ]
     },
     "shadow": {
-        "name":"Shadow","primary_stat":"LUK","line":"thief","path":"A",
+        "name":"Cleaner","primary_stat":"LUK","line":"thief","path":"A",
         "weapon_types":["dagger"],
         "armor_type":"thief_armor",
-        "desc":"You are the darkness. Every dodge fuels destruction.",
+        "desc":"Clears the table quietly. Nobody sees it happen.",
         "stat_bonus":{"AGI":4},
         "skills":[
             {"tier":3,"unlock":30,"name":"Shadowstep",
@@ -499,7 +499,7 @@ CLASS_TREE = {
         "name":"Phantom","primary_stat":"LUK","line":"thief","path":"A",
         "weapon_types":["dagger"],
         "armor_type":"thief_armor",
-        "desc":"More ghost than person. Attacks pass through you.",
+        "desc":"You can't foul what you can't see.",
         "stat_bonus":{"AGI":5,"INT":1},
         "skills":[
             {"tier":4,"unlock":60,"name":"Ghost Form",
@@ -510,10 +510,10 @@ CLASS_TREE = {
         ]
     },
     "wraith": {
-        "name":"Wraith","primary_stat":"LUK","line":"thief","path":"A",
+        "name":"Ghost Cue","primary_stat":"LUK","line":"thief","path":"A",
         "weapon_types":["dagger"],
         "armor_type":"thief_armor",
-        "desc":"Death made flesh. Every dodge restores, every kill protects.",
+        "desc":"The cue moves. Nobody held it.",
         "stat_bonus":{"AGI":6,"INT":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Death's Shadow",
@@ -524,10 +524,10 @@ CLASS_TREE = {
         ]
     },
     "cutthroat": {
-        "name":"Cutthroat","primary_stat":"LUK","line":"thief","path":"B",
+        "name":"Cutter","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
-        "desc":"First strike, last strike. Mark them and end them.",
+        "desc":"Thin cut, maximum damage. Always the hard way.",
         "stat_bonus":{"AGI":2,"STR":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Marked",
@@ -543,10 +543,10 @@ CLASS_TREE = {
         ]
     },
     "assassin": {
-        "name":"Assassin","primary_stat":"LUK","line":"thief","path":"B",
+        "name":"Bookmaker","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
-        "desc":"Executioner of the weak. Low HP targets never survive.",
+        "desc":"Knows the odds. Sets them. Wins them.",
         "stat_bonus":{"AGI":3,"STR":2},
         "skills":[
             {"tier":3,"unlock":30,"name":"Execute",
@@ -557,10 +557,10 @@ CLASS_TREE = {
         ]
     },
     "blade_master": {
-        "name":"Blade Master","primary_stat":"LUK","line":"thief","path":"B",
+        "name":"Fixer","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
-        "desc":"A storm of blades. Every attack has a chance to hit twice.",
+        "desc":"Fixes every problem the same way — by making it disappear.",
         "stat_bonus":{"AGI":4,"STR":3},
         "skills":[
             {"tier":4,"unlock":60,"name":"Flurry",
@@ -571,10 +571,10 @@ CLASS_TREE = {
         ]
     },
     "specialist": {
-        "name":"Specialist","primary_stat":"LUK","line":"thief","path":"B",
+        "name":"Backdoor King","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
-        "desc":"The professional. Every debuff lingers, every kill profits.",
+        "desc":"Wins through angles nobody else considered legal.",
         "stat_bonus":{"AGI":5,"STR":4},
         "skills":[
             {"tier":5,"unlock":100,"name":"The Professional",
@@ -586,10 +586,10 @@ CLASS_TREE = {
     },
     # ── ARCHER ────────────────────────────────────────────────────────────────
     "archer": {
-        "name":"Archer","primary_stat":"DEX","line":"archer",
+        "name":"Marksman","primary_stat":"DEX","line":"archer",
         "weapon_types":["bow","crossbow"],
         "armor_type":"archer_armor",
-        "desc":"Precise and deadly at range. Never miss a shot that matters.",
+        "desc":"Calls every shot before it happens. Never misses what matters.",
         "stat_bonus":{"AGI":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Eagle Eye",
@@ -605,10 +605,10 @@ CLASS_TREE = {
         ]
     },
     "scout": {
-        "name":"Scout","primary_stat":"DEX","line":"archer","path":"A",
+        "name":"Shot Caller","primary_stat":"DEX","line":"archer","path":"A",
         "weapon_types":["bow"],
         "armor_type":"archer_armor",
-        "desc":"Intelligence and disruption. Control the battlefield.",
+        "desc":"Calls the corner pocket from downtown. Makes it every time.",
         "stat_bonus":{"AGI":2,"INT":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Trailblazer",
@@ -624,10 +624,10 @@ CLASS_TREE = {
         ]
     },
     "ranger": {
-        "name":"Ranger","primary_stat":"DEX","line":"archer","path":"A",
+        "name":"Sniper","primary_stat":"DEX","line":"archer","path":"A",
         "weapon_types":["bow"],
         "armor_type":"archer_armor",
-        "desc":"Nature's guardian. Reduced damage, locked-down enemies.",
+        "desc":"One shot, one pocket. Distance is irrelevant.",
         "stat_bonus":{"AGI":3,"DEF":1},
         "skills":[
             {"tier":3,"unlock":30,"name":"Nature's Bond",
@@ -638,27 +638,27 @@ CLASS_TREE = {
         ]
     },
     "warden": {
-        "name":"Warden","primary_stat":"DEX","line":"archer","path":"A",
+        "name":"Deadstroke","primary_stat":"DEX","line":"archer","path":"A",
         "weapon_types":["bow"],
         "armor_type":"archer_armor",
-        "desc":"Protector of allies. Intercepts hits, rains arrows on crowds.",
+        "desc":"In the zone. Untouchable. Every shot automatic.",
         "stat_bonus":{"AGI":3,"DEF":3},
         "skills":[
             {"tier":4,"unlock":60,"name":"Guardian Stance",
-             "passive":"If a guild member is attacked you have 20% chance to intercept the hit.",
+             "passive":"If a hall member is attacked you have 20% chance to intercept the hit.",
              "active":"Barrage","type":"random_aoe",
              "desc":"Fire 6 arrows at random active players in chat. Each deals AGI x1.5 damage.",
              "passive_key":"guardian_stance"},
         ]
     },
     "strider": {
-        "name":"Strider","primary_stat":"DEX","line":"archer","path":"A",
+        "name":"Ghostman","primary_stat":"DEX","line":"archer","path":"A",
         "weapon_types":["bow"],
         "armor_type":"archer_armor",
-        "desc":"Unstoppable pathfinder. No root can hold you. Retribution is swift.",
+        "desc":"Moves through the table like it isn't there.",
         "stat_bonus":{"AGI":5,"DEF":3},
         "skills":[
-            {"tier":5,"unlock":100,"name":"Pathfinder",
+            {"tier":5,"unlock":100,"name":"Railfinder",
              "passive":"Cannot be rooted, frozen or stunned by any skill ever.",
              "active":"Storm of Arrows","type":"aoe_recent_attackers",
              "desc":"AGI x8 split across all players who attacked you in last 30 minutes.",
@@ -666,10 +666,10 @@ CLASS_TREE = {
         ]
     },
     "bounty_hunter": {
-        "name":"Bounty Hunter","primary_stat":"DEX","line":"archer","path":"B",
+        "name":"Railrunner","primary_stat":"DEX","line":"archer","path":"B",
         "weapon_types":["crossbow"],
         "armor_type":"archer_armor",
-        "desc":"Every target has a price. You always collect.",
+        "desc":"Uses every cushion. The long way is the right way.",
         "stat_bonus":{"AGI":2,"STR":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Marked for Death",
@@ -688,7 +688,7 @@ CLASS_TREE = {
         "name":"Sharpshooter","primary_stat":"DEX","line":"archer","path":"B",
         "weapon_types":["crossbow"],
         "armor_type":"archer_armor",
-        "desc":"Consistency is power. Every hit builds toward devastation.",
+        "desc":"Consistency over flash. Wins more than they should.",
         "stat_bonus":{"AGI":3,"STR":1},
         "skills":[
             {"tier":3,"unlock":30,"name":"Steady Aim",
@@ -699,10 +699,10 @@ CLASS_TREE = {
         ]
     },
     "sniper": {
-        "name":"Sniper","primary_stat":"DEX","line":"archer","path":"B",
+        "name":"Steadyhand","primary_stat":"DEX","line":"archer","path":"B",
         "weapon_types":["crossbow"],
         "armor_type":"archer_armor",
-        "desc":"One shot, one kill. Crits hit harder than anyone else.",
+        "desc":"Never rushes. Never misses.",
         "stat_bonus":{"AGI":4,"STR":2},
         "skills":[
             {"tier":4,"unlock":60,"name":"Headshot",
@@ -716,7 +716,7 @@ CLASS_TREE = {
         "name":"Deadeye","primary_stat":"DEX","line":"archer","path":"B",
         "weapon_types":["crossbow"],
         "armor_type":"archer_armor",
-        "desc":"The final form. Every kill makes you deadlier forever.",
+        "desc":"The pocket is the only thing that exists.",
         "stat_bonus":{"AGI":6,"STR":3},
         "skills":[
             {"tier":5,"unlock":100,"name":"Dead or Alive",
@@ -728,10 +728,10 @@ CLASS_TREE = {
     },
     # ── PRIEST ────────────────────────────────────────────────────────────────
     "priest": {
-        "name":"Priest","primary_stat":"WIS","line":"priest",
+        "name":"Chalker","primary_stat":"WIS","line":"priest",
         "weapon_types":["rosary","cross"],
         "armor_type":"priest_armor",
-        "desc":"Healer and protector. The backbone of any group.",
+        "desc":"Keeps everyone sharp. The one who holds the team together.",
         "stat_bonus":{"WIS":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Mending Aura",
@@ -747,10 +747,10 @@ CLASS_TREE = {
         ]
     },
     "cleric": {
-        "name":"Cleric","primary_stat":"WIS","line":"priest","path":"A",
+        "name":"Caller","primary_stat":"WIS","line":"priest","path":"A",
         "weapon_types":["rosary"],
         "armor_type":"priest_armor",
-        "desc":"Devoted healer. Every heal bounces back to you.",
+        "desc":"Keeps everything above board. Calls every shot clean.",
         "stat_bonus":{"WIS":3},
         "skills":[
             {"tier":2,"unlock":10,"name":"Divine Grace",
@@ -766,52 +766,52 @@ CLASS_TREE = {
         ]
     },
     "bishop": {
-        "name":"Bishop","primary_stat":"WIS","line":"priest","path":"A",
+        "name":"Table Monk","primary_stat":"WIS","line":"priest","path":"A",
         "weapon_types":["rosary"],
         "armor_type":"priest_armor",
-        "desc":"Sacred ground follows your healing. Group protection is your gift.",
+        "desc":"Studies the table like scripture. Knows it better than the felt itself.",
         "stat_bonus":{"WIS":4},
         "skills":[
             {"tier":3,"unlock":30,"name":"Sacred Ground",
              "passive":"Players you have healed take 10% less damage for 1 hour after being healed.",
              "active":"Mass Heal","type":"group_heal",
-             "desc":"Heal all guild members currently in chat for WIS x3 HP each. No potion required.",
+             "desc":"Heal all hall members currently in chat for WIS x3 HP each. No potion required.",
              "passive_key":"sacred_ground"},
         ]
     },
     "high_priest": {
-        "name":"High Priest","primary_stat":"WIS","line":"priest","path":"A",
+        "name":"High Roller","primary_stat":"WIS","line":"priest","path":"A",
         "weapon_types":["rosary"],
         "armor_type":"priest_armor",
-        "desc":"Death cannot claim you. Miracles are real.",
+        "desc":"The stakes are never too high. The chalk never runs out.",
         "stat_bonus":{"WIS":5,"DEF":1},
         "skills":[
             {"tier":4,"unlock":60,"name":"Resurrection",
              "passive":"Once per day if you reach 0 HP you automatically revive at 30% HP.",
              "active":"Miracle","type":"full_revive",
-             "desc":"Fully restore target to max HP. Grant 2 hours invincibility. Costs one Holy Relic.",
+             "desc":"Fully restore target to max HP. Grant 2 hours invincibility. Costs one Golden Triangle.",
              "passive_key":"resurrection"},
         ]
     },
     "saint": {
-        "name":"Saint","primary_stat":"WIS","line":"priest","path":"A",
+        "name":"House Saint","primary_stat":"WIS","line":"priest","path":"A",
         "weapon_types":["rosary"],
         "armor_type":"priest_armor",
-        "desc":"A living blessing. Your presence alone uplifts the faithful.",
+        "desc":"The table's guardian. Everyone plays better when they're around.",
         "stat_bonus":{"WIS":6,"DEF":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Divine Presence",
-             "passive":"All guild members in active chat gain +5% EXP and regen 5 HP every 30 minutes while you are online.",
+             "passive":"All hall members in active chat gain +5% EXP and regen 5 HP every 30 minutes while you are online.",
              "active":"Absolution","type":"mass_cleanse",
-             "desc":"Cleanse ALL debuffs from ALL guild members. Grant 30 minutes of blessed status (+10% all stats). COUNTERS Zealot's revival block.",
+             "desc":"Cleanse ALL debuffs from ALL hall members. Grant 30 minutes of blessed status (+10% all stats). COUNTERS Zealot's revival block.",
              "passive_key":"divine_presence"},
         ]
     },
     "acolyte": {
-        "name":"Acolyte","primary_stat":"WIS","line":"priest","path":"B",
+        "name":"Judge","primary_stat":"WIS","line":"priest","path":"B",
         "weapon_types":["cross"],
         "armor_type":"priest_armor",
-        "desc":"Dark sense and holy wrath. You see what others cannot.",
+        "desc":"Watches everything. Misses nothing. Rules on contact.",
         "stat_bonus":{"WIS":2,"INT":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Dark Sense",
@@ -827,10 +827,10 @@ CLASS_TREE = {
         ]
     },
     "exorcist": {
-        "name":"Exorcist","primary_stat":"WIS","line":"priest","path":"B",
+        "name":"Referee","primary_stat":"WIS","line":"priest","path":"B",
         "weapon_types":["cross"],
         "armor_type":"priest_armor",
-        "desc":"Purge the wicked. Strip their power and punish their sins.",
+        "desc":"Enforces the rules of The Felt with zero mercy.",
         "stat_bonus":{"WIS":3,"INT":1},
         "skills":[
             {"tier":3,"unlock":30,"name":"Purge",
@@ -841,10 +841,10 @@ CLASS_TREE = {
         ]
     },
     "inquisitor": {
-        "name":"Inquisitor","primary_stat":"WIS","line":"priest","path":"B",
+        "name":"Bishop","primary_stat":"WIS","line":"priest","path":"B",
         "weapon_types":["cross"],
         "armor_type":"priest_armor",
-        "desc":"Justice is your shield. Attackers are punished. Targets are judged.",
+        "desc":"Diagonal movement. Unexpected angles. Ruthless efficiency.",
         "stat_bonus":{"WIS":4,"INT":2},
         "skills":[
             {"tier":4,"unlock":60,"name":"Judgement",
@@ -855,10 +855,10 @@ CLASS_TREE = {
         ]
     },
     "zealot": {
-        "name":"Zealot","primary_stat":"WIS","line":"priest","path":"B",
+        "name":"Verdict","primary_stat":"WIS","line":"priest","path":"B",
         "weapon_types":["cross"],
         "armor_type":"priest_armor",
-        "desc":"Holy wrath without mercy. The righteous cannot be brought back.",
+        "desc":"The final word on the table. Appeals are not accepted.",
         "stat_bonus":{"WIS":6,"INT":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Wrath of the Righteous",
@@ -890,196 +890,196 @@ HEALER_CLASSES = {"priest","cleric","bishop","high_priest","saint"}
 
 # ── TITLES ────────────────────────────────────────────────────────────────────
 TITLES = {
-    "The Newcomer":    {"type":"level","threshold":1},
-    "Rising Star":     {"type":"level","threshold":3},
-    "Veteran":         {"type":"level","threshold":7},
+    "Fresh Rack":    {"type":"level","threshold":1},
+    "On the Come Up":     {"type":"level","threshold":3},
+    "Seasoned Stroke":         {"type":"level","threshold":7},
     "Pocket King":     {"type":"level","threshold":10},
-    "Legend":          {"type":"level","threshold":15},
-    "The Immortal":    {"type":"level","threshold":20},
-    "The Ascended":    {"type":"prestige","threshold":1},
-    "The Relentless":  {"type":"wins","threshold":10},
-    "The Undefeated":  {"type":"wins","threshold":25},
-    "The Executioner": {"type":"wins","threshold":5},
-    "Shadow":          {"type":"dodges","threshold":5},
-    "The Wanderer":    {"type":"quests","threshold":20},
-    "Dungeon Crawler": {"type":"quests","threshold":10},
-    "Loot Goblin":     {"type":"quests","threshold":5},
-    "The Healer":      {"type":"heals","threshold":5},
-    "Guardian":        {"type":"heals","threshold":10},
-    "One Ball Slayer": {"type":"special","threshold":0},
-    "Three Ball Slayer":{"type":"special","threshold":0},
-    "Five Ball Slayer":{"type":"special","threshold":0},
-    "Seven Ball Slayer":{"type":"special","threshold":0},
-    "8Ball Champion":  {"type":"special","threshold":0},
-    "Void Slayer":     {"type":"special","threshold":0},
-    "Pathfinder":      {"type":"special","threshold":0},
-    "The Seer":        {"type":"special","threshold":0},
-    "The Chosen One":  {"type":"special","threshold":0},
-    "Guild Founder":   {"type":"special","threshold":0},
-    "Raid Leader":     {"type":"special","threshold":0},
-    "Alchemist":       {"type":"crafts","threshold":5},
-    "Master Smith":    {"type":"crafts","threshold":10},
-    "Artisan":         {"type":"crafts","threshold":20},
-    "Century":         {"type":"level","threshold":100},
+    "Table Legend":          {"type":"level","threshold":15},
+    "Never Scratches":    {"type":"level","threshold":20},
+    "Gone Pro":    {"type":"prestige","threshold":1},
+    "Never Off the Table":  {"type":"wins","threshold":10},
+    "Never Lost the Rack":  {"type":"wins","threshold":25},
+    "The Closer": {"type":"wins","threshold":5},
+    "Ghost at the Table":          {"type":"dodges","threshold":5},
+    "Road Player":    {"type":"quests","threshold":20},
+    "Hall Crawler": {"type":"quests","threshold":10},
+    "Rack Collector":     {"type":"quests","threshold":5},
+    "The Chalker":      {"type":"heals","threshold":5},
+    "Table Guardian":        {"type":"heals","threshold":10},
+    "1-Ball Slayer": {"type":"special","threshold":0},
+    "3-Ball Slayer":{"type":"special","threshold":0},
+    "5-Ball Slayer":{"type":"special","threshold":0},
+    "7-Ball Slayer":{"type":"special","threshold":0},
+    "8-Ball Champion":  {"type":"special","threshold":0},
+    "Blackball Slayer":     {"type":"special","threshold":0},
+    "Railfinder":      {"type":"special","threshold":0},
+    "The Angle Reader":        {"type":"special","threshold":0},
+    "The Called Shot":  {"type":"special","threshold":0},
+    "Hall Founder":   {"type":"special","threshold":0},
+    "Break Leader":     {"type":"special","threshold":0},
+    "Tip Maker":       {"type":"crafts","threshold":5},
+    "Cue Maker":    {"type":"crafts","threshold":10},
+    "Master Craftsman":         {"type":"crafts","threshold":20},
+    "Century Break":         {"type":"level","threshold":100},
 }
 
 # ── GEAR SYSTEM ───────────────────────────────────────────────────────────────
 WEAPONS = {
     # ── WARRIOR ──────────────────────────────────────────────────────────────
-    "Broken Longsword":        {"class":"warrior","type":"sword_1h","atk":3, "rarity":"common"},
-    "Militia Falchion":        {"class":"warrior","type":"sword_1h","atk":7, "rarity":"uncommon"},
-    "Blacksteel Bastard Sword":{"class":"warrior","type":"sword_1h","atk":14,"rarity":"rare"},
-    "Giantslayer Zweihander":  {"class":"warrior","type":"sword_2h","atk":24,"rarity":"epic"},
-    "Worldcleaver":            {"class":"warrior","type":"sword_2h","atk":40,"rarity":"legendary"},
+    "Cracked House Cue":        {"class":"warrior","type":"sword_1h","atk":3, "rarity":"common"},
+    "Worn Practice Cue":        {"class":"warrior","type":"sword_1h","atk":7, "rarity":"uncommon"},
+    "Graphite Break Cue":{"class":"warrior","type":"sword_1h","atk":14,"rarity":"rare"},
+    "Heavy Breaker Staff":  {"class":"warrior","type":"sword_2h","atk":24,"rarity":"epic"},
+    "The Rack Splitter":            {"class":"warrior","type":"sword_2h","atk":40,"rarity":"legendary"},
     # ── MAGE ─────────────────────────────────────────────────────────────────
-    "Oak Practice Staff":      {"class":"mage","type":"wand","atk":2, "rarity":"common"},
-    "Petrified Willow Wand":   {"class":"mage","type":"wand","atk":8, "rarity":"uncommon"},
-    "Cursed Ebony Staff":      {"class":"mage","type":"staff","atk":15,"rarity":"rare"},
-    "Astral Conduit Rod":      {"class":"mage","type":"staff","atk":26,"rarity":"epic"},
-    "Nullstar Scepter":        {"class":"mage","type":"wand","atk":42,"rarity":"legendary"},
+    "Chalked Finger":      {"class":"mage","type":"wand","atk":2, "rarity":"common"},
+    "Blue Diamond Chalk":   {"class":"mage","type":"wand","atk":8, "rarity":"uncommon"},
+    "Blackwood Bridge Stick":      {"class":"mage","type":"staff","atk":15,"rarity":"rare"},
+    "The Extension":      {"class":"mage","type":"staff","atk":26,"rarity":"epic"},
+    "The Grand Bridge":        {"class":"mage","type":"wand","atk":42,"rarity":"legendary"},
     # ── ARCHER ────────────────────────────────────────────────────────────────
-    "Makeshift Shortbow":      {"class":"archer","type":"bow","atk":3, "rarity":"common"},
-    "Goat Horn Crossbow":      {"class":"archer","type":"crossbow","atk":7,"rarity":"uncommon"},
-    "Falconwing Recurve Bow":  {"class":"archer","type":"bow","atk":13,"rarity":"rare"},
-    "Windripper Greatbow":     {"class":"archer","type":"bow","atk":23,"rarity":"epic"},
-    "Heaven's Tear Ballista":  {"class":"archer","type":"crossbow","atk":38,"rarity":"legendary"},
+    "Bent Triangle":      {"class":"archer","type":"bow","atk":3, "rarity":"common"},
+    "Standard Magic Rack":      {"class":"archer","type":"crossbow","atk":7,"rarity":"uncommon"},
+    "Precision Rack":  {"class":"archer","type":"bow","atk":13,"rarity":"rare"},
+    "Diamond Rack":     {"class":"archer","type":"bow","atk":23,"rarity":"epic"},
+    "The Perfect Break Rack":  {"class":"archer","type":"crossbow","atk":38,"rarity":"legendary"},
     # ── THIEF ─────────────────────────────────────────────────────────────────
-    "Rusty Shiv":              {"class":"thief","type":"dagger","atk":4, "rarity":"common"},
-    "Serrated Kujang":         {"class":"thief","type":"dagger","atk":9, "rarity":"uncommon"},
-    "Venomspike Blowgun":      {"class":"thief","type":"throwing_star","atk":14,"rarity":"rare"},
-    "Shadowstitch Katars":     {"class":"thief","type":"throwing_star","atk":25,"rarity":"epic"},
-    "Umbral Chain Sickle":     {"class":"thief","type":"dagger","atk":44,"rarity":"legendary"},
+    "Chalk Shiv":              {"class":"thief","type":"dagger","atk":4, "rarity":"common"},
+    "Mushroom Tip Blade":         {"class":"thief","type":"dagger","atk":9, "rarity":"uncommon"},
+    "Ferrule Dart":      {"class":"thief","type":"throwing_star","atk":14,"rarity":"rare"},
+    "Twin Tip Blades":     {"class":"thief","type":"throwing_star","atk":25,"rarity":"epic"},
+    "The Ball Return":     {"class":"thief","type":"dagger","atk":44,"rarity":"legendary"},
     # ── PRIEST ────────────────────────────────────────────────────────────────
-    "Wooden Prayer Beads":     {"class":"priest","type":"rosary","atk":2, "rarity":"common"},
-    "Iron Rosary":             {"class":"priest","type":"rosary","atk":6, "rarity":"uncommon"},
-    "Sun Disc Pendant":        {"class":"priest","type":"cross","atk":12,"rarity":"rare"},
-    "Martyr's Thorned Cross":  {"class":"priest","type":"cross","atk":22,"rarity":"epic"},
-    "Sanctus Aeterna":         {"class":"priest","type":"cross","atk":36,"rarity":"legendary"},
+    "Chalk Beads":     {"class":"priest","type":"rosary","atk":2, "rarity":"common"},
+    "Iron Chalk Ring":             {"class":"priest","type":"rosary","atk":6, "rarity":"uncommon"},
+    "The Spot Marker":        {"class":"priest","type":"cross","atk":12,"rarity":"rare"},
+    "The Crossed Cues":  {"class":"priest","type":"cross","atk":22,"rarity":"epic"},
+    "The Diamond Staff":         {"class":"priest","type":"cross","atk":36,"rarity":"legendary"},
 }
 
 ARMORS = {
-    "Padded Tunic":            {"class":"warrior","def":4, "rarity":"common"},
-    "Iron Scale Vest":         {"class":"warrior","def":11,"rarity":"uncommon"},
-    "Crimson Plackart":        {"class":"warrior","def":22,"rarity":"rare"},
-    "Onyx Golem Plate":        {"class":"warrior","def":34,"rarity":"epic"},
-    "Titanfoil Carapace":      {"class":"warrior","def":50,"rarity":"legendary"},
-    "Frayed Spellcloak":       {"class":"mage","def":3,  "rarity":"common"},
-    "Windwoven Silk Robe":     {"class":"mage","def":9,  "rarity":"uncommon"},
-    "Arctic Fox Stole":        {"class":"mage","def":18, "rarity":"rare"},
-    "Voidweave Mantle":        {"class":"mage","def":28, "rarity":"epic"},
-    "Singularity Robe":        {"class":"mage","def":44, "rarity":"legendary"},
-    "Sturdy Leather Jerkin":   {"class":"archer","def":4, "rarity":"common"},
-    "Hardened Hide Cuirass":   {"class":"archer","def":10,"rarity":"uncommon"},
-    "Griffon Plate Chest":     {"class":"archer","def":20,"rarity":"rare"},
-    "Phoenix Down Brigandine": {"class":"archer","def":31,"rarity":"epic"},
-    "Skybreaker Scale Armor":  {"class":"archer","def":47,"rarity":"legendary"},
-    "Dark Hooded Wrap":        {"class":"thief","def":3,  "rarity":"common"},
-    "Oilskin Shadow Coat":     {"class":"thief","def":10, "rarity":"uncommon"},
-    "Stalker's Mesh Shroud":   {"class":"thief","def":19, "rarity":"rare"},
-    "Nocturnal Leather Harness":{"class":"thief","def":30,"rarity":"epic"},
-    "Abyssal Cloak of Silence":{"class":"thief","def":48, "rarity":"legendary"},
-    "Woven Vestments":         {"class":"priest","def":3, "rarity":"common"},
-    "Embroidered Cassock":     {"class":"priest","def":8, "rarity":"uncommon"},
-    "Silver Mitre Hood":       {"class":"priest","def":17,"rarity":"rare"},
-    "Lightweaver Chasuble":    {"class":"priest","def":27,"rarity":"epic"},
-    "Seraph's Surplice":       {"class":"priest","def":42,"rarity":"legendary"},
+    "Bar Room Vest":            {"class":"warrior","def":4, "rarity":"common"},
+    "Slate Guard":         {"class":"warrior","def":11,"rarity":"uncommon"},
+    "Red Cloth Plate":        {"class":"warrior","def":22,"rarity":"rare"},
+    "Black Ball Plate":        {"class":"warrior","def":34,"rarity":"epic"},
+    "Diamond Felt Armor":      {"class":"warrior","def":50,"rarity":"legendary"},
+    "Worn Chalk Coat":       {"class":"mage","def":3,  "rarity":"common"},
+    "Green Baize Robe":     {"class":"mage","def":9,  "rarity":"uncommon"},
+    "White Glove Wrap":        {"class":"mage","def":18, "rarity":"rare"},
+    "Blacklight Cloak":        {"class":"mage","def":28, "rarity":"epic"},
+    "The Nap Robe":        {"class":"mage","def":44, "rarity":"legendary"},
+    "Corner Pocket Vest":   {"class":"archer","def":4, "rarity":"common"},
+    "Rail Leather Chest":   {"class":"archer","def":10,"rarity":"uncommon"},
+    "Diamond Point Plate":     {"class":"archer","def":20,"rarity":"rare"},
+    "Red Baize Brigandine": {"class":"archer","def":31,"rarity":"epic"},
+    "The Rack Scale":  {"class":"archer","def":47,"rarity":"legendary"},
+    "Hustle Coat":        {"class":"thief","def":3,  "rarity":"common"},
+    "Midnight Felt Coat":     {"class":"thief","def":10, "rarity":"uncommon"},
+    "The Sneak Mesh":   {"class":"thief","def":19, "rarity":"rare"},
+    "Backdoor Harness":{"class":"thief","def":30,"rarity":"epic"},
+    "The Ghost Coat":{"class":"thief","def":48, "rarity":"legendary"},
+    "Chalk Cloth Vestments":         {"class":"priest","def":3, "rarity":"common"},
+    "The Rule Book Robe":     {"class":"priest","def":8, "rarity":"uncommon"},
+    "The Referee Hood":       {"class":"priest","def":17,"rarity":"rare"},
+    "The Tournament Cloak":    {"class":"priest","def":27,"rarity":"epic"},
+    "The House Saint Surplice":       {"class":"priest","def":42,"rarity":"legendary"},
 }
 
 SHIELDS = {
-    "Splintered Buckler":      {"class":"warrior","path":"A","def":3, "rarity":"common"},
-    "Ironbound Targe":         {"class":"warrior","path":"A","def":8, "rarity":"uncommon"},
-    "Kite Shield of the Vow":  {"class":"warrior","path":"A","def":16,"rarity":"rare"},
-    "Obsidian Tower Shield":   {"class":"warrior","path":"A","def":26,"rarity":"epic"},
-    "Aegis of First Light":    {"class":"warrior","path":"A","def":40,"rarity":"legendary"},
+    "Cracked Rack Shield":      {"class":"warrior","path":"A","def":3, "rarity":"common"},
+    "Iron Triangle":         {"class":"warrior","path":"A","def":8, "rarity":"uncommon"},
+    "The Break Shield":  {"class":"warrior","path":"A","def":16,"rarity":"rare"},
+    "Black Ball Barrier":   {"class":"warrior","path":"A","def":26,"rarity":"epic"},
+    "The Diamond Aegis":    {"class":"warrior","path":"A","def":40,"rarity":"legendary"},
 }
 
 ACCESSORIES = {
     # Common
-    "Pebble of Focus":         {"slot":"ring","effect":{"atk":2},"rarity":"common",
+    "Chalk Nub":         {"slot":"ring","effect":{"atk":2},"rarity":"common",
                                 "desc":"Slightly sharpens your focus."},
-    "Frayed Rope Band":        {"slot":"ring","effect":{"hp":10},"rarity":"common",
+    "Worn Tip Wrap":        {"slot":"ring","effect":{"hp":10},"rarity":"common",
                                 "desc":"+10 max HP."},
-    "Copper Loop":             {"slot":"ring","effect":{"any_stat":3},"rarity":"common",
+    "Brass Rail Ring":             {"slot":"ring","effect":{"any_stat":3},"rarity":"common",
                                 "desc":"+3 to one stat of your choice on equip."},
-    "Tin Charm":               {"slot":"amulet","effect":{"hp":5},"rarity":"common",
+    "Pocket Marker":               {"slot":"amulet","effect":{"hp":5},"rarity":"common",
                                 "desc":"+5 max HP."},
-    "Traveler's Token":        {"slot":"amulet","effect":{"all_stats":2},"rarity":"common",
+    "Road Player's Coin":        {"slot":"amulet","effect":{"all_stats":2},"rarity":"common",
                                 "desc":"+2 to all stats."},
     # Uncommon
-    "Fox Tail Ring":           {"slot":"ring","effect":{"AGI":6},"rarity":"uncommon",
+    "Silk Tip Ring":           {"slot":"ring","effect":{"AGI":6},"rarity":"uncommon",
                                 "desc":"+6 AGI."},
-    "Brass Holy Symbol":       {"slot":"ring","effect":{"WIS":6},"rarity":"uncommon",
+    "Chalk Cross Pendant":       {"slot":"ring","effect":{"WIS":6},"rarity":"uncommon",
                                 "desc":"+6 WIS."},
-    "Chipped Onyx Stud":       {"slot":"ring","effect":{"any_stat":6},"rarity":"uncommon",
+    "Black Ball Stud":       {"slot":"ring","effect":{"any_stat":6},"rarity":"uncommon",
                                 "desc":"+6 STR or +6 INT (choose on equip)."},
-    "Bloodstone Band":         {"slot":"ring","effect":{"hp":8,"STR":3},"rarity":"uncommon",
+    "Red Ball Band":         {"slot":"ring","effect":{"hp":8,"STR":3},"rarity":"uncommon",
                                 "desc":"+8 HP, +3 STR."},
-    "Mercenary's Signet":      {"slot":"ring","effect":{"atk":4,"gold_bonus":0.05},"rarity":"uncommon",
+    "Road Shark Signet":      {"slot":"ring","effect":{"atk":4,"gold_bonus":0.05},"rarity":"uncommon",
                                 "desc":"+4 ATK, +5% gold drops."},
-    "Brass Holy Symbol":       {"slot":"amulet","effect":{"WIS":6},"rarity":"uncommon",
+    "Chalk Cross Pendant":       {"slot":"amulet","effect":{"WIS":6},"rarity":"uncommon",
                                 "desc":"+6 WIS."},
-    "Hunter's Fang Pendant":   {"slot":"amulet","effect":{"STR":6,"AGI":3},"rarity":"uncommon",
+    "Hustler's Tooth":   {"slot":"amulet","effect":{"STR":6,"AGI":3},"rarity":"uncommon",
                                 "desc":"+6 STR, +3 AGI."},
-    "Mana Bead Necklace":      {"slot":"amulet","effect":{"INT":8},"rarity":"uncommon",
+    "Chalk Bead Necklace":      {"slot":"amulet","effect":{"INT":8},"rarity":"uncommon",
                                 "desc":"+8 INT."},
     # Rare
-    "Whisper Coin":            {"slot":"ring","effect":{"AGI":12,"crit_bonus":0.08},"rarity":"rare",
+    "The Action Coin":            {"slot":"ring","effect":{"AGI":12,"crit_bonus":0.08},"rarity":"rare",
                                 "desc":"+12 AGI, +8% crit damage."},
-    "Warmaster's Clasp":       {"slot":"ring","effect":{"STR":12,"DEF":8},"rarity":"rare",
+    "Break Master's Clasp":       {"slot":"ring","effect":{"STR":12,"DEF":8},"rarity":"rare",
                                 "desc":"+12 STR, +8 DEF."},
-    "Owl Medallion":           {"slot":"ring","effect":{"INT":12,"WIS":8},"rarity":"rare",
+    "Diamond Sight Medallion":           {"slot":"ring","effect":{"INT":12,"WIS":8},"rarity":"rare",
                                 "desc":"+12 INT, +8 WIS."},
-    "Phantom Loop":            {"slot":"ring","effect":{"AGI":10,"dodge_bonus":0.10},"rarity":"rare",
+    "Ghost Ball Loop":            {"slot":"ring","effect":{"AGI":10,"dodge_bonus":0.10},"rarity":"rare",
                                 "desc":"+10 AGI, +10% dodge chance."},
-    "Executioner's Band":      {"slot":"ring","effect":{"STR":10,"lifesteal_flat":5},"rarity":"rare",
+    "Closer's Band":      {"slot":"ring","effect":{"STR":10,"lifesteal_flat":5},"rarity":"rare",
                                 "desc":"+10 STR. Kills restore 5 HP."},
-    "Spellweaver's Coil":      {"slot":"ring","effect":{"INT":14},"rarity":"rare",
+    "English Coil":      {"slot":"ring","effect":{"INT":14},"rarity":"rare",
                                 "desc":"+14 INT."},
-    "Ironheart Medallion":     {"slot":"amulet","effect":{"DEF":15,"hp":20},"rarity":"rare",
+    "Slate Heart":     {"slot":"amulet","effect":{"DEF":15,"hp":20},"rarity":"rare",
                                 "desc":"+15 DEF, +20 HP."},
-    "Vampiric Fang Chain":     {"slot":"amulet","effect":{"STR":10,"lifesteal_flat":5},"rarity":"rare",
+    "Shark Tooth Chain":     {"slot":"amulet","effect":{"STR":10,"lifesteal_flat":5},"rarity":"rare",
                                 "desc":"+10 STR. +5 HP per hit landed."},
-    "Wanderer's Compass":      {"slot":"amulet","effect":{"all_stats":10,"explore_bonus":0.10},"rarity":"rare",
+    "Road Player's Compass":      {"slot":"amulet","effect":{"all_stats":10,"explore_bonus":0.10},"rarity":"rare",
                                 "desc":"+10 to all stats, +10% explore rewards."},
-    "Stormcaller's Torc":      {"slot":"amulet","effect":{"AGI":10,"INT":10},"rarity":"rare",
+    "The Break Torc":      {"slot":"amulet","effect":{"AGI":10,"INT":10},"rarity":"rare",
                                 "desc":"+10 AGI, +10 INT."},
     # Epic
-    "Twin Serpent Ring":       {"slot":"ring","effect":{"atk":20,"DEF":15},"rarity":"epic",
+    "Double Kiss Ring":       {"slot":"ring","effect":{"atk":20,"DEF":15},"rarity":"epic",
                                 "desc":"+20 ATK, +15 DEF."},
-    "Eye of the Storm":        {"slot":"ring","effect":{"AGI":18,"dodge_bonus":0.12},"rarity":"epic",
+    "Eye of the Table":        {"slot":"ring","effect":{"AGI":18,"dodge_bonus":0.12},"rarity":"epic",
                                 "desc":"+18 AGI, +12% dodge."},
-    "Void-Touched Circle":     {"slot":"ring","effect":{"INT":22,"reflect_pct":0.10},"rarity":"epic",
+    "Blackball Circle":     {"slot":"ring","effect":{"INT":22,"reflect_pct":0.10},"rarity":"epic",
                                 "desc":"+22 INT, 10% reflect damage."},
-    "Berserker's Knuckle":     {"slot":"ring","effect":{"STR":20,"low_hp_dmg_bonus":0.10},"rarity":"epic",
+    "Break Knuckle":     {"slot":"ring","effect":{"STR":20,"low_hp_dmg_bonus":0.10},"rarity":"epic",
                                 "desc":"+20 STR, +10% damage when below 30% HP."},
-    "Saint's Halo Band":       {"slot":"ring","effect":{"WIS":20,"heal_bonus":0.30},"rarity":"epic",
+    "House Saint's Band":       {"slot":"ring","effect":{"WIS":20,"heal_bonus":0.30},"rarity":"epic",
                                 "desc":"+20 WIS, heals are 30% more effective."},
-    "Cinder Heart Pendant":    {"slot":"amulet","effect":{"hp":25,"all_stats":15},"rarity":"epic",
+    "Chalk Heart":    {"slot":"amulet","effect":{"hp":25,"all_stats":15},"rarity":"epic",
                                 "desc":"+25 HP, +15 to all stats."},
-    "Deathwhisper Amulet":     {"slot":"amulet","effect":{"AGI":20,"crit_bonus":0.15},"rarity":"epic",
+    "The Hustler's Whisper":     {"slot":"amulet","effect":{"AGI":20,"crit_bonus":0.15},"rarity":"epic",
                                 "desc":"+20 AGI, +15% crit chance."},
-    "Aegis Talisman":          {"slot":"amulet","effect":{"DEF":25,"block_chance":0.10},"rarity":"epic",
+    "The Safety Talisman":          {"slot":"amulet","effect":{"DEF":25,"block_chance":0.10},"rarity":"epic",
                                 "desc":"+25 DEF, 10% chance to block any incoming hit."},
-    "Luminous Crucifix":       {"slot":"amulet","effect":{"WIS":20,"revive_heal_bonus":0.20},"rarity":"epic",
+    "The Crossed Cues Pendant":       {"slot":"amulet","effect":{"WIS":20,"revive_heal_bonus":0.20},"rarity":"epic",
                                 "desc":"+20 WIS, revive heals 20% more HP."},
-    "Dragon Soul Pendant":     {"slot":"amulet","effect":{"STR":22,"INT":22},"rarity":"epic",
+    "The Slate and Felt Pendant":     {"slot":"amulet","effect":{"STR":22,"INT":22},"rarity":"epic",
                                 "desc":"+22 STR, +22 INT."},
     # Legendary
-    "Godshard Splinter":       {"slot":"ring","effect":{"atk":35,"DEF":35},"rarity":"legendary",
+    "Splinter of the Break":       {"slot":"ring","effect":{"atk":35,"DEF":35},"rarity":"legendary",
                                 "desc":"+35 ATK, +35 DEF."},
-    "Infinity Loop":           {"slot":"ring","effect":{"all_stats":30,"hp":50},"rarity":"legendary",
+    "The Endless Run":           {"slot":"ring","effect":{"all_stats":30,"hp":50},"rarity":"legendary",
                                 "desc":"+30 to all stats, +50 HP."},
-    "Ring of the Ancients":    {"slot":"ring","effect":{"primary_stat":40},"rarity":"legendary",
+    "The Old Road Ring":    {"slot":"ring","effect":{"primary_stat":40},"rarity":"legendary",
                                 "desc":"+40 to your primary class stat."},
-    "Ouroboros":               {"slot":"ring","effect":{"all_stats":25,"dodge_bonus":0.05},"rarity":"legendary",
+    "The Rack Eternal":               {"slot":"ring","effect":{"all_stats":25,"dodge_bonus":0.05},"rarity":"legendary",
                                 "desc":"+25 all stats, 5% chance to dodge any attack."},
-    "Last Breath Locket":      {"slot":"amulet","effect":{"revive_once":True},"rarity":"legendary",
+    "The Final Shot Locket":      {"slot":"amulet","effect":{"revive_once":True},"rarity":"legendary",
                                 "desc":"Revive once per combat at 20% HP."},
-    "Worldsoul Amulet":        {"slot":"amulet","effect":{"primary_stat":40,"hp":100},"rarity":"legendary",
+    "The Felt Soul":        {"slot":"amulet","effect":{"primary_stat":40,"hp":100},"rarity":"legendary",
                                 "desc":"+40 to primary class stat, +100 HP."},
-    "Shard of Divinity":       {"slot":"amulet","effect":{"WIS":35,"priest_aoe":True},"rarity":"legendary",
+    "The Diamond Shard":       {"slot":"amulet","effect":{"WIS":35,"priest_aoe":True},"rarity":"legendary",
                                 "desc":"+35 WIS, priest skills affect 2 targets at once."},
-    "Mark of the Void":        {"slot":"amulet","effect":{"INT":35,"spell_double_chance":0.15},"rarity":"legendary",
+    "The Blackball Mark":        {"slot":"amulet","effect":{"INT":35,"spell_double_chance":0.15},"rarity":"legendary",
                                 "desc":"+35 INT, 15% chance spells hit twice."},
 }
 
@@ -1089,22 +1089,22 @@ RARITY_EMOJI = {
 
 # Items that can be found in game
 CONSUMABLES = {
-    "Health Potion":       {"desc":"Restores 50 HP.","sell":75},
-    "Super Health Potion": {"desc":"Restores 100 HP.","sell":200},
-    "Mega Health Potion":  {"desc":"Restores 200 HP.","sell":450},
-    "Revival Charm":       {"desc":"Revive a defeated player.","sell":750},
-    "Holy Relic":          {"desc":"Required for Miracle (High Priest skill).","sell":1000},
-    "Dragon Scale":        {"desc":"Crafting material. Rare drop.","sell":100},
-    "Enchanting Scroll":   {"desc":"Used to enchant gear. Future system.","sell":150},
+    "Chalk Vial":       {"desc":"Restores 50 HP.","sell":75},
+    "Premium Chalk Draft": {"desc":"Restores 100 HP.","sell":200},
+    "Champion's Chalk Flask":  {"desc":"Restores 200 HP.","sell":450},
+    "The Re-Rack":       {"desc":"Revive a defeated player.","sell":750},
+    "The Golden Triangle":          {"desc":"Required for Miracle (High Roller skill).","sell":1000},
+    "Slate Fragment":        {"desc":"Crafting material. Rare drop.","sell":100},
+    "The Custom Tip Scroll":   {"desc":"Used to enchant gear. Future system.","sell":150},
 }
 
 SHOP_POOL = [
-    {"item":"Health Potion","price":150,"desc":"Restores 50 HP."},
-    {"item":"Super Health Potion","price":400,"desc":"Restores 100 HP."},
-    {"item":"Mega Health Potion","price":900,"desc":"Restores 200 HP."},
-    {"item":"Revival Charm","price":1500,"desc":"Revive a defeated player."},
-    {"item":"Dragon Scale","price":300,"desc":"Crafting material."},
-    {"item":"Enchanting Scroll","price":500,"desc":"Enchant gear. Future use."},
+    {"item":"Chalk Vial","price":150,"desc":"Restores 50 HP."},
+    {"item":"Premium Chalk Draft","price":400,"desc":"Restores 100 HP."},
+    {"item":"Champion's Chalk Flask","price":900,"desc":"Restores 200 HP."},
+    {"item":"The Re-Rack","price":1500,"desc":"Revive a defeated player."},
+    {"item":"Slate Fragment","price":300,"desc":"Crafting material."},
+    {"item":"The Custom Tip Scroll","price":500,"desc":"Enchant gear. Future use."},
 ]
 ENHANCE_COSTS = {1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:18, 9:23, 10:30}
 ENHANCE_RATES = {1:1.00, 2:0.95, 3:0.90, 4:0.85, 5:0.75,
@@ -1150,23 +1150,23 @@ def get_daily_shop():
 # ── BOSSES ────────────────────────────────────────────────────────────────────
 BOSSES = {
     "1 ball": {"name":"The 1 Ball","hp":1200,"max_hp":1200,"dmg_min":68,"dmg_max":120,
-               "exp":2000,"gold":150,"title":"One Ball Slayer","desc":"The loneliest ball — now furious.",
-               "loot_table":[("Super Health Potion","uncommon"),("Dragon Scale","uncommon"),("Iron Scale Vest","uncommon")]},
+               "exp":2000,"gold":150,"title":"1-Ball Slayer","desc":"The break leaves it alone every time. It's had enough.",
+               "loot_table":[("Premium Chalk Draft","uncommon"),("Slate Fragment","uncommon"),("Slate Guard","uncommon")]},
     "3 ball": {"name":"The 3 Ball","hp":2000,"max_hp":2000,"dmg_min":105,"dmg_max":165,
-               "exp":4000,"gold":300,"title":"Three Ball Slayer","desc":"A red wrecking ball.",
-               "loot_table":[("Mega Health Potion","rare"),("Dragon Scale","uncommon"),("Falconwing Recurve Bow","rare")]},
+               "exp":4000,"gold":300,"title":"3-Ball Slayer","desc":"Sits in the cluster and waits. When it moves, things break.",
+               "loot_table":[("Champion's Chalk Flask","rare"),("Slate Fragment","uncommon"),("Precision Rack","rare")]},
     "5 ball": {"name":"The 5 Ball","hp":3000,"max_hp":3000,"dmg_min":143,"dmg_max":210,
-               "exp":7000,"gold":500,"title":"Five Ball Slayer","desc":"Orange and merciless.",
-               "loot_table":[("Revival Charm","rare"),("Cursed Ebony Staff","rare"),("Whisper Coin","rare")]},
+               "exp":7000,"gold":500,"title":"5-Ball Slayer","desc":"The middle of the rack. The heart of the problem.",
+               "loot_table":[("The Re-Rack","rare"),("Blackwood Bridge Stick","rare"),("The Action Coin","rare")]},
     "7 ball": {"name":"The 7 Ball","hp":4500,"max_hp":4500,"dmg_min":180,"dmg_max":270,
-               "exp":12000,"gold":800,"title":"Seven Ball Slayer","desc":"Maroon and relentless.",
-               "loot_table":[("Giantslayer Zweihander","epic"),("Voidweave Mantle","epic"),("Twin Serpent Ring","epic")]},
+               "exp":12000,"gold":800,"title":"7-Ball Slayer","desc":"The last ball before the money ball. It knows what it guards.",
+               "loot_table":[("Heavy Breaker Staff","epic"),("Blacklight Cloak","epic"),("Double Kiss Ring","epic")]},
     "8 ball": {"name":"The 8 Ball","hp":8000,"max_hp":8000,"dmg_min":225,"dmg_max":375,
-               "exp":20000,"gold":2000,"title":"8Ball Champion","desc":"Black as the Corner Pocket itself.",
-               "loot_table":[("Worldcleaver","legendary"),("Singularity Robe","legendary"),("Infinity Loop","legendary")]},
+               "exp":20000,"gold":2000,"title":"8-Ball Champion","desc":"The money ball. The only one that matters at the end.",
+               "loot_table":[("The Rack Splitter","legendary"),("The Nap Robe","legendary"),("The Endless Run","legendary")]},
     "void":   {"name":"The Void Ball","hp":15000,"max_hp":15000,"dmg_min":375,"dmg_max":600,
-               "exp":50000,"gold":5000,"title":"Void Slayer","desc":"A secret boss from beyond the table.","secret":True,
-               "loot_table":[("Godshard Splinter","legendary"),("Last Breath Locket","legendary"),("Mark of the Void","legendary")]},
+               "exp":50000,"gold":5000,"title":"Blackball Slayer","desc":"A ball that was never racked. It came from somewhere else.","secret":True,
+               "loot_table":[("Splinter of the Break","legendary"),("The Final Shot Locket","legendary"),("The Blackball Mark","legendary")]},
 }
 
 RAID_TIERS = [
@@ -1174,115 +1174,115 @@ RAID_TIERS = [
      "wave_enemies":[{"name":"Rack Grunt","hp":150,"dmg_min":15,"dmg_max":30},
                      {"name":"Side Rail Mob","hp":250,"dmg_min":20,"dmg_max":40}],
      "exp_reward":600,"gold_reward":120,
-     "loot_table":[("Health Potion","common"),("Dragon Scale","uncommon"),("Militia Falchion","uncommon")]},
+     "loot_table":[("Chalk Vial","common"),("Slate Fragment","uncommon"),("Worn Practice Cue","uncommon")]},
     {"name":"The Corner Pocket Assault","min_level":5,"waves":3,"wave_boss_key":"3 ball",
      "wave_enemies":[{"name":"Chalk Golem","hp":400,"dmg_min":35,"dmg_max":60},
                      {"name":"Pocket Demon","hp":600,"dmg_min":45,"dmg_max":75},
                      {"name":"Rack Fiend","hp":800,"dmg_min":55,"dmg_max":90}],
      "exp_reward":1400,"gold_reward":300,
-     "loot_table":[("Super Health Potion","uncommon"),("Blacksteel Bastard Sword","rare"),("Owl Medallion","rare")]},
+     "loot_table":[("Premium Chalk Draft","uncommon"),("Graphite Break Cue","rare"),("Diamond Sight Medallion","rare")]},
     {"name":"The Break Line Siege","min_level":10,"waves":3,"wave_boss_key":"5 ball",
      "wave_enemies":[{"name":"Felt Wraith","hp":1000,"dmg_min":65,"dmg_max":100},
                      {"name":"Cue Specter","hp":1500,"dmg_min":85,"dmg_max":130},
                      {"name":"Break Titan","hp":2000,"dmg_min":100,"dmg_max":150}],
      "exp_reward":3000,"gold_reward":700,
-     "loot_table":[("Revival Charm","rare"),("Astral Conduit Rod","epic"),("Warmaster's Clasp","rare")]},
+     "loot_table":[("The Re-Rack","rare"),("The Extension","epic"),("Break Master's Clasp","rare")]},
     {"name":"The Final Rack — Endgame","min_level":15,"waves":4,"wave_boss_key":"8 ball",
      "wave_enemies":[{"name":"Shadow Rack","hp":2500,"dmg_min":100,"dmg_max":160},
                      {"name":"Void Ball","hp":3500,"dmg_min":130,"dmg_max":200},
                      {"name":"8Ball Sentinel","hp":5000,"dmg_min":150,"dmg_max":230},
                      {"name":"Doom Cluster","hp":6000,"dmg_min":180,"dmg_max":260}],
      "exp_reward":8000,"gold_reward":2000,
-     "loot_table":[("Worldcleaver","legendary"),("Nullstar Scepter","legendary"),("Godshard Splinter","legendary")]},
+     "loot_table":[("The Rack Splitter","legendary"),("The Grand Bridge","legendary"),("Splinter of the Break","legendary")]},
 ]
 
 EXPLORE_ZONES = [
-    {"name":"The Forgotten Crossroads","tier":"Easy","exp":500,"gold":50,
-     "loot_table":[("Health Potion",0.15),("Rusty Shiv",0.10),("Wooden Prayer Beads",0.10),
-                   ("Pebble of Focus",0.08),("Frayed Rope Band",0.08)],
+    {"name":"The Old Pool Hall","tier":"Easy","exp":500,"gold":50,
+     "loot_table":[("Chalk Vial",0.15),("Chalk Shiv",0.10),("Chalk Beads",0.10),
+                   ("Chalk Nub",0.08),("Worn Tip Wrap",0.08)],
      "fail_msg":"The road was longer than expected. You return empty-handed."},
-    {"name":"The Bandit Caves","tier":"Medium","exp":900,"gold":100,
-     "loot_table":[("Super Health Potion",0.10),("Serrated Kujang",0.08),("Militia Falchion",0.08),
-                   ("Fox Tail Ring",0.06),("Bloodstone Band",0.05)],
+    {"name":"The Back Room","tier":"Medium","exp":900,"gold":100,
+     "loot_table":[("Premium Chalk Draft",0.10),("Mushroom Tip Blade",0.08),("Worn Practice Cue",0.08),
+                   ("Silk Tip Ring",0.06),("Red Ball Band",0.05)],
      "fail_msg":"The bandits were too many. You barely escaped."},
-    {"name":"The Ancient Ruins","tier":"Hard","exp":1500,"gold":200,
-     "loot_table":[("Mega Health Potion",0.05),("Revival Charm",0.03),("Dragon Scale",0.15),
-                   ("Whisper Coin",0.05),("Ironheart Medallion",0.05),("Blacksteel Bastard Sword",0.04)],
+    {"name":"The Condemned Hall","tier":"Hard","exp":1500,"gold":200,
+     "loot_table":[("Champion's Chalk Flask",0.05),("The Re-Rack",0.03),("Slate Fragment",0.15),
+                   ("The Action Coin",0.05),("Slate Heart",0.05),("Graphite Break Cue",0.04)],
      "fail_msg":"The ruins shifted and swallowed the path. You find nothing."},
-    {"name":"The Dragon's Lair","tier":"Elite","exp":2500,"gold":400,
-     "loot_table":[("Dragon Scale",0.30),("Enchanting Scroll",0.15),
-                   ("Giantslayer Zweihander",0.03),("Astral Conduit Rod",0.03),
-                   ("Twin Serpent Ring",0.03),("Cinder Heart Pendant",0.03)],
+    {"name":"The Shark's Den","tier":"Elite","exp":2500,"gold":400,
+     "loot_table":[("Slate Fragment",0.30),("The Custom Tip Scroll",0.15),
+                   ("Heavy Breaker Staff",0.03),("The Extension",0.03),
+                   ("Double Kiss Ring",0.03),("Chalk Heart",0.03)],
      "fail_msg":"The dragon was awake. You fled with your life."},
-    {"name":"The Void Rift","tier":"Legendary","exp":5000,"gold":800,
-     "loot_table":[("Worldcleaver",0.01),("Nullstar Scepter",0.01),("Godshard Splinter",0.01),
-                   ("Last Breath Locket",0.01),("Mark of the Void",0.01),
-                   ("Dragon Scale",0.20),("Enchanting Scroll",0.20)],
+    {"name":"The Corner Pocket","tier":"Legendary","exp":5000,"gold":800,
+     "loot_table":[("The Rack Splitter",0.01),("The Grand Bridge",0.01),("Splinter of the Break",0.01),
+                   ("The Final Shot Locket",0.01),("The Blackball Mark",0.01),
+                   ("Slate Fragment",0.20),("The Custom Tip Scroll",0.20)],
      "fail_msg":"The void rejected you. You wake up back at camp, shaken."},
 ]
 
 SOLO_QUESTS = [
-    {"tier":"Easy","text":"You helped a merchant fend off a pack of wolves.","exp":30,"gold":5,
-     "loot_table":[("Health Potion",0.05),("Rusty Shiv",0.03),("Wooden Prayer Beads",0.03)]},
-    {"tier":"Easy","text":"You ran a message across town before dawn.","exp":25,"gold":8,
-     "loot_table":[("Pebble of Focus",0.05),("Tin Charm",0.05)]},
-    {"tier":"Easy","text":"You cleared rats from a tavern basement.","exp":20,"gold":10,
-     "loot_table":[("Health Potion",0.05),("Copper Loop",0.04)]},
-    {"tier":"Easy","text":"You escorted a child back to their village.","exp":35,"gold":5,
-     "loot_table":[("Frayed Rope Band",0.05),("Traveler's Token",0.04)]},
-    {"tier":"Easy","text":"You dug up an old cache for a dying soldier.","exp":28,"gold":7,
-     "loot_table":[("Health Potion",0.06),("Rusty Shiv",0.03)]},
-    {"tier":"Medium","text":"You survived a night in the mercenary camp.","exp":55,"gold":20,
-     "loot_table":[("Super Health Potion",0.03),("Militia Falchion",0.04),("Fox Tail Ring",0.03)]},
-    {"tier":"Medium","text":"You tracked a thief through the city sewers.","exp":60,"gold":25,
-     "loot_table":[("Serrated Kujang",0.04),("Bloodstone Band",0.03),("Chipped Onyx Stud",0.03)]},
-    {"tier":"Medium","text":"You defeated the local dueling champion.","exp":65,"gold":30,
-     "loot_table":[("Dragon Scale",0.05),("Mercenary's Signet",0.03),("Hunter's Fang Pendant",0.03)]},
-    {"tier":"Medium","text":"You cleared a dungeon room single-handedly.","exp":70,"gold":25,
-     "loot_table":[("Goat Horn Crossbow",0.04),("Petrified Willow Wand",0.04),("Iron Rosary",0.04)]},
-    {"tier":"Hard","text":"You slew a beast terrorizing the outer villages.","exp":80,"gold":50,
-     "loot_table":[("Dragon Scale",0.10),("Mega Health Potion",0.01),("Revival Charm",0.01),
-                   ("Venomspike Blowgun",0.02),("Cursed Ebony Staff",0.02)]},
-    {"tier":"Hard","text":"You raided a fortified dungeon beneath the cliffs.","exp":75,"gold":60,
-     "loot_table":[("Dragon Scale",0.10),("Enchanting Scroll",0.05),
-                   ("Warmaster's Clasp",0.02),("Owl Medallion",0.02)]},
-    {"tier":"Hard","text":"You defeated a demonic commander in single combat.","exp":80,"gold":55,
-     "loot_table":[("Dragon Scale",0.12),("Enchanting Scroll",0.05),
-                   ("Falconwing Recurve Bow",0.02),("Blacksteel Bastard Sword",0.02)]},
+    {"tier":"Easy","text":"You ran a message across town to a player who couldn't leave their table.","exp":30,"gold":5,
+     "loot_table":[("Chalk Vial",0.05),("Chalk Shiv",0.03),("Chalk Beads",0.03)]},
+    {"tier":"Easy","text":"You chalked up for a stranger who'd run out mid-game.","exp":25,"gold":8,
+     "loot_table":[("Chalk Nub",0.05),("Pocket Marker",0.05)]},
+    {"tier":"Easy","text":"You cleared the back room of a pool hall that hadn't been touched in years.","exp":20,"gold":10,
+     "loot_table":[("Chalk Vial",0.05),("Brass Rail Ring",0.04)]},
+    {"tier":"Easy","text":"You walked a rookie home after they lost their stake money. Good people exist.","exp":35,"gold":5,
+     "loot_table":[("Worn Tip Wrap",0.05),("Road Player's Coin",0.04)]},
+    {"tier":"Easy","text":"You recovered a cue for an old player who couldn't get to the hall himself.","exp":28,"gold":7,
+     "loot_table":[("Chalk Vial",0.06),("Chalk Shiv",0.03)]},
+    {"tier":"Medium","text":"You survived a night in the back room with real money on the table.","exp":55,"gold":20,
+     "loot_table":[("Premium Chalk Draft",0.03),("Worn Practice Cue",0.04),("Silk Tip Ring",0.03)]},
+    {"tier":"Medium","text":"You tracked a hustler who'd been working the hall under a fake name.","exp":60,"gold":25,
+     "loot_table":[("Mushroom Tip Blade",0.04),("Red Ball Band",0.03),("Black Ball Stud",0.03)]},
+    {"tier":"Medium","text":"You went heads up with the hall's best player. Walked out with their respect.","exp":65,"gold":30,
+     "loot_table":[("Slate Fragment",0.05),("Road Shark Signet",0.03),("Hustler's Tooth",0.03)]},
+    {"tier":"Medium","text":"You cleared the table alone in a packed room with everyone watching.","exp":70,"gold":25,
+     "loot_table":[("Standard Magic Rack",0.04),("Blue Diamond Chalk",0.04),("Iron Chalk Ring",0.04)]},
+    {"tier":"Hard","text":"You shut down a shark who'd been running the hall for six months.","exp":80,"gold":50,
+     "loot_table":[("Slate Fragment",0.10),("Champion's Chalk Flask",0.01),("The Re-Rack",0.01),
+                   ("Ferrule Dart",0.02),("Blackwood Bridge Stick",0.02)]},
+    {"tier":"Hard","text":"You broke into the closed tournament room and played the setup tables alone.","exp":75,"gold":60,
+     "loot_table":[("Slate Fragment",0.10),("The Custom Tip Scroll",0.05),
+                   ("Break Master's Clasp",0.02),("Diamond Sight Medallion",0.02)]},
+    {"tier":"Hard","text":"You beat the house player straight up, no handicap, on their home table.","exp":80,"gold":55,
+     "loot_table":[("Slate Fragment",0.12),("The Custom Tip Scroll",0.05),
+                   ("Precision Rack",0.02),("Graphite Break Cue",0.02)]},
 ]
 
 RANDOM_EVENTS = [
     {"key":"traveler","freq":"common",
-     "msg":"🧙 *A Mysterious Traveler appears!*\nFirst to /greet gets +300 EXP and a random item!",
-     "exp":300,"loot_table":[("Health Potion",0.40),("Dragon Scale",0.20),("Pebble of Focus",0.20),("Tin Charm",0.20)]},
+     "msg":"🎱 *A Road Player has set up at the far table.*\nFirst to /greet gets a tip and something useful.",
+     "exp":300,"loot_table":[("Chalk Vial",0.40),("Slate Fragment",0.20),("Chalk Nub",0.20),("Pocket Marker",0.20)]},
     {"key":"bandit","freq":"common",
-     "msg":"🗡️ *Bandit Ambush!* A bandit (150 HP) attacks!\nUse /fight to strike. Defeat for +250 EXP!",
+     "msg":"🗡️ *A hustler who lost badly is looking for someone to blame.* 150 HP. Use /fight. Take them down for +250 EXP.",
      "enemy_hp":150,"exp_reward":250,
-     "loot_table":[("Health Potion",0.30),("Rusty Shiv",0.15),("Copper Loop",0.10)]},
+     "loot_table":[("Chalk Vial",0.30),("Chalk Shiv",0.15),("Brass Rail Ring",0.10)]},
     {"key":"ghost","freq":"common",
-     "msg":"👻 *A Restless Spirit appears!* (200 HP)\nUse /shoot to banish it. Reward: +300 EXP!",
+     "msg":"👻 *Something that used to play here doesn't know it's gone.* 200 HP. Use /shoot to send it off. +300 EXP.",
      "enemy_hp":200,"exp_reward":300,
-     "loot_table":[("Super Health Potion",0.20),("Frayed Rope Band",0.15)]},
+     "loot_table":[("Premium Chalk Draft",0.20),("Worn Tip Wrap",0.15)]},
     {"key":"merchant","freq":"uncommon",
-     "msg":"🛍️ *A Wandering Merchant sets up shop!*\n/greet them for a 20% shop discount for 30 minutes!",
+     "msg":"🛍️ *A cue dealer just set up in the corner.*\n/greet them for 20% off at the shop for 30 minutes.",
      "discount":0.20,"duration_min":30},
     {"key":"rival","freq":"uncommon",
-     "msg":"⚔️ *A Rival Adventurer challenges someone!*\nFirst to /fight claims the duel! Winner gets bonus EXP and gold."},
+     "msg":"⚔️ *Someone walked in looking for action.*\nFirst to /fight claims the table. Winner gets bonus EXP and gold."},
     {"key":"drake","freq":"uncommon",
-     "msg":"🐉 *A Wild Drake appears!* (500 HP)\nReply to this message with /strike to attack!\nRewards split by damage dealt!",
+     "msg":"🎱 *A legendary shark just sat down uninvited.* 500 HP. Reply with /strike to run them off. Rewards split by damage dealt.",
      "enemy_hp":500,"exp_reward":1000,
-     "loot_table":[("Dragon Scale",0.50),("Enchanting Scroll",0.20),("Revival Charm",0.10)]},
+     "loot_table":[("Slate Fragment",0.50),("The Custom Tip Scroll",0.20),("The Re-Rack",0.10)]},
     {"key":"cache","freq":"uncommon",
-     "msg":"💰 *An Abandoned Cache was discovered!*\nFirst to /claim it gets the reward!",
-     "loot_table":[("Dragon Scale",0.30),("Super Health Potion",0.30),("Fox Tail Ring",0.20),("Mana Bead Necklace",0.20)]},
+     "msg":"💰 *Someone left a bag under the corner table and didn't come back.*\nFirst to /claim gets what's inside.",
+     "loot_table":[("Slate Fragment",0.30),("Premium Chalk Draft",0.30),("Silk Tip Ring",0.20),("Chalk Bead Necklace",0.20)]},
     {"key":"storm","freq":"uncommon",
-     "msg":"🌩️ *A Storm rolls in!* Weather changes immediately — EXP and DMG modifiers shift!"},
+     "msg":"🌩️ *The hall's AC blew.* The felt is different now. Table conditions changed."},
     {"key":"legendary_merchant","freq":"rare",
-     "msg":"👑 *A Legendary Merchant appears for 10 minutes!*\nUse /shop legend to browse rare and epic gear!","duration_min":10},
+     "msg":"👑 *A master cue maker just walked in with a case.* 10 minutes only. Use /shop legend.","duration_min":10},
     {"key":"shrine","freq":"rare",
-     "msg":"🔮 *An Ancient Shrine has been uncovered!*\nFirst to /pray receives a random stat boost for 2 hours!"},
+     "msg":"🔮 *An old trophy was found behind the wall.*\nFirst to /pray gets something from it."},
     {"key":"cursed","freq":"rare",
-     "msg":"⚰️ *A Cursed Wanderer passes through!*\nA random player has been cursed — they lose 10% EXP per hour until another player uses /purge on them!"},
+     "msg":"⚰️ *A losing player put something bad into the table on their way out.*\nSomeone's been marked. Use /purge to lift it."},
 ]
 
 GUILD_PERKS = {
@@ -1320,8 +1320,8 @@ IDLE_FLAVOR = {
 # ── DUNGEON CONSTANTS ─────────────────────────────────────────────────────────
 DUNGEON_THEMES = [
     {
-        "name": "The Sunken Vaults",
-        "desc": "Ancient treasure halls buried beneath a flooded city.",
+        "name": "The Sunken Hall",
+        "desc": "An old pool hall reclaimed by groundwater. The tables are still level.",
         "enemy_prefix": ["Drowned","Waterlogged","Barnacled","Tide-Cursed"],
         "trap_flavor": ["a pressure plate beneath inches of dark water",
                         "a rusted portcullis rigged to drop",
@@ -1331,12 +1331,12 @@ DUNGEON_THEMES = [
                         "Somewhere deeper, water drips in an endless rhythm.",
                         "The floor is slick and cold beneath your feet.",
                         "Pale fish dart through cracks in the stone."],
-        "boss_name": "The Vault Warden",
-        "boss_desc": "A colossus of barnacle and bone, guardian of everything that sank.",
+        "boss_name": "The Hall Manager",
+        "boss_desc": "He ran this hall for forty years. It sank with him. He didn't leave.",
     },
     {
-        "name": "The Ashen Crypts",
-        "desc": "The burial grounds of a civilization that burned itself to nothing.",
+        "name": "The Burned Billiard Room",
+        "desc": "A private billiard room that caught fire mid-session. The game was never finished.",
         "enemy_prefix": ["Charred","Cinder","Smoldering","Ash-Born"],
         "trap_flavor": ["jets of flame erupting from the floor",
                         "a tripwire connected to a wall of fire",
@@ -1346,12 +1346,12 @@ DUNGEON_THEMES = [
                         "Gray ash coats every surface like fresh snow.",
                         "The heat is oppressive and constant.",
                         "Blackened bones line the walls in neat rows."],
-        "boss_name": "The Cinder Patriarch",
-        "boss_desc": "A scorched titan still burning from within, refusing to die.",
+        "boss_name": "The Burned Out Champion",
+        "boss_desc": "Won everything there was to win. Then the hall burned. Now he wanders the smoke.",
     },
     {
-        "name": "The Forsaken Citadel",
-        "desc": "A military fortress abandoned mid-siege. Both sides lost.",
+        "name": "The Abandoned Pool Hall",
+        "desc": "Closed without notice. Locked from the outside. Nobody knows why.",
         "enemy_prefix": ["Spectral","Siege-Cursed","Hollow","Battleborn"],
         "trap_flavor": ["a crossbow mounted to the wall still loaded",
                         "a floor section rigged to collapse into darkness",
@@ -1361,12 +1361,12 @@ DUNGEON_THEMES = [
                         "The echoes of a battle that ended centuries ago linger here.",
                         "Banners hang in tatters from the vaulted ceiling.",
                         "Arrow shafts protrude from every wooden surface."],
-        "boss_name": "The Siege Commander",
-        "boss_desc": "A general who refused to retreat even in death.",
+        "boss_name": "The Tournament Director",
+        "boss_desc": "Ran the last tournament held here. Still calling the shots. Nobody's listening.",
     },
     {
-        "name": "The Verdant Labyrinth",
-        "desc": "A dungeon reclaimed by something ancient and alive.",
+        "name": "The Felt Maze",
+        "desc": "A hall built entirely of table felt. The layout changes. The exits don't stay put.",
         "enemy_prefix": ["Vine-Choked","Root-Twisted","Spore-Touched","Feral"],
         "trap_flavor": ["carnivorous vines dropping from the ceiling",
                         "spore clouds that cloud the mind",
@@ -1376,12 +1376,12 @@ DUNGEON_THEMES = [
                         "Something breathes here. You can feel it.",
                         "Bioluminescent fungi cast everything in pale blue light.",
                         "The labyrinth shifts — the walls have moved since you passed them."],
-        "boss_name": "The Root Mind",
-        "boss_desc": "A hive intelligence woven from a thousand years of growth.",
+        "boss_name": "The Felt Itself",
+        "boss_desc": "The table stopped being furniture a long time ago. It has opinions now.",
     },
     {
-        "name": "The Shattered Observatory",
-        "desc": "A tower of arcane research that tore itself apart at the peak of its power.",
+        "name": "The Broken Table Room",
+        "desc": "Every table in here has a broken leg. They're still in use. Nobody knows why.",
         "enemy_prefix": ["Fractured","Void-Touched","Rift-Born","Unbound"],
         "trap_flavor": ["unstable arcane nodes that discharge on proximity",
                         "a rift in space that pulls at anything nearby",
@@ -1391,12 +1391,12 @@ DUNGEON_THEMES = [
                         "Books orbit the ceiling slowly, still open to their last page.",
                         "The floor is translucent. Something massive moves beneath it.",
                         "You hear conversations that happened in this room long ago."],
-        "boss_name": "The Unbound Archivist",
-        "boss_desc": "A scholar who unlocked something that unlocked them back.",
+        "boss_name": "The Rulebook Gone Wrong",
+        "boss_desc": "Someone wrote new rules for the table. The table accepted them. This is the result.",
     },
     {
-        "name": "The Rusted Underbelly",
-        "desc": "Industrial depths of a forgotten machine city, still running.",
+        "name": "The Basement Tables",
+        "desc": "Below the main floor. No windows. No clock. The game never stops down here.",
         "enemy_prefix": ["Clockwork","Steam-Wreathed","Corroded","Iron-Boned"],
         "trap_flavor": ["gears that engage and crush without warning",
                         "steam vents at scalding pressure",
@@ -1406,12 +1406,12 @@ DUNGEON_THEMES = [
                         "Steam fills every corridor at knee height.",
                         "The noise is constant. You stop being able to hear yourself think.",
                         "Pipes sweat rust-colored water onto everything."],
-        "boss_name": "The Foreman Construct",
-        "boss_desc": "The machine that manages all the other machines. It found you unauthorized.",
+        "boss_name": "The Automated Rack Machine",
+        "boss_desc": "Racks every ball. Every time. With zero interest in who wins.",
     },
     {
-        "name": "The Pale Wastes",
-        "desc": "Frozen halls carved into a glacier that should not exist this far south.",
+        "name": "The White Cloth Wastes",
+        "desc": "The cloth here is pure white and stretches in every direction. No rails. No pockets.",
         "enemy_prefix": ["Frost-Bitten","Glacial","Ice-Forged","Pale"],
         "trap_flavor": ["ice sheets that shatter into razor shards underfoot",
                         "a wind corridor that freezes exposed skin instantly",
@@ -1421,12 +1421,12 @@ DUNGEON_THEMES = [
                         "Something is preserved in the ice wall. It looks back.",
                         "The silence here is total and wrong.",
                         "The cold has a weight to it, like it's alive."],
-        "boss_name": "The Glacier King",
-        "boss_desc": "Ancient beyond reckoning. The cold bends to its will.",
+        "boss_name": "The Cold Stroke Master",
+        "boss_desc": "Never rushes. Never reacts. Cold as the cloth. Hits harder for it.",
     },
     {
-        "name": "The Bloodmarked Sanctum",
-        "desc": "A holy site corrupted so completely it became its own inverse.",
+        "name": "The Red Felt Sanctum",
+        "desc": "Red felt from floor to ceiling. The pockets are real. So is whatever guards them.",
         "enemy_prefix": ["Corrupted","Tainted","Blasphemous","Hollow-Faithful"],
         "trap_flavor": ["consecrated ground that burns the faithless",
                         "a bell toll that shatters concentration and causes damage",
@@ -1436,50 +1436,50 @@ DUNGEON_THEMES = [
                         "Candles burn black here.",
                         "The geometry of this place does not match what a sane architect would build.",
                         "You feel watched by something that disapproves of you deeply."],
-        "boss_name": "The Fallen High Confessor",
-        "boss_desc": "Once the most devoted servant of the light. Now its greatest enemy.",
+        "boss_name": "The Disqualified Champion",
+        "boss_desc": "Won the championship. Got disqualified on a technicality. Never accepted it.",
     },
 ]
 
 DUNGEON_LOOT = {
     "normal": {
-        "monster":   [("Health Potion",0.30),("Dragon Scale",0.12),
-                      ("Rusty Shiv",0.08),("Wooden Prayer Beads",0.08)],
-        "treasure":  [("Super Health Potion",0.20),("Dragon Scale",0.20),
-                      ("Fox Tail Ring",0.08),("Bloodstone Band",0.08),
-                      ("Militia Falchion",0.06)],
-        "mini_boss": [("Dragon Scale",0.40),("Enchanting Scroll",0.10),
-                      ("Mega Health Potion",0.15),("Whisper Coin",0.06)],
-        "boss":      [("Dragon Scale",0.50),("Enchanting Scroll",0.20),
-                      ("Revival Charm",0.10),("Warmaster's Clasp",0.05)],
+        "monster":   [("Chalk Vial",0.30),("Slate Fragment",0.12),
+                      ("Chalk Shiv",0.08),("Chalk Beads",0.08)],
+        "treasure":  [("Premium Chalk Draft",0.20),("Slate Fragment",0.20),
+                      ("Silk Tip Ring",0.08),("Red Ball Band",0.08),
+                      ("Worn Practice Cue",0.06)],
+        "mini_boss": [("Slate Fragment",0.40),("The Custom Tip Scroll",0.10),
+                      ("Champion's Chalk Flask",0.15),("The Action Coin",0.06)],
+        "boss":      [("Slate Fragment",0.50),("The Custom Tip Scroll",0.20),
+                      ("The Re-Rack",0.10),("Break Master's Clasp",0.05)],
         "completion_bonus": {"exp": 800, "gold": 200},
     },
     "hard": {
-        "monster":   [("Super Health Potion",0.15),("Dragon Scale",0.20),
-                      ("Serrated Kujang",0.07),("Militia Falchion",0.07)],
-        "treasure":  [("Dragon Scale",0.30),("Enchanting Scroll",0.15),
-                      ("Mega Health Potion",0.10),("Whisper Coin",0.07),
-                      ("Warmaster's Clasp",0.05),("Owl Medallion",0.05)],
-        "mini_boss": [("Dragon Scale",0.50),("Enchanting Scroll",0.25),
-                      ("Revival Charm",0.10),("Blacksteel Bastard Sword",0.05)],
-        "boss":      [("Dragon Scale",0.60),("Enchanting Scroll",0.30),
-                      ("Revival Charm",0.15),("Giantslayer Zweihander",0.04),
-                      ("Astral Conduit Rod",0.04),("Twin Serpent Ring",0.04)],
+        "monster":   [("Premium Chalk Draft",0.15),("Slate Fragment",0.20),
+                      ("Mushroom Tip Blade",0.07),("Worn Practice Cue",0.07)],
+        "treasure":  [("Slate Fragment",0.30),("The Custom Tip Scroll",0.15),
+                      ("Champion's Chalk Flask",0.10),("The Action Coin",0.07),
+                      ("Break Master's Clasp",0.05),("Diamond Sight Medallion",0.05)],
+        "mini_boss": [("Slate Fragment",0.50),("The Custom Tip Scroll",0.25),
+                      ("The Re-Rack",0.10),("Graphite Break Cue",0.05)],
+        "boss":      [("Slate Fragment",0.60),("The Custom Tip Scroll",0.30),
+                      ("The Re-Rack",0.15),("Heavy Breaker Staff",0.04),
+                      ("The Extension",0.04),("Double Kiss Ring",0.04)],
         "completion_bonus": {"exp": 1800, "gold": 450},
     },
     "legendary": {
-        "monster":   [("Dragon Scale",0.30),("Enchanting Scroll",0.10),
-                      ("Mega Health Potion",0.12),("Revival Charm",0.05)],
-        "treasure":  [("Dragon Scale",0.40),("Enchanting Scroll",0.25),
-                      ("Revival Charm",0.12),("Cinder Heart Pendant",0.05),
-                      ("Deathwhisper Amulet",0.04),("Eye of the Storm",0.04)],
-        "mini_boss": [("Dragon Scale",0.60),("Enchanting Scroll",0.35),
-                      ("Giantslayer Zweihander",0.05),("Voidweave Mantle",0.05),
-                      ("Twin Serpent Ring",0.05)],
-        "boss":      [("Dragon Scale",0.70),("Enchanting Scroll",0.40),
-                      ("Worldcleaver",0.02),("Nullstar Scepter",0.02),
-                      ("Godshard Splinter",0.02),("Last Breath Locket",0.02),
-                      ("Infinity Loop",0.02)],
+        "monster":   [("Slate Fragment",0.30),("The Custom Tip Scroll",0.10),
+                      ("Champion's Chalk Flask",0.12),("The Re-Rack",0.05)],
+        "treasure":  [("Slate Fragment",0.40),("The Custom Tip Scroll",0.25),
+                      ("The Re-Rack",0.12),("Chalk Heart",0.05),
+                      ("The Hustler's Whisper",0.04),("Eye of the Table",0.04)],
+        "mini_boss": [("Slate Fragment",0.60),("The Custom Tip Scroll",0.35),
+                      ("Heavy Breaker Staff",0.05),("Blacklight Cloak",0.05),
+                      ("Double Kiss Ring",0.05)],
+        "boss":      [("Slate Fragment",0.70),("The Custom Tip Scroll",0.40),
+                      ("The Rack Splitter",0.02),("The Grand Bridge",0.02),
+                      ("Splinter of the Break",0.02),("The Final Shot Locket",0.02),
+                      ("The Endless Run",0.02)],
         "completion_bonus": {"exp": 4000, "gold": 1000},
     },
 }
@@ -1596,24 +1596,24 @@ def set_status(p, key, duration_seconds):
 
 def get_active_statuses(p):
     statuses = []
-    if is_distracted(p):      statuses.append("😵 Distracted (30% miss)")
-    if is_entangled(p):       statuses.append("🌿 Entangled (can't attack)")
-    if is_frozen(p):          statuses.append("🧊 Frozen (can't attack)")
-    if is_stunned(p):         statuses.append("⚡ Stunned (miss next attack)")
-    if is_vanished(p):        statuses.append("👻 Vanished (untargetable)")
-    if is_poisoned(p):    statuses.append(f"🐍 Poisoned ({p.get('poison_damage',6)} dmg/30s)")
-    if is_burning(p):     statuses.append(f"🔥 Burning ({p.get('burn_damage',8)} dmg/20s)")
-    if has_ward(p):       statuses.append("✨ Holy Ward (next hit -40%)")
-    if is_exposed(p):     statuses.append("🗡️ Exposed (+15% dmg taken)")
-    if is_branded(p):     statuses.append("🔥 Branded (next attack -30%)")
-    if is_bleeding(p):        statuses.append(f"🩸 Bleeding ({p.get('bleed_damage',10)} dmg/30s)")
-    if is_hexed(p):           statuses.append("💀 Hexed (-25% damage)")
-    if is_blessed(p):         statuses.append("✨ Blessed (+10% all stats)")
-    if is_weakened(p):        statuses.append("💔 Weakened (+25% dmg taken)")
-    if is_healing_blocked(p): statuses.append("🚫 Healing Blocked")
-    if is_revival_blocked(p): statuses.append("☠️ Revival Blocked (Zealot)")
-    if is_silenced(p):        statuses.append("🤐 Silenced (no skills)")
-    if is_invincible(p):      statuses.append("🛡️ Invincible (Still Recovering)")
+    if is_distracted(p):      statuses.append("😵 Miscued (30% miss)")
+    if is_entangled(p):       statuses.append("🌿 Snookered (can't attack)")
+    if is_frozen(p):          statuses.append("🧊 Table Locked (can't attack)")
+    if is_stunned(p):         statuses.append("⚡ Scratched (miss next attack)")
+    if is_vanished(p):        statuses.append("👻 Ghost Cued (untargetable)")
+    if is_poisoned(p):    statuses.append(f"🐍 Chalk Dusted ({p.get('poison_damage',6)} dmg/30s)")
+    if is_burning(p):     statuses.append(f"🔥 Felt Burning ({p.get('burn_damage',8)} dmg/20s)")
+    if has_ward(p):       statuses.append("✨ Safety Play (next hit -40%)")
+    if is_exposed(p):     statuses.append("🗡️ Open Table (+15% dmg taken)")
+    if is_branded(p):     statuses.append("🔥 Chalk Marked (next attack -30%)")
+    if is_bleeding(p):        statuses.append(f"🩸 Draw Bleed ({p.get('bleed_damage',10)} dmg/30s)")
+    if is_hexed(p):           statuses.append("💀 Hooked (-25% damage)")
+    if is_blessed(p):         statuses.append("✨ In Stroke (+10% all stats)")
+    if is_weakened(p):        statuses.append("💔 Miscue Form (+25% dmg taken)")
+    if is_healing_blocked(p): statuses.append("🚫 No Re-Rack")
+    if is_revival_blocked(p): statuses.append("☠️ Condemned (Verdict's Call)")
+    if is_silenced(p):        statuses.append("🤐 Frozen Stroke (no skills)")
+    if is_invincible(p):      statuses.append("🛡️ Still Chalking (Still Recovering)")
     return statuses
 
 # ── GEAR HELPERS ──────────────────────────────────────────────────────────────
@@ -2143,7 +2143,7 @@ def init_db():
         losses INTEGER DEFAULT 0, quests_done INTEGER DEFAULT 0,
         heals_given INTEGER DEFAULT 0, dodges INTEGER DEFAULT 0,
         crafts_done INTEGER DEFAULT 0, perm_dmg_bonus INTEGER DEFAULT 0,
-        titles TEXT DEFAULT '["The Newcomer"]',
+        titles TEXT DEFAULT '["Fresh Rack"]',
         active_title TEXT DEFAULT 'The Newcomer',
         class_id TEXT DEFAULT NULL,
         class_path TEXT DEFAULT NULL,
@@ -2382,7 +2382,7 @@ def add_guild_exp(g, amount):
           g["exp"] >= guild_exp_for_level(safe_int(g.get("level"),1)):
         g["exp"] -= guild_exp_for_level(safe_int(g.get("level"),1))
         g["level"] = safe_int(g.get("level"),1) + 1
-        msgs.append(f"🏰 Guild leveled up to {g['level']}! "
+        msgs.append(f"🏰 Hall leveled up to {g['level']}! "
                     f"{GUILD_PERKS.get(g['level'],{}).get('desc','')}")
     return msgs
 
@@ -2396,13 +2396,13 @@ def new_player(s):
         "gold": max(50, slvl * 10), "wins": 0, "losses": 0,
         "quests_done": 0, "heals_given": 0, "dodges": 0,
         "crafts_done": 0, "perm_dmg_bonus": 0,
-        "titles": json.dumps(["The Newcomer"]),
-        "active_title": "The Newcomer",
+        "titles": json.dumps(["Fresh Rack"]),
+        "active_title": "Fresh Rack",
         "class_id": None, "class_path": None,
         "all_skills": json.dumps([]),
         "stat_points": slvl * 3 + slvl // 5,
         "stats": json.dumps(DEFAULT_STATS.copy()),
-        "inventory": json.dumps(["Health Potion", "Health Potion"]),
+        "inventory": json.dumps(["Chalk Vial", "Chalk Vial"]),
         "passive_cooldowns": json.dumps({}),
         "equipped_weapon": None, "equipped_armor": None,
         "equipped_shield": None, "equipped_accessory": None,
@@ -2512,7 +2512,7 @@ def add_exp(p, amount, weather=None):
         if p["level"] == 100:
             _auto_advance_class(p, 100)
             msgs.append("🏆 *LEVEL 100!* You have reached the pinnacle!")
-            award_title(p, "Century")
+            award_title(p, "Century Break")
         for t in check_titles(p):
             msgs.append(f"🏅 New title: *{t}*!")
     return msgs, leveled_up
@@ -3162,8 +3162,8 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Block non-priest potions on defeated targets
     if is_defeated(t) and get_class_line(h) != "priest":
         await send_group(update,
-            f"❌ *{t['username']}* is defeated — potions can't revive them!\n"
-            f"Use a *Revival Charm* from your inventory, or ask a Priest.", delay=9)
+            f"❌ *{t['username']}* is defeated — vials can't revive them!\n"
+            f"Use a *The Re-Rack* from your inventory, or ask a Chalker.", delay=9)
         return
 
     cid = h.get("class_id","")
@@ -3180,16 +3180,16 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             heal_amount = round(heal_amount * 1.25)
     else:
         # Non-priest — requires potion
-        if "Mega Health Potion" in inv:
-            potion = "Mega Health Potion"; heal_amount = 200
-        elif "Super Health Potion" in inv:
-            potion = "Super Health Potion"; heal_amount = 100
-        elif "Health Potion" in inv:
-            potion = "Health Potion"; heal_amount = 50
+        if "Champion's Chalk Flask" in inv:
+            potion = "Champion's Chalk Flask"; heal_amount = 200
+        elif "Premium Chalk Draft" in inv:
+            potion = "Premium Chalk Draft"; heal_amount = 100
+        elif "Chalk Vial" in inv:
+            potion = "Chalk Vial"; heal_amount = 50
         else:
             await send_group(update,
-                "❌ You need a Health Potion to heal someone!\n"
-                "Priests can heal for free with /skill.", delay=9); return
+                "❌ You need a Chalk Vial to heal someone!\n"
+                "Chalkers can heal for free with /skill.", delay=9); return
         inv.remove(potion)
         h["inventory"] = json.dumps(inv)
 
@@ -3503,7 +3503,7 @@ async def raidstrike_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pp["quests_done"] = pp.get("quests_done",0) + 1
                 loot = roll_loot_table([(n,0.33) for n,_ in tier.get("loot_table",[])])
                 if loot: add_item(pp, loot); lines.append(f"🎒 *{pp['username']}* found *{loot}*!")
-                if u == raid["party"][0] and award_title(pp, "Raid Leader"):
+                if u == raid["party"][0] and award_title(pp, "Break Leader"):
                     lines.append(f"🏅 *{pp['username']}* earned: *Raid Leader*!")
                 lmsgs, leveled = add_exp(pp, tier["exp_reward"], w); save_player(pp)
                 lines.append(f"✅ *{pp['username']}* — +{tier['exp_reward']:,} EXP | +{tier['gold_reward']} Gold")
@@ -3685,7 +3685,7 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p["all_skills"] = json.dumps([])
         p["max_hp"] = max_hp_for_level(1); p["hp"] = p["max_hp"]
         p["stat_points"] = safe_int(p.get("stat_points")) + 10
-        award_title(p, "The Ascended"); save_player(p)
+        award_title(p, "Gone Pro"); save_player(p)
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
             f"🌟 *{p['username']}* has PRESTIGED! A new journey begins! 🌟",
             permanent=True))
@@ -3743,12 +3743,12 @@ async def allocate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📊 *Stat Allocation* — *{sp}* points available\n\n"
             f"STR:{sd.get('STR',5)} AGI:{sd.get('AGI',5)} INT:{sd.get('INT',5)} "
             f"WIS:{sd.get('WIS',5)} DEX:{sd.get('DEX',5)} LUK:{sd.get('LUK',5)}\n\n"
-            f"📌 STR — Attack damage (Warrior)\n"
+            f"📌 STR — Attack damage (Breaker)\n"
             f"📌 AGI — Dodge & crit\n"
-            f"📌 INT — Spell damage (Mage)\n"
-            f"📌 WIS — Heal power (Priest)\n"
-            f"📌 DEX — Accuracy & crit (Archer)\n"
-            f"📌 LUK — Crit & gold bonus (Thief)\n"
+            f"📌 INT — Spell damage (Hustler)\n"
+            f"📌 WIS — Heal power (Chalker)\n"
+            f"📌 DEX — Accuracy & crit (Marksman)\n"
+            f"📌 LUK — Crit & gold bonus (Shark)\n"
             f"📌 DEF — From gear only (cannot allocate)\n\n"
             f"🧭 {rec}\n\nUsage: `/allocate STR 5`", delay=30); return
     stat = context.args[0].upper()
@@ -3783,14 +3783,14 @@ async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Rare potion chance
     item = None
     if random.random() < 0.10:
-        item = random.choice(["Health Potion","Super Health Potion","Mega Health Potion"])
+        item = random.choice(["Chalk Vial","Premium Chalk Draft","Champion's Chalk Flask"])
         add_item(p, item)
     daily_exp = 200 + (p["level"] * 10)
     lmsgs, leveled = add_exp(p, daily_exp)
     save_player(p)
     msg = f"🎁 *Daily Reward!*\n\n✨ +{daily_exp} EXP | 💰 +{gold} Gold"
     if item: msg += f" | 🎒 *{item}* (lucky drop!)"
-    else:    msg += f"\n_(No potion today — check the /shop)_"
+    else:    msg += f"\n_(No chalk today — check the /shop)_"
     if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
     if leveled and p["level"] % 10 == 0:
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
@@ -3800,13 +3800,14 @@ async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── TRAIN ─────────────────────────────────────────────────────────────────────
 TRAIN_MESSAGES = [
-    "You drilled your form at the practice board until your arms gave out.",
-    "You sparred with a training dummy for hours.",
-    "You ran laps across The Felt until your legs burned.",
-    "You studied combat technique late into the night.",
-    "You meditated on your class abilities and sharpened your instincts.",
-    "You pushed through an exhausting session in the back alley.",
-    "You reviewed battle tactics and practiced your weaknesses.",
+    "You drilled straight shots until your bridge hand went numb.",
+    "You ran the same pattern forty times until it became automatic.",
+    "You practiced kick shots on an empty table until the angles were memorized.",
+    "You studied safety play until safe shots became your first instinct.",
+    "You worked on your break until the rack split exactly how you wanted.",
+    "You spent an hour on draw shots, learning where the cue ball goes.",
+    "You practiced position play — potting the ball was never the problem.",
+    "You ran ghost ball drills until every cut angle was committed to muscle memory.",
 ]
 
 async def train_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4232,46 +4233,46 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, f"You don't have *{item}*!", delay=9); return
     inv.remove(item); p["inventory"] = json.dumps(inv)
     msg = f"✅ Used *{item}*. "
-    if item == "Health Potion":
+    if item == "Chalk Vial":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "❌ You're defeated — potions won't help.\n"
-                "Use a *Revival Charm* to revive yourself, or wait for a Priest.", delay=9)
+                "❌ You're defeated — vials won't help.\n"
+                "Use a *The Re-Rack* to revive yourself, or wait for a Chalker.", delay=9)
             return
         p["hp"] = min(p["max_hp"], p["hp"]+50); msg += f"❤️ +50 HP ({p['hp']}/{p['max_hp']})"
-    elif item == "Super Health Potion":
+    elif item == "Premium Chalk Draft":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "❌ You're defeated — potions won't help.\n"
-                "Use a *Revival Charm* to revive yourself, or wait for a Priest.", delay=9)
+                "❌ You're defeated — vials won't help.\n"
+                "Use a *The Re-Rack* to revive yourself, or wait for a Chalker.", delay=9)
             return
         p["hp"] = min(p["max_hp"], p["hp"]+100); msg += f"❤️ +100 HP ({p['hp']}/{p['max_hp']})"
-    elif item == "Mega Health Potion":
+    elif item == "Champion's Chalk Flask":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "❌ You're defeated — potions won't help.\n"
-                "Use a *Revival Charm* to revive yourself, or wait for a Priest.", delay=9)
+                "❌ You're defeated — vials won't help.\n"
+                "Use a *The Re-Rack* to revive yourself, or wait for a Chalker.", delay=9)
             return
         p["hp"] = min(p["max_hp"], p["hp"]+200); msg += f"❤️ +200 HP ({p['hp']}/{p['max_hp']})"
-    elif item == "Revival Charm":
+    elif item == "The Re-Rack":
         if not is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "You're not defeated — save your Revival Charm for when you need it!", delay=9)
+                "You're not defeated — save your Re-Rack for when you need it!", delay=9)
             return
         if is_revival_blocked(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "☠️ You have been condemned by a Zealot — you cannot be revived!\n"
-                "Only a *Saint's Absolution* can lift this curse.", delay=9)
+                "☠️ You have been condemned by Verdict — you cannot be revived!\n"
+                "Only a *House Saint's Absolution* can lift this curse.", delay=9)
             return
         p["defeated_until"] = None
         p["hp"] = p["max_hp"] // 2
@@ -4477,23 +4478,23 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
     if not context.args:
         await send_group(update,
-            "🏰 *Guild Commands:*\n"
+            "🏰 *Hall Commands:*\n"
             "/guild create [name] — 100g to found\n"
             "/guild join [name] — request to join\n"
             "/guild approve [name] — leader approves\n"
             "/guild deny [name] — leader denies\n"
-            "/guild info — your guild info\n"
-            "/guild list — top guilds\n"
+            "/guild info — your hall info\n"
+            "/guild list — top halls\n"
             "/guild bank [amount] — donate gold\n"
-            "/guild leave — leave your guild", delay=15); return
+            "/guild leave — leave your hall", delay=15); return
     sub = context.args[0].lower()
     if sub == "create":
         if len(context.args) < 2:
             await send_group(update, "Usage: /guild create [name]", delay=9); return
         if p.get("guild_id") and str(p.get("guild_id")) != "None":
-            await send_group(update, "You're already in a guild!", delay=9); return
+            await send_group(update, "You're already in a hall!", delay=9); return
         if p.get("gold",0) < 100:
-            await send_group(update, "Need 100 gold to found a guild!", delay=9); return
+            await send_group(update, "Need 100 gold to found a hall!", delay=9); return
         name = " ".join(context.args[1:])
         conn = sqlite3.connect(DB_PATH); c = conn.cursor()
         try:
@@ -4501,20 +4502,20 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                       (name, user.id, json.dumps([user.id])))
             conn.commit(); gid = c.lastrowid
         except sqlite3.IntegrityError:
-            await send_group(update, f"Guild '{name}' already exists!", delay=9)
+            await send_group(update, f"Hall '{name}' already exists!", delay=9)
             conn.close(); return
         conn.close()
         p["guild_id"] = gid; p["gold"] = p.get("gold",0)-100
-        award_title(p,"Guild Founder"); save_player(p)
+        award_title(p,"Hall Founder"); save_player(p)
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
-            f"🏰 *{name}* guild founded by *{user.first_name}*!"))
-        await send_group(update, f"🏰 *{name}* founded!\n🏅 Title: *Guild Founder*!", delay=15)
+            f"🏰 *{name}* hall founded by *{user.first_name}*!"))
+        await send_group(update, f"🏰 *{name}* founded!\n🏅 Title: *Hall Founder*!", delay=15)
     elif sub == "join":
         if len(context.args) < 2:
             await send_group(update, "Usage: /guild join [name]", delay=9); return
         name = " ".join(context.args[1:]); g = get_guild_by_name(name)
         if not g:
-            await send_group(update, f"No guild named *{name}*.", delay=9); return
+            await send_group(update, f"No hall named *{name}*.", delay=9); return
         gid = g["guild_id"]
         if gid not in pending_guild_reqs: pending_guild_reqs[gid] = []
         if any(r["user_id"]==user.id for r in pending_guild_reqs[gid]):
@@ -4532,10 +4533,10 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(context.args) < 2:
             await send_group(update, "Usage: /guild approve [username]", delay=9); return
         if not p.get("guild_id"):
-            await send_group(update, "You're not in a guild!", delay=9); return
+            await send_group(update, "You're not in a hall!", delay=9); return
         g = get_guild(p["guild_id"])
         if not g or g["leader_id"] != user.id:
-            await send_group(update, "Only the guild leader can approve.", delay=9); return
+            await send_group(update, "Only the hall leader can approve.", delay=9); return
         tn = " ".join(context.args[1:]).lower()
         reqs = pending_guild_reqs.get(g["guild_id"],[])
         match = next((r for r in reqs if r["username"].lower()==tn), None)
@@ -4553,10 +4554,10 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(context.args) < 2:
             await send_group(update, "Usage: /guild deny [username]", delay=9); return
         if not p.get("guild_id"):
-            await send_group(update, "You're not in a guild!", delay=9); return
+            await send_group(update, "You're not in a hall!", delay=9); return
         g = get_guild(p["guild_id"])
         if not g or g["leader_id"] != user.id:
-            await send_group(update, "Only the guild leader can deny.", delay=9); return
+            await send_group(update, "Only the hall leader can deny.", delay=9); return
         tn = " ".join(context.args[1:]).lower()
         reqs = pending_guild_reqs.get(g["guild_id"],[])
         match = next((r for r in reqs if r["username"].lower()==tn), None)
@@ -4566,10 +4567,10 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, f"❌ *{match['username']}*'s request denied.", delay=9)
     elif sub == "info":
         if not p.get("guild_id"):
-            await send_group(update, "You're not in a guild!", delay=9); return
+            await send_group(update, "You're not in a hall!", delay=9); return
         g = get_guild(p["guild_id"])
         if not g:
-            await send_group(update, "Guild not found.", delay=9); return
+            await send_group(update, "Hall not found.", delay=9); return
         members = sjl(g["members"],[]); leader = get_player(g["leader_id"])
         glvl = safe_int(g.get("level"),1); perk = GUILD_PERKS.get(glvl,{})
         nxt = guild_exp_for_level(glvl) if glvl < 10 else "MAX"
@@ -4585,7 +4586,7 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(context.args) < 2:
             await send_group(update, "Usage: /guild bank [amount]", delay=9); return
         if not p.get("guild_id"):
-            await send_group(update, "You're not in a guild!", delay=9); return
+            await send_group(update, "You're not in a hall!", delay=9); return
         try: amount = int(context.args[1])
         except:
             await send_group(update, "Usage: /guild bank [amount]", delay=9); return
@@ -4593,7 +4594,7 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update, f"Not enough gold! Have {p.get('gold',0)}g.", delay=9); return
         g = get_guild(p["guild_id"])
         if not g:
-            await send_group(update, "Guild not found.", delay=9); return
+            await send_group(update, "Hall not found.", delay=9); return
         p["gold"] -= amount; g["bank"] = safe_int(g.get("bank"))+amount
         gmsgs = add_guild_exp(g, amount//10); save_guild(g); save_player(p)
         msg = f"💰 *{user.first_name}* donated {amount}g! Bank: {g['bank']}g"
@@ -4604,25 +4605,25 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("SELECT name,level,members FROM guilds ORDER BY level DESC LIMIT 10")
         rows = c.fetchall(); conn.close()
         if not rows:
-            await send_group(update, "No guilds yet!", delay=9); return
+            await send_group(update, "No halls yet!", delay=9); return
         medals = ["🥇","🥈","🥉"]+["🏰"]*7
-        lines = ["🏰 *Guild Leaderboard:*\n"]
+        lines = ["🏰 *Hall Standings:*\n"]
         for i, row in enumerate(rows):
             members = len(sjl(row["members"],[]))
             lines.append(f"{medals[i]} *{row['name']}* — Lv {safe_int(row['level'],1)} | {members} members")
         await send_group(update, "\n".join(lines), delay=15)
     elif sub == "leave":
         if not p.get("guild_id"):
-            await send_group(update, "You're not in a guild!", delay=9); return
+            await send_group(update, "You're not in a hall!", delay=9); return
         g = get_guild(p["guild_id"])
         if g and g["leader_id"] == user.id:
-            await send_group(update, "Guild leaders can't leave!", delay=9); return
+            await send_group(update, "Hall leaders can't leave!", delay=9); return
         if g:
             members = sjl(g["members"],[])
             if user.id in members: members.remove(user.id)
             g["members"] = json.dumps(members); save_guild(g)
         p["guild_id"] = None; save_player(p)
-        await send_group(update, "You've left your guild.", delay=9)
+        await send_group(update, "You've left your hall.", delay=9)
 
 # ── SKILL ─────────────────────────────────────────────────────────────────────
 async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5103,7 +5104,7 @@ async def cooldowns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = datetime.now().strftime("%Y-%m-%d")
     exp_count = safe_int(p.get("explore_count_today")) if p.get("explore_date")==today else 0
     lines.append(f"🗺️ Explore: {exp_count}/2 today")
-    lines.append(f"🏰 Dungeon: {time_remaining(p.get('last_dungeon'), 86400)}")
+    lines.append(f"🏰 Hall Run: {time_remaining(p.get('last_dungeon'), 86400)}")
     if is_defeated(p):
         end  = datetime.fromisoformat(p["defeated_until"])
         diff = end - datetime.now()
@@ -5246,12 +5247,12 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if lv < 10:
                 cost = ENHANCE_COSTS[lv + 1]
                 rate = int(ENHANCE_RATES[lv + 1] * 100)
-                nxt  = f"+{lv+1} | Cost: {cost} Dragon Scale(s) | {rate}% success"
+                nxt  = f"+{lv+1} | Cost: {cost} Slate Fragment(s) | {rate}% success"
             else:
                 nxt = "MAX"
             lines.append(f"*{slot_label}:* {name} +{lv} {stars}\n  Next: {nxt}")
         inv = sjl(p.get("inventory"), [])
-        lines.append(f"\n🐉 Dragon Scales: {inv.count('Dragon Scale')}")
+        lines.append(f"\n🪨 Slate Fragments: {inv.count('Slate Fragment')}")
         lines.append("`/enhance weapon` | `/enhance armor` | `/enhance shield`")
         await send_group(update, "\n".join(lines), delay=30); return
 
@@ -5278,13 +5279,13 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rate    = ENHANCE_RATES[next_lv]
 
     inv = sjl(p.get("inventory"), [])
-    if inv.count("Dragon Scale") < cost:
+    if inv.count("Slate Fragment") < cost:
         await send_group(update,
-            f"❌ Need {cost} Dragon Scale(s), have {inv.count('Dragon Scale')}.\n"
-            f"Dragon Scales drop from bosses, explores, and quests.", delay=9); return
+            f"❌ Need {cost} Slate Fragment(s), have {inv.count('Slate Fragment')}.\n"
+            f"Slate Fragments drop from bosses, explores, and quests.", delay=9); return
 
     for _ in range(cost):
-        inv.remove("Dragon Scale")
+        inv.remove("Slate Fragment")
     p["inventory"] = json.dumps(inv)
 
     if random.random() < rate:
@@ -5295,7 +5296,7 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚒️ *Enhancement Success!*\n\n"
             f"*{item_name}* → *+{next_lv}* {'⭐' * next_lv}\n"
             f"+{bonus} {stat_label} total from enhancement\n"
-            f"Used {cost} Dragon Scale(s).", delay=20)
+            f"Used {cost} Slate Fragment(s).", delay=20)
     else:
         if current >= 6:
             set_enhancement(p, item_name, current - 1)
@@ -5303,13 +5304,13 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update,
                 f"💔 *Enhancement Failed!*\n\n"
                 f"*{item_name}* dropped from +{current} to +{current - 1}!\n"
-                f"Used {cost} Dragon Scale(s). Try again.", delay=20)
+                f"Used {cost} Slate Fragment(s). Try again.", delay=20)
         else:
             save_player(p)
             await send_group(update,
                 f"💔 *Enhancement Failed!*\n\n"
                 f"*{item_name}* stays at +{current}.\n"
-                f"Used {cost} Dragon Scale(s). Try again.", delay=20)
+                f"Used {cost} Slate Fragment(s). Try again.", delay=20)
 
 # ── ENCHANT ───────────────────────────────────────────────────────────────────
 async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5330,7 +5331,7 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             enc_str = f"*{enc['id'].capitalize()}* — {enc['desc']}" if enc else "None"
             lines.append(f"*{slot_label}:* {name}\n  Enchant: {enc_str}")
         inv = sjl(p.get("inventory"), [])
-        lines.append(f"\n📜 Enchanting Scrolls: {inv.count('Enchanting Scroll')}")
+        lines.append(f"\n📜 Custom Tip Scrolls: {inv.count('The Custom Tip Scroll')}")
         lines.append("`/enchant weapon` | `/enchant armor` | "
                      "`/enchant shield` | `/enchant accessory`")
         await send_group(update, "\n".join(lines), delay=30); return
@@ -5352,12 +5353,12 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, f"No {slot} equipped!", delay=9); return
 
     inv = sjl(p.get("inventory"), [])
-    if "Enchanting Scroll" not in inv:
+    if "The Custom Tip Scroll" not in inv:
         await send_group(update,
-            "❌ You need an *Enchanting Scroll*.\n"
+            "❌ You need a *Custom Tip Scroll*.\n"
             "They drop from explores, quests, and the shop.", delay=9); return
 
-    inv.remove("Enchanting Scroll")
+    inv.remove("The Custom Tip Scroll")
     p["inventory"] = json.dumps(inv)
 
     pool = ENCHANT_EFFECTS.get(effect_pool_key, [])
@@ -6123,13 +6124,13 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             items = arena[atk_items_key]
             if not items.get(item_name, 0):
                 await send_group(update, f"You don't have *{item_name}* in your arena kit.", delay=5); return
-            if atk_state.get("heal_block_turns", 0) > 0 and "Potion" in item_name:
+            if atk_state.get("heal_block_turns", 0) > 0 and ("Chalk" in item_name or "Flask" in item_name):
                 arena["log"].append(f"🚫 {atk_name}'s healing is blocked!")
                 await send_group(update, "Your healing is blocked!", delay=5); return
             items[item_name] -= 1
             if items[item_name] <= 0: del items[item_name]
-            if "Health Potion" in item_name or "Potion" in item_name:
-                heal_val = {"Health Potion":50,"Super Health Potion":100,"Mega Health Potion":200}.get(item_name,50)
+            if "Chalk Vial" in item_name or "Chalk Draft" in item_name or "Chalk Flask" in item_name:
+                heal_val = {"Chalk Vial":50,"Premium Chalk Draft":100,"Champion's Chalk Flask":200}.get(item_name,50)
                 arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal_val)
                 log_entry = f"🧪 {atk_name} drinks *{item_name}*! +{heal_val} HP."
             else:
@@ -6269,7 +6270,7 @@ def _resolve_dungeon_room(p, room_type, theme, diff, room_num, hp_remaining, cla
                      "Someone camped here before you. Their fire ring is cold but you restart it.",
                      "Not ideal. But you've slept in worse places.",
                      "A natural chamber — wide enough to breathe in.",
-                     "The dungeon offers a rare moment of silence. You take it."],
+                     "The hall run offers a rare moment of silence. You take it."],
         "altar":    ["A stone altar dominates the room. Old carvings. Something dried on the surface.",
                      "The altar pulses with a light that has no source.",
                      "Offerings have been left here recently. Someone else has been through.",
@@ -6280,7 +6281,7 @@ def _resolve_dungeon_room(p, room_type, theme, diff, room_num, hp_remaining, cla
                      f"They were in the ceiling. {enemy_name}s, plural. Dropping together.",
                      f"A second {enemy_name} you didn't see. The first was a distraction.",
                      f"The passage narrows right as the {enemy_name}s spring their trap."],
-        "merchant": ["A hooded figure sits cross-legged on a bedroll with wares. Inside a dungeon.",
+        "merchant": ["A hooded figure sits cross-legged on a bedroll with wares. Inside a hall run.",
                      "You smell pipe smoke before you see them — a merchant, impossibly calm.",
                      "A small stall set up in an alcove. The merchant nods like they expected you.",
                      "Someone has been down here long enough to set up shop. They look comfortable."],
@@ -6314,7 +6315,7 @@ def _resolve_dungeon_room(p, room_type, theme, diff, room_num, hp_remaining, cla
             "It gets more of you than you wanted. You push through.",
             "Not your finest moment. You survive it.",
             "You take the hit and keep moving. No other option.",
-            "The dungeon wins this exchange. You absorb it and press on.",
+            "The hall run wins this exchange. You absorb it and press on.",
             "A rough one. You'll feel this in the later rooms.",
         ])
 
@@ -6397,7 +6398,7 @@ def _resolve_dungeon_boss(p, theme, diff, class_line):
         f"The {theme['boss_name']}'s chamber is vast. It has been here a very long time.",
         f"You hear it breathing before the door is fully open.",
         f"The {theme['boss_name']} doesn't move when you enter. It watches.",
-        f"Everything in the dungeon led here. The {theme['boss_name']} is the reason.",
+        f"Everything in the hall run led here. The {theme['boss_name']} is the reason.",
     ])
     if epic:
         outcome = random.choice([
@@ -6410,12 +6411,12 @@ def _resolve_dungeon_boss(p, theme, diff, class_line):
         ])
     elif success:
         outcome = random.choice([
-            (f"The {theme['boss_name']} is every bit the threat the dungeon promised. "
+            (f"The {theme['boss_name']} is every bit the threat the hall run promised. "
              f"You give everything. A long brutal exchange. You're still standing. Barely."),
             (f"It takes several attempts to find the pattern. When you do, the "
              f"{theme['boss_name']} falls on your terms, not its own."),
             (f"You go in hard and don't let up. The {theme['boss_name']} is stronger "
-             f"than anything else in this dungeon. So are you, today."),
+             f"than anything else in this hall run. So are you, today."),
             (f"A war of attrition. The {theme['boss_name']} has endurance. You have more. "
              f"When it drops the silence is absolute."),
         ])
@@ -6489,9 +6490,9 @@ def _build_dungeon_recap(p, theme, diff, results, total_exp, total_gold,
 
     lines.append("\n━━━━━━━━━━━━━━━━")
     if not run_failed:
-        lines.append(f"✅ *Dungeon Complete — {diff.capitalize()}*\n")
+        lines.append(f"✅ *Hall Run Complete — {diff.capitalize()}*\n")
     else:
-        lines.append("🏃 *Dungeon Abandoned — retreated alive*\n")
+        lines.append("🏃 *Hall Run Abandoned — retreated alive*\n")
     lines.append("🏆 *Total Rewards:*")
     lines.append(f"✨ +{total_exp:,} EXP | 💰 +{total_gold:,} gold")
     for item in items_found:
@@ -6513,12 +6514,12 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if is_defeated(p):
-        await send_group(update, "💀 You're too beaten up to enter a dungeon!", delay=9); return
+        await send_group(update, "💀 You're too beaten up to enter a hall run!", delay=9); return
     if not check_cooldown(p.get("last_dungeon"), 86400):
         await send_group(update,
-            f"⏳ Dungeon cooldown: {time_remaining(p.get('last_dungeon'), 86400)}", delay=9); return
+            f"⏳ Hall run cooldown: {time_remaining(p.get('last_dungeon'), 86400)}", delay=9); return
     if user.id in active_dungeons:
-        await send_group(update, "🏰 You're already in a dungeon! Wait for your return.", delay=9); return
+        await send_group(update, "🏰 You're already in a hall run! Wait for your return.", delay=9); return
 
     diff = "normal"
     if context.args:
@@ -6529,7 +6530,7 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     level_reqs = {"normal": 1, "hard": 15, "legendary": 40}
     if p["level"] < level_reqs[diff]:
         await send_group(update,
-            f"❌ *{diff.capitalize()}* dungeons require Level {level_reqs[diff]}. "
+            f"❌ *{diff.capitalize()}* hall runs require Level {level_reqs[diff]}. "
             f"You're Level {p['level']}.", delay=9); return
 
     theme = random.choice(DUNGEON_THEMES)
@@ -6547,7 +6548,7 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p["last_dungeon"] = datetime.now().isoformat()
     save_player(p)
     cls      = get_player_class(p)
-    cls_name = cls["name"] if cls else "Adventurer"
+    cls_name = cls["name"] if cls else "Player"
     await send_group(update,
         f"🏰 *{user.first_name}* enters *{theme['name']}!*\n\n"
         f"_{theme['desc']}_\n\n"
@@ -6583,7 +6584,7 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 results.append({"type":"defeat","narrative":(
                     f"Room {i+1} would have finished you. "
                     f"You make the call to retreat while you still can. "
-                    f"The dungeon lets you go. This time.")})
+                    f"The hall lets you go. This time.")})
         if not run_failed:
             boss_result = _resolve_dungeon_boss(fp, theme, diff, line)
             total_exp  += boss_result.get("exp", 0)
@@ -6631,7 +6632,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*/quest* — Go on a quest (1hr)\n"
         "*/explore* — Expedition (1hr, 2x/day)\n"
         "*/pool* — Take a pool shot (8s cooldown)\n"
-        "*/dungeon* — Solo dungeon crawl (1x/day)\n"
+        "*/dungeon* — Solo hall run (1x/day)\n"
         "   `/dungeon` | `/dungeon hard` | `/dungeon legendary`\n"
         "*/shop* — Daily shop\n"
         "*/inventory* — Your items\n"
@@ -6645,17 +6646,17 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*/weather* — Table conditions\n\n"
         "⚔️ *Combat:*\n"
         "*/attack* — Reply + /attack to strike\n"
-        "*/heal* — Reply + /heal (needs potion)\n"
+        "*/heal* — Reply + /heal (needs chalk vial)\n"
         "*/skill* — View skills (arena-only for offense)\n"
         "*/boss [name]* — Start boss fight\n"
         "*/strike* — Attack active boss\n"
         "*/duel @user [wager]* — Quick CP-based duel\n"
         "*/arena @user [wager]* — Turn-based arena fight\n\n"
         "⚒️ *Gear Upgrades:*\n"
-        "*/enhance [weapon/armor/shield]* — Enhance gear (Dragon Scales)\n"
-        "*/enchant [weapon/armor/shield/accessory]* — Enchant gear (Scrolls)\n\n"
-        "🏰 *Guild:*\n"
-        "*/guild* — All guild commands\n\n"
+        "*/enhance [weapon/armor/shield]* — Enhance gear (Slate Fragments)\n"
+        "*/enchant [weapon/armor/shield/accessory]* — Enchant gear (Custom Tip Scrolls)\n\n"
+        "🏰 *Hall:*\n"
+        "*/guild* — All hall commands\n\n"
         "💬 *Chat earns EXP. Level-ups announced at x10. Secrets lurk...* 🎱",
         delay=30)
 
@@ -6681,74 +6682,74 @@ POOL_SHOTS = [
      "exp":35,"gold":5,"loot":None},
     {"id":"two_ball_run","weight":35,"rarity":"common",
      "text":"Two ball run before the pattern breaks. You'll take it.",
-     "exp":40,"gold":8,"loot":[("Health Potion",0.08)]},
+     "exp":40,"gold":8,"loot":[("Chalk Vial",0.08)]},
     {"id":"long_pot","weight":33,"rarity":"common",
      "text":"Long pot, full length of the table. The satisfying thud of a good hit.",
-     "exp":45,"gold":8,"loot":[("Health Potion",0.10)]},
+     "exp":45,"gold":8,"loot":[("Chalk Vial",0.10)]},
     {"id":"three_cushion","weight":30,"rarity":"common",
      "text":"Three cushion shot, exactly as planned. Nobody saw it but you know.",
-     "exp":50,"gold":10,"loot":[("Health Potion",0.12)]},
+     "exp":50,"gold":10,"loot":[("Chalk Vial",0.12)]},
     {"id":"position_play","weight":30,"rarity":"common",
      "text":"Perfect position play. You pot the ball and land exactly where you wanted.",
-     "exp":55,"gold":12,"loot":[("Health Potion",0.12),("Copper Loop",0.05)]},
+     "exp":55,"gold":12,"loot":[("Chalk Vial",0.12),("Brass Rail Ring",0.05)]},
     {"id":"break_and_run","weight":20,"rarity":"uncommon",
      "text":"Break and run. Four balls drop on the break and you clear the table from there.",
-     "exp":80,"gold":20,"loot":[("Super Health Potion",0.12),("Pebble of Focus",0.08)]},
+     "exp":80,"gold":20,"loot":[("Premium Chalk Draft",0.12),("Chalk Nub",0.08)]},
     {"id":"masse_shot","weight":20,"rarity":"uncommon",
      "text":"Massé shot curves around the cluster perfectly. The crowd would have gone wild.",
-     "exp":85,"gold":22,"loot":[("Super Health Potion",0.15),("Tin Charm",0.08)]},
+     "exp":85,"gold":22,"loot":[("Premium Chalk Draft",0.15),("Pocket Marker",0.08)]},
     {"id":"bank_pot","weight":18,"rarity":"uncommon",
      "text":"Bank pot off the far cushion drops clean. Calculated.",
-     "exp":90,"gold":25,"loot":[("Super Health Potion",0.15),("Dragon Scale",0.06)]},
+     "exp":90,"gold":25,"loot":[("Premium Chalk Draft",0.15),("Slate Fragment",0.06)]},
     {"id":"combo_pot","weight":18,"rarity":"uncommon",
      "text":"Combo pot — cue ball kisses the 5, sends the 7 into the corner. Beautiful.",
-     "exp":95,"gold":28,"loot":[("Super Health Potion",0.15),("Dragon Scale",0.08)]},
+     "exp":95,"gold":28,"loot":[("Premium Chalk Draft",0.15),("Slate Fragment",0.08)]},
     {"id":"five_ball_run","weight":16,"rarity":"uncommon",
      "text":"Five ball run. Your focus is absolute. The table offers no resistance.",
-     "exp":100,"gold":30,"loot":[("Dragon Scale",0.12),("Frayed Rope Band",0.08)]},
+     "exp":100,"gold":30,"loot":[("Slate Fragment",0.12),("Worn Tip Wrap",0.08)]},
     {"id":"called_shot","weight":16,"rarity":"uncommon",
      "text":"Called shot — 6 ball, side pocket, two cushions. You called it. It dropped.",
-     "exp":110,"gold":35,"loot":[("Dragon Scale",0.15),("Fox Tail Ring",0.05)]},
+     "exp":110,"gold":35,"loot":[("Slate Fragment",0.15),("Silk Tip Ring",0.05)]},
     {"id":"century_break","weight":14,"rarity":"uncommon",
      "text":"Century break. You stop counting at twelve balls. The table is yours.",
-     "exp":120,"gold":40,"loot":[("Dragon Scale",0.18),("Bloodstone Band",0.06)]},
+     "exp":120,"gold":40,"loot":[("Slate Fragment",0.18),("Red Ball Band",0.06)]},
     {"id":"maximum_break","weight":8,"rarity":"rare",
      "text":"Maximum break. Every ball. Every pocket. The felt bows to your command.",
-     "exp":200,"gold":80,"loot":[("Dragon Scale",0.30),("Enchanting Scroll",0.12),("Whisper Coin",0.06)]},
+     "exp":200,"gold":80,"loot":[("Slate Fragment",0.30),("The Custom Tip Scroll",0.12),("The Action Coin",0.06)]},
     {"id":"trick_shot","weight":8,"rarity":"rare",
      "text":"Trick shot — cue behind the back, jump shot over the cluster, corner pocket. "
             "You don't even watch it drop. You already knew.",
-     "exp":220,"gold":90,"loot":[("Dragon Scale",0.30),("Enchanting Scroll",0.15),("Warmaster's Clasp",0.04)]},
+     "exp":220,"gold":90,"loot":[("Slate Fragment",0.30),("The Custom Tip Scroll",0.15),("Break Master's Clasp",0.04)]},
     {"id":"ghost_ball","weight":7,"rarity":"rare",
      "text":"Ghost ball method on an impossible cut. The cue ball threads a gap "
             "that shouldn't exist. The 8 drops. You breathe.",
-     "exp":240,"gold":100,"loot":[("Dragon Scale",0.35),("Enchanting Scroll",0.18),("Owl Medallion",0.04)]},
+     "exp":240,"gold":100,"loot":[("Slate Fragment",0.35),("The Custom Tip Scroll",0.18),("Diamond Sight Medallion",0.04)]},
     {"id":"full_rack_clear","weight":6,"rarity":"rare",
      "text":"Full rack clear on the break. All fifteen balls. One shot. "
             "The table is empty before the echo dies.",
-     "exp":280,"gold":120,"loot":[("Dragon Scale",0.40),("Enchanting Scroll",0.20),
-                                   ("Revival Charm",0.08),("Phantom Loop",0.04)]},
+     "exp":280,"gold":120,"loot":[("Slate Fragment",0.40),("The Custom Tip Scroll",0.20),
+                                   ("The Re-Rack",0.08),("Ghost Ball Loop",0.04)]},
     {"id":"void_pocket","weight":3,"rarity":"epic",
      "text":"The cue ball rolls toward a pocket that wasn't there a moment ago. "
             "A void pocket. The ball disappears. Something falls out of the table "
             "that was never inside it.",
-     "exp":500,"gold":200,"loot":[("Dragon Scale",0.60),("Enchanting Scroll",0.35),
-                                   ("Revival Charm",0.15),("Cinder Heart Pendant",0.05),
-                                   ("Eye of the Storm",0.04)]},
+     "exp":500,"gold":200,"loot":[("Slate Fragment",0.60),("The Custom Tip Scroll",0.35),
+                                   ("The Re-Rack",0.15),("Chalk Heart",0.05),
+                                   ("Eye of the Table",0.04)]},
     {"id":"eight_ball_break","weight":3,"rarity":"epic",
      "text":"8 ball on the break. Dead center. Corner pocket. "
             "The felt goes silent. Something ancient stirs beneath the table.",
-     "exp":600,"gold":250,"loot":[("Dragon Scale",0.65),("Enchanting Scroll",0.40),
-                                   ("Deathwhisper Amulet",0.05),("Aegis Talisman",0.04)]},
+     "exp":600,"gold":250,"loot":[("Slate Fragment",0.65),("The Custom Tip Scroll",0.40),
+                                   ("The Hustler's Whisper",0.05),("The Safety Talisman",0.04)]},
     {"id":"corner_pocket_singularity","weight":1,"rarity":"legendary",
      "text":"The corner pocket opens. Not just opens — becomes. "
             "Every ball on the table rolls toward it simultaneously without being struck. "
             "They vanish one by one. The table is left perfectly bare. "
             "You didn't do that. Or maybe you did. The chalk dust settles. "
             "Something was left behind.",
-     "exp":1200,"gold":500,"loot":[("Dragon Scale",0.80),("Enchanting Scroll",0.60),
-                                    ("Godshard Splinter",0.03),("Infinity Loop",0.03),
-                                    ("Last Breath Locket",0.03)]},
+     "exp":1200,"gold":500,"loot":[("Slate Fragment",0.80),("The Custom Tip Scroll",0.60),
+                                    ("Splinter of the Break",0.03),("The Endless Run",0.03),
+                                    ("The Final Shot Locket",0.03)]},
 ]
 
 POOL_CLASS_FLAVOR = {
