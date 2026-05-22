@@ -1208,26 +1208,51 @@ RAID_TIERS = [
      "wave_enemies":[{"name":"Rack Grunt","hp":150,"dmg_min":15,"dmg_max":30},
                      {"name":"Side Rail Mob","hp":250,"dmg_min":20,"dmg_max":40}],
      "exp_reward":600,"gold_reward":120,
-     "loot_table":[("Chalk Vial","common"),("Slate Fragment","uncommon"),("Worn Practice Cue","uncommon")]},
+     "loot_table":[
+         ("Worn Practice Cue",0.40),("Chalk Shiv",0.35),("Chalk Nub",0.30),
+         ("Worn Tip Wrap",0.30),("Pocket Marker",0.25),("Brass Rail Ring",0.20),
+         ("Road Player's Coin",0.15),("Silk Tip Ring",0.10),("Black Ball Stud",0.08),
+         ("Slate Fragment",0.12),("Chalk Vial",0.20),
+     ]},
     {"name":"The Corner Pocket Assault","min_level":5,"waves":3,"wave_boss_key":"3 ball",
      "wave_enemies":[{"name":"Chalk Golem","hp":400,"dmg_min":35,"dmg_max":60},
                      {"name":"Pocket Demon","hp":600,"dmg_min":45,"dmg_max":75},
                      {"name":"Rack Fiend","hp":800,"dmg_min":55,"dmg_max":90}],
      "exp_reward":1400,"gold_reward":300,
-     "loot_table":[("Premium Chalk Draft","uncommon"),("Graphite Break Cue","rare"),("Diamond Sight Medallion","rare")]},
+     "loot_table":[
+         ("Graphite Break Cue",0.35),("Blue Diamond Chalk",0.30),("Blackwood Bridge Stick",0.25),
+         ("Red Ball Band",0.25),("Road Shark Signet",0.20),("Hustler's Tooth",0.18),
+         ("Chalk Bead Necklace",0.18),("Iron Scale Vest",0.15),("Shadow Leather Coat",0.12),
+         ("Slate Fragment",0.25),("The Action Coin",0.10),("Diamond Sight Medallion",0.08),
+         ("The Custom Tip Scroll",0.10),
+     ]},
     {"name":"The Break Line Siege","min_level":10,"waves":3,"wave_boss_key":"5 ball",
      "wave_enemies":[{"name":"Felt Wraith","hp":1000,"dmg_min":65,"dmg_max":100},
                      {"name":"Cue Specter","hp":1500,"dmg_min":85,"dmg_max":130},
                      {"name":"Break Titan","hp":2000,"dmg_min":100,"dmg_max":150}],
      "exp_reward":3000,"gold_reward":700,
-     "loot_table":[("The Re-Rack","rare"),("The Extension","epic"),("Break Master's Clasp","rare")]},
+     "loot_table":[
+         ("Heavy Breaker Staff",0.30),("The Extension",0.20),("Ferrule Dart",0.25),
+         ("Break Master's Clasp",0.22),("Ghost Ball Loop",0.18),("Closer's Band",0.16),
+         ("English Coil",0.15),("Slate Heart",0.18),("Shark Tooth Chain",0.15),
+         ("Road Player's Compass",0.12),("The Break Torc",0.12),
+         ("Slate Fragment",0.35),("The Custom Tip Scroll",0.20),("The Re-Rack",0.08),
+     ]},
     {"name":"The Final Rack — Endgame","min_level":15,"waves":4,"wave_boss_key":"8 ball",
      "wave_enemies":[{"name":"Shadow Rack","hp":2500,"dmg_min":100,"dmg_max":160},
                      {"name":"Void Ball","hp":3500,"dmg_min":130,"dmg_max":200},
                      {"name":"8Ball Sentinel","hp":5000,"dmg_min":150,"dmg_max":230},
                      {"name":"Doom Cluster","hp":6000,"dmg_min":180,"dmg_max":260}],
      "exp_reward":8000,"gold_reward":2000,
-     "loot_table":[("The Rack Splitter","legendary"),("The Grand Bridge","legendary"),("Splinter of the Break","legendary")]},
+     "loot_table":[
+         ("The Rack Splitter",0.12),("The Grand Bridge",0.10),("Chalked Finger",0.15),
+         ("Double Kiss Ring",0.18),("Eye of the Table",0.16),("Blackball Circle",0.14),
+         ("Break Knuckle",0.14),("House Saint's Band",0.12),("Chalk Heart",0.14),
+         ("The Hustler's Whisper",0.12),("The Safety Talisman",0.10),
+         ("Splinter of the Break",0.06),("The Endless Run",0.05),("The Old Road Ring",0.04),
+         ("The Rack Eternal",0.04),("Slate Fragment",0.50),("The Custom Tip Scroll",0.35),
+         ("The Re-Rack",0.15),
+     ]},
 ]
 
 EXPLORE_ZONES = [
@@ -7815,13 +7840,17 @@ def main():
     app.add_handler(CommandHandler("gear",      gear_cmd))
 
     # Combat & Dungeons
-    app.add_handler(CommandHandler("duel",      duel_cmd))
-    app.add_handler(CommandHandler("arena",     arena_cmd))
-    app.add_handler(CommandHandler("attack",    attack_cmd))
-    app.add_handler(CommandHandler("heal",      heal_cmd))
-    app.add_handler(CommandHandler("boss",      boss_cmd))
-    app.add_handler(CommandHandler("strike",    strike_cmd))
-    app.add_handler(CommandHandler("dungeon",   dungeon_cmd))
+    app.add_handler(CommandHandler("duel",       duel_cmd))
+    app.add_handler(CommandHandler("arena",      arena_cmd))
+    app.add_handler(CommandHandler("attack",     attack_cmd))
+    app.add_handler(CommandHandler("heal",       heal_cmd))
+    app.add_handler(CommandHandler("boss",       boss_cmd))
+    app.add_handler(CommandHandler("strike",     strike_cmd))
+    app.add_handler(CommandHandler("dungeon",    dungeon_cmd))
+    app.add_handler(CommandHandler("raid",       raid_cmd))
+    app.add_handler(CommandHandler("raidstart",  raidstart_cmd))
+    app.add_handler(CommandHandler("raidstrike", raidstrike_cmd))
+    app.add_handler(CommandHandler("raidstatus", raidstatus_cmd))
 
     # Guild
     app.add_handler(CommandHandler("guild",     guild_cmd))
