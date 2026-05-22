@@ -923,6 +923,40 @@ TITLES = {
     "Century Break":         {"type":"level","threshold":100},
 }
 
+TITLE_BONUSES = {
+    "Fresh Rack":           {"all_stats": 1},
+    "On the Come Up":       {"all_stats": 2},
+    "Seasoned Stroke":      {"STR": 3, "AGI": 3},
+    "Pocket King":          {"STR": 5, "DEF": 5},
+    "Table Legend":         {"all_stats": 5},
+    "Never Scratches":      {"AGI": 8, "LUK": 5},
+    "Gone Pro":             {"all_stats": 8},
+    "Never Off the Table":  {"STR": 6, "WIS": 6},
+    "Never Lost the Rack":  {"STR": 8, "DEF": 6},
+    "The Closer":           {"STR": 5, "LUK": 8},
+    "Ghost at the Table":   {"AGI": 10, "LUK": 6},
+    "Road Player":          {"all_stats": 6},
+    "Hall Crawler":         {"STR": 4, "DEX": 4, "LUK": 4},
+    "Rack Collector":       {"LUK": 12},
+    "The Chalker":          {"WIS": 8},
+    "Table Guardian":       {"DEF": 10, "WIS": 5},
+    "1-Ball Slayer":        {"STR": 5},
+    "3-Ball Slayer":        {"STR": 8},
+    "5-Ball Slayer":        {"STR": 10, "AGI": 5},
+    "7-Ball Slayer":        {"STR": 12, "DEF": 8},
+    "8-Ball Champion":      {"all_stats": 10},
+    "Blackball Slayer":     {"all_stats": 15, "LUK": 10},
+    "Railfinder":           {"DEX": 12, "AGI": 8},
+    "The Angle Reader":     {"INT": 12, "DEX": 8},
+    "The Called Shot":      {"all_stats": 12},
+    "Hall Founder":         {"WIS": 6, "all_stats": 3},
+    "Break Leader":         {"STR": 8, "WIS": 6},
+    "Tip Maker":            {"DEX": 6, "LUK": 6},
+    "Cue Maker":            {"STR": 6, "DEX": 8},
+    "Master Craftsman":     {"all_stats": 8},
+    "Century Break":        {"all_stats": 20, "LUK": 15},
+}
+
 # ── GEAR SYSTEM ───────────────────────────────────────────────────────────────
 WEAPONS = {
     # ── WARRIOR ──────────────────────────────────────────────────────────────
@@ -1638,23 +1672,36 @@ def get_equipped_accessory(p):
     return ACCESSORIES.get(name)
 
 def get_enchant(p, item_name):
-    if not item_name: return None
-    return sjl(p.get("enchants"), {}).get(item_name)
+    raw = sjl(p.get("enchants"), {}).get(item_name)
+    if raw is None: return []
+    if isinstance(raw, dict): return [raw]
+    if isinstance(raw, list): return raw
+    return []
+
+def get_all_enchants(p, item_name):
+    return get_enchant(p, item_name)
 
 def set_enchant(p, item_name, effect):
     enchants = sjl(p.get("enchants"), {})
-    enchants[item_name] = effect
+    current = enchants.get(item_name, [])
+    if isinstance(current, dict):
+        current = [current]
+    current = [e for e in current if e.get("id") != effect.get("id")]
+    current.append(effect)
+    if len(current) > 3:
+        current = current[-3:]
+    enchants[item_name] = current
     p["enchants"] = json.dumps(enchants)
 
 def get_enchant_bonus(p, stat):
     total = 0
-    for slot_key in ["equipped_weapon","equipped_armor","equipped_shield","equipped_accessory"]:
+    for slot_key in ["equipped_weapon","equipped_armor",
+                      "equipped_shield","equipped_accessory"]:
         name = p.get(slot_key)
         if not name: continue
-        enchant = get_enchant(p, name)
-        if not enchant: continue
-        if enchant.get("type") == stat:
-            total += enchant.get("val", 0)
+        for enchant in get_enchant(p, name):
+            if enchant.get("type") == stat:
+                total += enchant.get("val", 0)
     return total
 
 def get_enhancement(p, item_name):
@@ -1673,11 +1720,11 @@ def get_weapon_atk(p):
     if not w: return 0
     name = p.get("equipped_weapon")
     base = w["atk"] + get_enhance_bonus(p, name)
-    enchant = get_enchant(p, name)
-    if enchant and enchant.get("type") == "flat_dmg":
-        base += enchant["val"]
-    if enchant and enchant.get("type") == "atk":
-        base += enchant["val"]
+    for enchant in get_enchant(p, name):
+        if enchant.get("type") == "flat_dmg":
+            base += enchant["val"]
+        if enchant.get("type") == "atk":
+            base += enchant["val"]
     return base
 
 def get_armor_def(p):
@@ -1685,10 +1732,10 @@ def get_armor_def(p):
     a_name = p.get("equipped_armor"); s_name = p.get("equipped_shield")
     a_val = (a["def"] + get_enhance_bonus(p, a_name)) if a else 0
     s_val = (s["def"] + get_enhance_bonus(p, s_name)) if s else 0
-    a_enc = get_enchant(p, a_name) if a_name else None
-    if a_enc and a_enc.get("type") == "armor_def": a_val += a_enc["val"]
-    s_enc = get_enchant(p, s_name) if s_name else None
-    if s_enc and s_enc.get("type") == "armor_def": s_val += s_enc["val"]
+    for enc in (get_enchant(p, a_name) if a_name else []):
+        if enc.get("type") == "armor_def": a_val += enc["val"]
+    for enc in (get_enchant(p, s_name) if s_name else []):
+        if enc.get("type") == "armor_def": s_val += enc["val"]
     return a_val + s_val
 
 def gear_line(p, slot_key):
@@ -1697,12 +1744,12 @@ def gear_line(p, slot_key):
     if not name:
         return "None"
     enh   = get_enhancement(p, name)
-    enc   = get_enchant(p, name)
+    encs  = get_enchant(p, name)
     parts = [name]
     if enh:
         parts.append(f"+{enh}")
-    if enc:
-        parts.append(f"✨{enc.get('id','?').capitalize()}")
+    if encs:
+        parts.append(f"✨×{len(encs)}")
     return " ".join(parts)
 
 def get_accessory_bonus(p, stat):
@@ -1787,6 +1834,13 @@ def get_stat(p, stat):
     acc   = get_accessory_bonus(p, stat)
     all_s = get_accessory_bonus(p, "all_stats")
     blessed_bonus = 1 if is_blessed(p) else 0
+    # Active title bonus
+    active_title = p.get("active_title", "")
+    title_bonus_dict = TITLE_BONUSES.get(active_title, {})
+    title_bonus = title_bonus_dict.get(stat, 0)
+    all_title = title_bonus_dict.get("all_stats", 0)
+    if stat in ("STR","AGI","INT","WIS","DEX","LUK"):
+        return base + acc + all_s + blessed_bonus + title_bonus + all_title
     return base + acc + all_s + blessed_bonus
 
 def calc_max_hp(p):
@@ -2499,8 +2553,9 @@ def add_exp(p, amount, weather=None):
         p["level"] += 1; leveled_up = True
         p["max_hp"]      = max_hp_for_level(p["level"])
         p["hp"]          = p["max_hp"]
-        p["stat_points"] = safe_int(p.get("stat_points")) + 3
-        msgs.append(f"⬆️ *LEVEL UP!* {p['username']} is now *Level {p['level']}*! +3 stat points.")
+        points_per_level = 6 if p["level"] > 20 else 3
+        p["stat_points"] = safe_int(p.get("stat_points")) + points_per_level
+        msgs.append(f"⬆️ *LEVEL UP!* {p['username']} is now *Level {p['level']}*! +{points_per_level} stat points.")
         if p["level"] == 5 and not p.get("class_id"):
             msgs.append("⚔️ You can now choose a class! Use /class.")
         if p["level"] == 10 and p.get("class_id") and not p.get("class_path"):
@@ -2573,10 +2628,12 @@ def get_random_item_by_rarity(rarity):
         if data["rarity"] == rarity: pool.append(name)
     return random.choice(pool) if pool else None
 
-def roll_loot_table(loot_table):
-    """Roll on a loot table and return item or None."""
+def roll_loot_table(loot_table, p=None):
+    luk_bonus = (get_stat(p, "LUK") * 0.005) if p else 0
     for item_name, chance in loot_table:
-        if random.random() < chance:
+        weapon_boost = 1.8 if item_name in WEAPONS else 1.0
+        adjusted = min(chance * weapon_boost + luk_bonus, 0.95)
+        if random.random() < adjusted:
             return item_name
     return None
 
@@ -2657,6 +2714,127 @@ async def check_idle_reward(user, s, p, bot, chat_id):
                 permanent=True))
 
     await announce(bot, chat_id, msg, permanent=True)
+
+async def gear_cmd(update, context):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!"); return
+
+    lines = [f"🎽 *{p['username']}'s Equipped Gear*\n"]
+
+    # Weapon
+    weap_name = p.get("equipped_weapon")
+    if weap_name and weap_name in WEAPONS:
+        w = WEAPONS[weap_name]
+        enh = get_enhancement(p, weap_name)
+        enc = get_enchant(p, weap_name)
+        base_atk = w["atk"]
+        enh_bonus = enh * 2
+        total_atk = base_atk + enh_bonus
+        rarity = RARITY_EMOJI.get(w["rarity"], "")
+        lines.append(f"⚔️ *Weapon*")
+        lines.append(f"{rarity} {weap_name}")
+        lines.append(f"ATK: {base_atk} base + {enh_bonus} enhancement = *{total_atk} total*")
+        if enh > 0:
+            lines.append(f"Enhancement: *+{enh}* {'⭐' * enh}")
+        if enc:
+            all_encs = get_all_enchants(p, weap_name)
+            if len(all_encs) > 1:
+                for e in all_encs:
+                    lines.append(f"  ✨ {e['id'].capitalize()} — {e['desc']}")
+            else:
+                lines.append(f"Enchant: ✨ *{enc[0]['id'].capitalize() if isinstance(enc, list) else enc['id'].capitalize()}* — _{enc[0]['desc'] if isinstance(enc, list) else enc['desc']}_")
+    else:
+        lines.append(f"⚔️ *Weapon* — None")
+
+    lines.append("")
+
+    # Armor
+    armr_name = p.get("equipped_armor")
+    if armr_name and armr_name in ARMORS:
+        a = ARMORS[armr_name]
+        enh = get_enhancement(p, armr_name)
+        enc = get_enchant(p, armr_name)
+        base_def = a["def"]
+        enh_bonus = enh * 2
+        total_def = base_def + enh_bonus
+        rarity = RARITY_EMOJI.get(a["rarity"], "")
+        lines.append(f"🛡️ *Armor*")
+        lines.append(f"{rarity} {armr_name}")
+        lines.append(f"DEF: {base_def} base + {enh_bonus} enhancement = *{total_def} total*")
+        if enh > 0:
+            lines.append(f"Enhancement: *+{enh}* {'⭐' * enh}")
+        if enc:
+            all_encs = get_all_enchants(p, armr_name)
+            for e in all_encs:
+                lines.append(f"✨ *{e['id'].capitalize()}* — _{e['desc']}_")
+    else:
+        lines.append(f"🛡️ *Armor* — None")
+
+    lines.append("")
+
+    # Shield
+    shld_name = p.get("equipped_shield")
+    if shld_name and shld_name in SHIELDS:
+        s_data = SHIELDS[shld_name]
+        enh = get_enhancement(p, shld_name)
+        base_def = s_data["def"]
+        enh_bonus = enh * 2
+        total_def = base_def + enh_bonus
+        rarity = RARITY_EMOJI.get(s_data["rarity"], "")
+        lines.append(f"🔰 *Shield*")
+        lines.append(f"{rarity} {shld_name}")
+        lines.append(f"DEF: {base_def} base + {enh_bonus} enhancement = *{total_def} total*")
+        if enh > 0:
+            lines.append(f"Enhancement: *+{enh}* {'⭐' * enh}")
+    else:
+        lines.append(f"🔰 *Shield* — None")
+
+    lines.append("")
+
+    # Accessory
+    acc_name = p.get("equipped_accessory")
+    if acc_name and acc_name in ACCESSORIES:
+        acc = ACCESSORIES[acc_name]
+        enc = get_enchant(p, acc_name)
+        rarity = RARITY_EMOJI.get(acc["rarity"], "")
+        lines.append(f"💍 *Accessory*")
+        lines.append(f"{rarity} {acc_name}")
+        lines.append(f"_{acc['desc']}_")
+        for k, v in acc.get("effect", {}).items():
+            if k == "all_stats":
+                lines.append(f"+{v} to all stats")
+            elif k in ("STR","AGI","INT","WIS","DEX","LUK","DEF"):
+                lines.append(f"+{v} {k}")
+            elif k == "atk":
+                lines.append(f"+{v} ATK")
+            elif k == "hp":
+                lines.append(f"+{v} max HP")
+            elif k == "dodge_bonus":
+                lines.append(f"+{int(v*100)}% dodge chance")
+            elif k == "crit_bonus":
+                lines.append(f"+{int(v*100)}% crit chance")
+            elif k == "heal_bonus":
+                lines.append(f"+{int(v*100)}% healing received")
+            elif k == "gold_bonus":
+                lines.append(f"+{int(v*100)}% gold earned")
+            elif k == "lifesteal_flat":
+                lines.append(f"+{v} HP lifesteal per hit")
+            elif k == "block_chance":
+                lines.append(f"+{int(v*100)}% block chance")
+        all_encs = get_all_enchants(p, acc_name)
+        for e in all_encs:
+            lines.append(f"✨ *{e['id'].capitalize()}* — _{e['desc']}_")
+    else:
+        lines.append(f"💍 *Accessory* — None")
+
+    lines.append("")
+    lines.append(f"Total Weapon ATK: *{get_weapon_atk(p)}*")
+    lines.append(f"Total Armor DEF: *{get_armor_def(p)}*")
+    lines.append(f"\n`/enhance` to upgrade  |  `/enchant` to enchant")
+
+    await send_group(update, "\n".join(lines), permanent=True)
 
 # ── RANK ──────────────────────────────────────────────────────────────────────
 async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3283,45 +3461,6 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p["stat_points"] = safe_int(p.get("stat_points")) + refund_def
         save_player(p)
 
-    w   = get_weather()
-    inv = Counter(sjl(p.get("inventory"), []))
-    inv_text = ", ".join(f"{k} x{v}" for k,v in inv.items()) or "Empty"
-
-    guild_text = "None"
-    if p.get("guild_id") and str(p.get("guild_id")) != "None":
-        g = get_guild(p["guild_id"])
-        if g:
-            glvl = safe_int(g.get("level"),1)
-            perk = GUILD_PERKS.get(glvl,{})
-            guild_text = f"{g['name']} (Lv{glvl} +{int(perk.get('exp_bonus',0)*100)}% EXP)"
-
-    cls       = get_player_class(p)
-    cls_name  = cls["name"] if cls else ("*Choose at Lv 5!* — /class" if p["level"] >= 5 else "Unlocks at Lv 5")
-    path_str  = f" | Path {p.get('class_path','?')}" if p.get("class_path") else ""
-    stats_d   = safe_stats(p)
-    # Compute effective stats (base + accessory bonuses) for display
-    eff_stats = {}
-    for st in ["STR","DEF","AGI","INT","WIS","DEX","LUK"]:
-        eff_stats[st] = get_stat(p, st)
-    sp        = safe_int(p.get("stat_points"))
-    statuses  = get_active_statuses(p)
-    status_str = "\n" + " | ".join(statuses) if statuses else ""
-
-    defeated_str = " *(Defeated — 0 HP)*" if is_defeated(p) else ""
-    recovering   = " *(Still Recovering)*" if is_invincible(p) else ""
-
-    # Gear display with enhancement and enchant tags
-    weap = gear_line(p, "equipped_weapon")
-    armo = gear_line(p, "equipped_armor")
-    shld = gear_line(p, "equipped_shield")
-    acc_gear = gear_line(p, "equipped_accessory")
-
-    cp = calc_combat_power(p)
-
-    # Skills
-    all_skills = sjl(p.get("all_skills"), [])
-    skill_names = [sk["name"] for sk in all_skills] if all_skills else ["None yet"]
-
     # Real max HP (includes accessory and enchant bonuses)
     real_max = calc_max_hp(p)
     if real_max != p["max_hp"] and not viewing_other:
@@ -3329,61 +3468,103 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if p["hp"] > real_max: p["hp"] = real_max
         save_player(p)
 
-    # Accessory bonus note
-    acc_obj = get_equipped_accessory(p)
-    acc_bonus_line = ""
-    if acc_obj:
-        effects = acc_obj.get("effect", {})
-        bonus_parts = []
-        for k, v in effects.items():
-            if k == "all_stats":       bonus_parts.append(f"+{v} all stats")
-            elif k in ("STR","DEF","AGI","INT","WIS","DEX","LUK"): bonus_parts.append(f"+{v} {k}")
-            elif k == "atk":           bonus_parts.append(f"+{v} ATK")
-            elif k == "hp":            bonus_parts.append(f"+{v} max HP")
-            elif k == "dodge_bonus":   bonus_parts.append(f"+{int(v*100)}% dodge")
-            elif k == "crit_bonus":    bonus_parts.append(f"+{int(v*100)}% crit")
-            elif k == "heal_bonus":    bonus_parts.append(f"+{int(v*100)}% healing")
-            elif k == "primary_stat":  bonus_parts.append(f"+{v} {get_primary_stat(p)}")
-        if bonus_parts:
-            acc_name = p.get("equipped_accessory", "")
-            enc = get_enchant(p, acc_name) if acc_name else None
-            enc_note = f" ✨{enc['id'].capitalize()}" if enc else ""
-            acc_bonus_line = f"\n💍 _{', '.join(bonus_parts)}{enc_note}_"
+    defeated_str  = " *(Defeated)*" if is_defeated(p) else ""
+    recovering    = " *(Still Chalking)*" if is_invincible(p) else ""
+    cls           = get_player_class(p)
+    cls_name      = cls["name"] if cls else ("Choose at Lv 5 — /class" if p["level"] >= 5 else "Unlocks at Lv 5")
+    path_str      = f" — Path {p.get('class_path','?')}" if p.get("class_path") else ""
+    sd            = safe_stats(p)
+    eff           = {st: get_stat(p, st) for st in ["STR","AGI","INT","WIS","DEX","LUK"]}
+    sp            = safe_int(p.get("stat_points"))
+    tier          = get_tier(p["level"])
+    w             = get_weather()
+    statuses      = get_active_statuses(p)
 
-    header_line = (
-        f"👤 *{p['username']}'s Stats*{defeated_str}{recovering}\n"
-        if viewing_other else
-        f"⚔️ *{p['username']}*{defeated_str}{recovering}\n"
-    )
+    guild_str = "None"
+    if p.get("guild_id") and str(p.get("guild_id")) != "None":
+        g = get_guild(p["guild_id"])
+        if g:
+            glvl = safe_int(g.get("level"), 1)
+            perk = GUILD_PERKS.get(glvl, {})
+            guild_str = f"{g['name']} (Lv{glvl} +{int(perk.get('exp_bonus',0)*100)}% EXP)"
 
-    msg = (
-        header_line
-        + f"🏅 *{p['active_title']}* | {get_tier(p['level'])['name']} | 🏰 {guild_text}\n"
-        f"🌍 {WORLD_NAME} — _{w['name']}_\n{status_str}\n\n"
-        f"❤️ HP: {p['hp']}/{real_max} | ⭐ Level {p['level']}\n"
-        f"{_exp_bar(p['exp'], exp_for_level(p['level']))}\n"
-        f"🏆 Lifetime: *{safe_int(p.get('total_exp')):,}* EXP\n"
-        f"💰 Gold: {p['gold']} | ⚔️ W/L: {p['wins']}/{p.get('losses',0)}\n"
-        f"🗺️ Quests: {p['quests_done']} | 🔨 Crafts: {safe_int(p.get('crafts_done'))}\n"
-        f"⚡ Combat Power: *{cp}*\n\n"
-        f"🧙 Class: {cls_name}{path_str}\n"
-        f"📊 STR:{eff_stats['STR']} DEF:{eff_stats['DEF']} "
-        f"AGI:{eff_stats['AGI']} INT:{eff_stats['INT']} "
-        f"WIS:{eff_stats['WIS']} DEX:{eff_stats['DEX']} LUK:{eff_stats['LUK']}\n"
-        + acc_bonus_line
-        + f"\n🛡️ Armor DEF: {get_armor_def(p)} (from gear)"
-        + (f" | 💡 {sp} pts (/allocate)" if sp > 0 and not viewing_other else "") + "\n"
-        f"🔮 Skills: {', '.join(skill_names)}\n\n"
-        f"⚔️ Weapon: {weap}\n"
-        f"🛡️ Armor: {armo} | 🔰 Shield: {shld}\n"
-        f"💍 Accessory: {acc_gear}\n"
-    )
-    if not viewing_other:
-        msg += f"🎒 Inventory: {inv_text}\n"
-    msg += f"🏅 Titles: {', '.join(safe_titles(p))}"
+    inv = Counter(sjl(p.get("inventory"), []))
+    inv_str = "\n".join(
+        f"  {RARITY_EMOJI.get(WEAPONS.get(k,ARMORS.get(k,ACCESSORIES.get(k,CONSUMABLES.get(k,{})))).get('rarity',''),'⚪')} {k} x{v}"
+        for k,v in inv.items()
+    ) or "  Empty"
 
-    await send_group(update, msg,
-        permanent=True)
+    weap_name = p.get("equipped_weapon") or "None"
+    armr_name = p.get("equipped_armor") or "None"
+    shld_name = p.get("equipped_shield") or "None"
+    acc_name  = p.get("equipped_accessory") or "None"
+
+    def quick_gear(name):
+        if name == "None": return "None"
+        enh = get_enhancement(p, name)
+        encs = get_enchant(p, name)
+        enh_str = f" +{enh}" if enh else ""
+        enc_str = f" ✨×{len(encs)}" if encs else ""
+        return f"{name}{enh_str}{enc_str}"
+
+    cp = calc_combat_power(p) if callable(globals().get("calc_combat_power")) else 0
+
+    out = [
+        f"🎱 *{p['username']}*{defeated_str}{recovering}",
+        f"🏅 {p['active_title']}",
+        f"{tier['name']} — Level {p['level']}",
+        f"🏰 {guild_str}",
+        f"🌍 {w['name']}",
+        "",
+        f"❤️ HP: {p['hp']}/{real_max}",
+        f"{_exp_bar(p['exp'], exp_for_level(p['level']))}",
+        f"🏆 Lifetime EXP: {safe_int(p.get('total_exp')):,}",
+        f"💰 Gold: {p['gold']}",
+        f"⚔️ Wins: {p['wins']}   Losses: {p.get('losses',0)}",
+        "",
+        f"🧙 Class: {cls_name}{path_str}",
+        "",
+        f"📊 *Stats (effective)*",
+        f"STR: {eff['STR']}",
+        f"AGI: {eff['AGI']}",
+        f"INT: {eff['INT']}",
+        f"WIS: {eff['WIS']}",
+        f"DEX: {eff['DEX']}",
+        f"LUK: {eff['LUK']}",
+        f"🛡️ DEF: {get_armor_def(p)} (from gear)",
+    ]
+
+    if sp > 0:
+        out.append(f"💡 {sp} stat points available — /allocate")
+
+    out += [
+        "",
+        f"🎽 *Gear*",
+        f"⚔️ {quick_gear(weap_name)}",
+        f"🛡️ {quick_gear(armr_name)}",
+        f"🔰 {quick_gear(shld_name)}",
+        f"💍 {quick_gear(acc_name)}",
+        f"_/gear for full details_",
+    ]
+
+    if cp > 0:
+        out.append(f"⚡ Combat Power: *{cp:,}*")
+
+    if statuses:
+        out += ["", "⚠️ *Active Effects*"]
+        for st in statuses:
+            out.append(f"  {st}")
+
+    out += [
+        "",
+        f"🎒 *Inventory*",
+        inv_str,
+        "",
+        f"🏅 *Titles*",
+        f"  {', '.join(safe_titles(p))}",
+    ]
+
+    await send_group(update, "\n".join(out), permanent=True)
 
 # ── BOSS ──────────────────────────────────────────────────────────────────────
 def _roll_boss_loot(boss_data):
@@ -3395,139 +3576,263 @@ def _roll_boss_loot(boss_data):
     return None
 
 # ── RAID ──────────────────────────────────────────────────────────────────────
-async def raid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user; p = get_player(user.id); chat_id = update.effective_chat.id
-    if not p: await send_group(update, "Use /ascend first!"); return
-    if is_defeated(p): await send_group(update, "💀 You're defeated!"); return
-    if chat_id in active_raids:
-        raid = active_raids[chat_id]
-        if raid.get("in_progress"):
-            await send_group(update, "⚔️ Raid in progress! Use /raidstrike."); return
+async def raid_cmd(update, context):
+    user = update.effective_user
+    p = get_player(user.id)
+    chat_id = update.effective_chat.id
+    if not p:
+        await send_group(update, "Use /ascend first!"); return
+    if is_defeated(p):
+        await send_group(update, "💀 You're defeated — can't raid!"); return
+
+    raid = active_raids.get(chat_id)
+
+    if raid and not raid["in_progress"]:
+        if datetime.now() > datetime.fromisoformat(raid["expires"]):
+            active_raids.pop(chat_id, None)
+            await send_group(update, "⏰ Raid lobby expired. Use /raid to start a new one.")
+            return
         if user.id in [u["id"] for u in raid["party"]]:
+            count = len(raid["party"])
             await send_group(update,
-                f"Already in party! ({len(raid['party'])} players)\nUse /raidstart when ready."); return
-        raid["party"].append({"id":user.id,"name":user.first_name})
+                f"⚔️ You're already in the party! ({count} players)\n"
+                f"Use /raidstart when ready."); return
+        raid["party"].append({"id": user.id, "name": user.first_name})
+        count = len(raid["party"])
         await send_group(update,
-            f"⚔️ *{user.first_name}* joins! ({len(raid['party'])} players)\nUse /raidstart (min 2)."); return
+            f"⚔️ *{user.first_name}* joins the raid party! ({count} players)\n"
+            f"Use /raidstart to begin (min 2)."); return
+
+    if raid and raid["in_progress"]:
+        await send_group(update,
+            f"⚔️ A raid is in progress!\n"
+            f"Use /raidstrike to attack."); return
+
     active_raids[chat_id] = {
-        "party":[{"id":user.id,"name":user.first_name}],
-        "in_progress":False,"wave":0,"tier":None,
-        "enemy":None,"enemy_hp":0,"enemy_max_hp":0,
+        "party": [{"id": user.id, "name": user.first_name}],
+        "in_progress": False,
+        "wave": 0,
+        "tier": None,
+        "enemy": None,
+        "enemy_hp": 0,
+        "enemy_max_hp": 0,
         "expires": (datetime.now() + timedelta(minutes=15)).isoformat(),
+        "damage_dealt": {},
     }
     await send_group(update,
-        f"🏰 *RAID LOBBY!*\n\n*{user.first_name}* is forming a party.\n"
-        f"Others: /raid to join! (Min 2)\n\nLeader: /raidstart when ready.", delay=60)
+        f"🏰 *RAID LOBBY OPEN!*\n\n"
+        f"*{user.first_name}* is forming a raid party.\n"
+        f"Others: type /raid to join!\n"
+        f"Minimum 2 players required.\n\n"
+        f"_Leader: /raidstart when ready. Lobby expires in 15 minutes._",
+        permanent=True)
 
-async def raidstart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user; chat_id = update.effective_chat.id
-    if chat_id not in active_raids:
-        await send_group(update, "No raid lobby! Use /raid."); return
-    raid = active_raids[chat_id]
-    if not raid.get("in_progress"):
-        if datetime.now() > datetime.fromisoformat(raid.get("expires", datetime.now().isoformat())):
-            active_raids.pop(chat_id, None)
-            await send_group(update, "⏰ Raid lobby expired. Use /raid to start a new one."); return
-    if raid.get("in_progress"):
-        await send_group(update, "Raid already started!"); return
+
+async def raidstart_cmd(update, context):
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    raid = active_raids.get(chat_id)
+
+    if not raid:
+        await send_group(update, "No raid lobby! Use /raid to start one."); return
+    if raid["in_progress"]:
+        await send_group(update, "Raid already in progress! Use /raidstrike."); return
+    if user.id != raid["party"][0]["id"]:
+        await send_group(update, "Only the raid leader can start."); return
     if len(raid["party"]) < 2:
-        await send_group(update, f"Need at least 2 players! Have {len(raid['party'])}."); return
-    levels = [get_player(u["id"])["level"] for u in raid["party"] if get_player(u["id"])]
-    avg    = sum(levels)/len(levels) if levels else 1
-    tier   = ([t for t in RAID_TIERS if t["min_level"] <= avg] or [RAID_TIERS[0]])[-1]
-    raid["tier"]        = tier
-    raid["in_progress"] = True
-    raid["wave"]        = 1
-    fe = tier["wave_enemies"][0].copy()
-    raid["enemy"]       = fe
-    raid["enemy_hp"]    = fe["hp"]
-    raid["enemy_max_hp"]= fe["hp"]
-    names = ", ".join(u["name"] for u in raid["party"])
-    await send_group(update,
-        f"⚔️ *RAID — {tier['name']}*\n\n👥 {names}\n"
-        f"📊 Avg Lv: {avg:.0f} | Waves: {len(tier['wave_enemies'])+1}\n\n"
-        f"🌊 *Wave 1 — {fe['name']}*\n❤️ HP: {fe['hp']}\n\nUse /raidstrike!", delay=60)
+        await send_group(update,
+            f"Need at least 2 players. Have {len(raid['party'])}."); return
 
-async def raidstrike_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user; p = get_player(user.id); chat_id = update.effective_chat.id
-    if not p: await send_group(update, "Use /ascend first!"); return
-    if chat_id not in active_raids:
-        await send_group(update, "No active raid!"); return
-    raid = active_raids[chat_id]
-    if not raid.get("in_progress"):
-        if datetime.now() > datetime.fromisoformat(raid.get("expires", datetime.now().isoformat())):
-            active_raids.pop(chat_id, None)
-            await send_group(update, "⏰ Raid lobby expired. Use /raid to start a new one."); return
+    levels = []
+    for u in raid["party"]:
+        pp = get_player(u["id"])
+        if pp: levels.append(pp["level"])
+    avg = sum(levels) / len(levels) if levels else 1
+    eligible = [t for t in RAID_TIERS if t["min_level"] <= avg]
+    tier = eligible[-1] if eligible else RAID_TIERS[0]
+
+    first_enemy = tier["wave_enemies"][0].copy()
+    raid["tier"] = tier
+    raid["in_progress"] = True
+    raid["wave"] = 1
+    raid["enemy"] = first_enemy
+    raid["enemy_hp"] = first_enemy["hp"]
+    raid["enemy_max_hp"] = first_enemy["hp"]
+    raid["damage_dealt"] = {u["id"]: 0 for u in raid["party"]}
+
+    names = ", ".join(u["name"] for u in raid["party"])
+    wave_count = len(tier["wave_enemies"]) + 1
+    await send_group(update,
+        f"⚔️ *RAID BEGINS — {tier['name']}*\n\n"
+        f"👥 Party: {names}\n"
+        f"📊 Avg Level: {avg:.0f}\n"
+        f"🌊 {wave_count} waves total\n\n"
+        f"🌊 *Wave 1 — {first_enemy['name']}*\n"
+        f"❤️ HP: {first_enemy['hp']}\n"
+        f"💀 Damage: {first_enemy['dmg_min']}-{first_enemy['dmg_max']}\n\n"
+        f"Use /raidstrike to attack!",
+        permanent=True)
+
+
+async def raidstrike_cmd(update, context):
+    user = update.effective_user
+    p = get_player(user.id)
+    chat_id = update.effective_chat.id
+
+    if not p:
+        await send_group(update, "Use /ascend first!"); return
+
+    raid = active_raids.get(chat_id)
+    if not raid:
+        await send_group(update, "No active raid! Use /raid."); return
+    if not raid["in_progress"]:
         await send_group(update, "Raid hasn't started! Use /raidstart."); return
     if user.id not in [u["id"] for u in raid["party"]]:
-        await send_group(update, "You're not in this raid!"); return
+        await send_group(update, "You're not in this raid party!"); return
     if is_defeated(p):
-        await send_group(update, "💀 You're defeated!"); return
-    w   = get_weather(); dmg = calc_attack_damage(p, w); enemy = raid["enemy"]; lines = []
-    raid["enemy_hp"] = max(0, raid["enemy_hp"]-dmg)
-    lines.append(f"⚔️ *{user.first_name}* strikes *{enemy['name']}* for *{dmg}!*\n"
-                 f"❤️ HP: {raid['enemy_hp']}/{raid['enemy_max_hp']}")
-    alive = [u for u in raid["party"] if not is_defeated(get_player(u["id"]))]
-    if alive and raid["enemy_hp"] > 0 and random.random() < 0.65:
-        target = random.choice(alive); tp = get_player(target["id"])
+        await send_group(update, "💀 You're defeated — can't strike!"); return
+
+    w = get_weather()
+    dmg = calc_attack_damage(p, w)
+    if check_crit(p):
+        dmg = apply_crit(p, dmg)
+
+    raid["enemy_hp"] = max(0, raid["enemy_hp"] - dmg)
+    raid["damage_dealt"][user.id] = raid["damage_dealt"].get(user.id, 0) + dmg
+
+    enemy = raid["enemy"]
+    lines = [
+        f"⚔️ *{user.first_name}* strikes *{enemy['name']}* for *{dmg}!*",
+        f"❤️ HP: {raid['enemy_hp']}/{raid['enemy_max_hp']}",
+    ]
+
+    alive = [u for u in raid["party"]
+             if not is_defeated(get_player(u["id"]))]
+    if alive and raid["enemy_hp"] > 0:
+        target = random.choice(alive)
+        tp = get_player(target["id"])
         if tp:
-            edm = calc_defense(tp, random.randint(enemy["dmg_min"],enemy["dmg_max"]))
-            tp["hp"] = max(0, tp["hp"]-edm)
+            raw_dmg = random.randint(enemy["dmg_min"], enemy["dmg_max"])
+            edm = calc_defense(tp, raw_dmg)
+            tp["hp"] = max(0, tp["hp"] - edm)
             if tp["hp"] == 0:
-                tp["defeated_until"] = (datetime.now()+timedelta(hours=2)).isoformat()
+                tp["defeated_until"] = (datetime.now() + timedelta(hours=2)).isoformat()
+                lines.append(f"💀 *{enemy['name']}* defeats *{target['name']}*! (2hr cooldown)")
+            else:
+                lines.append(f"🩸 *{enemy['name']}* hits *{target['name']}* for {edm}! "
+                             f"({tp['hp']}/{tp.get('max_hp', calc_max_hp(tp))} HP)")
             save_player(tp)
-            lines.append(f"🩸 Enemy hits *{target['name']}* for {edm}! ({tp['hp']}/{tp['max_hp']} HP)")
+
     if raid["enemy_hp"] <= 0:
-        tier = raid["tier"]; we = tier["wave_enemies"]; cw = raid["wave"]
+        tier = raid["tier"]
+        wave_enemies = tier["wave_enemies"]
+        cw = raid["wave"]
         lines.append(f"\n✅ *Wave {cw} cleared!*")
-        if cw < len(we):
-            raid["wave"] += 1; ne = we[cw].copy()
-            raid["enemy"] = ne; raid["enemy_hp"] = ne["hp"]; raid["enemy_max_hp"] = ne["hp"]
-            lines.append(f"\n🌊 *Wave {raid['wave']} — {ne['name']}*\n❤️ HP: {ne['hp']}")
-        elif cw == len(we):
-            bd   = BOSSES[tier["wave_boss_key"]]
-            rbhp = round(bd["max_hp"] * 0.5 * len(raid["party"]))
-            raid["wave"] = len(we)+1
-            raid["enemy"] = {"name":bd["name"]+" ⚡",
-                             "dmg_min":round(bd["dmg_min"]*0.6),
-                             "dmg_max":round(bd["dmg_max"]*0.6)}
-            raid["enemy_hp"] = rbhp; raid["enemy_max_hp"] = rbhp
-            lines.append(f"\n🎱 *FINAL BOSS — {bd['name']}!*\n❤️ HP: {rbhp}")
+
+        if cw < len(wave_enemies):
+            raid["wave"] += 1
+            ne = wave_enemies[cw].copy()
+            raid["enemy"] = ne
+            raid["enemy_hp"] = ne["hp"]
+            raid["enemy_max_hp"] = ne["hp"]
+            lines.append(f"\n🌊 *Wave {raid['wave']} — {ne['name']}*")
+            lines.append(f"❤️ HP: {ne['hp']} | 💀 {ne['dmg_min']}-{ne['dmg_max']}")
+
+        elif cw == len(wave_enemies):
+            bd = BOSSES[tier["wave_boss_key"]]
+            boss_hp = round(bd["max_hp"] * 0.6 * len(raid["party"]))
+            boss_hp = max(bd["max_hp"] // 2, boss_hp)
+            raid["wave"] = len(wave_enemies) + 1
+            raid["enemy"] = {
+                "name": bd["name"] + " ⚡",
+                "dmg_min": round(bd["dmg_min"] * 0.7),
+                "dmg_max": round(bd["dmg_max"] * 0.7),
+            }
+            raid["enemy_hp"] = boss_hp
+            raid["enemy_max_hp"] = boss_hp
+            lines.append(f"\n🎱 *FINAL BOSS — {bd['name']}!*")
+            lines.append(f"❤️ HP: {boss_hp}")
+            lines.append("Give it everything!")
+
         else:
             lines.append(f"\n🏆 *RAID COMPLETE — {tier['name']}!*\n")
-            bd = BOSSES[tier["wave_boss_key"]]; active_raids.pop(chat_id, None)
+            active_raids.pop(chat_id, None)
+
+            total_dmg = sum(raid["damage_dealt"].values())
+            w2 = get_weather()
+
             for u in raid["party"]:
                 pp = get_player(u["id"])
                 if not pp: continue
-                pp["gold"] = pp.get("gold",0) + tier["gold_reward"]
-                pp["quests_done"] = pp.get("quests_done",0) + 1
-                loot = roll_loot_table([(n,0.33) for n,_ in tier.get("loot_table",[])])
-                if loot: add_item(pp, loot); lines.append(f"🎒 *{pp['username']}* found *{loot}*!")
-                if u == raid["party"][0] and award_title(pp, "Break Leader"):
-                    lines.append(f"🏅 *{pp['username']}* earned: *Raid Leader*!")
-                lmsgs, leveled = add_exp(pp, tier["exp_reward"], w); save_player(pp)
-                lines.append(f"✅ *{pp['username']}* — +{tier['exp_reward']:,} EXP | +{tier['gold_reward']} Gold")
+
+                share = raid["damage_dealt"].get(u["id"], 0) / max(1, total_dmg)
+                share = max(0.10, share)
+
+                exp_reward = round(tier["exp_reward"] * (0.5 + share))
+                gold_reward = round(tier["gold_reward"] * (0.5 + share))
+
+                pp["gold"] = pp.get("gold", 0) + gold_reward
+                pp["quests_done"] = pp.get("quests_done", 0) + 1
+
+                loot = roll_loot_table(tier.get("loot_table", []), pp)
+                if loot:
+                    add_item(pp, loot)
+                    r = ""
+                    for pool in [WEAPONS, ARMORS, ACCESSORIES]:
+                        if loot in pool:
+                            r = RARITY_EMOJI.get(pool[loot].get("rarity",""), "")
+                            break
+                    lines.append(f"🎒 *{pp['username']}* found {r} *{loot}*!")
+
+                if u == raid["party"][0]:
+                    if award_title(pp, "Break Leader"):
+                        lines.append(f"🏅 *{pp['username']}* earned: *Break Leader*!")
+
+                lmsgs, leveled = add_exp(pp, exp_reward, w2)
+                save_player(pp)
+                pct = int(share * 100)
+                lines.append(f"✅ *{pp['username']}* ({pct}% dmg) — "
+                             f"+{exp_reward:,} EXP | +{gold_reward}g")
                 if leveled and pp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{pp['username']}* reached *Level {pp['level']}* from the raid! 🏰",
                         permanent=True))
-    save_player(p); await send_group(update, "\n".join(lines), delay=30)
 
-async def raidstatus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    save_player(p)
+    await send_group(update, "\n".join(lines), delay=30)
+
+
+async def raidstatus_cmd(update, context):
     chat_id = update.effective_chat.id
-    if chat_id not in active_raids:
+    raid = active_raids.get(chat_id)
+    if not raid:
         await send_group(update, "No active raid."); return
-    raid = active_raids[chat_id]
-    if not raid.get("in_progress"):
+
+    if not raid["in_progress"]:
         names = ", ".join(u["name"] for u in raid["party"])
         await send_group(update,
-            f"🏰 *Raid Lobby* — {len(raid['party'])} players: {names}\nUse /raidstart."); return
-    tier = raid["tier"]; enemy = raid["enemy"]
+            f"🏰 *Raid Lobby* — {len(raid['party'])} players\n"
+            f"👥 {names}\n"
+            f"Use /raidstart when ready."); return
+
+    tier = raid["tier"]
+    enemy = raid["enemy"]
+    wave_count = len(tier["wave_enemies"]) + 1
     names = ", ".join(u["name"] for u in raid["party"])
+
+    dmg_board = sorted(raid.get("damage_dealt", {}).items(), key=lambda x: x[1], reverse=True)
+    dmg_lines = []
+    for uid, dmg in dmg_board[:5]:
+        pp = get_player(uid)
+        name = pp["username"] if pp else str(uid)
+        dmg_lines.append(f"  {name}: {dmg:,} dmg")
+
     await send_group(update,
-        f"⚔️ *{tier['name']}*\n👥 {names}\n"
-        f"🌊 Wave {raid['wave']}/{len(tier['wave_enemies'])+1} — *{enemy['name']}*\n"
-        f"❤️ HP: {raid['enemy_hp']}/{raid['enemy_max_hp']}", delay=20)
+        f"⚔️ *{tier['name']}*\n"
+        f"👥 {names}\n"
+        f"🌊 Wave {raid['wave']}/{wave_count} — *{enemy['name']}*\n"
+        f"❤️ HP: {raid['enemy_hp']:,}/{raid['enemy_max_hp']:,}\n\n"
+        f"📊 *Damage dealt:*\n" + "\n".join(dmg_lines), delay=20)
 
 # ── ASCEND ────────────────────────────────────────────────────────────────────
 async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3626,20 +3931,27 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     line = cls.get("line")
     path = p.get("class_path")
 
-    # Already has path — just show status
+    # Already has path — show path status and progression
     if path:
+        full_path = CLASS_PATHS.get(line, {}).get(path, [])
+        path_names = " → ".join(CLASS_TREE.get(k,{}).get("name","?") for k in full_path)
+        current_cls = get_player_class(p)
+        current_cls_name = current_cls["name"] if current_cls else "Unknown"
         next_threshold = None
         for lvl in [30,60,100]:
             if p["level"] < lvl:
                 next_threshold = lvl; break
         if next_threshold:
             await send_group(update,
-                f"🌟 You are on *Path {path}*.\n"
+                f"🌟 *Path {path}* — Current Class: *{current_cls_name}*\n\n"
+                f"📜 Path: {path_names}\n\n"
                 f"Your class advances automatically at Level *{next_threshold}*.\n"
-                f"Keep leveling!", delay=9)
+                f"Keep leveling!", delay=15)
         else:
             await send_group(update,
-                f"👑 You have reached *Level 100* — the pinnacle of Path {path}!\n"
+                f"👑 *Path {path}* — Current Class: *{current_cls_name}*\n\n"
+                f"📜 Path: {path_names}\n\n"
+                f"You have reached *Level 100* — the pinnacle of Path {path}!\n"
                 f"You may optionally reset and start a new class journey.\n"
                 f"Use `/prestige reset` to do so (keeps all stats and skills).", delay=15)
         return
@@ -3820,7 +4132,7 @@ async def train_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update,
             f"⏳ Train again in {time_remaining(p.get('last_train'), 1800)}.", delay=9); return
     p["last_train"] = datetime.now().isoformat()
-    base = 80 + p["level"] * 3
+    base = 150 + p["level"] * 5
     cls  = get_player_class(p)
     note = ""
     if cls:
@@ -4097,27 +4409,36 @@ async def inventory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append("*— Equipped —*")
             eq_header = True
         enh = get_enhancement(p, name)
-        enc = get_enchant(p, name)
+        encs_slot = get_enchant(p, name)
         tags = []
         if enh: tags.append(f"+{enh}")
-        if enc: tags.append(f"✨{enc.get('id','?').capitalize()}")
+        if encs_slot: tags.append(f"✨×{len(encs_slot)}")
         tag_str = " " + " ".join(tags) if tags else ""
         lines.append(f"{emoji} {name}{tag_str} _(equipped)_")
     if eq_header:
         lines.append("")
+    rarity_label = {
+        "common":    "",
+        "uncommon":  " _Uncommon_",
+        "rare":      " _Rare_",
+        "epic":      " _Epic_",
+        "legendary": " _Legendary_",
+    }
     if inv:
         lines.append("*— Bag —*")
         for item, count in inv.items():
-            desc = ""; rarity = ""
+            desc = ""; rarity = ""; rarity_word = "common"
             for pool in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS, CONSUMABLES]:
                 if item in pool:
                     d = pool[item]
                     if "atk" in d:   desc = f"+{d['atk']} ATK"
                     elif "def" in d: desc = f"+{d['def']} DEF"
                     elif "desc" in d: desc = d["desc"]
-                    rarity = RARITY_EMOJI.get(d.get("rarity",""),"")
+                    rarity_word = d.get("rarity","common")
+                    rarity = RARITY_EMOJI.get(rarity_word,"")
                     break
-            lines.append(f"{rarity} *{item}* x{count} — _{desc}_")
+            rlabel = rarity_label.get(rarity_word, "") if rarity_word != "common" else ""
+            lines.append(f"{rarity} *{item}* x{count}{rlabel} — _{desc}_")
     else:
         if not eq_header:
             await send_group(update, "🎒 Your inventory is empty!", delay=9); return
@@ -4137,9 +4458,9 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         def _gear_summary_line(slot, name, pool):
             if name == "None": return f"{slot}: None"
             enh = get_enhancement(p, name)
-            enc = get_enchant(p, name)
+            encs_g = get_enchant(p, name)
             enh_str = f" *+{enh}*" if enh else ""
-            enc_str = f" ✨_{enc['id'].capitalize()}_" if enc else ""
+            enc_str = f" ✨×{len(encs_g)}" if encs_g else ""
             d = pool.get(name, {})
             stat_val = d.get("atk") or d.get("def", 0)
             stat_label = "ATK" if "atk" in d else "DEF"
@@ -4153,8 +4474,8 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if acc_e != "None":
             acc_data = ACCESSORIES.get(acc_e, {})
             rarity = RARITY_EMOJI.get(acc_data.get("rarity",""), "")
-            enc = get_enchant(p, acc_e)
-            enc_str = f" ✨_{enc['id'].capitalize()}_" if enc else ""
+            encs_acc2 = get_enchant(p, acc_e)
+            enc_str = f" ✨×{len(encs_acc2)}" if encs_acc2 else ""
             lines.append(f"💍 Accessory: {rarity} *{acc_e}*{enc_str} — _{acc_data.get('desc','')}_")
         else:
             lines.append("💍 Accessory: None")
@@ -4290,6 +4611,13 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await send_group(update, "Usage: `/sell [item name]` or `/sell all [rarity]`", delay=9); return
 
+    BULK_SELL_PROTECTED = {
+        "Dragon Scale", "Slate Fragment",
+        "Enchanting Scroll", "The Custom Tip Scroll",
+        "Revival Charm", "The Re-Rack",
+        "Holy Relic", "The Golden Triangle",
+    }
+
     if context.args[0].lower() == "all":
         inv = sjl(p.get("inventory"), [])
         if not inv:
@@ -4303,6 +4631,9 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         equipped = [p.get("equipped_weapon"), p.get("equipped_armor"),
                     p.get("equipped_shield"), p.get("equipped_accessory")]
         for item_s in inv:
+            if item_s in BULK_SELL_PROTECTED:
+                remaining_inv.append(item_s)
+                continue
             item_rarity = None; item_price = 0
             for pool_s in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS]:
                 if item_s in pool_s:
@@ -4415,21 +4746,25 @@ async def strike_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = [f"⚔️ *{user.first_name}* strikes *{boss_dict['data']['name']}* for *{dmg}!*\n"
              f"❤️ Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}"]
 
-    # Boss counterattack (80% chance, lethal)
     alive = [u for u in boss_dict["participants"]
              if not is_defeated(get_player(u["id"]))]
     if alive and boss_dict["hp"] > 0 and random.random() < 0.90:
         target = random.choice(alive)
         tp = get_player(target["id"])
-        if tp:
-            bdmg = calc_defense(tp, random.randint(
-                boss_dict["data"]["dmg_min"], boss_dict["data"]["dmg_max"]))
-            tp["hp"] = max(0, tp["hp"] - bdmg)
+        if tp and not is_defeated(tp):
+            raw = random.randint(
+                boss_dict["data"]["dmg_min"],
+                boss_dict["data"]["dmg_max"])
+            edm = calc_defense(tp, raw)
+            tp["hp"] = max(0, tp["hp"] - edm)
             if tp["hp"] == 0:
-                tp["defeated_until"] = (datetime.now()+timedelta(hours=6)).isoformat()
-                lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 6hr defeat.")
+                tp["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
+                lines.append(
+                    f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 6hr defeat.")
             else:
-                lines.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for {bdmg}!")
+                lines.append(
+                    f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* "
+                    f"for *{edm} damage!* ({tp['hp']}/{tp.get('max_hp', calc_max_hp(tp))} HP)")
             save_player(tp)
 
     # Check if all players dead — end fight
@@ -5120,9 +5455,21 @@ async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
     titles = safe_titles(p)
     if not context.args:
-        await send_group(update,
-            f"🏅 *Your Titles:*\n" + "\n".join(f"• {t}" for t in titles) +
-            f"\n\nCurrent: *{p['active_title']}*\nUse `/title [name]` to equip.", delay=15); return
+        lines = [f"🏅 *Your Titles:*\n"]
+        for t in titles:
+            bonus = TITLE_BONUSES.get(t, {})
+            if bonus:
+                bonus_parts = []
+                for k, v in bonus.items():
+                    if k == "all_stats": bonus_parts.append(f"+{v} all")
+                    else: bonus_parts.append(f"+{v} {k}")
+                bonus_str = f" _({', '.join(bonus_parts)})_"
+            else:
+                bonus_str = ""
+            active_marker = " ◀️" if t == p["active_title"] else ""
+            lines.append(f"• {t}{bonus_str}{active_marker}")
+        lines.append(f"\n`/title [name]` to equip")
+        await send_group(update, "\n".join(lines), permanent=True); return
     chosen = " ".join(context.args)
     if chosen not in titles:
         await send_group(update, f"You haven't earned *{chosen}* yet!", delay=9); return
@@ -5327,9 +5674,11 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ("Accessory", "equipped_accessory")]:
             name = p.get(slot_key)
             if not name: continue
-            enc = get_enchant(p, name)
-            enc_str = f"*{enc['id'].capitalize()}* — {enc['desc']}" if enc else "None"
-            lines.append(f"*{slot_label}:* {name}\n  Enchant: {enc_str}")
+            encs = get_enchant(p, name)
+            count = len(encs)
+            remaining = 3 - count
+            enc_str = ", ".join(e["id"].capitalize() for e in encs) if encs else "None"
+            lines.append(f"*{slot_label}:* {name}\n  Enchants ({count}/3): {enc_str}\n  Slots remaining: {remaining}")
         inv = sjl(p.get("inventory"), [])
         lines.append(f"\n📜 Custom Tip Scrolls: {inv.count('The Custom Tip Scroll')}")
         lines.append("`/enchant weapon` | `/enchant armor` | "
@@ -5358,21 +5707,24 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ You need a *Custom Tip Scroll*.\n"
             "They drop from explores, quests, and the shop.", delay=9); return
 
+    encs = get_enchant(p, item_name)
+    if len(encs) >= 3:
+        await send_group(update,
+            f"❌ *{item_name}* already has 3 enchants (maximum).\n"
+            f"Current: {', '.join(e['id'].capitalize() for e in encs)}"); return
+
     inv.remove("The Custom Tip Scroll")
     p["inventory"] = json.dumps(inv)
 
     pool = ENCHANT_EFFECTS.get(effect_pool_key, [])
     effect = random.choice(pool)
-    old_enc = get_enchant(p, item_name)
     set_enchant(p, item_name, effect)
     save_player(p)
-
-    old_str = f"\n_Replaced: {old_enc['id'].capitalize()}_" if old_enc else ""
+    new_encs = get_enchant(p, item_name)
+    all_str = "\n".join(f"✨ {e['id'].capitalize()} — {e['desc']}" for e in new_encs)
     await send_group(update,
         f"✨ *Enchanted!*\n\n"
-        f"*{item_name}* gained: *{effect['id'].capitalize()}*\n"
-        f"_{effect['desc']}_"
-        f"{old_str}", delay=20)
+        f"*{item_name}* — Enchants ({len(new_encs)}/3):\n{all_str}", delay=20)
 
 # ── DUEL ──────────────────────────────────────────────────────────────────────
 def calc_combat_power(p):
@@ -5588,6 +5940,14 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p1 = get_player(arena["p1_id"])
         if not p1:
             active_arenas.pop(chat_id, None); return
+        if wager > 0 and p1["gold"] < wager:
+            active_arenas.pop(chat_id, None)
+            await send_group(update, "❌ Challenger can no longer afford the wager.", delay=9); return
+        if wager > 0:
+            p["gold"] = p.get("gold", 0) - wager
+            p1["gold"] = p1.get("gold", 0) - wager
+            save_player(p)
+            save_player(p1)
         arena["p1"] = p1; arena["p2"] = p
         arena["p1_hp"]  = p1["max_hp"]; arena["p2_hp"]  = p["max_hp"]
         arena["p1_max"] = p1["max_hp"]; arena["p2_max"] = p["max_hp"]
@@ -6149,8 +6509,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             wager = arena["wager"]
             if wp and lp:
                 if wager > 0:
-                    wp["gold"] = wp.get("gold",0) + wager
-                    lp["gold"] = max(0, lp.get("gold",0) - wager)
+                    wp["gold"] = wp.get("gold",0) + wager * 2
                 wp["wins"] = wp.get("wins",0) + 1
                 exp_gain = 50 + wp["level"] * 5
                 add_exp(wp, exp_gain)
@@ -6631,7 +6990,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*/train* — Train (30min)\n"
         "*/quest* — Go on a quest (1hr)\n"
         "*/explore* — Expedition (1hr, 2x/day)\n"
-        "*/pool* — Take a pool shot (8s cooldown)\n"
+        "*/pool* — Take a pool shot (1min cooldown)\n"
         "*/dungeon* — Solo hall run (1x/day)\n"
         "   `/dungeon` | `/dungeon hard` | `/dungeon legendary`\n"
         "*/shop* — Daily shop\n"
@@ -6653,6 +7012,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*/duel @user [wager]* — Quick CP-based duel\n"
         "*/arena @user [wager]* — Turn-based arena fight\n\n"
         "⚒️ *Gear Upgrades:*\n"
+        "*/gear* — Full equipped gear details with stats\n"
         "*/enhance [weapon/armor/shield]* — Enhance gear (Slate Fragments)\n"
         "*/enchant [weapon/armor/shield/accessory]* — Enchant gear (Custom Tip Scrolls)\n\n"
         "🏰 *Hall:*\n"
@@ -6664,82 +7024,82 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 POOL_SHOTS = [
     {"id":"scratch","weight":40,"rarity":"common",
      "text":"Scratch. Cue ball drops into the corner pocket. Rookie mistake.",
-     "exp":15,"gold":0,"loot":None},
+     "exp":19,"gold":0,"loot":None},
     {"id":"rail_kiss","weight":40,"rarity":"common",
      "text":"Rail kiss, no pocket. The felt absorbs the hit and gives nothing back.",
-     "exp":20,"gold":0,"loot":None},
+     "exp":25,"gold":0,"loot":None},
     {"id":"cluster_stuck","weight":40,"rarity":"common",
      "text":"You crack the cluster but nothing drops. The rack laughs at you.",
-     "exp":20,"gold":2,"loot":None},
+     "exp":25,"gold":2,"loot":None},
     {"id":"thin_cut","weight":38,"rarity":"common",
      "text":"Thin cut on the 3 ball. It grazes the pocket and rolls away.",
-     "exp":25,"gold":3,"loot":None},
+     "exp":31,"gold":3,"loot":None},
     {"id":"safe_play","weight":38,"rarity":"common",
      "text":"You play safe. Smart. Boring. The table respects it.",
-     "exp":30,"gold":5,"loot":None},
+     "exp":38,"gold":5,"loot":None},
     {"id":"solid_pot","weight":35,"rarity":"common",
      "text":"Clean pot on the 2 ball. Nothing fancy, just good fundamentals.",
-     "exp":35,"gold":5,"loot":None},
+     "exp":44,"gold":5,"loot":None},
     {"id":"two_ball_run","weight":35,"rarity":"common",
      "text":"Two ball run before the pattern breaks. You'll take it.",
-     "exp":40,"gold":8,"loot":[("Chalk Vial",0.08)]},
+     "exp":50,"gold":8,"loot":[("Chalk Vial",0.08)]},
     {"id":"long_pot","weight":33,"rarity":"common",
      "text":"Long pot, full length of the table. The satisfying thud of a good hit.",
-     "exp":45,"gold":8,"loot":[("Chalk Vial",0.10)]},
+     "exp":56,"gold":8,"loot":[("Chalk Vial",0.10)]},
     {"id":"three_cushion","weight":30,"rarity":"common",
      "text":"Three cushion shot, exactly as planned. Nobody saw it but you know.",
-     "exp":50,"gold":10,"loot":[("Chalk Vial",0.12)]},
+     "exp":63,"gold":10,"loot":[("Chalk Vial",0.12)]},
     {"id":"position_play","weight":30,"rarity":"common",
      "text":"Perfect position play. You pot the ball and land exactly where you wanted.",
-     "exp":55,"gold":12,"loot":[("Chalk Vial",0.12),("Brass Rail Ring",0.05)]},
+     "exp":69,"gold":12,"loot":[("Chalk Vial",0.12),("Brass Rail Ring",0.05)]},
     {"id":"break_and_run","weight":20,"rarity":"uncommon",
      "text":"Break and run. Four balls drop on the break and you clear the table from there.",
-     "exp":80,"gold":20,"loot":[("Premium Chalk Draft",0.12),("Chalk Nub",0.08)]},
+     "exp":100,"gold":20,"loot":[("Premium Chalk Draft",0.12),("Chalk Nub",0.08)]},
     {"id":"masse_shot","weight":20,"rarity":"uncommon",
      "text":"Massé shot curves around the cluster perfectly. The crowd would have gone wild.",
-     "exp":85,"gold":22,"loot":[("Premium Chalk Draft",0.15),("Pocket Marker",0.08)]},
+     "exp":106,"gold":22,"loot":[("Premium Chalk Draft",0.15),("Pocket Marker",0.08)]},
     {"id":"bank_pot","weight":18,"rarity":"uncommon",
      "text":"Bank pot off the far cushion drops clean. Calculated.",
-     "exp":90,"gold":25,"loot":[("Premium Chalk Draft",0.15),("Slate Fragment",0.06)]},
+     "exp":113,"gold":25,"loot":[("Premium Chalk Draft",0.15),("Slate Fragment",0.06)]},
     {"id":"combo_pot","weight":18,"rarity":"uncommon",
      "text":"Combo pot — cue ball kisses the 5, sends the 7 into the corner. Beautiful.",
-     "exp":95,"gold":28,"loot":[("Premium Chalk Draft",0.15),("Slate Fragment",0.08)]},
+     "exp":119,"gold":28,"loot":[("Premium Chalk Draft",0.15),("Slate Fragment",0.08)]},
     {"id":"five_ball_run","weight":16,"rarity":"uncommon",
      "text":"Five ball run. Your focus is absolute. The table offers no resistance.",
-     "exp":100,"gold":30,"loot":[("Slate Fragment",0.12),("Worn Tip Wrap",0.08)]},
+     "exp":125,"gold":30,"loot":[("Slate Fragment",0.12),("Worn Tip Wrap",0.08)]},
     {"id":"called_shot","weight":16,"rarity":"uncommon",
      "text":"Called shot — 6 ball, side pocket, two cushions. You called it. It dropped.",
-     "exp":110,"gold":35,"loot":[("Slate Fragment",0.15),("Silk Tip Ring",0.05)]},
+     "exp":138,"gold":35,"loot":[("Slate Fragment",0.15),("Silk Tip Ring",0.05)]},
     {"id":"century_break","weight":14,"rarity":"uncommon",
      "text":"Century break. You stop counting at twelve balls. The table is yours.",
-     "exp":120,"gold":40,"loot":[("Slate Fragment",0.18),("Red Ball Band",0.06)]},
+     "exp":150,"gold":40,"loot":[("Slate Fragment",0.18),("Red Ball Band",0.06)]},
     {"id":"maximum_break","weight":8,"rarity":"rare",
      "text":"Maximum break. Every ball. Every pocket. The felt bows to your command.",
-     "exp":200,"gold":80,"loot":[("Slate Fragment",0.30),("The Custom Tip Scroll",0.12),("The Action Coin",0.06)]},
+     "exp":250,"gold":80,"loot":[("Slate Fragment",0.30),("The Custom Tip Scroll",0.12),("The Action Coin",0.06)]},
     {"id":"trick_shot","weight":8,"rarity":"rare",
      "text":"Trick shot — cue behind the back, jump shot over the cluster, corner pocket. "
             "You don't even watch it drop. You already knew.",
-     "exp":220,"gold":90,"loot":[("Slate Fragment",0.30),("The Custom Tip Scroll",0.15),("Break Master's Clasp",0.04)]},
+     "exp":275,"gold":90,"loot":[("Slate Fragment",0.30),("The Custom Tip Scroll",0.15),("Break Master's Clasp",0.04)]},
     {"id":"ghost_ball","weight":7,"rarity":"rare",
      "text":"Ghost ball method on an impossible cut. The cue ball threads a gap "
             "that shouldn't exist. The 8 drops. You breathe.",
-     "exp":240,"gold":100,"loot":[("Slate Fragment",0.35),("The Custom Tip Scroll",0.18),("Diamond Sight Medallion",0.04)]},
+     "exp":300,"gold":100,"loot":[("Slate Fragment",0.35),("The Custom Tip Scroll",0.18),("Diamond Sight Medallion",0.04)]},
     {"id":"full_rack_clear","weight":6,"rarity":"rare",
      "text":"Full rack clear on the break. All fifteen balls. One shot. "
             "The table is empty before the echo dies.",
-     "exp":280,"gold":120,"loot":[("Slate Fragment",0.40),("The Custom Tip Scroll",0.20),
+     "exp":350,"gold":120,"loot":[("Slate Fragment",0.40),("The Custom Tip Scroll",0.20),
                                    ("The Re-Rack",0.08),("Ghost Ball Loop",0.04)]},
     {"id":"void_pocket","weight":3,"rarity":"epic",
      "text":"The cue ball rolls toward a pocket that wasn't there a moment ago. "
             "A void pocket. The ball disappears. Something falls out of the table "
             "that was never inside it.",
-     "exp":500,"gold":200,"loot":[("Slate Fragment",0.60),("The Custom Tip Scroll",0.35),
+     "exp":625,"gold":200,"loot":[("Slate Fragment",0.60),("The Custom Tip Scroll",0.35),
                                    ("The Re-Rack",0.15),("Chalk Heart",0.05),
                                    ("Eye of the Table",0.04)]},
     {"id":"eight_ball_break","weight":3,"rarity":"epic",
      "text":"8 ball on the break. Dead center. Corner pocket. "
             "The felt goes silent. Something ancient stirs beneath the table.",
-     "exp":600,"gold":250,"loot":[("Slate Fragment",0.65),("The Custom Tip Scroll",0.40),
+     "exp":750,"gold":250,"loot":[("Slate Fragment",0.65),("The Custom Tip Scroll",0.40),
                                    ("The Hustler's Whisper",0.05),("The Safety Talisman",0.04)]},
     {"id":"corner_pocket_singularity","weight":1,"rarity":"legendary",
      "text":"The corner pocket opens. Not just opens — becomes. "
@@ -6747,9 +7107,109 @@ POOL_SHOTS = [
             "They vanish one by one. The table is left perfectly bare. "
             "You didn't do that. Or maybe you did. The chalk dust settles. "
             "Something was left behind.",
-     "exp":1200,"gold":500,"loot":[("Slate Fragment",0.80),("The Custom Tip Scroll",0.60),
+     "exp":1500,"gold":500,"loot":[("Slate Fragment",0.80),("The Custom Tip Scroll",0.60),
                                     ("Splinter of the Break",0.03),("The Endless Run",0.03),
                                     ("The Final Shot Locket",0.03)]},
+
+    # ── Additional Common ────────────────────────────────────────────────
+    {"id":"chalk_up","weight":38,"rarity":"common",
+     "text":"You chalk up carefully. Take your time. Miss anyway.",
+     "exp":22,"gold":0,"loot":None},
+
+    {"id":"wrong_ball","weight":36,"rarity":"common",
+     "text":"Wrong ball first. Foul. Your opponent would have loved that.",
+     "exp":18,"gold":0,"loot":None},
+
+    {"id":"kitchen_shot","weight":34,"rarity":"common",
+     "text":"Ball in hand from the kitchen. You make the most of it.",
+     "exp":38,"gold":6,"loot":[("Chalk Vial",0.10)]},
+
+    {"id":"frozen_ball","weight":33,"rarity":"common",
+     "text":"Frozen ball on the rail. You play it safe and take the defensive.",
+     "exp":32,"gold":4,"loot":None},
+
+    {"id":"diamond_system","weight":31,"rarity":"common",
+     "text":"You use the diamond system for a kick shot. It works. You act like it always does.",
+     "exp":42,"gold":7,"loot":[("Chalk Vial",0.08)]},
+
+    {"id":"one_pocket_defense","weight":30,"rarity":"common",
+     "text":"A defensive shot worthy of one pocket. Nothing to pocket but nowhere to run either.",
+     "exp":45,"gold":9,"loot":[("Chalk Vial",0.10)]},
+
+    {"id":"stroke_check","weight":28,"rarity":"common",
+     "text":"You pause. Check your stroke. Restart. It was worth the delay.",
+     "exp":48,"gold":10,"loot":[("Chalk Vial",0.12),("Brass Rail Ring",0.05)]},
+
+    # ── Additional Uncommon ──────────────────────────────────────────────
+    {"id":"running_english","weight":18,"rarity":"uncommon",
+     "text":"Running English off the far cushion opens the table completely. "
+            "You read it perfectly.",
+     "exp":105,"gold":32,"loot":[("Slate Fragment",0.10),("Silk Tip Ring",0.07)]},
+
+    {"id":"stun_shot","weight":17,"rarity":"uncommon",
+     "text":"Stun shot. Cue ball stops dead. Exactly where you needed it. "
+            "Nobody else saw that coming.",
+     "exp":115,"gold":36,"loot":[("Slate Fragment",0.12),("Road Shark Signet",0.04)]},
+
+    {"id":"screw_back","weight":16,"rarity":"uncommon",
+     "text":"Strong draw — screw back across the table. "
+            "The cue ball returns to you like it owed you something.",
+     "exp":125,"gold":40,"loot":[("Slate Fragment",0.15),("Black Ball Stud",0.05)]},
+
+    {"id":"two_way_shot","weight":15,"rarity":"uncommon",
+     "text":"Two-way shot. If you make it, great. If you miss, you left them nothing. "
+            "You make it.",
+     "exp":130,"gold":42,"loot":[("Slate Fragment",0.18),("Custom Tip Scroll",0.08)]},
+
+    {"id":"jump_shot","weight":14,"rarity":"uncommon",
+     "text":"Jump shot over the cluster. Clean contact. The blocker never had a chance.",
+     "exp":140,"gold":45,"loot":[("Slate Fragment",0.20),("Custom Tip Scroll",0.10),
+                                   ("Worn Tip Wrap",0.06)]},
+
+    {"id":"nine_ball_rotation","weight":13,"rarity":"uncommon",
+     "text":"Nine ball rotation — lowest ball first, every time, "
+            "three balls pocketed in sequence. The rack is learning to fear you.",
+     "exp":150,"gold":50,"loot":[("Slate Fragment",0.22),("Custom Tip Scroll",0.12),
+                                   ("Road Player's Coin",0.05)]},
+
+    # ── Additional Rare ──────────────────────────────────────────────────
+    {"id":"masse_curve","weight":6,"rarity":"rare",
+     "text":"Massé shot — cue nearly vertical, extreme spin, "
+            "the ball curves around the blocker like it changed its mind. "
+            "The felt remembers this shot.",
+     "exp":260,"gold":110,"loot":[("Slate Fragment",0.40),("Custom Tip Scroll",0.22),
+                                    ("Re-Rack",0.06),("Action Coin",0.05)]},
+
+    {"id":"ghost_ball_method","weight":5,"rarity":"rare",
+     "text":"Ghost ball method on a thin cut — you aim at where the cue ball "
+            "needs to be, not where the object ball is. It drops clean.",
+     "exp":290,"gold":125,"loot":[("Slate Fragment",0.45),("Custom Tip Scroll",0.25),
+                                    ("Re-Rack",0.08),("Ghost Ball Loop",0.04)]},
+
+    {"id":"three_cushion_carom","weight":4,"rarity":"rare",
+     "text":"Three cushion carom. Three rails before the second object ball. "
+            "Technically you weren't even trying to pocket anything. "
+            "Somehow something drops.",
+     "exp":320,"gold":135,"loot":[("Slate Fragment",0.50),("Custom Tip Scroll",0.28),
+                                    ("Re-Rack",0.10),("Diamond Sight Medallion",0.04)]},
+
+    # ── Additional Epic ──────────────────────────────────────────────────
+    {"id":"golden_break","weight":2,"rarity":"epic",
+     "text":"Golden break. Nine ball drops on the break. "
+            "You called it. Nobody believed you. "
+            "The table is already empty. The game is already won.",
+     "exp":700,"gold":280,"loot":[("Slate Fragment",0.70),("Custom Tip Scroll",0.45),
+                                    ("Re-Rack",0.20),("Deathwhisper Amulet",0.06),
+                                    ("Dragon Soul Pendant",0.04)]},
+
+    {"id":"call_shot_perfection","weight":2,"rarity":"epic",
+     "text":"Every ball called before every shot. "
+            "Every ball dropped in the called pocket. "
+            "Not one fluke, not one assumption. "
+            "Pure declared intention, executed perfectly.",
+     "exp":750,"gold":300,"loot":[("Slate Fragment",0.72),("Custom Tip Scroll",0.48),
+                                    ("Re-Rack",0.22),("Eye of the Storm",0.05),
+                                    ("Aegis Talisman",0.04)]},
 ]
 
 POOL_CLASS_FLAVOR = {
@@ -7353,6 +7813,7 @@ def main():
     app.add_handler(CommandHandler("decline",   decline_trade_cmd))
     app.add_handler(CommandHandler("enhance",   enhance_cmd))
     app.add_handler(CommandHandler("enchant",   enchant_cmd))
+    app.add_handler(CommandHandler("gear",      gear_cmd))
 
     # Combat & Dungeons
     app.add_handler(CommandHandler("duel",      duel_cmd))
