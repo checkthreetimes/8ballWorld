@@ -2868,6 +2868,131 @@ def init_db():
     conn3.commit()
     conn3.close()
 
+    # ── v15 Item Name Migration ───────────────────────────────────────────────
+    ITEM_NAME_MAP = {
+        # Weapons — Warrior
+        "Broken Longsword":"Cracked House Cue","Militia Falchion":"Worn Practice Cue",
+        "Blacksteel Bastard Sword":"Graphite Break Cue","Giantslayer Zweihander":"Heavy Breaker Staff",
+        "Worldcleaver":"The Rack Splitter",
+        # Weapons — Mage
+        "Oak Practice Staff":"Chalked Finger","Petrified Willow Wand":"Blue Diamond Chalk",
+        "Cursed Ebony Staff":"Blackwood Bridge Stick","Astral Conduit Rod":"The Extension",
+        "Nullstar Scepter":"The Grand Bridge",
+        # Weapons — Archer
+        "Makeshift Shortbow":"Bent Triangle","Goat Horn Crossbow":"Standard Magic Rack",
+        "Falconwing Recurve Bow":"Precision Rack","Windripper Greatbow":"Diamond Rack",
+        "Heaven's Tear Ballista":"The Perfect Break Rack",
+        # Weapons — Thief
+        "Rusty Shiv":"Chalk Shiv","Serrated Kujang":"Mushroom Tip Blade",
+        "Venomspike Blowgun":"Ferrule Dart","Shadowstitch Katars":"Twin Tip Blades",
+        "Umbral Chain Sickle":"The Ball Return",
+        # Weapons — Priest
+        "Wooden Prayer Beads":"Chalk Beads","Iron Rosary":"Iron Chalk Ring",
+        "Sun Disc Pendant":"The Spot Marker","Martyr's Thorned Cross":"The Crossed Cues",
+        "Sanctus Aeterna":"The Diamond Staff",
+        # Armors — Warrior
+        "Padded Tunic":"Padded Cue Jacket","Iron Scale Vest":"Slate Guard",
+        "Crimson Plackart":"Red Cloth Plate","Onyx Golem Plate":"Black Ball Plate",
+        "Titanfoil Carapace":"Diamond Felt Armor",
+        # Armors — Mage
+        "Frayed Spellcloak":"Worn Chalk Coat","Windwoven Silk Robe":"Green Baize Robe",
+        "Arctic Fox Stole":"White Glove Wrap","Voidweave Mantle":"Blacklight Cloak",
+        "Singularity Robe":"The Nap Robe",
+        # Armors — Archer
+        "Sturdy Leather Jerkin":"Corner Pocket Vest","Hardened Hide Cuirass":"Rail Leather Chest",
+        "Griffon Plate Chest":"Diamond Point Plate","Phoenix Down Brigandine":"Red Baize Brigandine",
+        "Skybreaker Scale Armor":"The Rack Scale",
+        # Armors — Thief
+        "Dark Hooded Wrap":"Hustle Coat","Oilskin Shadow Coat":"Midnight Felt Coat",
+        "Stalker's Mesh Shroud":"The Sneak Mesh","Nocturnal Leather Harness":"Backdoor Harness",
+        "Abyssal Cloak of Silence":"The Ghost Coat",
+        # Armors — Priest
+        "Woven Vestments":"Chalk Cloth Vestments","Embroidered Cassock":"The Rule Book Robe",
+        "Silver Mitre Hood":"The Referee Hood","Lightweaver Chasuble":"The Tournament Cloak",
+        "Seraph's Surplice":"The House Saint Surplice",
+        # Shields
+        "Splintered Buckler":"Cracked Rack Shield","Ironbound Targe":"Iron Triangle",
+        "Kite Shield of the Vow":"The Break Shield","Obsidian Tower Shield":"Black Ball Barrier",
+        "Aegis of First Light":"The Diamond Aegis",
+        # Accessories — Common
+        "Pebble of Focus":"Chalk Nub","Frayed Rope Band":"Worn Tip Wrap",
+        "Copper Loop":"Brass Rail Ring","Tin Charm":"Pocket Marker",
+        "Traveler's Token":"Road Player's Coin",
+        # Accessories — Uncommon
+        "Fox Tail Ring":"Silk Tip Ring","Brass Holy Symbol":"Chalk Cross Pendant",
+        "Chipped Onyx Stud":"Black Ball Stud","Bloodstone Band":"Red Ball Band",
+        "Mercenary's Signet":"Road Shark Signet","Hunter's Fang Pendant":"Hustler's Tooth",
+        "Mana Bead Necklace":"Chalk Bead Necklace",
+        # Accessories — Rare
+        "Whisper Coin":"The Action Coin","Warmaster's Clasp":"Break Master's Clasp",
+        "Owl Medallion":"Diamond Sight Medallion","Phantom Loop":"Ghost Ball Loop",
+        "Executioner's Band":"Closer's Band","Spellweaver's Coil":"English Coil",
+        "Ironheart Medallion":"Slate Heart","Vampiric Fang Chain":"Shark Tooth Chain",
+        "Wanderer's Compass":"Road Player's Compass","Stormcaller's Torc":"The Break Torc",
+        # Accessories — Epic
+        "Twin Serpent Ring":"Double Kiss Ring","Eye of the Storm":"Eye of the Table",
+        "Void-Touched Circle":"Blackball Circle","Berserker's Knuckle":"Break Knuckle",
+        "Saint's Halo Band":"House Saint's Band","Cinder Heart Pendant":"Chalk Heart",
+        "Deathwhisper Amulet":"The Hustler's Whisper","Aegis Talisman":"The Safety Talisman",
+        "Luminous Crucifix":"The Crossed Cues Pendant","Dragon Soul Pendant":"The Slate and Felt Pendant",
+        # Accessories — Legendary
+        "Godshard Splinter":"Splinter of the Break","Infinity Loop":"The Endless Run",
+        "Ring of the Ancients":"The Old Road Ring","Ouroboros":"The Rack Eternal",
+        "Last Breath Locket":"The Final Shot Locket","Worldsoul Amulet":"The Felt Soul",
+        "Shard of Divinity":"The Diamond Shard","Mark of the Void":"The Blackball Mark",
+        # Consumables
+        "Health Potion":"Chalk Vial","Super Health Potion":"Premium Chalk Draft",
+        "Mega Health Potion":"Champion's Chalk Flask","Revival Charm":"The Re-Rack",
+        "Holy Relic":"The Golden Triangle","Dragon Scale":"Slate Fragment",
+        "Enchanting Scroll":"The Custom Tip Scroll",
+    }
+
+    def _migrate_item_list(lst):
+        return [ITEM_NAME_MAP.get(x, x) for x in lst]
+
+    def _migrate_item_dict(d):
+        return {ITEM_NAME_MAP.get(k, k): v for k, v in d.items()}
+
+    try:
+        mig_conn = sqlite3.connect(DB_PATH)
+        mig_conn.row_factory = sqlite3.Row
+        mig_c = mig_conn.cursor()
+        mig_c.execute("""SELECT user_id,inventory,equipped_weapon,equipped_armor,
+                                equipped_shield,equipped_accessory,enhancements,enchants
+                         FROM players""")
+        rows = mig_c.fetchall()
+        migrated = 0
+        for row in rows:
+            changed = False
+            uid = row["user_id"]
+            inv  = sjl(row["inventory"], [])
+            new_inv = _migrate_item_list(inv)
+            if new_inv != inv: changed = True
+            ew  = ITEM_NAME_MAP.get(row["equipped_weapon"],  row["equipped_weapon"])
+            ea  = ITEM_NAME_MAP.get(row["equipped_armor"],   row["equipped_armor"])
+            es  = ITEM_NAME_MAP.get(row["equipped_shield"],  row["equipped_shield"])
+            eac = ITEM_NAME_MAP.get(row["equipped_accessory"], row["equipped_accessory"])
+            if ew != row["equipped_weapon"] or ea != row["equipped_armor"] or \
+               es != row["equipped_shield"] or eac != row["equipped_accessory"]:
+                changed = True
+            enh = sjl(row["enhancements"], {}); new_enh = _migrate_item_dict(enh)
+            if new_enh != enh: changed = True
+            enc = sjl(row["enchants"], {});     new_enc = _migrate_item_dict(enc)
+            if new_enc != enc: changed = True
+            if changed:
+                mig_c.execute("""UPDATE players SET inventory=?,equipped_weapon=?,
+                                  equipped_armor=?,equipped_shield=?,equipped_accessory=?,
+                                  enhancements=?,enchants=? WHERE user_id=?""",
+                    (json.dumps(new_inv), ew, ea, es, eac,
+                     json.dumps(new_enh), json.dumps(new_enc), uid))
+                migrated += 1
+        mig_conn.commit()
+        mig_conn.close()
+        if migrated > 0:
+            logger.info(f"v15 item migration: updated {migrated} player(s)")
+    except Exception as e:
+        logger.error(f"v15 item migration failed: {e}")
+
 # ── DB HELPERS ────────────────────────────────────────────────────────────────
 def _get(table, user_id):
     conn = sqlite3.connect(DB_PATH)
@@ -5125,18 +5250,35 @@ async def inventory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if inv:
         lines.append("*— Bag —*")
         for item, count in inv.items():
-            desc = ""; rarity = ""; rarity_word = "common"
-            for pool in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS, CONSUMABLES]:
-                if item in pool:
-                    d = pool[item]
-                    if "atk" in d:   desc = f"+{d['atk']} ATK"
-                    elif "def" in d: desc = f"+{d['def']} DEF"
-                    elif "desc" in d: desc = d["desc"]
-                    rarity_word = d.get("rarity","common")
-                    rarity = RARITY_EMOJI.get(rarity_word,"")
-                    break
-            rlabel = rarity_label.get(rarity_word, "") if rarity_word != "common" else ""
-            lines.append(f"{rarity} *{item}* x{count}{rlabel} — _{desc}_")
+            if item in WEAPONS:
+                type_tag = "⚔️ Weapon"; d = WEAPONS[item]
+                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
+                stat_str = f"+{d['atk']} ATK"
+            elif item in ARMORS:
+                type_tag = "🛡️ Armor"; d = ARMORS[item]
+                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
+                stat_str = f"+{d['def']} DEF"
+            elif item in SHIELDS:
+                type_tag = "🔰 Shield"; d = SHIELDS[item]
+                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
+                stat_str = f"+{d['def']} DEF"
+            elif item in ACCESSORIES:
+                type_tag = "💍 Accessory"; d = ACCESSORIES[item]
+                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
+                stat_str = d.get("desc","")[:40]
+            elif item in CONSUMABLES:
+                type_tag = "🧪 Consumable"; d = CONSUMABLES[item]
+                rarity = "⚪"; stat_str = d.get("desc","")
+            else:
+                type_tag = "📦 Material"; rarity = "⚪"; stat_str = ""
+            enh = get_enhancement(p, item)
+            encs = get_enchant(p, item) if item in {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES} else []
+            enh_str = f" *+{enh}*" if enh > 0 else ""
+            enc_str = f" ✨×{len(encs)}" if encs else ""
+            lines.append(
+                f"{rarity} *{item}*{enh_str}{enc_str} x{count}\n"
+                f"  {type_tag} — _{stat_str}_"
+            )
     else:
         if not eq_header:
             await send_group(update, "🎒 Your inventory is empty!", delay=9); return
@@ -5183,6 +5325,15 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     inv = sjl(p.get("inventory"), [])
     if item_name not in inv:
         await send_group(update, f"You don't have *{item_name}* in your inventory!", delay=9); return
+
+    # Safety check — unknown items are never silently deleted
+    all_known = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES)
+    if item_name not in all_known:
+        await send_group(update,
+            f"⚠️ *{item_name}* is a legacy item from before the reskin.\n"
+            f"It will be exchanged automatically — please wait for the next deploy.",
+            delay=15)
+        return
 
     # Determine item type and equip
     if item_name in WEAPONS:
@@ -5250,6 +5401,20 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     inv  = sjl(p.get("inventory"), [])
     if item not in inv:
         await send_group(update, f"You don't have *{item}*!", delay=9); return
+
+    # Safety check — never silently delete unknown items
+    all_known_consumables = set(CONSUMABLES)
+    all_known_gear = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES)
+    if item not in all_known_consumables and item not in all_known_gear:
+        inv.append(item)
+        p["inventory"] = json.dumps(inv)
+        save_player(p)
+        await send_group(update,
+            f"⚠️ *{item}* is a legacy item from before the reskin.\n"
+            f"It will be exchanged automatically — please wait for the next deploy.",
+            delay=15)
+        return
+
     inv.remove(item); p["inventory"] = json.dumps(inv)
     msg = f"✅ Used *{item}*. "
     if item == "Chalk Vial":
