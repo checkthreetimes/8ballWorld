@@ -4112,10 +4112,139 @@ def _exp_bar(current, needed, length=10):
     bar    = "█" * filled + "░" * (length - filled)
     return f"✨ [{bar}] {current:,}/{needed:,} EXP ({int(pct*100)}%)"
 
+def _build_stats_pages(p, viewing_name=None):
+    real_max     = calc_max_hp(p)
+    defeated_str = " *(Defeated)*" if is_defeated(p) else ""
+    recovering   = " *(Still Chalking)*" if is_invincible(p) else ""
+    cls          = get_player_class(p)
+    cls_name     = cls["name"] if cls else ("Choose at Lv 5  -  /class" if p["level"] >= 5 else "Unlocks at Lv 5")
+    path_str     = f"  -  Path {p.get('class_path','?')}" if p.get("class_path") else ""
+    eff          = {st: get_stat(p, st) for st in ["STR","AGI","INT","WIS","DEX","LUK"]}
+    sp           = safe_int(p.get("stat_points"))
+    tier         = get_tier(p["level"])
+    w            = get_weather()
+    statuses     = get_active_statuses(p)
+    cp           = calc_combat_power(p) if callable(globals().get("calc_combat_power")) else 0
+    name         = viewing_name or p["username"]
+
+    guild_str = "None"
+    if p.get("guild_id") and str(p.get("guild_id")) != "None":
+        g = get_guild(p["guild_id"])
+        if g:
+            glvl = safe_int(g.get("level"), 1)
+            perk = GUILD_PERKS.get(glvl, {})
+            guild_str = f"{g['name']} (Lv{glvl} +{int(perk.get('exp_bonus',0)*100)}% EXP)"
+
+    weap_name = p.get("equipped_weapon") or "None"
+    armr_name = p.get("equipped_armor") or "None"
+    shld_name = p.get("equipped_shield") or "None"
+    acc_name  = p.get("equipped_accessory") or "None"
+
+    def quick_gear(n):
+        if n == "None": return "None"
+        enh  = get_enhancement(p, n)
+        encs = get_enchant(p, n)
+        return f"{n}{f' +{enh}' if enh else ''}{f' ✨×{len(encs)}' if encs else ''}"
+
+    inv = Counter(sjl(p.get("inventory"), []))
+    inv_lines = [
+        f"  {RARITY_EMOJI.get(WEAPONS.get(k,ARMORS.get(k,ACCESSORIES.get(k,CONSUMABLES.get(k,{})))).get('rarity',''),'⚪')} {k} x{v}"
+        for k, v in inv.items()
+    ] or ["  Empty"]
+
+    # Page 1 - Profile & Stats
+    p1 = [
+        f"🎱 *{name}*{defeated_str}{recovering}  (1/3)",
+        f"🏅 {p['active_title']}",
+        f"{tier['name']}  -  Level {p['level']}",
+        f"🏰 {guild_str}",
+        f"🌍 {w['name']}",
+        "",
+        f"❤️ HP: {p['hp']}/{real_max}",
+        f"{_exp_bar(p['exp'], exp_for_level(p['level']))}",
+        f"🏆 Lifetime EXP: {safe_int(p.get('total_exp')):,}",
+        f"💰 Gold: {p['gold']}",
+        f"⚔️ Wins: {p['wins']}   Losses: {p.get('losses',0)}",
+        "",
+        f"🧙 Class: {cls_name}{path_str}",
+        "",
+        f"📊 *Stats (effective)*",
+        f"STR {eff['STR']}  |  AGI {eff['AGI']}  |  INT {eff['INT']}",
+        f"WIS {eff['WIS']}  |  DEX {eff['DEX']}  |  LUK {eff['LUK']}",
+        f"🛡️ DEF: {get_armor_def(p)} (from gear)",
+    ]
+    if sp > 0:
+        p1.append(f"💡 {sp} stat point{'s' if sp != 1 else ''} available  -  /allocate")
+
+    # Page 2 - Gear & Combat
+    p2 = [
+        f"🎱 *{name}*  -  Gear & Combat  (2/3)",
+        "",
+        f"🎽 *Equipped Gear*",
+        f"⚔️ Weapon:  {quick_gear(weap_name)}",
+        f"🛡️ Armor:   {quick_gear(armr_name)}",
+        f"🔰 Shield:  {quick_gear(shld_name)}",
+        f"💍 Access:  {quick_gear(acc_name)}",
+        f"_/gear for full enhancement + enchant details_",
+    ]
+    if cp > 0:
+        p2 += ["", f"⚡ *Combat Power: {cp:,}*"]
+    if statuses:
+        p2 += ["", "⚠️ *Active Effects*"] + [f"  {st}" for st in statuses]
+    else:
+        p2 += ["", "_No active effects_"]
+
+    # Page 3 - Inventory & Titles
+    p3 = [f"🎱 *{name}*  -  Inventory & Titles  (3/3)", "", "🎒 *Inventory*"]
+    p3 += inv_lines[:20]
+    if len(inv_lines) > 20:
+        p3.append(f"  _...and {len(inv_lines)-20} more  -  /inventory for full list_")
+    else:
+        p3.append("_Use /inventory for paginated full view_")
+    p3 += ["", "🏅 *Titles*", f"  {', '.join(safe_titles(p)) or 'None'}"]
+
+    return ["\n".join(p1), "\n".join(p2), "\n".join(p3)]
+
+
+async def _send_stats_page(target, target_uid: int, page: int, edit: bool = False,
+                           caller_name: str = None):
+    p = get_player(target_uid)
+    if not p:
+        text = "No RPG profile found."
+        if edit:
+            await target.edit_message_text(text, parse_mode="Markdown")
+        else:
+            await send_group(target, text, delay=9)
+        return
+
+    pages = _build_stats_pages(p, viewing_name=caller_name)
+    total = len(pages)
+    page  = max(1, min(page, total))
+    text  = pages[page - 1]
+    row   = []
+    if page > 1:
+        row.append(InlineKeyboardButton("◀ Prev", callback_data=f"stats_p_{target_uid}_{page-1}"))
+    if page < total:
+        row.append(InlineKeyboardButton("Next ▶", callback_data=f"stats_p_{target_uid}_{page+1}"))
+    markup = InlineKeyboardMarkup([row]) if row else None
+    if edit:
+        await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+    else:
+        await send_group(target, text, permanent=True, reply_markup=markup)
+
+
+async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")   # stats_p_<uid>_<page>
+    target_uid = int(parts[2])
+    page       = int(parts[3])
+    await _send_stats_page(query, target_uid, page, edit=True)
+
+
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
-    # Determine target  -  self or replied-to player
     viewing_other = False
     if update.message.reply_to_message:
         target_uid = update.message.reply_to_message.from_user.id
@@ -4146,11 +4275,9 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if s and not viewing_other: sync_levels(p, s); save_player(p); save_shadow(s)
 
-    # Auto-clear bad defeated state
     if is_defeated(p) and p["hp"] > 0:
         p["defeated_until"] = None; save_player(p)
 
-    # Silent DEF point refund  -  DEF is now gear-only
     sd_check = safe_stats(p)
     if sd_check.get("DEF", 0) > 0:
         refund_def = sd_check["DEF"]
@@ -4159,110 +4286,18 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p["stat_points"] = safe_int(p.get("stat_points")) + refund_def
         save_player(p)
 
-    # Real max HP (includes accessory and enchant bonuses)
     real_max = calc_max_hp(p)
     if real_max != p["max_hp"] and not viewing_other:
         p["max_hp"] = real_max
         if p["hp"] > real_max: p["hp"] = real_max
         save_player(p)
 
-    defeated_str  = " *(Defeated)*" if is_defeated(p) else ""
-    recovering    = " *(Still Chalking)*" if is_invincible(p) else ""
-    cls           = get_player_class(p)
-    cls_name      = cls["name"] if cls else ("Choose at Lv 5  -  /class" if p["level"] >= 5 else "Unlocks at Lv 5")
-    path_str      = f"  -  Path {p.get('class_path','?')}" if p.get("class_path") else ""
-    sd            = safe_stats(p)
-    eff           = {st: get_stat(p, st) for st in ["STR","AGI","INT","WIS","DEX","LUK"]}
-    sp            = safe_int(p.get("stat_points"))
-    tier          = get_tier(p["level"])
-    w             = get_weather()
-    statuses      = get_active_statuses(p)
+    caller_name = user.first_name if not viewing_other else None
+    if viewing_other:
+        target_user = update.message.reply_to_message.from_user
+        p["username"] = target_user.first_name
 
-    guild_str = "None"
-    if p.get("guild_id") and str(p.get("guild_id")) != "None":
-        g = get_guild(p["guild_id"])
-        if g:
-            glvl = safe_int(g.get("level"), 1)
-            perk = GUILD_PERKS.get(glvl, {})
-            guild_str = f"{g['name']} (Lv{glvl} +{int(perk.get('exp_bonus',0)*100)}% EXP)"
-
-    inv = Counter(sjl(p.get("inventory"), []))
-    inv_str = "\n".join(
-        f"  {RARITY_EMOJI.get(WEAPONS.get(k,ARMORS.get(k,ACCESSORIES.get(k,CONSUMABLES.get(k,{})))).get('rarity',''),'⚪')} {k} x{v}"
-        for k,v in inv.items()
-    ) or "  Empty"
-
-    weap_name = p.get("equipped_weapon") or "None"
-    armr_name = p.get("equipped_armor") or "None"
-    shld_name = p.get("equipped_shield") or "None"
-    acc_name  = p.get("equipped_accessory") or "None"
-
-    def quick_gear(name):
-        if name == "None": return "None"
-        enh = get_enhancement(p, name)
-        encs = get_enchant(p, name)
-        enh_str = f" +{enh}" if enh else ""
-        enc_str = f" ✨×{len(encs)}" if encs else ""
-        return f"{name}{enh_str}{enc_str}"
-
-    cp = calc_combat_power(p) if callable(globals().get("calc_combat_power")) else 0
-
-    out = [
-        f"🎱 *{p['username']}*{defeated_str}{recovering}",
-        f"🏅 {p['active_title']}",
-        f"{tier['name']}  -  Level {p['level']}",
-        f"🏰 {guild_str}",
-        f"🌍 {w['name']}",
-        "",
-        f"❤️ HP: {p['hp']}/{real_max}",
-        f"{_exp_bar(p['exp'], exp_for_level(p['level']))}",
-        f"🏆 Lifetime EXP: {safe_int(p.get('total_exp')):,}",
-        f"💰 Gold: {p['gold']}",
-        f"⚔️ Wins: {p['wins']}   Losses: {p.get('losses',0)}",
-        "",
-        f"🧙 Class: {cls_name}{path_str}",
-        "",
-        f"📊 *Stats (effective)*",
-        f"STR: {eff['STR']}",
-        f"AGI: {eff['AGI']}",
-        f"INT: {eff['INT']}",
-        f"WIS: {eff['WIS']}",
-        f"DEX: {eff['DEX']}",
-        f"LUK: {eff['LUK']}",
-        f"🛡️ DEF: {get_armor_def(p)} (from gear)",
-    ]
-
-    if sp > 0:
-        out.append(f"💡 {sp} stat points available  -  /allocate")
-
-    out += [
-        "",
-        f"🎽 *Gear*",
-        f"⚔️ {quick_gear(weap_name)}",
-        f"🛡️ {quick_gear(armr_name)}",
-        f"🔰 {quick_gear(shld_name)}",
-        f"💍 {quick_gear(acc_name)}",
-        f"_/gear for full details_",
-    ]
-
-    if cp > 0:
-        out.append(f"⚡ Combat Power: *{cp:,}*")
-
-    if statuses:
-        out += ["", "⚠️ *Active Effects*"]
-        for st in statuses:
-            out.append(f"  {st}")
-
-    out += [
-        "",
-        f"🎒 *Inventory*",
-        inv_str,
-        "",
-        f"🏅 *Titles*",
-        f"  {', '.join(safe_titles(p))}",
-    ]
-
-    await send_group(update, "\n".join(out), permanent=True)
+    await _send_stats_page(update, target_uid, page=1, caller_name=caller_name)
 
 # ── BOSS ──────────────────────────────────────────────────────────────────────
 def _roll_boss_loot(boss_data):
@@ -9267,6 +9302,7 @@ def main():
     app.add_handler(CallbackQueryHandler(rank_callback,      pattern="^rank_p_"))
     app.add_handler(CallbackQueryHandler(inventory_callback, pattern="^inv_p_"))
     app.add_handler(CallbackQueryHandler(help_callback,      pattern="^help_p_"))
+    app.add_handler(CallbackQueryHandler(stats_callback,     pattern="^stats_p_"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
