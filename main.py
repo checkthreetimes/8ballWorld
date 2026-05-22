@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-The World of 8Ball — RPG Bot v13
+The World of 8Ball  -  RPG Bot v13
 """
 
 import os, json, random, logging, sqlite3, re, asyncio
@@ -170,7 +170,7 @@ CLASS_TREE = {
             {"tier":1,"unlock":5,"name":"Iron Will",
              "passive":"Take 10% less damage from all sources.",
              "active":"Shield Bash","type":"stun",
-             "desc":"30% chance to stun target — they miss their next attack.",
+             "desc":"30% chance to stun target  -  they miss their next attack.",
              "passive_key":"iron_will"},
             {"tier":1,"unlock":5,"name":"Defensive Stance",
              "passive":"Reduce incoming damage by 5 when HP is above 70%.",
@@ -189,7 +189,7 @@ CLASS_TREE = {
             {"tier":2,"unlock":10,"name":"Holy Stance",
              "passive":"Gain +15% defense when below 50% HP.",
              "active":"Consecrate","type":"dmg_field",
-             "desc":"Deal damage + create a holy field for 30 min — enemies who attack you take WIS x2 holy damage back.",
+             "desc":"Deal damage + create a holy field for 30 min  -  enemies who attack you take WIS x2 holy damage back.",
              "passive_key":"holy_stance"},
             {"tier":2,"unlock":10,"name":"Shield Wall",
              "passive":"Reduce physical damage by 5 when shield is equipped.",
@@ -281,7 +281,7 @@ CLASS_TREE = {
         "stat_bonus":{"STR":5,"DEF":2},
         "skills":[
             {"tier":4,"unlock":60,"name":"Unbreakable",
-             "passive":"Cannot be one-shotted — always survive at 1 HP (once per fight).",
+             "passive":"Cannot be one-shotted  -  always survive at 1 HP (once per fight).",
              "active":"Rampage","type":"aoe_recent_attackers",
              "desc":"Hit everyone who attacked you in the last 30 minutes. Damage scales +25% per attacker.",
              "passive_key":"unbreakable"},
@@ -297,7 +297,7 @@ CLASS_TREE = {
             {"tier":5,"unlock":100,"name":"Conqueror",
              "passive":"Every PVP kill restores 20% HP. Defeated targets take +25% more damage from all sources for 1 hour.",
              "active":"Decimation","type":"execute_nuke",
-             "desc":"STR x6 damage, ignores all defense. On kill: target is weakened — takes 25% more damage for 1 hour.",
+             "desc":"STR x6 damage, ignores all defense. On kill: target is weakened  -  takes 25% more damage for 1 hour.",
              "passive_key":"conqueror"},
         ]
     },
@@ -350,7 +350,7 @@ CLASS_TREE = {
             {"tier":3,"unlock":30,"name":"Arcane Mastery",
              "passive":"Every 3rd spell cast deals triple damage (tracked internally).",
              "active":"Meteor","type":"aoe_recent_attackers",
-             "desc":"Massive AOE — hits target + everyone who attacked them in last 30 minutes.",
+             "desc":"Massive AOE  -  hits target + everyone who attacked them in last 30 minutes.",
              "passive_key":"arcane_mastery"},
         ]
     },
@@ -362,9 +362,9 @@ CLASS_TREE = {
         "stat_bonus":{"INT":5,"AGI":1},
         "skills":[
             {"tier":4,"unlock":60,"name":"Mana Overload",
-             "passive":"15% chance any attack against you triggers a shock — attacker takes INT-scaled damage back.",
+             "passive":"15% chance any attack against you triggers a shock  -  attacker takes INT-scaled damage back.",
              "active":"Supernova","type":"raid_aoe",
-             "desc":"INT x5 — hits all players currently in an active boss or raid fight.",
+             "desc":"INT x5  -  hits all players currently in an active boss or raid fight.",
              "passive_key":"mana_overload"},
         ]
     },
@@ -390,9 +390,9 @@ CLASS_TREE = {
         "stat_bonus":{"INT":2,"STR":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Cursed Blade",
-             "passive":"Physical attacks carry a hex — target deals 10% less damage for 2 minutes.",
+             "passive":"Physical attacks carry a hex  -  target deals 10% less damage for 2 minutes.",
              "active":"Hex","type":"debuff",
-             "desc":"Curse target — they deal 25% less damage for 2 minutes.",
+             "desc":"Curse target  -  they deal 25% less damage for 2 minutes.",
              "passive_key":"cursed_blade"},
             {"tier":2,"unlock":10,"name":"Shadow Hex",
              "passive":"Hexed targets take 5% extra damage from all sources.",
@@ -437,7 +437,7 @@ CLASS_TREE = {
         "stat_bonus":{"INT":6,"AGI":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Void Rift",
-             "passive":"25% chance any attack against you misses — absorbed by the void.",
+             "passive":"25% chance any attack against you misses  -  absorbed by the void.",
              "active":"Void Collapse","type":"void_nuke",
              "desc":"Target loses 50% of current HP instantly. Cannot be healed for 30 minutes.",
              "passive_key":"void_rift"},
@@ -561,7 +561,7 @@ CLASS_TREE = {
         "name":"Fixer","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
-        "desc":"Fixes every problem the same way — by making it disappear.",
+        "desc":"Fixes every problem the same way  -  by making it disappear.",
         "stat_bonus":{"AGI":4,"STR":3},
         "skills":[
             {"tier":4,"unlock":60,"name":"Flurry",
@@ -738,7 +738,7 @@ CLASS_TREE = {
             {"tier":1,"unlock":5,"name":"Mending Aura",
              "passive":"All heals you cast are 25% more effective.",
              "active":"Holy Light","type":"revive_heal",
-             "desc":"Heal target for WIS x5 HP. Works on defeated players — revives them.",
+             "desc":"Heal target for WIS x5 HP. Works on defeated players  -  revives them.",
              "passive_key":"mending_aura"},
             {"tier":1,"unlock":5,"name":"Mend",
              "passive":"Regen 3 HP every 10 minutes passively.",
@@ -760,7 +760,7 @@ CLASS_TREE = {
              "desc":"Grant target 1 hour of damage reduction (15% less damage taken).",
              "passive_key":"divine_grace"},
             {"tier":2,"unlock":10,"name":"Renew",
-             "passive":"Heals you cast leave a regen buff — 5 HP per 30s for 5 minutes.",
+             "passive":"Heals you cast leave a regen buff  -  5 HP per 30s for 5 minutes.",
              "active":"Renew","type":"regen",
              "desc":"Apply regen to target: restore WIS HP every 30 seconds for 5 minutes.",
              "passive_key":"renew"},
@@ -961,63 +961,63 @@ TITLE_BONUSES = {
 # ── GEAR SYSTEM ───────────────────────────────────────────────────────────────
 WEAPONS = {
     # ── WARRIOR ──────────────────────────────────────────────────────────────
-    "Cracked House Cue":        {"class":"warrior","type":"sword_1h","atk":3, "rarity":"common"},
-    "Worn Practice Cue":        {"class":"warrior","type":"sword_1h","atk":7, "rarity":"uncommon"},
-    "Graphite Break Cue":{"class":"warrior","type":"sword_1h","atk":14,"rarity":"rare"},
-    "Heavy Breaker Staff":  {"class":"warrior","type":"sword_2h","atk":24,"rarity":"epic"},
-    "The Rack Splitter":            {"class":"warrior","type":"sword_2h","atk":40,"rarity":"legendary"},
+    "Cracked House Cue":        {"class":"warrior","type":"sword_1h","atk":3, "rarity":"common","line":"warrior"},
+    "Worn Practice Cue":        {"class":"warrior","type":"sword_1h","atk":7, "rarity":"uncommon","line":"warrior"},
+    "Graphite Break Cue":{"class":"warrior","type":"sword_1h","atk":14,"rarity":"rare","line":"warrior"},
+    "Heavy Breaker Staff":  {"class":"warrior","type":"sword_2h","atk":24,"rarity":"epic","line":"warrior"},
+    "The Rack Splitter":            {"class":"warrior","type":"sword_2h","atk":40,"rarity":"legendary","line":"warrior"},
     # ── MAGE ─────────────────────────────────────────────────────────────────
-    "Chalked Finger":      {"class":"mage","type":"wand","atk":2, "rarity":"common"},
-    "Blue Diamond Chalk":   {"class":"mage","type":"wand","atk":8, "rarity":"uncommon"},
-    "Blackwood Bridge Stick":      {"class":"mage","type":"staff","atk":15,"rarity":"rare"},
-    "The Extension":      {"class":"mage","type":"staff","atk":26,"rarity":"epic"},
-    "The Grand Bridge":        {"class":"mage","type":"wand","atk":42,"rarity":"legendary"},
+    "Chalked Finger":      {"class":"mage","type":"wand","atk":2, "rarity":"common","line":"mage"},
+    "Blue Diamond Chalk":   {"class":"mage","type":"wand","atk":8, "rarity":"uncommon","line":"mage"},
+    "Blackwood Bridge Stick":      {"class":"mage","type":"staff","atk":15,"rarity":"rare","line":"mage"},
+    "The Extension":      {"class":"mage","type":"staff","atk":26,"rarity":"epic","line":"mage"},
+    "The Grand Bridge":        {"class":"mage","type":"wand","atk":42,"rarity":"legendary","line":"mage"},
     # ── ARCHER ────────────────────────────────────────────────────────────────
-    "Bent Triangle":      {"class":"archer","type":"bow","atk":3, "rarity":"common"},
-    "Standard Magic Rack":      {"class":"archer","type":"crossbow","atk":7,"rarity":"uncommon"},
-    "Precision Rack":  {"class":"archer","type":"bow","atk":13,"rarity":"rare"},
-    "Diamond Rack":     {"class":"archer","type":"bow","atk":23,"rarity":"epic"},
-    "The Perfect Break Rack":  {"class":"archer","type":"crossbow","atk":38,"rarity":"legendary"},
+    "Bent Triangle":      {"class":"archer","type":"bow","atk":3, "rarity":"common","line":"archer"},
+    "Standard Magic Rack":      {"class":"archer","type":"crossbow","atk":7,"rarity":"uncommon","line":"archer"},
+    "Precision Rack":  {"class":"archer","type":"bow","atk":13,"rarity":"rare","line":"archer"},
+    "Diamond Rack":     {"class":"archer","type":"bow","atk":23,"rarity":"epic","line":"archer"},
+    "The Perfect Break Rack":  {"class":"archer","type":"crossbow","atk":38,"rarity":"legendary","line":"archer"},
     # ── THIEF ─────────────────────────────────────────────────────────────────
-    "Chalk Shiv":              {"class":"thief","type":"dagger","atk":4, "rarity":"common"},
-    "Mushroom Tip Blade":         {"class":"thief","type":"dagger","atk":9, "rarity":"uncommon"},
-    "Ferrule Dart":      {"class":"thief","type":"throwing_star","atk":14,"rarity":"rare"},
-    "Twin Tip Blades":     {"class":"thief","type":"throwing_star","atk":25,"rarity":"epic"},
-    "The Ball Return":     {"class":"thief","type":"dagger","atk":44,"rarity":"legendary"},
+    "Chalk Shiv":              {"class":"thief","type":"dagger","atk":4, "rarity":"common","line":"thief"},
+    "Mushroom Tip Blade":         {"class":"thief","type":"dagger","atk":9, "rarity":"uncommon","line":"thief"},
+    "Ferrule Dart":      {"class":"thief","type":"throwing_star","atk":14,"rarity":"rare","line":"thief"},
+    "Twin Tip Blades":     {"class":"thief","type":"throwing_star","atk":25,"rarity":"epic","line":"thief"},
+    "The Ball Return":     {"class":"thief","type":"dagger","atk":44,"rarity":"legendary","line":"thief"},
     # ── PRIEST ────────────────────────────────────────────────────────────────
-    "Chalk Beads":     {"class":"priest","type":"rosary","atk":2, "rarity":"common"},
-    "Iron Chalk Ring":             {"class":"priest","type":"rosary","atk":6, "rarity":"uncommon"},
-    "The Spot Marker":        {"class":"priest","type":"cross","atk":12,"rarity":"rare"},
-    "The Crossed Cues":  {"class":"priest","type":"cross","atk":22,"rarity":"epic"},
-    "The Diamond Staff":         {"class":"priest","type":"cross","atk":36,"rarity":"legendary"},
+    "Chalk Beads":     {"class":"priest","type":"rosary","atk":2, "rarity":"common","line":"priest"},
+    "Iron Chalk Ring":             {"class":"priest","type":"rosary","atk":6, "rarity":"uncommon","line":"priest"},
+    "The Spot Marker":        {"class":"priest","type":"cross","atk":12,"rarity":"rare","line":"priest"},
+    "The Crossed Cues":  {"class":"priest","type":"cross","atk":22,"rarity":"epic","line":"priest"},
+    "The Diamond Staff":         {"class":"priest","type":"cross","atk":36,"rarity":"legendary","line":"priest"},
 }
 
 ARMORS = {
-    "Bar Room Vest":            {"class":"warrior","def":4, "rarity":"common"},
-    "Slate Guard":         {"class":"warrior","def":11,"rarity":"uncommon"},
-    "Red Cloth Plate":        {"class":"warrior","def":22,"rarity":"rare"},
-    "Black Ball Plate":        {"class":"warrior","def":34,"rarity":"epic"},
-    "Diamond Felt Armor":      {"class":"warrior","def":50,"rarity":"legendary"},
-    "Worn Chalk Coat":       {"class":"mage","def":3,  "rarity":"common"},
-    "Green Baize Robe":     {"class":"mage","def":9,  "rarity":"uncommon"},
-    "White Glove Wrap":        {"class":"mage","def":18, "rarity":"rare"},
-    "Blacklight Cloak":        {"class":"mage","def":28, "rarity":"epic"},
-    "The Nap Robe":        {"class":"mage","def":44, "rarity":"legendary"},
-    "Corner Pocket Vest":   {"class":"archer","def":4, "rarity":"common"},
-    "Rail Leather Chest":   {"class":"archer","def":10,"rarity":"uncommon"},
-    "Diamond Point Plate":     {"class":"archer","def":20,"rarity":"rare"},
-    "Red Baize Brigandine": {"class":"archer","def":31,"rarity":"epic"},
-    "The Rack Scale":  {"class":"archer","def":47,"rarity":"legendary"},
-    "Hustle Coat":        {"class":"thief","def":3,  "rarity":"common"},
-    "Midnight Felt Coat":     {"class":"thief","def":10, "rarity":"uncommon"},
-    "The Sneak Mesh":   {"class":"thief","def":19, "rarity":"rare"},
-    "Backdoor Harness":{"class":"thief","def":30,"rarity":"epic"},
-    "The Ghost Coat":{"class":"thief","def":48, "rarity":"legendary"},
-    "Chalk Cloth Vestments":         {"class":"priest","def":3, "rarity":"common"},
-    "The Rule Book Robe":     {"class":"priest","def":8, "rarity":"uncommon"},
-    "The Referee Hood":       {"class":"priest","def":17,"rarity":"rare"},
-    "The Tournament Cloak":    {"class":"priest","def":27,"rarity":"epic"},
-    "The House Saint Surplice":       {"class":"priest","def":42,"rarity":"legendary"},
+    "Bar Room Vest":            {"class":"warrior","def":4, "rarity":"common","line":"warrior"},
+    "Slate Guard":         {"class":"warrior","def":11,"rarity":"uncommon","line":"warrior"},
+    "Red Cloth Plate":        {"class":"warrior","def":22,"rarity":"rare","line":"warrior"},
+    "Black Ball Plate":        {"class":"warrior","def":34,"rarity":"epic","line":"warrior"},
+    "Diamond Felt Armor":      {"class":"warrior","def":50,"rarity":"legendary","line":"warrior"},
+    "Worn Chalk Coat":       {"class":"mage","def":3,  "rarity":"common","line":"mage"},
+    "Green Baize Robe":     {"class":"mage","def":9,  "rarity":"uncommon","line":"mage"},
+    "White Glove Wrap":        {"class":"mage","def":18, "rarity":"rare","line":"mage"},
+    "Blacklight Cloak":        {"class":"mage","def":28, "rarity":"epic","line":"mage"},
+    "The Nap Robe":        {"class":"mage","def":44, "rarity":"legendary","line":"mage"},
+    "Corner Pocket Vest":   {"class":"archer","def":4, "rarity":"common","line":"archer"},
+    "Rail Leather Chest":   {"class":"archer","def":10,"rarity":"uncommon","line":"archer"},
+    "Diamond Point Plate":     {"class":"archer","def":20,"rarity":"rare","line":"archer"},
+    "Red Baize Brigandine": {"class":"archer","def":31,"rarity":"epic","line":"archer"},
+    "The Rack Scale":  {"class":"archer","def":47,"rarity":"legendary","line":"archer"},
+    "Hustle Coat":        {"class":"thief","def":3,  "rarity":"common","line":"thief"},
+    "Midnight Felt Coat":     {"class":"thief","def":10, "rarity":"uncommon","line":"thief"},
+    "The Sneak Mesh":   {"class":"thief","def":19, "rarity":"rare","line":"thief"},
+    "Backdoor Harness":{"class":"thief","def":30,"rarity":"epic","line":"thief"},
+    "The Ghost Coat":{"class":"thief","def":48, "rarity":"legendary","line":"thief"},
+    "Chalk Cloth Vestments":         {"class":"priest","def":3, "rarity":"common","line":"priest"},
+    "The Rule Book Robe":     {"class":"priest","def":8, "rarity":"uncommon","line":"priest"},
+    "The Referee Hood":       {"class":"priest","def":17,"rarity":"rare","line":"priest"},
+    "The Tournament Cloak":    {"class":"priest","def":27,"rarity":"epic","line":"priest"},
+    "The House Saint Surplice":       {"class":"priest","def":42,"rarity":"legendary","line":"priest"},
 }
 
 SHIELDS = {
@@ -1239,7 +1239,7 @@ RAID_TIERS = [
          ("Road Player's Compass",0.12),("The Break Torc",0.12),
          ("Slate Fragment",0.35),("The Custom Tip Scroll",0.20),("The Re-Rack",0.08),
      ]},
-    {"name":"The Final Rack — Endgame","min_level":15,"waves":4,"wave_boss_key":"8 ball",
+    {"name":"The Final Rack  -  Endgame","min_level":15,"waves":4,"wave_boss_key":"8 ball",
      "wave_enemies":[{"name":"Shadow Rack","hp":2500,"dmg_min":100,"dmg_max":160},
                      {"name":"Void Ball","hp":3500,"dmg_min":130,"dmg_max":200},
                      {"name":"8Ball Sentinel","hp":5000,"dmg_min":150,"dmg_max":230},
@@ -1493,7 +1493,7 @@ DUNGEON_THEMES = [
         "room_flavor": ["The stone is barely visible beneath layers of growth.",
                         "Something breathes here. You can feel it.",
                         "Bioluminescent fungi cast everything in pale blue light.",
-                        "The labyrinth shifts — the walls have moved since you passed them."],
+                        "The labyrinth shifts  -  the walls have moved since you passed them."],
         "boss_name": "The Felt Itself",
         "boss_desc": "The table stopped being furniture a long time ago. It has opinions now.",
     },
@@ -1849,7 +1849,7 @@ def get_accessory_bonus(p, stat):
     if stat in ("STR","DEF","AGI","INT","WIS","DEX","LUK") and "all_stats" in effect:
         return effect["all_stats"]
 
-    # primary_stat — applies only to the player's primary class stat
+    # primary_stat  -  applies only to the player's primary class stat
     if "primary_stat" in effect:
         primary = get_primary_stat(p)
         if stat == primary:
@@ -1963,15 +1963,15 @@ def calc_proc_effect(attacker, defender, dmg):
     path = attacker.get("class_path")
     now  = datetime.now()
  
-    # ── WARRIOR PATH A — Blessed Strike ──────────────────────
+    # ── WARRIOR PATH A  -  Blessed Strike ──────────────────────
     if line == "warrior" and path == "A":
         chance = get_proc_chance(0.10, attacker)
         if random.random() < chance:
             defender["burn_until"]  = (now + timedelta(minutes=3)).isoformat()
             defender["burn_damage"] = 10
-            return True, "⚔️ *Blessed Strike!* Holy fire ignites — 10 dmg/30s!", 0
+            return True, "⚔️ *Blessed Strike!* Holy fire ignites  -  10 dmg/30s!", 0
  
-    # ── WARRIOR PATH B — Double Strike ───────────────────────
+    # ── WARRIOR PATH B  -  Double Strike ───────────────────────
     elif line == "warrior" and path == "B":
         chance = get_proc_chance(0.15, attacker)
         if random.random() < chance:
@@ -1980,7 +1980,7 @@ def calc_proc_effect(attacker, defender, dmg):
             defender["hp"] = max(0, defender["hp"] - extra)
             return True, f"⚔️ *Double Strike!* A second blow lands for {extra} dmg!", extra
  
-    # ── MAGE PATH A — Arcane Burn ─────────────────────────────
+    # ── MAGE PATH A  -  Arcane Burn ─────────────────────────────
     elif line == "mage" and path == "A":
         chance = get_proc_chance(0.12, attacker)
         if random.random() < chance:
@@ -1988,7 +1988,7 @@ def calc_proc_effect(attacker, defender, dmg):
             defender["burn_damage"] = 8
             return True, "🔥 *Arcane Burn!* Magical fire clings to the wound!", 0
  
-    # ── MAGE PATH B — Soul Drain ──────────────────────────────
+    # ── MAGE PATH B  -  Soul Drain ──────────────────────────────
     elif line == "mage" and path == "B":
         chance = get_proc_chance(0.12, attacker)
         if random.random() < chance:
@@ -1996,7 +1996,7 @@ def calc_proc_effect(attacker, defender, dmg):
             attacker["hp"] = min(calc_max_hp(attacker), attacker["hp"] + steal)
             return True, f"🌑 *Soul Drain!* Stole {steal} HP from the wound!", 0
  
-    # ── THIEF PATH A — Poison Strike ─────────────────────────
+    # ── THIEF PATH A  -  Poison Strike ─────────────────────────
     elif line == "thief" and path == "A":
         chance = get_proc_chance(0.15, attacker)
         if random.random() < chance:
@@ -2004,21 +2004,21 @@ def calc_proc_effect(attacker, defender, dmg):
             defender["poison_damage"] = 6
             return True, "🐍 *Poison Strike!* The blade was coated in poison!", 0
  
-    # ── THIEF PATH B — Exposed ────────────────────────────────
+    # ── THIEF PATH B  -  Exposed ────────────────────────────────
     elif line == "thief" and path == "B":
         chance = get_proc_chance(0.15, attacker)
         if random.random() < chance:
             defender["exposed_until"] = (now + timedelta(minutes=2)).isoformat()
-            return True, "🗡️ *Exposed!* A vital point was struck — +15% dmg taken!", 0
+            return True, "🗡️ *Exposed!* A vital point was struck  -  +15% dmg taken!", 0
  
-    # ── ARCHER PATH A — Pin Down ──────────────────────────────
+    # ── ARCHER PATH A  -  Pin Down ──────────────────────────────
     elif line == "archer" and path == "A":
         chance = get_proc_chance(0.12, attacker)
         if random.random() < chance:
             defender["distracted_until"] = (now + timedelta(seconds=30)).isoformat()
-            return True, "🏹 *Pin Down!* The arrow grazes their shoulder — distracted!", 0
+            return True, "🏹 *Pin Down!* The arrow grazes their shoulder  -  distracted!", 0
  
-    # ── ARCHER PATH B — Headshot ──────────────────────────────
+    # ── ARCHER PATH B  -  Headshot ──────────────────────────────
     elif line == "archer" and path == "B":
         chance = get_proc_chance(0.12, attacker)
         if random.random() < chance:
@@ -2027,19 +2027,19 @@ def calc_proc_effect(attacker, defender, dmg):
             defender["hp"] = max(0, defender["hp"] - extra)
             return True, f"🎯 *Headshot!* Clean hit for {extra} bonus dmg!", extra
  
-    # ── PRIEST PATH A — Holy Ward (on attack) ────────────────
+    # ── PRIEST PATH A  -  Holy Ward (on attack) ────────────────
     elif line == "priest" and path == "A":
         chance = get_proc_chance(0.20, attacker)
         if random.random() < chance:
             attacker["ward_until"] = (now + timedelta(minutes=2)).isoformat()
             return True, "✨ *Holy Ward!* Divine light shields the faithful!", 0
  
-    # ── PRIEST PATH B — Holy Brand ────────────────────────────
+    # ── PRIEST PATH B  -  Holy Brand ────────────────────────────
     elif line == "priest" and path == "B":
         chance = get_proc_chance(0.15, attacker)
         if random.random() < chance:
             defender["branded_until"] = (now + timedelta(minutes=2)).isoformat()
-            return True, "🔥 *Holy Brand!* Branded by judgment — next attack weakened!", 0
+            return True, "🔥 *Holy Brand!* Branded by judgment  -  next attack weakened!", 0
  
     return False, "", 0
 
@@ -2135,11 +2135,11 @@ def calc_defense(defender, dmg):
     total = min(0.80, def_reduction + armor_reduction)
     final = max(1, round(dmg * (1 - total)))
  
-    # Exposed debuff — target takes +15% more damage
+    # Exposed debuff  -  target takes +15% more damage
     if _ts_active(defender, "exposed_until"):
         final = round(final * 1.15)
  
-    # Branded — attacker's next strike deals 30% less (checked on attacker)
+    # Branded  -  attacker's next strike deals 30% less (checked on attacker)
     if _ts_active(defender, "branded_until"):
         final = round(final * 0.70)
         defender["branded_until"] = None  # consumed on hit
@@ -2231,7 +2231,7 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         lines.append("💥 *Guaranteed Critical!*")
     elif stype == "pierce_dmg":
         dmg = round(get_stat(p, "AGI") * 3)
-        lines.append("🌑 *Pierce!* Full damage — no defense.")
+        lines.append("🌑 *Pierce!* Full damage  -  no defense.")
     elif stype == "pierce_all":
         dmg = round(get_stat(p, "STR") * sk.get("str_mult", 2))
         lines.append("🏹 *Piercing Shot!* Ignores all defense.")
@@ -2274,10 +2274,10 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         lines.append(f"💀 *Hexed!* {enemy['name']} deals 25% less damage for 2 minutes!")
         dmg = round(base * 0.8)
     elif stype in ("vanish", "holy_shield", "blessing"):
-        # Self-buff — apply to player, no damage
+        # Self-buff  -  apply to player, no damage
         if stype == "vanish":
             set_status(p, "vanish_until", 60)
-            lines.append("👻 *Vanished!* (No effect in raids — treated as stealth stance)")
+            lines.append("👻 *Vanished!* (No effect in raids  -  treated as stealth stance)")
         elif stype == "blessing":
             set_status(p, "blessed_until", 300)
             lines.append("✨ *Blessed!* +10% damage and healing for 5 minutes.")
@@ -2285,7 +2285,7 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
     elif stype == "silence":
         set_enemy_status(raid_state, "silenced_until", 60)
         dmg = round(base * 1.5)
-        lines.append(f"🤐 *Silenced!* {enemy['name']} is dazed — reduced damage next hit!")
+        lines.append(f"🤐 *Silenced!* {enemy['name']} is dazed  -  reduced damage next hit!")
         set_enemy_status(raid_state, "weakened_until", 60)
     elif stype in ("holy_dmg", "strip_debuff", "condemn"):
         wis = get_stat(p, "WIS")
@@ -2303,7 +2303,7 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         int_v = get_stat(p, "INT")
         dmg   = int_v * 6
         set_enemy_status(raid_state, "frozen_until", 60)
-        lines.append(f"❄️ *Frozen!* {enemy['name']} is frozen — skips next counter-attack!")
+        lines.append(f"❄️ *Frozen!* {enemy['name']} is frozen  -  skips next counter-attack!")
     else:
         dmg = round(base * sk.get("mult", 1.0))
 
@@ -2334,12 +2334,12 @@ def raid_enemy_counter(p, raid_state, lines):
     if bleed_dmg:
         lines.append(f"🩸 *{enemy['name']}* bleeds for *{bleed_dmg}*! HP: {raid_state['enemy_hp']}/{raid_state['enemy_max_hp']}")
         if raid_state["enemy_hp"] <= 0:
-            return False  # enemy died to bleed — caller handles wave clear
+            return False  # enemy died to bleed  -  caller handles wave clear
 
     # Check if enemy is stunned/frozen/rooted
     if enemy_status_active(raid_state, "stunned_until") or enemy_status_active(raid_state, "frozen_until"):
         status = "stunned" if enemy_status_active(raid_state, "stunned_until") else "frozen"
-        lines.append(f"⚡ *{enemy['name']}* is {status} — no counter-attack!")
+        lines.append(f"⚡ *{enemy['name']}* is {status}  -  no counter-attack!")
         return False
 
     raw = random.randint(enemy["dmg_min"], enemy["dmg_max"])
@@ -2453,7 +2453,7 @@ async def _advance_raid_turn(bot, chat_id, raid_state):
     remaining = alive_ids - acted
 
     if not remaining:
-        # All players acted — enemy phase
+        # All players acted  -  enemy phase
         await _enemy_phase(bot, chat_id, raid_state)
     else:
         # Find next alive player who hasn't acted
@@ -2511,6 +2511,11 @@ async def _enemy_phase(bot, chat_id, raid_state):
             lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6hr defeat. -{exp_loss} EXP.")
         else:
             lines.append(f"🩸 *{p['username']}* takes *{edm} dmg!* ({php}/{pmhp} HP)")
+            if php <= round(pmhp * 0.30):
+                asyncio.create_task(bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⚠️ *{p['username']}* is critically low! ({php}/{pmhp} HP) Use /skill or a healing item!",
+                    parse_mode="Markdown"))
 
     await bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown")
 
@@ -2528,7 +2533,7 @@ async def _enemy_phase(bot, chat_id, raid_state):
     await _announce_turn(bot, chat_id, raid_state)
 
 async def _handle_wave_clear(bot, chat_id, raid_state, p=None):
-    """Handle enemy death — advance wave or complete the raid."""
+    """Handle enemy death  -  advance wave or complete the raid."""
     tier = raid_state["tier"]
     wave_enemies = tier["wave_enemies"]
     cw = raid_state["wave"]
@@ -2542,10 +2547,10 @@ async def _handle_wave_clear(bot, chat_id, raid_state, p=None):
         raid_state["enemy"] = ne
         raid_state["enemy_hp"] = ne["hp"]
         raid_state["enemy_max_hp"] = ne["hp"]
-        lines.append(f"\n🌊 *Wave {raid_state['wave']} — {ne['name']}*")
+        lines.append(f"\n🌊 *Wave {raid_state['wave']}  -  {ne['name']}*")
         lines.append(f"❤️ HP: {ne['hp']} | 💀 {ne['dmg_min']}–{ne['dmg_max']}")
         await bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown")
-        # New wave — reset round and announce first turn
+        # New wave  -  reset round and announce first turn
         raid_state["acted_this_round"] = set()
         raid_state["current_turn_idx"] = 0
         await _announce_turn(bot, chat_id, raid_state)
@@ -2562,7 +2567,7 @@ async def _handle_wave_clear(bot, chat_id, raid_state, p=None):
         }
         raid_state["enemy_hp"] = boss_hp
         raid_state["enemy_max_hp"] = boss_hp
-        lines.append(f"\n🎱 *FINAL BOSS — {bd['name']}!* ❤️ HP: {boss_hp}")
+        lines.append(f"\n🎱 *FINAL BOSS  -  {bd['name']}!* ❤️ HP: {boss_hp}")
         await bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown")
         raid_state["acted_this_round"] = set()
         raid_state["current_turn_idx"] = 0
@@ -2571,7 +2576,7 @@ async def _handle_wave_clear(bot, chat_id, raid_state, p=None):
     else:
         # Raid complete
         active_raids.pop(chat_id, None)
-        lines.append(f"\n🏆 *RAID COMPLETE — {tier['name']}!*\n")
+        lines.append(f"\n🏆 *RAID COMPLETE  -  {tier['name']}!*\n")
         total_dmg = sum(raid_state["damage_dealt"].values())
         w2 = get_weather()
         for u in raid_state["party"]:
@@ -2591,7 +2596,7 @@ async def _handle_wave_clear(bot, chat_id, raid_state, p=None):
             if u == raid_state["party"][0] and award_title(pp,"Break Leader"):
                 lines.append(f"🏅 *{pp['username']}* earned: *Break Leader*!")
             add_exp(pp, exp_r, w2); save_player(pp)
-            lines.append(f"✅ *{pp['username']}* ({int(share*100)}% dmg) — +{exp_r:,} EXP | +{gold_r}g")
+            lines.append(f"✅ *{pp['username']}* ({int(share*100)}% dmg)  -  +{exp_r:,} EXP | +{gold_r}g")
         await bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
 
 def check_miss(attacker, defender):
@@ -2600,7 +2605,7 @@ def check_miss(attacker, defender):
     if is_vanished(defender):    return True
     if cannot_attack(attacker):  return True
 
-    # Base dodge — line-specific
+    # Base dodge  -  line-specific
     cls_d_line = get_class_line(defender)
     if cls_d_line == "archer":
         dodge_stat = get_stat(defender, "DEX")
@@ -2693,7 +2698,7 @@ def apply_reflect(defender, attacker, dmg):
     return reflect
 
 def check_bleed_tick(p):
-    """Called in handle_message — tick bleed damage."""
+    """Called in handle_message  -  tick bleed damage."""
     if not is_bleeding(p): return 0
     last = p.get("bleed_last_tick")
     now  = datetime.now()
@@ -2813,7 +2818,7 @@ def init_db():
 
     conn.commit()
 
-    # Migrate existing tables — add columns introduced in v13
+    # Migrate existing tables  -  add columns introduced in v13
     migrations = [
         ("players", "poison_until",      "TEXT DEFAULT NULL"),
         ("players", "poison_damage",     "INTEGER DEFAULT 0"),
@@ -2870,43 +2875,43 @@ def init_db():
 
     # ── v15 Item Name Migration ───────────────────────────────────────────────
     ITEM_NAME_MAP = {
-        # Weapons — Warrior
+        # Weapons  -  Warrior
         "Broken Longsword":"Cracked House Cue","Militia Falchion":"Worn Practice Cue",
         "Blacksteel Bastard Sword":"Graphite Break Cue","Giantslayer Zweihander":"Heavy Breaker Staff",
         "Worldcleaver":"The Rack Splitter",
-        # Weapons — Mage
+        # Weapons  -  Mage
         "Oak Practice Staff":"Chalked Finger","Petrified Willow Wand":"Blue Diamond Chalk",
         "Cursed Ebony Staff":"Blackwood Bridge Stick","Astral Conduit Rod":"The Extension",
         "Nullstar Scepter":"The Grand Bridge",
-        # Weapons — Archer
+        # Weapons  -  Archer
         "Makeshift Shortbow":"Bent Triangle","Goat Horn Crossbow":"Standard Magic Rack",
         "Falconwing Recurve Bow":"Precision Rack","Windripper Greatbow":"Diamond Rack",
         "Heaven's Tear Ballista":"The Perfect Break Rack",
-        # Weapons — Thief
+        # Weapons  -  Thief
         "Rusty Shiv":"Chalk Shiv","Serrated Kujang":"Mushroom Tip Blade",
         "Venomspike Blowgun":"Ferrule Dart","Shadowstitch Katars":"Twin Tip Blades",
         "Umbral Chain Sickle":"The Ball Return",
-        # Weapons — Priest
+        # Weapons  -  Priest
         "Wooden Prayer Beads":"Chalk Beads","Iron Rosary":"Iron Chalk Ring",
         "Sun Disc Pendant":"The Spot Marker","Martyr's Thorned Cross":"The Crossed Cues",
         "Sanctus Aeterna":"The Diamond Staff",
-        # Armors — Warrior
+        # Armors  -  Warrior
         "Padded Tunic":"Padded Cue Jacket","Iron Scale Vest":"Slate Guard",
         "Crimson Plackart":"Red Cloth Plate","Onyx Golem Plate":"Black Ball Plate",
         "Titanfoil Carapace":"Diamond Felt Armor",
-        # Armors — Mage
+        # Armors  -  Mage
         "Frayed Spellcloak":"Worn Chalk Coat","Windwoven Silk Robe":"Green Baize Robe",
         "Arctic Fox Stole":"White Glove Wrap","Voidweave Mantle":"Blacklight Cloak",
         "Singularity Robe":"The Nap Robe",
-        # Armors — Archer
+        # Armors  -  Archer
         "Sturdy Leather Jerkin":"Corner Pocket Vest","Hardened Hide Cuirass":"Rail Leather Chest",
         "Griffon Plate Chest":"Diamond Point Plate","Phoenix Down Brigandine":"Red Baize Brigandine",
         "Skybreaker Scale Armor":"The Rack Scale",
-        # Armors — Thief
+        # Armors  -  Thief
         "Dark Hooded Wrap":"Hustle Coat","Oilskin Shadow Coat":"Midnight Felt Coat",
         "Stalker's Mesh Shroud":"The Sneak Mesh","Nocturnal Leather Harness":"Backdoor Harness",
         "Abyssal Cloak of Silence":"The Ghost Coat",
-        # Armors — Priest
+        # Armors  -  Priest
         "Woven Vestments":"Chalk Cloth Vestments","Embroidered Cassock":"The Rule Book Robe",
         "Silver Mitre Hood":"The Referee Hood","Lightweaver Chasuble":"The Tournament Cloak",
         "Seraph's Surplice":"The House Saint Surplice",
@@ -2914,28 +2919,28 @@ def init_db():
         "Splintered Buckler":"Cracked Rack Shield","Ironbound Targe":"Iron Triangle",
         "Kite Shield of the Vow":"The Break Shield","Obsidian Tower Shield":"Black Ball Barrier",
         "Aegis of First Light":"The Diamond Aegis",
-        # Accessories — Common
+        # Accessories  -  Common
         "Pebble of Focus":"Chalk Nub","Frayed Rope Band":"Worn Tip Wrap",
         "Copper Loop":"Brass Rail Ring","Tin Charm":"Pocket Marker",
         "Traveler's Token":"Road Player's Coin",
-        # Accessories — Uncommon
+        # Accessories  -  Uncommon
         "Fox Tail Ring":"Silk Tip Ring","Brass Holy Symbol":"Chalk Cross Pendant",
         "Chipped Onyx Stud":"Black Ball Stud","Bloodstone Band":"Red Ball Band",
         "Mercenary's Signet":"Road Shark Signet","Hunter's Fang Pendant":"Hustler's Tooth",
         "Mana Bead Necklace":"Chalk Bead Necklace",
-        # Accessories — Rare
+        # Accessories  -  Rare
         "Whisper Coin":"The Action Coin","Warmaster's Clasp":"Break Master's Clasp",
         "Owl Medallion":"Diamond Sight Medallion","Phantom Loop":"Ghost Ball Loop",
         "Executioner's Band":"Closer's Band","Spellweaver's Coil":"English Coil",
         "Ironheart Medallion":"Slate Heart","Vampiric Fang Chain":"Shark Tooth Chain",
         "Wanderer's Compass":"Road Player's Compass","Stormcaller's Torc":"The Break Torc",
-        # Accessories — Epic
+        # Accessories  -  Epic
         "Twin Serpent Ring":"Double Kiss Ring","Eye of the Storm":"Eye of the Table",
         "Void-Touched Circle":"Blackball Circle","Berserker's Knuckle":"Break Knuckle",
         "Saint's Halo Band":"House Saint's Band","Cinder Heart Pendant":"Chalk Heart",
         "Deathwhisper Amulet":"The Hustler's Whisper","Aegis Talisman":"The Safety Talisman",
         "Luminous Crucifix":"The Crossed Cues Pendant","Dragon Soul Pendant":"The Slate and Felt Pendant",
-        # Accessories — Legendary
+        # Accessories  -  Legendary
         "Godshard Splinter":"Splinter of the Break","Infinity Loop":"The Endless Run",
         "Ring of the Ancients":"The Old Road Ring","Ouroboros":"The Rack Eternal",
         "Last Breath Locket":"The Final Shot Locket","Worldsoul Amulet":"The Felt Soul",
@@ -3310,7 +3315,7 @@ def get_recent_attackers(p):
             if (now - datetime.fromisoformat(r["ts"])).total_seconds() < 1800]
 
 # ── COMBAT CARD ───────────────────────────────────────────────────────────────
-# combat_cards removed in v14 — using inline send+auto-delete instead
+# combat_cards removed in v14  -  using inline send+auto-delete instead
 
 # ── IDLE REWARDS ──────────────────────────────────────────────────────────────
 async def check_idle_reward(user, s, p, bot, chat_id):
@@ -3399,11 +3404,11 @@ async def gear_cmd(update, context):
             all_encs = get_all_enchants(p, weap_name)
             if len(all_encs) > 1:
                 for e in all_encs:
-                    lines.append(f"  ✨ {e['id'].capitalize()} — {e['desc']}")
+                    lines.append(f"  ✨ {e['id'].capitalize()}  -  {e['desc']}")
             else:
-                lines.append(f"Enchant: ✨ *{enc[0]['id'].capitalize() if isinstance(enc, list) else enc['id'].capitalize()}* — _{enc[0]['desc'] if isinstance(enc, list) else enc['desc']}_")
+                lines.append(f"Enchant: ✨ *{enc[0]['id'].capitalize() if isinstance(enc, list) else enc['id'].capitalize()}*  -  _{enc[0]['desc'] if isinstance(enc, list) else enc['desc']}_")
     else:
-        lines.append(f"⚔️ *Weapon* — None")
+        lines.append(f"⚔️ *Weapon*  -  None")
 
     lines.append("")
 
@@ -3425,9 +3430,9 @@ async def gear_cmd(update, context):
         if enc:
             all_encs = get_all_enchants(p, armr_name)
             for e in all_encs:
-                lines.append(f"✨ *{e['id'].capitalize()}* — _{e['desc']}_")
+                lines.append(f"✨ *{e['id'].capitalize()}*  -  _{e['desc']}_")
     else:
-        lines.append(f"🛡️ *Armor* — None")
+        lines.append(f"🛡️ *Armor*  -  None")
 
     lines.append("")
 
@@ -3446,7 +3451,7 @@ async def gear_cmd(update, context):
         if enh > 0:
             lines.append(f"Enhancement: *+{enh}* {'⭐' * enh}")
     else:
-        lines.append(f"🔰 *Shield* — None")
+        lines.append(f"🔰 *Shield*  -  None")
 
     lines.append("")
 
@@ -3482,9 +3487,9 @@ async def gear_cmd(update, context):
                 lines.append(f"+{int(v*100)}% block chance")
         all_encs = get_all_enchants(p, acc_name)
         for e in all_encs:
-            lines.append(f"✨ *{e['id'].capitalize()}* — _{e['desc']}_")
+            lines.append(f"✨ *{e['id'].capitalize()}*  -  _{e['desc']}_")
     else:
-        lines.append(f"💍 *Accessory* — None")
+        lines.append(f"💍 *Accessory*  -  None")
 
     lines.append("")
     lines.append(f"Total Weapon ATK: *{get_weapon_atk(p)}*")
@@ -3497,27 +3502,25 @@ async def gear_cmd(update, context):
 async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
-    c.execute("SELECT user_id,username,level,total_exp FROM players")
+    c.execute("SELECT user_id,username,level,total_exp,class_id FROM players")
     rpg_rows = c.fetchall()
     c.execute("SELECT user_id,username,level,total_exp FROM shadow_profiles")
     shd_rows = c.fetchall()
     conn.close()
 
-    rpg_set = {row["user_id"] for row in rpg_rows}
-
     seen = {}
     for row in shd_rows:
         uid = row["user_id"]
         seen[uid] = {"user_id":uid,"username":row["username"],
-                     "level":row["level"],"total_exp":safe_int(row["total_exp"]),"type":"shadow"}
+                     "level":row["level"],"total_exp":safe_int(row["total_exp"]),
+                     "type":"shadow","class_id":None}
     for row in rpg_rows:
         uid = row["user_id"]; rlvl = row["level"]; rtex = safe_int(row["total_exp"])
         if uid not in seen or (rlvl,rtex) >= (seen[uid]["level"],seen[uid]["total_exp"]):
             seen[uid] = {"user_id":uid,"username":row["username"],
-                         "level":rlvl,"total_exp":rtex,"type":"rpg"}
+                         "level":rlvl,"total_exp":rtex,"type":"rpg","class_id":row["class_id"]}
 
     all_entries = list(seen.values())
-    # RPG players first, then shadows; within each group sort by total_exp desc
     rpg_entries = sorted([e for e in all_entries if e["type"]=="rpg"], key=lambda x: x["total_exp"], reverse=True)
     shd_entries = sorted([e for e in all_entries if e["type"]=="shadow"], key=lambda x: x["total_exp"], reverse=True)
     ranked = rpg_entries + shd_entries
@@ -3527,25 +3530,25 @@ async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     def fmt_ranked(i, e):
         medals = {1:"🥇",2:"🥈",3:"🥉"}
         prefix = medals.get(i+1, f"{i+1}.")
-        tag = "" if e["type"]=="rpg" else " _(inactive)_"
-        return f"{prefix} *{e['username']}* — Lv {e['level']} | {safe_int(e['total_exp']):,} EXP{tag}"
+        cls = CLASS_TREE.get(e.get("class_id") or "", {}).get("name", "No Class") if e["type"]=="rpg" else "Shadow"
+        return f"{prefix} *{e['username']}* - Lv {e['level']} - {cls}"
 
     if context.args and context.args[0].lower() == "wins":
         conn2 = sqlite3.connect(DB_PATH); conn2.row_factory = sqlite3.Row; c2 = conn2.cursor()
         c2.execute("SELECT username, wins, losses, level FROM players ORDER BY wins DESC LIMIT 20")
         rows2 = c2.fetchall(); conn2.close()
         medals2 = {1:"🥇",2:"🥈",3:"🥉"}
-        lines2 = ["⚔️ *Top 20 — PVP Wins*\n"]
+        lines2 = ["⚔️ *Top 20  -  PVP Wins*\n"]
         for i2, row2 in enumerate(rows2, 1):
             badge2 = medals2.get(i2, f"#{i2}")
             wl2 = f"{row2['wins']}W / {row2['losses']}L"
-            lines2.append(f"{badge2} *{row2['username']}* — {wl2} | Lv {row2['level']}")
+            lines2.append(f"{badge2} *{row2['username']}*  -  {wl2} | Lv {row2['level']}")
         await send_group(update, "\n".join(lines2), permanent=True); return
 
     if context.args and context.args[0].lower() == "me":
         pos = next((i+1 for i,e in enumerate(ranked) if e["user_id"]==user.id), None)
         if not pos:
-            await send_group(update, "Not ranked yet — start chatting!"); return
+            await send_group(update, "Not ranked yet  -  start chatting!"); return
         start_m = max(0, pos-3); end_m = min(total, pos+2)
         lines = [f"📊 *{user.first_name}'s Rank: #{pos} of {total}*\n"]
         for i, entry in enumerate(ranked[start_m:end_m], start=start_m):
@@ -3580,7 +3583,7 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     page = int(query.data.split("_")[-1])
 
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
-    c.execute("SELECT user_id,username,level,total_exp FROM players")
+    c.execute("SELECT user_id,username,level,total_exp,class_id FROM players")
     rpg_rows = c.fetchall()
     c.execute("SELECT user_id,username,level,total_exp FROM shadow_profiles")
     shd_rows = c.fetchall()
@@ -3590,12 +3593,13 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for row in shd_rows:
         uid = row["user_id"]
         seen[uid] = {"user_id":uid,"username":row["username"],
-                     "level":row["level"],"total_exp":safe_int(row["total_exp"]),"type":"shadow"}
+                     "level":row["level"],"total_exp":safe_int(row["total_exp"]),
+                     "type":"shadow","class_id":None}
     for row in rpg_rows:
         uid = row["user_id"]; rlvl = row["level"]; rtex = safe_int(row["total_exp"])
         if uid not in seen or (rlvl,rtex) >= (seen[uid]["level"],seen[uid]["total_exp"]):
             seen[uid] = {"user_id":uid,"username":row["username"],
-                         "level":rlvl,"total_exp":rtex,"type":"rpg"}
+                         "level":rlvl,"total_exp":rtex,"type":"rpg","class_id":row["class_id"]}
 
     all_entries = list(seen.values())
     rpg_entries = sorted([e for e in all_entries if e["type"]=="rpg"], key=lambda x: x["total_exp"], reverse=True)
@@ -3612,10 +3616,10 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     def fmt(i, e):
         medals = {1:"🥇",2:"🥈",3:"🥉"}
         prefix = medals.get(start+i+1, f"{start+i+1}.")
-        tag = "" if e["type"]=="rpg" else " _(inactive)_"
-        return f"{prefix} *{e['username']}* — Lv {e['level']} | {safe_int(e['total_exp']):,} EXP{tag}"
+        cls = CLASS_TREE.get(e.get("class_id") or "", {}).get("name", "No Class") if e["type"]=="rpg" else "Shadow"
+        return f"{prefix} *{e['username']}* - Lv {e['level']} - {cls}"
 
-    lines = [f"🏆 *Hall Rankings — Page {page}*\n"]
+    lines = [f"🏆 *Hall Rankings  -  Page {page}*\n"]
     for i, e in enumerate(page_entries):
         lines.append(fmt(i, e))
 
@@ -3640,9 +3644,9 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_defeated(a):
         await send_group(update, "💀 You're defeated! Wait for a heal or sit out.", delay=9); return
     if is_vanished(a):
-        await send_group(update, "👻 You're vanished — you can't attack while hidden.", delay=9); return
+        await send_group(update, "👻 You're vanished  -  you can't attack while hidden.", delay=9); return
     if cannot_attack(a):
-        await send_group(update, "⚡ You're stunned or rooted — can't attack right now.", delay=9); return
+        await send_group(update, "⚡ You're stunned or rooted  -  can't attack right now.", delay=9); return
 
     chat_id = update.effective_chat.id
 
@@ -3664,7 +3668,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Block if attacker is in any boss fight in any chat
     a_boss, _ = in_active_boss(au.id, chat_id)
     if a_boss and not (boss_dict and au.id in [u["id"] for u in boss_dict["participants"]]):
-        await send_group(update, "⚔️ You're in a boss fight — use /attack to strike the boss!", delay=9); return
+        await send_group(update, "⚔️ You're in a boss fight  -  use /attack to strike the boss!", delay=9); return
 
     # ── PvP below ──────────────────────────────────────────────────────────
     chat = chat_id
@@ -3680,14 +3684,14 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_defeated(d):
         await send_group(update, f"💀 {d['username']} is already defeated!", delay=9); return
     if is_invincible(d):
-        await send_group(update, f"🛡️ {d['username']} is *Still Recovering* — invincible for now.", delay=9); return
+        await send_group(update, f"🛡️ {d['username']} is *Still Recovering*  -  invincible for now.", delay=9); return
     raid_d, kind_d = in_active_raid(du.id, chat)
     if raid_d:
-        await send_group(update, f"⚔️ *{d['username']}* is in a raid right now — can't be targeted!", delay=9); return
+        await send_group(update, f"⚔️ *{d['username']}* is in a raid right now  -  can't be targeted!", delay=9); return
     # Block attack if target is in a boss instance
     t_boss, _ = in_active_boss(du.id, chat_id)
     if t_boss:
-        await send_group(update, f"⚔️ *{d['username']}* is in a boss fight — can't be targeted!", delay=9); return
+        await send_group(update, f"⚔️ *{d['username']}* is in a boss fight  -  can't be targeted!", delay=9); return
 
     w    = get_weather()
     chat = update.effective_chat.id
@@ -3698,7 +3702,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if safe_int(a.get("charging_killshot")):
         a["charging_killshot"] = 0
         dmg_after_def = get_stat(a, "AGI") * 4
-        action = (f"🎯 *KILLSHOT FIRED!* *{a['username']}* → *{d['username']}* — "
+        action = (f"🎯 *KILLSHOT FIRED!* *{a['username']}* → *{d['username']}*  -  "
                   f"AGI×4 = *{dmg_after_def} damage!* Cannot be dodged!")
         d["hp"] = max(0, d["hp"] - dmg_after_def)
         update_recent_attackers(d, au.id)
@@ -3749,7 +3753,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if pk_d_miss == "deaths_shadow":
                 d["hp"] = min(d["max_hp"], d["hp"] + 10)
         save_player(d); save_player(a)
-        miss_text = f"🌀 *{a['username']}* swings at *{d['username']}* — *MISS!*"
+        miss_text = f"🌀 *{a['username']}* swings at *{d['username']}*  -  *MISS!*"
         try:
             await update.message.delete()
         except Exception: pass
@@ -3828,7 +3832,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 dmg *= 2
                 cds_tb["trailblazer_date"] = today
                 a["passive_cooldowns"] = json.dumps(cds_tb)
-                extra_notes.append("🌅 *Trailblazer!* First strike of the day — double damage!")
+                extra_notes.append("🌅 *Trailblazer!* First strike of the day  -  double damage!")
 
         # Steady aim tracking
         if pk_a == "steady_aim":
@@ -3841,7 +3845,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Distracted check: attacker has +30% chance to miss
     if is_distracted(a):
         if random.random() < 0.30:
-            extra_notes.append("😵 Distracted — shot went wide!")
+            extra_notes.append("😵 Distracted  -  shot went wide!")
             save_player(a); save_player(d)
             dist_text = f"😵 *{a['username']}* was *Distracted* and missed *{d['username']}*!"
             try:
@@ -3872,7 +3876,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Reflect
     reflect = apply_reflect(d, a, dmg)
 
-    # Holy Ward — Priest Path A passive proc on being hit
+    # Holy Ward  -  Priest Path A passive proc on being hit
     if cls_d and cls_d.get("line") == "priest" and d.get("class_path") == "A":
         ward_chance = get_proc_chance(0.15, d)
         if not _ts_active(d, "ward_until") and random.random() < ward_chance:
@@ -3931,7 +3935,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         d["losses"] = d.get("losses",0) + 1
         a["wins"]   = a.get("wins",0) + 1
 
-        # Deadeye Last Shot — double timer
+        # Deadeye Last Shot  -  double timer
         if cls_a and cls_a.get("passive_key") == "dead_or_alive":
             d["defeated_until"] = (datetime.now() + timedelta(hours=12)).isoformat()
             action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 12 hours!"
@@ -3944,7 +3948,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lmsgs, leveled = add_exp(a, exp_gain, w)
         lvl_msgs = lmsgs
 
-        # Conqueror passive (Warlord) — restore 20% HP on kill
+        # Conqueror passive (Warlord)  -  restore 20% HP on kill
         if cls_a and cls_a.get("passive_key") == "conqueror":
             restore = round(a["max_hp"] * 0.20)
             a["hp"] = min(a["max_hp"], a["hp"] + restore)
@@ -3976,6 +3980,11 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if leveled and a["level"] % 10 == 0:
             asyncio.create_task(announce(update.get_bot(), chat,
                 f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", permanent=True))
+
+        asyncio.create_task(announce(update.get_bot(), chat,
+            f"💀 *{d['username']}* was defeated by *{a['username']}*!\n"
+            f"Final HP: 0/{d.get('max_hp', calc_max_hp(d))} - "
+            f"Lost {exp_loss:,} EXP - Defeated 6hrs", permanent=False))
 
     check_titles(a); check_titles(d)
     save_player(a); save_player(d)
@@ -4020,7 +4029,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_is_dead = t["hp"] <= 0
     if target_is_dead and is_revival_blocked(t):
         await send_group(update,
-            f"☠️ *{t['username']}* has been condemned by a Zealot — they cannot be revived for now.\n"
+            f"☠️ *{t['username']}* has been condemned by a Zealot  -  they cannot be revived for now.\n"
             f"Only a *Saint's Absolution* can lift this.", delay=15); return
     if is_healing_blocked(t) and not target_is_dead:
         await send_group(update,
@@ -4029,7 +4038,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Block non-priest potions on defeated targets
     if is_defeated(t) and get_class_line(h) != "priest":
         await send_group(update,
-            f"❌ *{t['username']}* is defeated — vials can't revive them!\n"
+            f"❌ *{t['username']}* is defeated  -  vials can't revive them!\n"
             f"Use a *The Re-Rack* from your inventory, or ask a Chalker.", delay=9)
         return
 
@@ -4041,12 +4050,12 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     heal_amount = 0
 
     if is_priest_healer:
-        # Priest line — free revive via skill (Holy Light)
+        # Priest line  -  free revive via skill (Holy Light)
         heal_amount = safe_stats(h).get("WIS",5) * 5
         if get_player_class(h) and get_player_class(h).get("passive_key") == "mending_aura":
             heal_amount = round(heal_amount * 1.25)
     else:
-        # Non-priest — requires potion
+        # Non-priest  -  requires potion
         if "Champion's Chalk Flask" in inv:
             potion = "Champion's Chalk Flask"; heal_amount = 200
         elif "Premium Chalk Draft" in inv:
@@ -4088,7 +4097,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (f"{who} *{t['username']}* for *{heal_amount} HP*!\n"
            f"❤️ {t['username']}: {t['hp']}/{t['max_hp']} HP")
     if was_defeated:
-        msg += f"\n✨ *{t['username']}* is revived! *1 hour invincibility* granted — _(Still Recovering)_"
+        msg += f"\n✨ *{t['username']}* is revived! *1 hour invincibility* granted  -  _(Still Recovering)_"
     if new_t:
         msg += f"\n🏅 *{h['username']}* earned: *{new_t[0]}*!"
     if leveled and h["level"] % 10 == 0:
@@ -4106,7 +4115,7 @@ def _exp_bar(current, needed, length=10):
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
-    # Determine target — self or replied-to player
+    # Determine target  -  self or replied-to player
     viewing_other = False
     if update.message.reply_to_message:
         target_uid = update.message.reply_to_message.from_user.id
@@ -4121,13 +4130,13 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s = get_shadow(target_uid)
     if not p and not s:
         await send_group(update,
-            "No profile yet — just start chatting to build your level!", delay=9); return
+            "No profile yet  -  just start chatting to build your level!", delay=9); return
     if p and not viewing_other: p["username"] = user.first_name
     if s and not viewing_other: s["username"] = user.first_name
     if not p:
         tier = get_tier(s["level"])
         await send_group(update,
-            f"👤 *{s['username']}* — Shadow Profile\n\n"
+            f"👤 *{s['username']}*  -  Shadow Profile\n\n"
             f"{tier['emoji']} Level *{s['level']}*\n"
             f"✨ EXP: {s['exp']:,}/{exp_for_level(s['level']):,}\n"
             f"🏆 Lifetime: *{safe_int(s.get('total_exp')):,}* EXP\n"
@@ -4141,7 +4150,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_defeated(p) and p["hp"] > 0:
         p["defeated_until"] = None; save_player(p)
 
-    # Silent DEF point refund — DEF is now gear-only
+    # Silent DEF point refund  -  DEF is now gear-only
     sd_check = safe_stats(p)
     if sd_check.get("DEF", 0) > 0:
         refund_def = sd_check["DEF"]
@@ -4160,8 +4169,8 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     defeated_str  = " *(Defeated)*" if is_defeated(p) else ""
     recovering    = " *(Still Chalking)*" if is_invincible(p) else ""
     cls           = get_player_class(p)
-    cls_name      = cls["name"] if cls else ("Choose at Lv 5 — /class" if p["level"] >= 5 else "Unlocks at Lv 5")
-    path_str      = f" — Path {p.get('class_path','?')}" if p.get("class_path") else ""
+    cls_name      = cls["name"] if cls else ("Choose at Lv 5  -  /class" if p["level"] >= 5 else "Unlocks at Lv 5")
+    path_str      = f"  -  Path {p.get('class_path','?')}" if p.get("class_path") else ""
     sd            = safe_stats(p)
     eff           = {st: get_stat(p, st) for st in ["STR","AGI","INT","WIS","DEX","LUK"]}
     sp            = safe_int(p.get("stat_points"))
@@ -4201,7 +4210,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     out = [
         f"🎱 *{p['username']}*{defeated_str}{recovering}",
         f"🏅 {p['active_title']}",
-        f"{tier['name']} — Level {p['level']}",
+        f"{tier['name']}  -  Level {p['level']}",
         f"🏰 {guild_str}",
         f"🌍 {w['name']}",
         "",
@@ -4224,7 +4233,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     if sp > 0:
-        out.append(f"💡 {sp} stat points available — /allocate")
+        out.append(f"💡 {sp} stat points available  -  /allocate")
 
     out += [
         "",
@@ -4272,7 +4281,7 @@ async def raid_cmd(update, context):
     if not p:
         await send_group(update, "Use /ascend first!"); return
     if is_defeated(p):
-        await send_group(update, "💀 You're defeated — can't raid!"); return
+        await send_group(update, "💀 You're defeated  -  can't raid!"); return
 
     raid = active_raids.get(chat_id)
 
@@ -4367,11 +4376,11 @@ async def raidstart_cmd(update, context):
     names = ", ".join(u["name"] for u in raid["party"])
     wave_count = len(tier["wave_enemies"]) + 1
     await send_group(update,
-        f"⚔️ *RAID BEGINS — {tier['name']}*\n\n"
+        f"⚔️ *RAID BEGINS  -  {tier['name']}*\n\n"
         f"👥 Party: {names}\n"
         f"📊 Avg Level: {avg:.0f}\n"
         f"🌊 {wave_count} waves total\n\n"
-        f"🌊 *Wave 1 — {first_enemy['name']}*\n"
+        f"🌊 *Wave 1  -  {first_enemy['name']}*\n"
         f"❤️ HP: {first_enemy['hp']}\n"
         f"💀 Damage: {first_enemy['dmg_min']}-{first_enemy['dmg_max']}\n\n"
         f"Use /raidstrike to attack!",
@@ -4390,7 +4399,7 @@ async def raidstrike_cmd(update, context):
     if user.id not in [u["id"] for u in raid["party"]]:
         await send_group(update, "You're not in this raid!"); return
     if raid["player_hp"].get(user.id, 0) <= 0:
-        await send_group(update, "💀 You're down — wait for the next raid!"); return
+        await send_group(update, "💀 You're down  -  wait for the next raid!"); return
     if cannot_attack(p):
         await send_group(update, "⚡ Stunned or rooted!", delay=9); return
 
@@ -4450,7 +4459,7 @@ async def raidstatus_cmd(update, context):
     if not raid["in_progress"]:
         names = ", ".join(u["name"] for u in raid["party"])
         await send_group(update,
-            f"🏰 *Raid Lobby* — {len(raid['party'])} players\n"
+            f"🏰 *Raid Lobby*  -  {len(raid['party'])} players\n"
             f"👥 {names}\n"
             f"Use /raidstart when ready."); return
 
@@ -4469,9 +4478,48 @@ async def raidstatus_cmd(update, context):
     await send_group(update,
         f"⚔️ *{tier['name']}*\n"
         f"👥 {names}\n"
-        f"🌊 Wave {raid['wave']}/{wave_count} — *{enemy['name']}*\n"
+        f"🌊 Wave {raid['wave']}/{wave_count}  -  *{enemy['name']}*\n"
         f"❤️ HP: {raid['enemy_hp']:,}/{raid['enemy_max_hp']:,}\n\n"
         f"📊 *Damage dealt:*\n" + "\n".join(dmg_lines), delay=20)
+
+async def raidparty_cmd(update, context):
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    raid = active_raids.get(chat_id)
+    sr   = active_soloraids.get(user.id)
+
+    if raid and raid.get("in_progress"):
+        lines = [f"👥 *Raid Party - {raid['tier']['name']}*\n"]
+        alive = _get_alive_party(raid)
+        alive_ids = {u["id"] for u in alive}
+        for u in raid["party"]:
+            uid = u["id"]
+            php  = raid["player_hp"].get(uid, 0)
+            pmhp = raid["player_max_hp"].get(uid, php)
+            dmg  = raid["damage_dealt"].get(uid, 0)
+            status = "✅" if uid in alive_ids else "💀"
+            bar_filled = int((php/max(1,pmhp))*10)
+            bar = "█"*bar_filled + "░"*(10-bar_filled)
+            lines.append(f"{status} *{u['name']}*\n  HP: [{bar}] {php}/{pmhp}\n  Dmg dealt: {dmg:,}")
+        # Current turn
+        if alive:
+            idx = raid.get("current_turn_idx",0) % len(alive)
+            lines.append(f"\n⚔️ Current turn: *{alive[idx]['name']}*")
+        await send_group(update, "\n".join(lines), delay=20); return
+
+    if sr:
+        php  = sr.get("player_hp", 0)
+        pmhp = sr.get("player_max_hp", php)
+        enemy = sr["enemy"]
+        bar_filled = int((php/max(1,pmhp))*10)
+        bar = "█"*bar_filled + "░"*(10-bar_filled)
+        await send_group(update,
+            f"🎱 *Solo Raid Status*\n\n"
+            f"Your HP: [{bar}] {php}/{pmhp}\n"
+            f"Enemy: *{enemy['name']}* ❤️ {sr['enemy_hp']}/{sr['enemy_max_hp']}\n"
+            f"Wave: {sr['wave']} - Total dmg: {sr.get('total_dmg',0):,}", delay=15); return
+
+    await send_group(update, "No active raid.", delay=9)
 
 # ── SOLO RAID ─────────────────────────────────────────────────────────────────
 async def soloraid_cmd(update, context):
@@ -4480,14 +4528,14 @@ async def soloraid_cmd(update, context):
     if not p:
         await send_group(update, "Use /ascend first!"); return
     if is_defeated(p):
-        await send_group(update, "💀 You're defeated — can't solo raid!"); return
+        await send_group(update, "💀 You're defeated  -  can't solo raid!"); return
 
     if user.id in active_soloraids:
         sr = active_soloraids[user.id]
         enemy = sr["enemy"]
         await send_group(update,
             f"⚔️ Solo raid in progress!\n"
-            f"🌊 Wave {sr['wave']} — *{enemy['name']}*\n"
+            f"🌊 Wave {sr['wave']}  -  *{enemy['name']}*\n"
             f"❤️ Enemy HP: {sr['enemy_hp']}/{sr['enemy_max_hp']}\n"
             f"Use /solostrike to attack."); return
 
@@ -4512,9 +4560,9 @@ async def soloraid_cmd(update, context):
     }
     wave_count = len(tier["wave_enemies"]) + 1
     await send_group(update,
-        f"🎱 *SOLO RAID — {tier['name']}*\n\n"
+        f"🎱 *SOLO RAID  -  {tier['name']}*\n\n"
         f"🌊 {wave_count} waves + final boss\n\n"
-        f"🌊 *Wave 1 — {first_enemy['name']}*\n"
+        f"🌊 *Wave 1  -  {first_enemy['name']}*\n"
         f"❤️ HP: {first_enemy['hp']}\n"
         f"💀 Damage: {first_enemy['dmg_min']}–{first_enemy['dmg_max']}\n\n"
         f"Use /solostrike to attack!",
@@ -4529,9 +4577,9 @@ async def solostrike_cmd(update, context):
     if user.id not in active_soloraids:
         await send_group(update, "No active solo raid! Use /soloraid."); return
     if is_defeated(p):
-        await send_group(update, "💀 You're defeated — can't strike!"); return
+        await send_group(update, "💀 You're defeated  -  can't strike!"); return
     if cannot_attack(p):
-        await send_group(update, "⚡ You're stunned or rooted — can't act!", delay=9); return
+        await send_group(update, "⚡ You're stunned or rooted  -  can't act!", delay=9); return
 
     sr = active_soloraids[user.id]
     enemy = sr["enemy"]
@@ -4560,14 +4608,14 @@ async def solostrike_cmd(update, context):
         if cw < len(wave_enemies):
             sr["wave"] += 1; ne = wave_enemies[cw].copy()
             sr["enemy"] = ne; sr["enemy_hp"] = ne["hp"]; sr["enemy_max_hp"] = ne["hp"]
-            lines.append(f"\n🌊 *Wave {sr['wave']} — {ne['name']}*")
+            lines.append(f"\n🌊 *Wave {sr['wave']}  -  {ne['name']}*")
             lines.append(f"❤️ HP: {ne['hp']} | 💀 {ne['dmg_min']}–{ne['dmg_max']}")
         elif cw == len(wave_enemies):
             bd = BOSSES[tier["wave_boss_key"]]; boss_hp = bd["max_hp"] // 2
             sr["wave"] = len(wave_enemies) + 1
             sr["enemy"] = {"name": bd["name"] + " ⚡","dmg_min": round(bd["dmg_min"]*0.6),"dmg_max": round(bd["dmg_max"]*0.6)}
             sr["enemy_hp"] = boss_hp; sr["enemy_max_hp"] = boss_hp
-            lines.append(f"\n🎱 *FINAL BOSS — {bd['name']}!* ❤️ HP: {boss_hp}")
+            lines.append(f"\n🎱 *FINAL BOSS  -  {bd['name']}!* ❤️ HP: {boss_hp}")
         else:
             active_soloraids.pop(user.id, None)
             exp_r = tier["exp_reward"]; gold_r = tier["gold_reward"]
@@ -4580,16 +4628,16 @@ async def solostrike_cmd(update, context):
                     if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity",""),""); break
                 loot_line = f"\n🎒 Found: {r} *{loot}*!"
             add_exp(p, exp_r, get_weather())
-            lines.append(f"\n🏆 *SOLO RAID COMPLETE — {tier['name']}!*")
+            lines.append(f"\n🏆 *SOLO RAID COMPLETE  -  {tier['name']}!*")
             lines.append(f"✅ +{exp_r:,} EXP | +{gold_r}g{loot_line}")
             save_player(p); await send_group(update, "\n".join(lines), delay=25); return
     else:
-        # Enemy counter-attack (solo — uses separate raid HP)
+        # Enemy counter-attack (solo  -  uses separate raid HP)
         enemy = sr["enemy"]
         if enemy_status_active(sr, "stunned_until"):
-            await send_group(update, f"⚡ *{enemy['name']}* is stunned — no counter!", delay=15)
+            await send_group(update, f"⚡ *{enemy['name']}* is stunned  -  no counter!", delay=15)
         elif enemy_status_active(sr, "frozen_until"):
-            await send_group(update, f"❄️ *{enemy['name']}* is frozen — no counter!", delay=15)
+            await send_group(update, f"❄️ *{enemy['name']}* is frozen  -  no counter!", delay=15)
         else:
             raw = random.randint(enemy["dmg_min"], enemy["dmg_max"])
             if enemy_status_active(sr, "weakened_until") or enemy_status_active(sr, "hexed_until"):
@@ -4611,6 +4659,8 @@ async def solostrike_cmd(update, context):
                 else:
                     lines.append(f"🩸 *{enemy['name']}* hits *{p['username']}* for *{edm}!* "
                                  f"({sr['player_hp']}/{sr['player_max_hp']} raid HP)")
+                    if sr["player_hp"] > 0 and sr["player_hp"] <= round(sr["player_max_hp"] * 0.30):
+                        lines.append(f"⚠️ *Critically low HP!* ({sr['player_hp']}/{sr['player_max_hp']}) Use /skill or a vial!")
 
     save_player(p)
     await send_group(update, "\n".join(lines), delay=20)
@@ -4642,7 +4692,7 @@ async def soloraidstatus_cmd(update, context):
 
     out = [
         f"🎱 *{tier['name']}*",
-        f"🌊 Wave {sr['wave']}/{wave_count} — *{enemy['name']}*",
+        f"🌊 Wave {sr['wave']}/{wave_count}  -  *{enemy['name']}*",
         f"❤️ Enemy HP: {sr['enemy_hp']:,}/{sr['enemy_max_hp']:,}",
         f"🧍 Your HP: {hp_str}",
         f"⚔️ Total dmg dealt: {sr.get('total_dmg',0):,}",
@@ -4674,11 +4724,11 @@ async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"❤️ HP: {p['hp']} | 💰 Gold: {p['gold']}\n"
         f"💡 Stat Points: *{p['stat_points']}*\n\n"
         f"Next steps:\n"
-        f"⚔️ /class — choose your class at Level 5\n"
-        f"📊 /allocate — spend stat points\n"
-        f"🎁 /daily — claim your daily reward\n"
-        f"🗺️ /quest — go on a quest\n"
-        f"🗺️ /explore — send yourself on an expedition", delay=30)
+        f"⚔️ /class  -  choose your class at Level 5\n"
+        f"📊 /allocate  -  spend stat points\n"
+        f"🎁 /daily  -  claim your daily reward\n"
+        f"🗺️ /quest  -  go on a quest\n"
+        f"🗺️ /explore  -  send yourself on an expedition", delay=30)
     asyncio.create_task(announce(context.bot, update.effective_chat.id,
         f"⚔️ *{user.first_name}* has ASCENDED! "
         f"Level {slvl} → RPG! 🎱", permanent=True))
@@ -4697,7 +4747,7 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         skills = sjl(p.get("all_skills"), [])
         skill_lines = []
         for sk in skills:
-            skill_lines.append(f"  🔸 *{sk['name']}* — {sk['desc']}")
+            skill_lines.append(f"  🔸 *{sk['name']}*  -  {sk['desc']}")
         await send_group(update,
             f"⚔️ You are a *{cls['name']}*{path_str}\n\n"
             f"_{cls['desc']}_\n\n"
@@ -4710,7 +4760,7 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cls = CLASS_TREE[cid]
             sk  = cls["skills"][0]
             lines.append(
-                f"*{cls['name']}* — {cls['desc']}\n"
+                f"*{cls['name']}*  -  {cls['desc']}\n"
                 f"  📈 Primary: {cls['primary_stat']}\n"
                 f"  🔹 {sk['passive']}\n"
                 f"  🔸 {sk['name']}: {sk['desc']}\n")
@@ -4731,7 +4781,7 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p["all_skills"] = json.dumps(all_tier1)
     save_player(p)
     sk = all_tier1[0]
-    skill_lines = "\n".join(f"🔸 *{s['name']}* — {s['desc']}" for s in all_tier1)
+    skill_lines = "\n".join(f"🔸 *{s['name']}*  -  {s['desc']}" for s in all_tier1)
     asyncio.create_task(announce(context.bot, update.effective_chat.id,
         f"⚔️ *{p['username']}* has chosen *{cls['name']}*!"))
     await send_group(update,
@@ -4754,7 +4804,7 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     line = cls.get("line")
     path = p.get("class_path")
 
-    # Already has path — show path status and progression
+    # Already has path  -  show path status and progression
     if path:
         full_path = CLASS_PATHS.get(line, {}).get(path, [])
         path_names = " → ".join(CLASS_TREE.get(k,{}).get("name","?") for k in full_path)
@@ -4766,15 +4816,15 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 next_threshold = lvl; break
         if next_threshold:
             await send_group(update,
-                f"🌟 *Path {path}* — Current Class: *{current_cls_name}*\n\n"
+                f"🌟 *Path {path}*  -  Current Class: *{current_cls_name}*\n\n"
                 f"📜 Path: {path_names}\n\n"
                 f"Your class advances automatically at Level *{next_threshold}*.\n"
                 f"Keep leveling!", delay=15)
         else:
             await send_group(update,
-                f"👑 *Path {path}* — Current Class: *{current_cls_name}*\n\n"
+                f"👑 *Path {path}*  -  Current Class: *{current_cls_name}*\n\n"
                 f"📜 Path: {path_names}\n\n"
-                f"You have reached *Level 100* — the pinnacle of Path {path}!\n"
+                f"You have reached *Level 100*  -  the pinnacle of Path {path}!\n"
                 f"You may optionally reset and start a new class journey.\n"
                 f"Use `/prestige reset` to do so (keeps all stats and skills).", delay=15)
         return
@@ -4854,7 +4904,7 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_player(p)
 
     asyncio.create_task(announce(context.bot, update.effective_chat.id,
-        f"🌟 *{p['username']}* chose *Path {chosen_path}* — *{new_cls['name']}*!"))
+        f"🌟 *{p['username']}* chose *Path {chosen_path}*  -  *{new_cls['name']}*!"))
     full_path = paths.get(chosen_path,[])
     path_names = " → ".join(CLASS_TREE.get(k,{}).get("name","?") for k in full_path)
     await send_group(update,
@@ -4875,16 +4925,16 @@ async def allocate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rec = cls["primary_stat"] + " recommended" if cls else "Free to allocate"
     if not context.args or len(context.args) < 2:
         await send_group(update,
-            f"📊 *Stat Allocation* — *{sp}* points available\n\n"
+            f"📊 *Stat Allocation*  -  *{sp}* points available\n\n"
             f"STR:{sd.get('STR',5)} AGI:{sd.get('AGI',5)} INT:{sd.get('INT',5)} "
             f"WIS:{sd.get('WIS',5)} DEX:{sd.get('DEX',5)} LUK:{sd.get('LUK',5)}\n\n"
-            f"📌 STR — Attack damage (Breaker)\n"
-            f"📌 AGI — Dodge & crit\n"
-            f"📌 INT — Spell damage (Hustler)\n"
-            f"📌 WIS — Heal power (Chalker)\n"
-            f"📌 DEX — Accuracy & crit (Marksman)\n"
-            f"📌 LUK — Crit & gold bonus (Shark)\n"
-            f"📌 DEF — From gear only (cannot allocate)\n\n"
+            f"📌 STR  -  Attack damage (Breaker)\n"
+            f"📌 AGI  -  Dodge & crit\n"
+            f"📌 INT  -  Spell damage (Hustler)\n"
+            f"📌 WIS  -  Heal power (Chalker)\n"
+            f"📌 DEX  -  Accuracy & crit (Marksman)\n"
+            f"📌 LUK  -  Crit & gold bonus (Shark)\n"
+            f"📌 DEF  -  From gear only (cannot allocate)\n\n"
             f"🧭 {rec}\n\nUsage: `/allocate STR 5`", delay=30); return
     stat = context.args[0].upper()
     if stat not in STAT_NAMES:
@@ -4925,7 +4975,7 @@ async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_player(p)
     msg = f"🎁 *Daily Reward!*\n\n✨ +{daily_exp} EXP | 💰 +{gold} Gold"
     if item: msg += f" | 🎒 *{item}* (lucky drop!)"
-    else:    msg += f"\n_(No chalk today — check the /shop)_"
+    else:    msg += f"\n_(No chalk today  -  check the /shop)_"
     if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
     if leveled and p["level"] % 10 == 0:
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
@@ -4941,7 +4991,7 @@ TRAIN_MESSAGES = [
     "You studied safety play until safe shots became your first instinct.",
     "You worked on your break until the rack split exactly how you wanted.",
     "You spent an hour on draw shots, learning where the cue ball goes.",
-    "You practiced position play — potting the ball was never the problem.",
+    "You practiced position play  -  potting the ball was never the problem.",
     "You ran ghost ball drills until every cut angle was committed to muscle memory.",
 ]
 
@@ -5010,7 +5060,7 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if g: add_guild_exp(g, 20); save_guild(g)
     lmsgs, leveled = add_exp(p, q["exp"], w)
     new_t = check_titles(p); save_player(p)
-    msg = f"🗺️ *Quest — {q['tier']}*\n\n{q['text']}\n\n✨ +{q['exp']} EXP | 💰 +{gold} Gold"
+    msg = f"🗺️ *Quest  -  {q['tier']}*\n\n{q['text']}\n\n✨ +{q['exp']} EXP | 💰 +{gold} Gold"
     if item_found:
         rarity = ""
         for pool2 in [WEAPONS,ARMORS,ACCESSORIES,CONSUMABLES]:
@@ -5159,7 +5209,7 @@ async def _handle_drake_strike(update: Update, context: ContextTypes.DEFAULT_TYP
                 loot = roll_loot_table([(n,c) for n,c in drake.get("loot_table",[])])
             if loot: add_item(fp, loot)
             lmsgs, leveled = add_exp(fp, exp); save_player(fp)
-            lines.append(f"✅ *{fp['username']}* — {int(share*100)}% dmg | +{exp} EXP"
+            lines.append(f"✅ *{fp['username']}*  -  {int(share*100)}% dmg | +{exp} EXP"
                          + (f" | 🎒 {loot}" if loot else ""))
             if leveled and fp["level"] % 10 == 0:
                 asyncio.create_task(announce(context.bot, chat_id,
@@ -5189,7 +5239,7 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if discount: lines.append(f"🏷️ Discount active: *{int(discount*100)}% off!*\n")
         for i, entry in enumerate(shop, 1):
             price = round(entry["price"] * (1-discount))
-            lines.append(f"{i}. *{entry['item']}* — {price}g\n   _{entry['desc']}_")
+            lines.append(f"{i}. *{entry['item']}*  -  {price}g\n   _{entry['desc']}_")
         lines.append(f"\n`/shop buy [1-{len(shop)}]` to purchase.")
         await send_group(update, "\n".join(lines), delay=30); return
 
@@ -5210,80 +5260,121 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ Bought *{entry['item']}* for {price}g!\n💰 Remaining: {p['gold']}g", delay=15)
 
 # ── INVENTORY / EQUIP / USE / SELL ────────────────────────────────────────────
-async def inventory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user; p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    inv = Counter(sjl(p.get("inventory"), []))
-    equipped = {
-        p.get("equipped_weapon"), p.get("equipped_armor"),
-        p.get("equipped_shield"), p.get("equipped_accessory"),
-    }
-    lines = [f"🎒 *{p['username']}'s Inventory:*\n"]
-    # Show equipped gear first
-    eq_header = False
-    for slot_key, emoji in [
-        ("equipped_weapon","⚔️"), ("equipped_armor","🛡️"),
-        ("equipped_shield","🔰"), ("equipped_accessory","💍"),
-    ]:
-        name = p.get(slot_key)
-        if not name: continue
-        if not eq_header:
-            lines.append("*— Equipped —*")
-            eq_header = True
-        enh = get_enhancement(p, name)
-        encs_slot = get_enchant(p, name)
-        tags = []
-        if enh: tags.append(f"+{enh}")
-        if encs_slot: tags.append(f"✨×{len(encs_slot)}")
-        tag_str = " " + " ".join(tags) if tags else ""
-        lines.append(f"{emoji} {name}{tag_str} _(equipped)_")
-    if eq_header:
-        lines.append("")
-    rarity_label = {
-        "common":    "",
-        "uncommon":  " _Uncommon_",
-        "rare":      " _Rare_",
-        "epic":      " _Epic_",
-        "legendary": " _Legendary_",
-    }
-    if inv:
-        lines.append("*— Bag —*")
-        for item, count in inv.items():
+async def _send_inventory_page(target, p, page=1, edit=False):
+    inv_list = sjl(p.get("inventory"), [])
+    inv = Counter(inv_list)
+    items = list(inv.items())
+    INV_PAGE_SIZE = 10
+    total = len(items)
+    start = (page - 1) * INV_PAGE_SIZE
+    end   = start + INV_PAGE_SIZE
+    page_items = items[start:end]
+
+    equipped = {p.get("equipped_weapon"), p.get("equipped_armor"),
+                p.get("equipped_shield"), p.get("equipped_accessory")}
+
+    lines = [f"🎒 *{p['username']}'s Inventory* - Page {page}\n"]
+    # Equipped gear header (only on page 1)
+    if page == 1:
+        eq_header = False
+        for slot_key, emoji in [("equipped_weapon","⚔️"),("equipped_armor","🛡️"),
+                                  ("equipped_shield","🔰"),("equipped_accessory","💍")]:
+            name = p.get(slot_key)
+            if not name: continue
+            if not eq_header:
+                lines.append("* -  Equipped  - *")
+                eq_header = True
+            enh = get_enhancement(p, name)
+            encs_slot = get_enchant(p, name)
+            tags = []
+            if enh: tags.append(f"+{enh}")
+            if encs_slot: tags.append(f"✨×{len(encs_slot)}")
+            tag_str = " " + " ".join(tags) if tags else ""
+            lines.append(f"{emoji} {name}{tag_str} _(equipped)_")
+        if any(p.get(k) for k in ["equipped_weapon","equipped_armor","equipped_shield","equipped_accessory"]):
+            lines.append("")
+
+    if page_items:
+        lines.append("* -  Bag  - *")
+        for item, count in page_items:
             if item in WEAPONS:
-                type_tag = "⚔️ Weapon"; d = WEAPONS[item]
-                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
-                stat_str = f"+{d['atk']} ATK"
+                d = WEAPONS[item]; type_tag = "⚔️ Weapon"
+                line_tag = f" [{d.get('line','').capitalize()}]" if d.get('line') else ""
+                type_tag += line_tag
+                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪"); stat_str = f"+{d['atk']} ATK"
             elif item in ARMORS:
-                type_tag = "🛡️ Armor"; d = ARMORS[item]
-                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
-                stat_str = f"+{d['def']} DEF"
+                d = ARMORS[item]; type_tag = "🛡️ Armor"
+                line_tag = f" [{d.get('line','').capitalize()}]" if d.get('line') else ""
+                type_tag += line_tag
+                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪"); stat_str = f"+{d['def']} DEF"
             elif item in SHIELDS:
-                type_tag = "🔰 Shield"; d = SHIELDS[item]
-                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
-                stat_str = f"+{d['def']} DEF"
+                d = SHIELDS[item]; type_tag = "🔰 Shield"
+                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪"); stat_str = f"+{d['def']} DEF"
             elif item in ACCESSORIES:
-                type_tag = "💍 Accessory"; d = ACCESSORIES[item]
-                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
-                stat_str = d.get("desc","")[:40]
+                d = ACCESSORIES[item]; type_tag = "💍 Accessory"
+                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪"); stat_str = d.get("desc","")[:40]
             elif item in CONSUMABLES:
-                type_tag = "🧪 Consumable"; d = CONSUMABLES[item]
+                d = CONSUMABLES[item]; type_tag = "🧪 Consumable"
                 rarity = "⚪"; stat_str = d.get("desc","")
             else:
                 type_tag = "📦 Material"; rarity = "⚪"; stat_str = ""
             enh = get_enhancement(p, item)
-            encs = get_enchant(p, item) if item in {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES} else []
+            encs = get_enchant(p, item) if item in {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES} else []
             enh_str = f" *+{enh}*" if enh > 0 else ""
             enc_str = f" ✨×{len(encs)}" if encs else ""
-            lines.append(
-                f"{rarity} *{item}*{enh_str}{enc_str} x{count}\n"
-                f"  {type_tag} — _{stat_str}_"
-            )
+            lines.append(f"{rarity} *{item}*{enh_str}{enc_str} x{count}\n  {type_tag} - _{stat_str}_")
     else:
-        if not eq_header:
-            await send_group(update, "🎒 Your inventory is empty!", delay=9); return
-    lines.append("\n_/equip [item] | /enhance [item] | /enchant [item] | /sell [item] | /use [item]_")
-    await send_group(update, "\n".join(lines), delay=30)
+        if page == 1 and not any(p.get(k) for k in ["equipped_weapon","equipped_armor","equipped_shield","equipped_accessory"]):
+            lines.append("🎒 Inventory is empty!")
+        else:
+            lines.append("Bag is empty.")
+
+    lines.append(f"\n_/equip [item] | /enhance [item] | /enchant [item] | /sell [item] | /use [item]_")
+
+    keyboard = []
+    if page > 1:
+        keyboard.append(InlineKeyboardButton(f"⬅️ Page {page-1}", callback_data=f"inv_p_{page-1}"))
+    if end < total:
+        keyboard.append(InlineKeyboardButton(f"➡️ Page {page+1}", callback_data=f"inv_p_{page+1}"))
+    markup = InlineKeyboardMarkup([keyboard]) if keyboard else None
+
+    text = "\n".join(lines)[:4096]
+    if edit:
+        await target.edit_message_text(text=text, parse_mode="Markdown", reply_markup=markup)
+    else:
+        # target is the update object
+        try:
+            await target.message.delete()
+        except Exception:
+            pass
+        key = (target.effective_chat.id, target.effective_user.id)
+        old_id = last_bot_message.get(key)
+        try:
+            if old_id:
+                await target.get_bot().delete_message(chat_id=target.effective_chat.id, message_id=old_id)
+        except Exception:
+            pass
+        new_msg = await target.get_bot().send_message(
+            chat_id=target.effective_chat.id, text=text,
+            parse_mode="Markdown", reply_markup=markup)
+        last_bot_message[key] = new_msg.message_id
+        asyncio.create_task(_auto_delete(target.get_bot(), target.effective_chat.id, new_msg.message_id, 30))
+
+async def inventory_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not query.data.startswith("inv_p_"): return
+    page = int(query.data.split("_")[-1])
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p: return
+    await _send_inventory_page(query, p, page, edit=True)
+
+async def inventory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    await _send_inventory_page(update, p, page=1, edit=False)
 
 async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -5316,7 +5407,7 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rarity = RARITY_EMOJI.get(acc_data.get("rarity",""), "")
             encs_acc2 = get_enchant(p, acc_e)
             enc_str = f" ✨×{len(encs_acc2)}" if encs_acc2 else ""
-            lines.append(f"💍 Accessory: {rarity} *{acc_e}*{enc_str} — _{acc_data.get('desc','')}_")
+            lines.append(f"💍 Accessory: {rarity} *{acc_e}*{enc_str}  -  _{acc_data.get('desc','')}_")
         else:
             lines.append("💍 Accessory: None")
         lines.append(f"\n`/equip [item name]` to equip from inventory.")
@@ -5326,12 +5417,12 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if item_name not in inv:
         await send_group(update, f"You don't have *{item_name}* in your inventory!", delay=9); return
 
-    # Safety check — unknown items are never silently deleted
+    # Safety check  -  unknown items are never silently deleted
     all_known = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES)
     if item_name not in all_known:
         await send_group(update,
             f"⚠️ *{item_name}* is a legacy item from before the reskin.\n"
-            f"It will be exchanged automatically — please wait for the next deploy.",
+            f"It will be exchanged automatically  -  please wait for the next deploy.",
             delay=15)
         return
 
@@ -5340,28 +5431,38 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ok, reason = can_equip_weapon(p, item_name)
         if not ok:
             await send_group(update, f"❌ {reason}", delay=9); return
-        old = p.get("equipped_weapon")
+        old_name = p.get("equipped_weapon")
+        old_atk = get_weapon_atk(p)
         p["equipped_weapon"] = item_name
         inv.remove(item_name)
-        if old: inv.append(old)
+        if old_name: inv.append(old_name)
         p["inventory"] = json.dumps(inv); save_player(p)
-        w = WEAPONS[item_name]
+        new_atk = get_weapon_atk(p)
+        if old_name:
+            compare = f"*{old_name}* ({old_atk} ATK) -> *{item_name}* ({new_atk} ATK)"
+        else:
+            compare = f"ATK: {old_atk} -> {new_atk}"
         await send_group(update,
-            f"⚔️ Equipped *{item_name}* (+{w['atk']} ATK)\n"
-            + (f"_Unequipped {old}_" if old else ""), delay=15)
+            f"⚔️ Equipped *{item_name}*!\n{compare}\n"
+            + (f"_Unequipped {old_name}_" if old_name else ""), delay=15)
     elif item_name in ARMORS:
         ok, reason = can_equip_armor(p, item_name)
         if not ok:
             await send_group(update, f"❌ {reason}", delay=9); return
-        old = p.get("equipped_armor")
+        old_name = p.get("equipped_armor")
+        old_def = get_armor_def(p)
         p["equipped_armor"] = item_name
         inv.remove(item_name)
-        if old: inv.append(old)
+        if old_name: inv.append(old_name)
         p["inventory"] = json.dumps(inv); save_player(p)
-        a = ARMORS[item_name]
+        new_def = get_armor_def(p)
+        if old_name:
+            compare = f"*{old_name}* ({old_def} DEF) -> *{item_name}* ({new_def} DEF)"
+        else:
+            compare = f"DEF: {old_def} -> {new_def}"
         await send_group(update,
-            f"🛡️ Equipped *{item_name}* (+{a['def']} DEF)\n"
-            + (f"_Unequipped {old}_" if old else ""), delay=15)
+            f"🛡️ Equipped *{item_name}*!\n{compare}\n"
+            + (f"_Unequipped {old_name}_" if old_name else ""), delay=15)
     elif item_name in SHIELDS:
         s_data = SHIELDS[item_name]
         cls_line = get_class_line(p)
@@ -5369,14 +5470,20 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if cls_line != "warrior" or path != "A":
             await send_group(update,
                 "❌ Only Warrior Path A (Page/Squire/Knight/Paladin) can use shields.", delay=9); return
-        old = p.get("equipped_shield")
+        old_name = p.get("equipped_shield")
+        old_def = get_armor_def(p)
         p["equipped_shield"] = item_name
         inv.remove(item_name)
-        if old: inv.append(old)
+        if old_name: inv.append(old_name)
         p["inventory"] = json.dumps(inv); save_player(p)
+        new_def = get_armor_def(p)
+        if old_name:
+            compare = f"*{old_name}* ({old_def} DEF) -> *{item_name}* ({new_def} DEF)"
+        else:
+            compare = f"DEF: {old_def} -> {new_def}"
         await send_group(update,
-            f"🔰 Equipped *{item_name}* (+{s_data['def']} DEF)\n"
-            + (f"_Unequipped {old}_" if old else ""), delay=15)
+            f"🔰 Equipped *{item_name}*!\n{compare}\n"
+            + (f"_Unequipped {old_name}_" if old_name else ""), delay=15)
     elif item_name in ACCESSORIES:
         old = p.get("equipped_accessory")
         p["equipped_accessory"] = item_name
@@ -5402,7 +5509,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if item not in inv:
         await send_group(update, f"You don't have *{item}*!", delay=9); return
 
-    # Safety check — never silently delete unknown items
+    # Safety check  -  never silently delete unknown items
     all_known_consumables = set(CONSUMABLES)
     all_known_gear = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES)
     if item not in all_known_consumables and item not in all_known_gear:
@@ -5411,7 +5518,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_player(p)
         await send_group(update,
             f"⚠️ *{item}* is a legacy item from before the reskin.\n"
-            f"It will be exchanged automatically — please wait for the next deploy.",
+            f"It will be exchanged automatically  -  please wait for the next deploy.",
             delay=15)
         return
 
@@ -5422,7 +5529,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "❌ You're defeated — vials won't help.\n"
+                "❌ You're defeated  -  vials won't help.\n"
                 "Use a *The Re-Rack* to revive yourself, or wait for a Chalker.", delay=9)
             return
         p["hp"] = min(p["max_hp"], p["hp"]+50); msg += f"❤️ +50 HP ({p['hp']}/{p['max_hp']})"
@@ -5431,7 +5538,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "❌ You're defeated — vials won't help.\n"
+                "❌ You're defeated  -  vials won't help.\n"
                 "Use a *The Re-Rack* to revive yourself, or wait for a Chalker.", delay=9)
             return
         p["hp"] = min(p["max_hp"], p["hp"]+100); msg += f"❤️ +100 HP ({p['hp']}/{p['max_hp']})"
@@ -5440,7 +5547,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "❌ You're defeated — vials won't help.\n"
+                "❌ You're defeated  -  vials won't help.\n"
                 "Use a *The Re-Rack* to revive yourself, or wait for a Chalker.", delay=9)
             return
         p["hp"] = min(p["max_hp"], p["hp"]+200); msg += f"❤️ +200 HP ({p['hp']}/{p['max_hp']})"
@@ -5449,13 +5556,13 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "You're not defeated — save your Re-Rack for when you need it!", delay=9)
+                "You're not defeated  -  save your Re-Rack for when you need it!", delay=9)
             return
         if is_revival_blocked(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "☠️ You have been condemned by Verdict — you cannot be revived!\n"
+                "☠️ You have been condemned by Verdict  -  you cannot be revived!\n"
                 "Only a *House Saint's Absolution* can lift this curse.", delay=9)
             return
         p["defeated_until"] = None
@@ -5463,7 +5570,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_status(p, "invincible_until", 3600)
         msg += f"💚 Revived at {p['hp']} HP! 1 hour invincibility granted."
     else:
-        msg += "_(No direct effect — used as crafting material or quest item)_"
+        msg += "_(No direct effect  -  used as crafting material or quest item)_"
     save_player(p)
     await send_group(update, msg, delay=15)
 
@@ -5532,27 +5639,86 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 *Bulk Sold!*\n_{summary_str}_\n\nEarned *{total_gold}g* | Balance: {p['gold']}g",
             delay=20); return
 
-    item = " ".join(context.args)
+    SELL_RARITIES = {"common", "uncommon", "rare", "epic", "legendary"}
+    if context.args and context.args[0].lower() in SELL_RARITIES:
+        target_rarity = context.args[0].lower()
+        inv = sjl(p.get("inventory"), [])
+        sold_items = []; gold_earned = 0
+        remaining = []
+        equipped_slots = {p.get("equipped_weapon"), p.get("equipped_armor"),
+                          p.get("equipped_shield"), p.get("equipped_accessory")}
+        RARITY_SELL_VALUES = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
+        for item_r_entry in inv:
+            if item_r_entry in BULK_SELL_PROTECTED or item_r_entry in equipped_slots:
+                remaining.append(item_r_entry); continue
+            item_r = ""; item_val = 0
+            for pool_r in [WEAPONS, ARMORS, SHIELDS, ACCESSORIES, CONSUMABLES]:
+                if item_r_entry in pool_r:
+                    item_r = pool_r[item_r_entry].get("rarity","common")
+                    item_val = RARITY_SELL_VALUES.get(item_r, 5)
+                    break
+            if item_r == target_rarity:
+                sold_items.append(item_r_entry)
+                gold_earned += item_val
+            else:
+                remaining.append(item_r_entry)
+        if not sold_items:
+            await send_group(update, f"No {target_rarity} items to sell.", delay=9); return
+        p["inventory"] = json.dumps(remaining)
+        p["gold"] = p.get("gold", 0) + gold_earned
+        save_player(p)
+        await send_group(update,
+            f"💰 Sold {len(sold_items)} *{target_rarity}* item(s) for *{gold_earned} gold*.\n"
+            f"Items: {', '.join(sold_items[:10])}{'...' if len(sold_items)>10 else ''}", delay=15); return
+
+    # Single-item sell
+    # Strip trailing "confirm" from args to get item name
+    args_list = list(context.args)
+    confirmed = len(args_list) > 1 and args_list[-1].lower() == "confirm"
+    if confirmed:
+        args_list = args_list[:-1]
+    item_name = " ".join(args_list)
     inv  = sjl(p.get("inventory"), [])
-    if item not in inv:
-        await send_group(update, f"You don't have *{item}*!", delay=9); return
-    # Determine sell price (50% of base value)
+    if item_name not in inv:
+        await send_group(update, f"You don't have *{item_name}*!", delay=9); return
+
+    # Check if item is equipped
+    equipped_slots = {p.get("equipped_weapon"), p.get("equipped_armor"),
+                      p.get("equipped_shield"), p.get("equipped_accessory")}
+    if item_name in equipped_slots and not confirmed:
+        await send_group(update,
+            f"⚠️ *{item_name}* is currently equipped!\n"
+            f"Use `/unequip` first, or `/sell {item_name} confirm` to sell anyway.", delay=12); return
+
+    # Warn on rare+
+    item_rarity = ""
+    for pool_check in [WEAPONS, ARMORS, SHIELDS, ACCESSORIES]:
+        if item_name in pool_check:
+            item_rarity = pool_check[item_name].get("rarity","")
+            break
+    if item_rarity in ("rare","epic","legendary") and not confirmed:
+        rarity_emoji = RARITY_EMOJI.get(item_rarity, "")
+        await send_group(update,
+            f"⚠️ {rarity_emoji} *{item_name}* is a *{item_rarity.capitalize()}* item!\n"
+            f"Type `/sell {item_name} confirm` to sell it.", delay=12); return
+
+    # Determine sell price
     price = 0
     for pool in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS]:
-        if item in pool:
-            d = pool[item]
+        if item_name in pool:
+            d = pool[item_name]
             rarity_prices = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
             price = rarity_prices.get(d.get("rarity","common"),20)
             break
     for pool2 in [CONSUMABLES]:
-        if item in pool2:
-            price = pool2[item].get("sell",10); break
+        if item_name in pool2:
+            price = pool2[item_name].get("sell",10); break
     if price == 0: price = 10
-    inv.remove(item); p["inventory"] = json.dumps(inv)
+    inv.remove(item_name); p["inventory"] = json.dumps(inv)
     p["gold"] = p.get("gold",0) + price
     save_player(p)
     await send_group(update,
-        f"💰 Sold *{item}* for *{price} gold*!\nTotal: {p['gold']}g", delay=15)
+        f"💰 Sold *{item_name}* for *{price} gold*!\nTotal: {p['gold']}g", delay=15)
 
 # ── BOSS ──────────────────────────────────────────────────────────────────────
 async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5570,7 +5736,7 @@ async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚔️ *{user.first_name}* joins *{boss['data']['name']}*!\n"
             f"❤️ {boss['hp']}/{boss['data']['max_hp']} HP | Use /strike!", delay=15); return
     if not context.args:
-        bl = "\n".join(f"• `{k}` — {v['name']} (HP:{v['max_hp']} | EXP:{v['exp']})"
+        bl = "\n".join(f"• `{k}`  -  {v['name']} (HP:{v['max_hp']} | EXP:{v['exp']})"
                        for k,v in BOSSES.items() if not v.get("secret"))
         await send_group(update, f"⚔️ *Available Bosses:*\n\n{bl}\n\nExample: `/boss 1 ball`", delay=30); return
     key = " ".join(context.args).lower(); bd = BOSSES.get(key)
@@ -5592,7 +5758,7 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
     if is_defeated(p):
         await send_group(update, "💀 You're defeated!", delay=9); return
     if cannot_attack(p):
-        await send_group(update, "⚡ Stunned or rooted — can't act!", delay=9); return
+        await send_group(update, "⚡ Stunned or rooted  -  can't act!", delay=9); return
 
     # Auto-join and init raid HP if not in participants
     if user.id not in [u["id"] for u in boss_dict["participants"]]:
@@ -5681,7 +5847,7 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
             if award_title(pp, data["title"]):
                 lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
             add_exp(pp, data["exp"], w2); save_player(pp)
-            lines.append(f"✅ *{pp['username']}* — +{data['exp']} EXP | +{data['gold']} Gold")
+            lines.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
 
     save_player(p)
     await send_group(update, "\n".join(lines), delay=30)
@@ -5733,7 +5899,7 @@ async def strike_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"for *{edm} damage!* ({tp['hp']}/{tp.get('max_hp', calc_max_hp(tp))} HP)")
             save_player(tp)
 
-    # Check if all players dead — end fight
+    # Check if all players dead  -  end fight
     alive_after = [u for u in boss_dict["participants"]
                    if not is_defeated(get_player(u["id"]))]
     if not alive_after and boss_dict["hp"] > 0:
@@ -5763,7 +5929,7 @@ async def strike_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
             lmsgs, leveled = add_exp(pp, data["exp"], w)
             save_player(pp)
-            lines.append(f"✅ *{pp['username']}* — +{data['exp']} EXP | +{data['gold']} Gold")
+            lines.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
             if leveled and pp["level"] % 10 == 0:
                 asyncio.create_task(announce(update.get_bot(), chat_id,
                     f"🎉 *{pp['username']}* reached *Level {pp['level']}* defeating "
@@ -5780,15 +5946,15 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await send_group(update,
             "🏰 *Hall Commands:*\n"
-            "/guild create [name] — 100g to found\n"
-            "/guild join [name] — request to join\n"
-            "/guild approve [name] — leader approves\n"
-            "/guild deny [name] — leader denies\n"
-            "/guild info — your hall info\n"
-            "/guild list — top halls\n"
-            "/guild bank [amount] — donate gold\n"
-            "/guild leave — leave your hall\n"
-            "/guild disband — disband the hall (leader only)", delay=15); return
+            "/guild create [name]  -  100g to found\n"
+            "/guild join [name]  -  request to join\n"
+            "/guild approve [name]  -  leader approves\n"
+            "/guild deny [name]  -  leader denies\n"
+            "/guild info  -  your hall info\n"
+            "/guild list  -  top halls\n"
+            "/guild bank [amount]  -  donate gold\n"
+            "/guild leave  -  leave your hall\n"
+            "/guild disband  -  disband the hall (leader only)", delay=15); return
     sub = context.args[0].lower()
     if sub == "create":
         if len(context.args) < 2:
@@ -5876,7 +6042,7 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update, "Hall not found.", delay=9); return
         if g["leader_id"] != user.id:
             await send_group(update, "Only the Hall Leader can disband the Hall.", delay=9); return
-        # Confirm step — require /guild disband confirm
+        # Confirm step  -  require /guild disband confirm
         if len(context.args) < 2 or context.args[1].lower() != "confirm":
             await send_group(update,
                 f"⚠️ This will permanently disband *{g['name']}* and remove all members.\n"
@@ -5934,7 +6100,7 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = ["🏰 *Hall Standings:*\n"]
         for i, row in enumerate(rows):
             members = len(sjl(row["members"],[]))
-            lines.append(f"{medals[i]} *{row['name']}* — Lv {safe_int(row['level'],1)} | {members} members")
+            lines.append(f"{medals[i]} *{row['name']}*  -  Lv {safe_int(row['level'],1)} | {members} members")
         await send_group(update, "\n".join(lines), delay=15)
     elif sub == "leave":
         if not p.get("guild_id"):
@@ -5999,7 +6165,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if raid_state:
         # Check player can act
         if cannot_attack(p):
-            await send_group(update, "⚡ You're stunned or rooted — can't use skills!", delay=9); return
+            await send_group(update, "⚡ You're stunned or rooted  -  can't use skills!", delay=9); return
 
         if sk is None:
             if len(all_skills) == 1:
@@ -6007,7 +6173,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 lines = [f"🔮 Choose a skill to use against *{raid_state['enemy']['name']}*:\n"]
                 for i, s in enumerate(all_skills, 1):
-                    lines.append(f"*{i}.* *{s['name']}* — {s['desc']}")
+                    lines.append(f"*{i}.* *{s['name']}*  -  {s['desc']}")
                 lines.append("\n_Use /skill [name or number]_")
                 await send_group(update, "\n".join(lines), delay=20); return
 
@@ -6026,7 +6192,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if enemy died from skill
         if raid_state["enemy_hp"] <= 0:
             out.append(f"\n✅ *{enemy['name']}* is destroyed by the skill!")
-            # Trigger wave advance on next strike — set hp to 0 and let strike handle it
+            # Trigger wave advance on next strike  -  set hp to 0 and let strike handle it
             # We do this by calling the wave-advance logic inline:
             if raid_kind == "solo":
                 tier = raid_state["tier"]
@@ -6039,7 +6205,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     raid_state["enemy_hp"] = ne["hp"]
                     raid_state["enemy_max_hp"] = ne["hp"]
                     raid_state.pop("enemy_statuses", None)
-                    out.append(f"\n🌊 *Wave {raid_state['wave']} — {ne['name']}*")
+                    out.append(f"\n🌊 *Wave {raid_state['wave']}  -  {ne['name']}*")
                     out.append(f"❤️ HP: {ne['hp']} | 💀 {ne['dmg_min']}–{ne['dmg_max']}")
                 elif cw == len(wave_enemies):
                     bd = BOSSES[tier["wave_boss_key"]]
@@ -6049,7 +6215,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     raid_state["enemy_hp"] = boss_hp
                     raid_state["enemy_max_hp"] = boss_hp
                     raid_state.pop("enemy_statuses", None)
-                    out.append(f"\n🎱 *FINAL BOSS — {bd['name']}!* ❤️ HP: {boss_hp}")
+                    out.append(f"\n🎱 *FINAL BOSS  -  {bd['name']}!* ❤️ HP: {boss_hp}")
                 else:
                     # Solo raid victory via skill kill
                     active_soloraids.pop(user.id, None)
@@ -6067,7 +6233,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     add_exp(p, exp_reward, w2)
                     out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{exp_reward:,} EXP | +{gold_reward}g")
         else:
-            # Enemy still alive — counter-attack
+            # Enemy still alive  -  counter-attack
             killed = raid_enemy_counter(p, raid_state, out)
             if killed:
                 if raid_kind == "solo":
@@ -6079,7 +6245,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "\n".join(out), delay=20)
         return
 
-    # Boss fight check — if player is in a boss fight, skill hits the boss
+    # Boss fight check  -  if player is in a boss fight, skill hits the boss
     boss_dict = active_bosses.get(chat_id) or secret_boss_active.get(chat_id)
     is_secret_boss = chat_id in secret_boss_active
     player_in_boss = boss_dict and user.id in [u["id"] for u in boss_dict["participants"]]
@@ -6090,7 +6256,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 lines = [f"🔮 Choose a skill to use against *{boss_dict['data']['name']}*:\n"]
                 for i, s in enumerate(all_skills, 1):
-                    lines.append(f"*{i}.* *{s['name']}* — {s['desc']}")
+                    lines.append(f"*{i}.* *{s['name']}*  -  {s['desc']}")
                 lines.append("\n_Use /skill [name or number]_")
                 await send_group(update, "\n".join(lines), delay=20); return
 
@@ -6184,7 +6350,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
                 lmsgs, leveled = add_exp(pp, data["exp"], w2)
                 save_player(pp)
-                lines.append(f"✅ *{pp['username']}* — +{data['exp']:,} EXP | +{data['gold']} Gold")
+                lines.append(f"✅ *{pp['username']}*  -  +{data['exp']:,} EXP | +{data['gold']} Gold")
                 if leveled and pp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{pp['username']}* reached *Level {pp['level']}*! 🏆",
@@ -6194,7 +6360,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "\n".join(lines), delay=30)
         return
 
-    # Open-world PVP check — offensive skills are arena-only
+    # Open-world PVP check  -  offensive skills are arena-only
     if replying and update.message.reply_to_message:
         du = update.message.reply_to_message.from_user
         if du.id != user.id:
@@ -6212,7 +6378,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if sk_check and sk_check.get("type") not in OPEN_WORLD_ALLOWED_SKILL_TYPES:
                 await send_group(update,
                     "⚔️ Offensive skills are *arena-only*.\n"
-                    "In open PVP, just use /attack — your class procs fire automatically!\n"
+                    "In open PVP, just use /attack  -  your class procs fire automatically!\n"
                     "Challenge someone to `/arena` for turn-based combat.",
                     delay=15)
                 return
@@ -6224,16 +6390,16 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  f"_Skills are used in /arena turn-based combat._\n",
                  f"_In open PVP, your class procs fire automatically on /attack._\n"]
         if cls:
-            lines.append(f"🔹 *Passive — {cls['name']}:* {cls['skills'][0]['passive']}\n")
+            lines.append(f"🔹 *Passive  -  {cls['name']}:* {cls['skills'][0]['passive']}\n")
         for i, s in enumerate(all_skills, 1):
             mult = s.get("mult", 1.0)
             dmg_est = round(base_est * mult) if mult else "varies"
-            lines.append(f"*{i}.* *{s['name']}* — {s['desc']}\n   Est. damage: ~{dmg_est}")
+            lines.append(f"*{i}.* *{s['name']}*  -  {s['desc']}\n   Est. damage: ~{dmg_est}")
         lines.append("\n_To use offensive skills, challenge someone to `/arena`._\n"
                      "_Support skills (heals, buffs) work anywhere._")
         await send_group(update, "\n".join(lines), delay=30); return
 
-    # Replying to a target — pick skill
+    # Replying to a target  -  pick skill
     if sk is None:
         if len(all_skills) == 1:
             sk = all_skills[0]
@@ -6241,7 +6407,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Show numbered selection prompt
             lines = [f"🔮 Choose a skill to use:\n"]
             for i, s in enumerate(all_skills, 1):
-                lines.append(f"*{i}.* *{s['name']}* — {s['desc']}")
+                lines.append(f"*{i}.* *{s['name']}*  -  {s['desc']}")
             lines.append("\n_Reply to the same message again with /skill [name or number]._")
             await send_group(update, "\n".join(lines), delay=20); return
 
@@ -6331,9 +6497,9 @@ async def _execute_skill(update, context, p, sk):
     if is_defeated(d):
         await send_group(update, f"{d['username']} is already defeated!", delay=9); return
     if is_invincible(d):
-        await send_group(update, f"🛡️ {d['username']} is still recovering — invincible.", delay=9); return
+        await send_group(update, f"🛡️ {d['username']} is still recovering  -  invincible.", delay=9); return
     if is_silenced(p):
-        await send_group(update, "🤐 You are silenced — can't use skills!", delay=9); return
+        await send_group(update, "🤐 You are silenced  -  can't use skills!", delay=9); return
 
     stats_p = safe_stats(p)
     base    = calc_attack_damage(p, w)
@@ -6409,7 +6575,7 @@ async def _execute_skill(update, context, p, sk):
         recent_kills = d.get("recent_kills", 0)
         if recent_kills: dmg *= 2; lines.append("✨ *Holy!* Double damage vs a recent killer!")
     elif stype == "strip_debuff":
-        # Banish — strip buffs
+        # Banish  -  strip buffs
         buffs_stripped = 0
         for bf in ["blessed_until","holy_field_until"]:
             if d.get(bf): d[bf] = None; buffs_stripped += 1
@@ -6419,7 +6585,7 @@ async def _execute_skill(update, context, p, sk):
         lines.append(f"🔥 *Banish!* Stripped {buffs_stripped} buffs. "
                      f"Cannot gain buffs for 30 minutes!")
     elif stype == "condemn":
-        # Holy Wrath — Zealot ultimate
+        # Holy Wrath  -  Zealot ultimate
         wis = get_stat(p,"WIS")
         dmg = wis * 8
         for bf in ["blessed_until","holy_field_until"]:
@@ -6455,7 +6621,7 @@ async def _execute_skill(update, context, p, sk):
     lvl_msgs = []
     if d["hp"] <= 0:
         d["hp"] = 0
-        # Check Zealot condemn — revival blocked
+        # Check Zealot condemn  -  revival blocked
         if stype == "condemn":
             d["defeated_until"] = (datetime.now()+timedelta(hours=6)).isoformat()
             set_status(d, "revival_blocked_until", 7200)
@@ -6524,6 +6690,32 @@ async def cooldowns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_invincible(p):
         lines.append(f"🛡️ Invincible: still recovering")
     await send_group(update, "\n".join(lines), delay=15)
+
+async def who_cmd(update, context):
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
+    c.execute("""SELECT s.user_id, s.username, s.level, s.last_seen,
+                        p.class_id, p.hp, p.max_hp
+                 FROM shadow_profiles s
+                 LEFT JOIN players p ON p.user_id = s.user_id
+                 WHERE s.last_seen > ?
+                 ORDER BY s.last_seen DESC LIMIT 20""",
+              (cutoff,))
+    rows = c.fetchall()
+    conn.close()
+
+    if not rows:
+        await send_group(update, "No players active in the last 24 hours.", delay=9); return
+
+    lines = ["👥 *Active Players (last 24h)*\n"]
+    for row in rows:
+        cls = CLASS_TREE.get(row["class_id"] or "", {}).get("name", "No Class")
+        hp  = safe_int(row["hp"]); mhp = safe_int(row["max_hp"])
+        hp_pct = int((hp / max(1, mhp)) * 100) if mhp else 100
+        hp_icon = "❤️" if hp_pct > 50 else ("🟡" if hp_pct > 25 else "🔴")
+        lines.append(f"{hp_icon} *{row['username']}* - Lv {row['level']} {cls}")
+
+    await send_group(update, "\n".join(lines), delay=20)
 
 async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -6599,7 +6791,7 @@ async def accept_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if datetime.now() > datetime.fromisoformat(trade.get("expires", datetime.now().isoformat())):
         pending_trades.pop(seller_id, None)
         await send_group(update, "❌ That trade offer has expired.", delay=9); return
-    # Non-ascended player — store item in shadow profile pending_items
+    # Non-ascended player  -  store item in shadow profile pending_items
     if not p:
         s_acc = get_shadow(user.id)
         if not s_acc:
@@ -6797,10 +6989,10 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_enchant(p, item_name, effect)
     save_player(p)
     new_encs = get_enchant(p, item_name)
-    all_str = "\n".join(f"✨ {e['id'].capitalize()} — {e['desc']}" for e in new_encs)
+    all_str = "\n".join(f"✨ {e['id'].capitalize()}  -  {e['desc']}" for e in new_encs)
     await send_group(update,
         f"✨ *Enchanted!*\n\n"
-        f"*{item_name}* — Enchants ({len(new_encs)}/3):\n{all_str}", delay=20)
+        f"*{item_name}*  -  Enchants ({len(new_encs)}/3):\n{all_str}", delay=20)
 
 # ── DUEL ──────────────────────────────────────────────────────────────────────
 def calc_combat_power(p):
@@ -6830,7 +7022,7 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if is_defeated(p):
-        await send_group(update, "💀 You're defeated — can't duel!", delay=9); return
+        await send_group(update, "💀 You're defeated  -  can't duel!", delay=9); return
 
     # Reply-to-message shortcut: replying to a challenge message counts as /duel accept
     if update.message.reply_to_message and (not context.args or context.args[0].lower() != "accept"):
@@ -6878,7 +7070,7 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         winner["wins"] = winner.get("wins",0) + 1
         save_player(winner); save_player(loser)
         lines = [
-            f"⚔️ *DUEL — {challenger['username']} vs {p['username']}*",
+            f"⚔️ *DUEL  -  {challenger['username']} vs {p['username']}*",
             f"━━━━━━━━━━━━━━━━",
             f"🔢 {challenger['username']} CP: *{cp_a:,}*",
             f"🔢 {p['username']} CP: *{cp_b:,}*",
@@ -6888,9 +7080,9 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if advantage < total * 0.05:
             lines.append("⚡ *Perfectly matched!* It could have gone either way...")
         elif winner["user_id"] == challenger["user_id"]:
-            lines.append(f"📈 {challenger['username']} had the edge — *{cp_a - cp_b:,} CP advantage!*")
+            lines.append(f"📈 {challenger['username']} had the edge  -  *{cp_a - cp_b:,} CP advantage!*")
         else:
-            lines.append(f"📈 {p['username']} had the edge — *{cp_b - cp_a:,} CP advantage!*")
+            lines.append(f"📈 {p['username']} had the edge  -  *{cp_b - cp_a:,} CP advantage!*")
         lines.append(f"\n🏆 *{winner['username']}* wins the duel!")
         if wager > 0:
             lines.append(f"💰 +{wager}g collected from {loser['username']}.")
@@ -6900,8 +7092,8 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         await send_group(update,
             "Reply to a player's message to challenge them!\n"
-            "`/duel` — free duel\n"
-            "`/duel 100` — duel with 100g wager", delay=9); return
+            "`/duel`  -  free duel\n"
+            "`/duel 100`  -  duel with 100g wager", delay=9); return
     du = update.message.reply_to_message.from_user
     if du.id == user.id:
         await send_group(update, "Can't duel yourself!", delay=9); return
@@ -6961,7 +7153,7 @@ def build_arena_card(arena):
         return "█" * filled + "░" * (length - filled)
     turn_name = p1["username"] if arena["turn"] == arena["p1_id"] else p2["username"]
     lines = [
-        f"🎪 *ARENA — Round {arena['round']}*",
+        f"🎪 *ARENA  -  Round {arena['round']}*",
         f"━━━━━━━━━━━━━━━━",
         f"⚔️ {p1['username']} [{bar(hp1,max1)}] {hp1}/{max1} HP",
         f"⚔️ {p2['username']} [{bar(hp2,max2)}] {hp2}/{max2} HP",
@@ -7091,7 +7283,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if atk_state["reflect_dot_turns"] == 0: atk_state["reflect_dot"] = 0
         if atk_state.get("skip_turns", 0) > 0:
             atk_state["skip_turns"] -= 1
-            arena["log"].append(f"⚡ {atk_name} is stunned — turn skipped!")
+            arena["log"].append(f"⚡ {atk_name} is stunned  -  turn skipped!")
             arena["turn"] = arena["p2_id"] if is_p1 else arena["p1_id"]
             arena["round"] += 1
             card_text = build_arena_card(arena)
@@ -7109,9 +7301,9 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         action = context.args[0].lower() if context.args else "attack"
 
         if atk_state.get("bind_turns", 0) > 0 and action in ("skill","item"):
-            await send_group(update, "⛓️ You are bound — only `/arena attack` is available!", delay=5); return
+            await send_group(update, "⛓️ You are bound  -  only `/arena attack` is available!", delay=5); return
         if action == "skill" and atk_state.get("skill_block_turns", 0) > 0:
-            await send_group(update, "🤐 You're silenced — no skills this turn!", delay=5); return
+            await send_group(update, "🤐 You're silenced  -  no skills this turn!", delay=5); return
 
         w = get_weather()
         skip_turn_after = False
@@ -7135,7 +7327,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 atk_state["charge_ready"] = False; atk_state["charge_mult"] = 1.0
                 arena["log"].append(f"💥 *CHARGED STRIKE!*")
             if atk_state.get("acc_debuff") and random.random() < atk_state.get("acc_debuff_pct", 0.40):
-                arena["log"].append(f"😵 {atk_name} missed — accuracy debuffed!")
+                arena["log"].append(f"😵 {atk_name} missed  -  accuracy debuffed!")
                 dmg = 0
             if def_state.get("miss_next_enemy"):
                 def_state["miss_next_enemy"] = False
@@ -7335,7 +7527,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif stype == "dot_on_attack":
                 atk_state["reflect_on_hit"] = sk.get("reflect_on_hit", 10)
                 atk_state["reflect_turns"] = sk.get("reflect_turns", 3)
-                log_entry = f"⚡ {atk_name} uses *{sk['name']}*! Static field charged — {sk.get('reflect_on_hit',10)} dmg on hit!"
+                log_entry = f"⚡ {atk_name} uses *{sk['name']}*! Static field charged  -  {sk.get('reflect_on_hit',10)} dmg on hit!"
             elif stype == "atk_debuff":
                 dmg = round(base_dmg * sk.get("dmg_mult", 0.70))
                 arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
@@ -7524,7 +7716,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if arena[def_hp_key] <= 0 and sk.get("kill_atk_bonus"):
                     atk_state["atk_mod"] = 1.0 + sk["kill_atk_bonus"]
                     atk_state["buff_turns"] = 99
-                    log_entry += " KILL BONUS — ATK surged!"
+                    log_entry += " KILL BONUS  -  ATK surged!"
             elif stype == "undodgeable_execute":
                 stat_n = sk.get("stat","AGI")
                 dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 6.0))
@@ -7611,10 +7803,10 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Challenge initiation
     if not update.message.reply_to_message:
         await send_group(update,
-            "⚔️ *Arena — Turn-based PvP*\n\n"
+            "⚔️ *Arena  -  Turn-based PvP*\n\n"
             "Reply to a player's message to challenge them!\n"
-            "`/arena` — free fight\n"
-            "`/arena 200` — fight with 200g wager\n\n"
+            "`/arena`  -  free fight\n"
+            "`/arena 200`  -  fight with 200g wager\n\n"
             "Each turn: `/arena attack`, `/arena skill [1-7]`, `/arena item [name]`",
             delay=30); return
 
@@ -7647,7 +7839,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update,
         f"🎪 *{user.first_name}* challenges *{du.first_name}* to an Arena fight{wager_str}!\n\n"
         f"_{du.first_name}: type `/arena accept` to begin._\n"
-        f"_HP changes are arena-only — your real HP is safe._\n\n"
+        f"_HP changes are arena-only  -  your real HP is safe._\n\n"
         f"Challenge expires in 5 minutes.", permanent=False, delay=300)
 
 # ── DUNGEON ───────────────────────────────────────────────────────────────────
@@ -7679,13 +7871,13 @@ def _resolve_dungeon_room(p, room_type, theme, diff, room_num, hp_remaining, cla
         "monster":  [f"A {enemy_name} lurches from the shadows.",
                      f"You round a corner and find a {enemy_name} waiting.",
                      f"The {enemy_name} drops from the ceiling without warning.",
-                     f"Something moves in the dark ahead — a {enemy_name}.",
+                     f"Something moves in the dark ahead  -  a {enemy_name}.",
                      f"The {enemy_name} was already watching you enter.",
                      f"You hear it before you see it. A {enemy_name} in the passage.",
                      f"It smells you first. The {enemy_name} charges.",
                      f"A {enemy_name} blocks the only path forward."],
         "trap":     [f"The corridor looks clear until {trap_desc}.",
-                     f"You feel the floor shift — {trap_desc}.",
+                     f"You feel the floor shift  -  {trap_desc}.",
                      f"Something about the room is wrong. Then {trap_desc} proves it.",
                      f"You notice {trap_desc} a moment too late.",
                      f"The passage narrows just as {trap_desc} activates."],
@@ -7703,23 +7895,23 @@ def _resolve_dungeon_room(p, room_type, theme, diff, room_num, hp_remaining, cla
         "rest":     ["A small alcove off the main corridor. Dry, defensible, quiet.",
                      "Someone camped here before you. Their fire ring is cold but you restart it.",
                      "Not ideal. But you've slept in worse places.",
-                     "A natural chamber — wide enough to breathe in.",
+                     "A natural chamber  -  wide enough to breathe in.",
                      "The hall run offers a rare moment of silence. You take it."],
         "altar":    ["A stone altar dominates the room. Old carvings. Something dried on the surface.",
                      "The altar pulses with a light that has no source.",
                      "Offerings have been left here recently. Someone else has been through.",
                      "The altar is intact while everything around it is rubble.",
                      "A shrine to something that has no name in any language you know."],
-        "ambush":   [f"The room seems clear. Then the walls start moving — a {enemy_name}.",
+        "ambush":   [f"The room seems clear. Then the walls start moving  -  a {enemy_name}.",
                      f"You walk into it. A coordinated ambush. Two {enemy_name}s from either side.",
                      f"They were in the ceiling. {enemy_name}s, plural. Dropping together.",
                      f"A second {enemy_name} you didn't see. The first was a distraction.",
                      f"The passage narrows right as the {enemy_name}s spring their trap."],
         "merchant": ["A hooded figure sits cross-legged on a bedroll with wares. Inside a hall run.",
-                     "You smell pipe smoke before you see them — a merchant, impossibly calm.",
+                     "You smell pipe smoke before you see them  -  a merchant, impossibly calm.",
                      "A small stall set up in an alcove. The merchant nods like they expected you.",
                      "Someone has been down here long enough to set up shop. They look comfortable."],
-        "mini_boss":[f"The room is too large and too quiet. Then you see why — a {enemy_name} Champion.",
+        "mini_boss":[f"The room is too large and too quiet. Then you see why  -  a {enemy_name} Champion.",
                      f"It heard you coming three rooms back. The {enemy_name} Lord was ready.",
                      f"This one is different. Bigger. Smarter. A {enemy_name} Alpha.",
                      f"You smell it before you see it. A {enemy_name} Warlord. Old and mean.",
@@ -7857,7 +8049,7 @@ def _resolve_dungeon_boss(p, theme, diff, class_line):
     else:
         outcome = random.choice([
             (f"The {theme['boss_name']} is too much. You get through two phases before "
-             f"it drives you back. Not a defeat — a tactical retreat."),
+             f"it drives you back. Not a defeat  -  a tactical retreat."),
             (f"It outpaces you. Not by much, but enough. You leave with your life "
              f"and a clear picture of what needs to improve."),
             (f"The {theme['boss_name']} has fought hundreds like you. It shows. "
@@ -7903,9 +8095,9 @@ def _build_dungeon_recap(p, theme, diff, results, total_exp, total_gold,
         crit_tag = " ✨" if result.get("crit")    else ""
         fail_tag = " ❌" if not result.get("success") else ""
         if result["type"] == "boss":
-            room_label = f"*⚔️ Final Boss — {theme['boss_name']}{crit_tag}{fail_tag}*"
+            room_label = f"*⚔️ Final Boss  -  {theme['boss_name']}{crit_tag}{fail_tag}*"
         else:
-            room_label = (f"*Room {room_num} — "
+            room_label = (f"*Room {room_num}  -  "
                           f"{result['type'].replace('_',' ').title()}{crit_tag}{fail_tag}*")
         lines.append(f"\n{emoji} {room_label}")
         lines.append(f"_{result['narrative']}_")
@@ -7924,9 +8116,9 @@ def _build_dungeon_recap(p, theme, diff, results, total_exp, total_gold,
 
     lines.append("\n━━━━━━━━━━━━━━━━")
     if not run_failed:
-        lines.append(f"✅ *Hall Run Complete — {diff.capitalize()}*\n")
+        lines.append(f"✅ *Hall Run Complete  -  {diff.capitalize()}*\n")
     else:
-        lines.append("🏃 *Hall Run Abandoned — retreated alive*\n")
+        lines.append("🏃 *Hall Run Abandoned  -  retreated alive*\n")
     lines.append("🏆 *Total Rewards:*")
     lines.append(f"✨ +{total_exp:,} EXP | 💰 +{total_gold:,} gold")
     for item in items_found:
@@ -8045,55 +8237,138 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_dungeons[user.id] = task
 
 
+HELP_PAGES = [
+    # Page 1 - General & Character
+    (
+        "📖 *Commands  -  General & Character* (1/5)\n"
+        "\n"
+        "*/ascend*  -  Join the RPG (start here, use in private chat)\n"
+        "*/stats*  -  View your full profile and equipped gear\n"
+        "*/rank*  -  Leaderboard; RPG players first, then Shadows\n"
+        "*/rank me*  -  Find your own rank position\n"
+        "*/rank wins*  -  Top PvP win leaderboard\n"
+        "*/who*  -  Players active in the last 24 hours\n"
+        "*/weather*  -  Current table conditions (affects drops + EXP)\n"
+        "*/cooldowns*  -  Check all your active timers at once\n"
+        "*/class*  -  Choose your class at Lv 5\n"
+        "*/prestige*  -  Pick your specialization path at Lv 10\n"
+        "*/allocate STR 5*  -  Spend stat points (STR/INT/AGI/LUK/WIS/DEF)\n"
+        "*/resetstats*  -  Refund all stat points and reallocate fresh\n"
+        "*/skill*  -  View + use your class skill (costs SP)\n"
+        "*/title [name]*  -  Equip a title for passive stat bonuses"
+    ),
+    # Page 2 - Daily Activities
+    (
+        "📖 *Commands  -  Daily Activities* (2/5)\n"
+        "\n"
+        "*/daily*  -  Claim your daily reward (24hr cooldown)\n"
+        "*/train*  -  Train for EXP (30min cooldown)\n"
+        "*/quest*  -  Go on a quest for EXP + gold (1hr cooldown)\n"
+        "*/explore*  -  Full expedition for loot + EXP (1hr, 2x per day)\n"
+        "*/pool*  -  Take a pool shot: earn EXP, gold, find items (1min)\n"
+        "   Rarer shots drop better loot  -  some items only found here\n"
+        "*/dungeon*  -  Solo hall run for EXP + loot (1x per day)\n"
+        "*/dungeon hard*  -  Harder version with better rewards\n"
+        "*/dungeon legendary*  -  Toughest version, best loot\n"
+        "   Dungeon difficulty scales with your level and Combat Power\n"
+        "\n"
+        "💡 *Tip:* Chatting earns passive EXP. Level-ups broadcast at x10."
+    ),
+    # Page 3 - Economy
+    (
+        "📖 *Commands  -  Economy* (3/5)\n"
+        "\n"
+        "*/shop*  -  Browse the daily rotating shop\n"
+        "*/inventory*  -  View your items (paginated, 10 per page)\n"
+        "*/equip [item]*  -  Equip a weapon, armor, or accessory\n"
+        "   Shows old stat -> new stat comparison on equip\n"
+        "   Items show [Warrior], [Mage] etc. class tags\n"
+        "*/use [item]*  -  Use a consumable from your bag\n"
+        "*/sell [item]*  -  Sell an item for 50% of its value\n"
+        "   Warns before selling rare+/equipped items\n"
+        "*/sell [item] confirm*  -  Bypass sell warning\n"
+        "*/sell [rarity]*  -  Bulk sell all items of that rarity\n"
+        "   Rarities: common, uncommon, rare, epic, legendary\n"
+        "   Skips equipped items and higher rarities automatically\n"
+        "*/trade @user [item] [price]*  -  Offer a trade to another player\n"
+        "*/accept*  -  Accept an incoming trade offer\n"
+        "*/decline*  -  Decline a trade offer"
+    ),
+    # Page 4 - Gear & Combat
+    (
+        "📖 *Commands  -  Gear & Combat* (4/5)\n"
+        "\n"
+        "*/gear*  -  Full breakdown of your equipped gear and stats\n"
+        "*/enhance [weapon/armor/shield]*  -  Upgrade gear with Slate Fragments\n"
+        "   Each enhance adds +ATK or +DEF (up to 10 levels)\n"
+        "*/enchant [weapon/armor/shield/accessory]*  -  Add enchantments\n"
+        "   Costs Custom Tip Scrolls  -  up to 3 enchants per item\n"
+        "\n"
+        "*/attack*  -  Smart attack: routes to boss/raid/PvP automatically\n"
+        "   Reply to a player to PvP; routes to raid/boss if in an instance\n"
+        "   Players in raids/bosses cannot be targeted for PvP\n"
+        "*/heal*  -  Reply to heal a target (needs Chalk Vial)\n"
+        "*/skill*  -  In a boss or raid instance, targets the enemy directly\n"
+        "*/duel @user [wager]*  -  Quick duel decided by Combat Power\n"
+        "*/arena @user [wager]*  -  Full turn-based arena fight\n"
+        "*/boss [name]*  -  Start a boss encounter in the group\n"
+        "   Type boss name or leave blank to see available bosses"
+    ),
+    # Page 5 - Raids & Hall
+    (
+        "📖 *Commands  -  Raids & Hall* (5/5)\n"
+        "\n"
+        "⚔️ *Group Raids:*\n"
+        "*/raid*  -  Create a raid party (Lv 5+, up to 4 players)\n"
+        "   Other players reply with /raid to join the party\n"
+        "*/raidstart*  -  Lock the party and begin the raid\n"
+        "*/raidstrike*  -  Attack on your turn (25s or auto-advance)\n"
+        "*/raidstatus*  -  Current raid wave, enemy HP, and turn order\n"
+        "*/raidparty*  -  Party HP bars and damage dealt mid-raid\n"
+        "\n"
+        "🗡️ *Solo Raids:*\n"
+        "*/soloraid*  -  Start a solo raid instance\n"
+        "   Choose tier based on your level (Lv 1/5/10/15)\n"
+        "*/solostrike*  -  Attack in your solo raid\n"
+        "*/soloraidstatus*  -  Check solo raid HP and wave progress\n"
+        "\n"
+        "🏰 *Hall (Guild):*\n"
+        "*/guild*  -  All hall commands: create, join, upgrade, donate\n"
+        "\n"
+        "💬 *Secrets lurk in the felt...* 🎱"
+    ),
+]
+
+async def _send_help_page(target, page: int, edit: bool = False):
+    total = len(HELP_PAGES)
+    page  = max(1, min(page, total))
+    text  = HELP_PAGES[page - 1]
+    buttons = []
+    row = []
+    if page > 1:
+        row.append(InlineKeyboardButton("◀ Prev", callback_data=f"help_p_{page-1}"))
+    if page < total:
+        row.append(InlineKeyboardButton("Next ▶", callback_data=f"help_p_{page+1}"))
+    if row:
+        buttons.append(row)
+    markup = InlineKeyboardMarkup(buttons) if buttons else None
+    if edit:
+        await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+    else:
+        await send_group(target, text, delay=20, reply_markup=markup)
+
+async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    page = int(query.data.split("_")[-1])
+    await _send_help_page(query, page, edit=True)
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_group(update,
-        f"⚔️ *{WORLD_NAME} v14 — Commands*\n\n"
-        "👤 *Everyone:*\n"
-        "*/rank* — Leaderboard (paginated)\n"
-        "*/rank me* — Your position\n"
-        "*/rank wins* — Top 20 PVP wins\n"
-        "*/stats* — Full profile\n"
-        "*/ascend* — Enter the RPG (private chat)\n\n"
-        "📱 *RPG:*\n"
-        "*/class* — Choose class (Lv 5)\n"
-        "*/prestige* — Choose path (Lv 10)\n"
-        "*/allocate STR 5* — Spend stat points\n"
-        "*/resetstats* — Refund all stat points and start fresh\n"
-        "*/skill* — View and use your skills\n"
-        "*/daily* — Daily reward (24hr)\n"
-        "*/cooldowns* — Check timers\n"
-        "*/train* — Train (30min)\n"
-        "*/quest* — Go on a quest (1hr)\n"
-        "*/explore* — Expedition (1hr, 2x/day)\n"
-        "*/pool* — Take a pool shot (1min cooldown)\n"
-        "*/dungeon* — Solo hall run (1x/day)\n"
-        "   `/dungeon` | `/dungeon hard` | `/dungeon legendary`\n"
-        "*/shop* — Daily shop\n"
-        "*/inventory* — Your items\n"
-        "*/equip [item]* — Equip gear\n"
-        "*/use [item]* — Use consumable\n"
-        "*/sell [item]* — Sell for gold | `/sell all [rarity]`\n"
-        "*/trade @user [item] [price]* — Trade\n"
-        "*/accept* — Accept a trade offer\n"
-        "*/decline* — Decline a trade offer\n"
-        "*/title [name]* — Equip a title\n"
-        "*/weather* — Table conditions\n\n"
-        "⚔️ *Combat:*\n"
-        "*/attack* — Reply + /attack to strike\n"
-        "*/heal* — Reply + /heal (needs chalk vial)\n"
-        "*/skill* — View skills (arena-only for offense)\n"
-        "*/boss [name]* — Start boss fight\n"
-        "*/strike* — Attack active boss\n"
-        "*/duel @user [wager]* — Quick CP-based duel\n"
-        "*/arena @user [wager]* — Turn-based arena fight\n\n"
-        "⚒️ *Gear Upgrades:*\n"
-        "*/gear* — Full equipped gear details with stats\n"
-        "*/enhance [weapon/armor/shield]* — Enhance gear (Slate Fragments)\n"
-        "*/enchant [weapon/armor/shield/accessory]* — Enchant gear (Custom Tip Scrolls)\n\n"
-        "🏰 *Hall:*\n"
-        "*/guild* — All hall commands\n\n"
-        "💬 *Chat earns EXP. Level-ups announced at x10. Secrets lurk...* 🎱",
-        delay=30)
+    page = 1
+    if context.args:
+        try: page = int(context.args[0])
+        except ValueError: pass
+    await _send_help_page(update, page)
 
 # ── POOL ACTIVITY ─────────────────────────────────────────────────────────────
 POOL_SHOTS = [
@@ -8137,13 +8412,13 @@ POOL_SHOTS = [
      "text":"Bank pot off the far cushion drops clean. Calculated.",
      "exp":113,"gold":25,"loot":[("Premium Chalk Draft",0.15),("Slate Fragment",0.06)]},
     {"id":"combo_pot","weight":18,"rarity":"uncommon",
-     "text":"Combo pot — cue ball kisses the 5, sends the 7 into the corner. Beautiful.",
+     "text":"Combo pot  -  cue ball kisses the 5, sends the 7 into the corner. Beautiful.",
      "exp":119,"gold":28,"loot":[("Premium Chalk Draft",0.15),("Slate Fragment",0.08)]},
     {"id":"five_ball_run","weight":16,"rarity":"uncommon",
      "text":"Five ball run. Your focus is absolute. The table offers no resistance.",
      "exp":125,"gold":30,"loot":[("Slate Fragment",0.12),("Worn Tip Wrap",0.08)]},
     {"id":"called_shot","weight":16,"rarity":"uncommon",
-     "text":"Called shot — 6 ball, side pocket, two cushions. You called it. It dropped.",
+     "text":"Called shot  -  6 ball, side pocket, two cushions. You called it. It dropped.",
      "exp":138,"gold":35,"loot":[("Slate Fragment",0.15),("Silk Tip Ring",0.05)]},
     {"id":"century_break","weight":14,"rarity":"uncommon",
      "text":"Century break. You stop counting at twelve balls. The table is yours.",
@@ -8152,7 +8427,7 @@ POOL_SHOTS = [
      "text":"Maximum break. Every ball. Every pocket. The felt bows to your command.",
      "exp":250,"gold":80,"loot":[("Slate Fragment",0.30),("The Custom Tip Scroll",0.12),("The Action Coin",0.06)]},
     {"id":"trick_shot","weight":8,"rarity":"rare",
-     "text":"Trick shot — cue behind the back, jump shot over the cluster, corner pocket. "
+     "text":"Trick shot  -  cue behind the back, jump shot over the cluster, corner pocket. "
             "You don't even watch it drop. You already knew.",
      "exp":275,"gold":90,"loot":[("Slate Fragment",0.30),("The Custom Tip Scroll",0.15),("Break Master's Clasp",0.04)]},
     {"id":"ghost_ball","weight":7,"rarity":"rare",
@@ -8177,7 +8452,7 @@ POOL_SHOTS = [
      "exp":750,"gold":250,"loot":[("Slate Fragment",0.65),("The Custom Tip Scroll",0.40),
                                    ("The Hustler's Whisper",0.05),("The Safety Talisman",0.04)]},
     {"id":"corner_pocket_singularity","weight":1,"rarity":"legendary",
-     "text":"The corner pocket opens. Not just opens — becomes. "
+     "text":"The corner pocket opens. Not just opens  -  becomes. "
             "Every ball on the table rolls toward it simultaneously without being struck. "
             "They vanish one by one. The table is left perfectly bare. "
             "You didn't do that. Or maybe you did. The chalk dust settles. "
@@ -8227,7 +8502,7 @@ POOL_SHOTS = [
      "exp":115,"gold":36,"loot":[("Slate Fragment",0.12),("Road Shark Signet",0.04)]},
 
     {"id":"screw_back","weight":16,"rarity":"uncommon",
-     "text":"Strong draw — screw back across the table. "
+     "text":"Strong draw  -  screw back across the table. "
             "The cue ball returns to you like it owed you something.",
      "exp":125,"gold":40,"loot":[("Slate Fragment",0.15),("Black Ball Stud",0.05)]},
 
@@ -8242,21 +8517,21 @@ POOL_SHOTS = [
                                    ("Worn Tip Wrap",0.06)]},
 
     {"id":"nine_ball_rotation","weight":13,"rarity":"uncommon",
-     "text":"Nine ball rotation — lowest ball first, every time, "
+     "text":"Nine ball rotation  -  lowest ball first, every time, "
             "three balls pocketed in sequence. The rack is learning to fear you.",
      "exp":150,"gold":50,"loot":[("Slate Fragment",0.22),("Custom Tip Scroll",0.12),
                                    ("Road Player's Coin",0.05)]},
 
     # ── Additional Rare ──────────────────────────────────────────────────
     {"id":"masse_curve","weight":6,"rarity":"rare",
-     "text":"Massé shot — cue nearly vertical, extreme spin, "
+     "text":"Massé shot  -  cue nearly vertical, extreme spin, "
             "the ball curves around the blocker like it changed its mind. "
             "The felt remembers this shot.",
      "exp":260,"gold":110,"loot":[("Slate Fragment",0.40),("Custom Tip Scroll",0.22),
                                     ("Re-Rack",0.06),("Action Coin",0.05)]},
 
     {"id":"ghost_ball_method","weight":5,"rarity":"rare",
-     "text":"Ghost ball method on a thin cut — you aim at where the cue ball "
+     "text":"Ghost ball method on a thin cut  -  you aim at where the cue ball "
             "needs to be, not where the object ball is. It drops clean.",
      "exp":290,"gold":125,"loot":[("Slate Fragment",0.45),("Custom Tip Scroll",0.25),
                                     ("Re-Rack",0.08),("Ghost Ball Loop",0.04)]},
@@ -8532,7 +8807,7 @@ async def resetstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔄 *Stat Reset Complete!*\n\n"
         f"All allocated stat points have been refunded.\n"
         f"💡 *{refunded} points* returned to your pool.\n\n"
-        f"DEF is now gear-only — armor and shields provide your defense.\n\n"
+        f"DEF is now gear-only  -  armor and shields provide your defense.\n\n"
         f"Use `/allocate` to redistribute your points.\n"
         f"Current stats after class bonuses:\n"
         f"STR:{new_stats['STR']} AGI:{new_stats['AGI']} "
@@ -8583,7 +8858,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text    = (update.message.text or "").lower()
 
-    # Non-text messages (stickers, photos, etc.) — track shadow profile but skip keyword triggers
+    # Non-text messages (stickers, photos, etc.)  -  track shadow profile but skip keyword triggers
     if not update.message.text:
         s = get_or_create_shadow(user.id, user.first_name)
         s["username"]      = user.first_name
@@ -8592,7 +8867,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_shadow(s)
         return
 
-    # Random events — every 2500 messages
+    # Random events  -  every 2500 messages
     message_counters[chat_id] = message_counters.get(chat_id, 0) + 1
     cnt = message_counters[chat_id]
 
@@ -8769,7 +9044,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             save_player(p)
 
-    # Drake reply detection — if message is a reply to drake message
+    # Drake reply detection  -  if message is a reply to drake message
     if chat_id in active_drakes:
         drake = active_drakes[chat_id]
         if (update.message.reply_to_message and
@@ -8794,7 +9069,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if loot: add_item(fp, loot)
                     lmsgs, leveled = add_exp(fp, exp_share)
                     save_player(fp)
-                    lines.append(f"✅ *{fp['username']}* — +{exp_share} EXP"
+                    lines.append(f"✅ *{fp['username']}*  -  +{exp_share} EXP"
                                  + (f" | 🎒 *{loot}*!" if loot else ""))
                     if leveled and fp["level"] % 10 == 0:
                         asyncio.create_task(announce(context.bot, chat_id,
@@ -8927,6 +9202,7 @@ def main():
     app.add_handler(CommandHandler("weather",   weather_cmd))
     app.add_handler(CommandHandler("ascend",    ascend_cmd))
     app.add_handler(CommandHandler("cooldowns", cooldowns_cmd))
+    app.add_handler(CommandHandler("who",       who_cmd))
 
     # Class & progression
     app.add_handler(CommandHandler("class",     class_cmd))
@@ -8962,13 +9238,14 @@ def main():
     app.add_handler(CommandHandler("attack",     attack_cmd))
     app.add_handler(CommandHandler("heal",       heal_cmd))
     app.add_handler(CommandHandler("boss",       boss_cmd))
-    # strike_cmd kept for reference but unregistered — use /attack instead
+    # strike_cmd kept for reference but unregistered  -  use /attack instead
     # app.add_handler(CommandHandler("strike",     strike_cmd))
     app.add_handler(CommandHandler("dungeon",    dungeon_cmd))
     app.add_handler(CommandHandler("raid",          raid_cmd))
     app.add_handler(CommandHandler("raidstart",     raidstart_cmd))
     app.add_handler(CommandHandler("raidstrike",    raidstrike_cmd))
     app.add_handler(CommandHandler("raidstatus",    raidstatus_cmd))
+    app.add_handler(CommandHandler("raidparty",     raidparty_cmd))
     app.add_handler(CommandHandler("soloraid",      soloraid_cmd))
     app.add_handler(CommandHandler("solostrike",    solostrike_cmd))
     app.add_handler(CommandHandler("soloraidstatus",soloraidstatus_cmd))
@@ -8987,7 +9264,9 @@ def main():
     app.add_handler(CommandHandler("wipe",      wipe_cmd))
 
     # Callbacks
-    app.add_handler(CallbackQueryHandler(rank_callback,  pattern="^rank_p_"))
+    app.add_handler(CallbackQueryHandler(rank_callback,      pattern="^rank_p_"))
+    app.add_handler(CallbackQueryHandler(inventory_callback, pattern="^inv_p_"))
+    app.add_handler(CallbackQueryHandler(help_callback,      pattern="^help_p_"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
