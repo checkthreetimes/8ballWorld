@@ -5728,8 +5728,7 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── DUEL ──────────────────────────────────────────────────────────────────────
 def calc_combat_power(p):
-    sd = safe_stats(p)
-    stat_total = sum(sd.values())
+    stat_total = sum(get_stat(p, st) for st in ["STR","AGI","INT","WIS","DEX","LUK"])
     weapon_val = get_weapon_atk(p) * 3
     armor_val  = get_armor_def(p) * 2
     level_val  = p["level"] * 10
