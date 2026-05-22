@@ -8434,8 +8434,8 @@ HELP_PAGES = [
         "*/class*  -  Choose your class at Lv 5\n"
         "*/prestige*  -  Pick your specialization path at Lv 10\n"
         "*/allocate STR 5*  -  Spend stat points (STR/INT/AGI/LUK/WIS/DEX)\n"
-        "*/resetstats*  -  Refund all stat points and reallocate fresh\n"
-        "*/resetclass confirm*  -  Reset class + path (300g, keeps level + allocated points)\n"
+        "*/resetstats*  -  Refund all stat points and reallocate from scratch\n"
+        "*/resetclass confirm*  -  Reset your class and path (300g)\n"
         "*/skill*  -  View + use your class skill (costs SP)\n"
         "*/title [name]*  -  Equip a title for passive stat bonuses"
     ),
@@ -8443,16 +8443,17 @@ HELP_PAGES = [
     (
         "📖 *Commands  -  Daily Activities* (2/5)\n"
         "\n"
-        "*/daily*  -  Claim your daily reward (24hr cooldown)\n"
-        "*/train*  -  Train for EXP (30min cooldown)\n"
-        "*/quest*  -  Go on a quest for EXP + gold (1hr cooldown)\n"
-        "*/explore*  -  Full expedition for loot + EXP (1hr, 2x per day)\n"
-        "*/pool*  -  Take a pool shot: earn EXP, gold, find items (1min)\n"
+        "*/hustle*  -  Run all ready activities at once (daily, train, quest, pool)\n"
+        "   Shows what ran and what's still on cooldown\n"
+        "*/daily*  -  Claim daily reward: EXP + gold + chance at an item (24hr)\n"
+        "*/train*  -  Train for EXP with class bonus (30min)\n"
+        "*/quest*  -  Quest for EXP, gold, and loot (1hr)\n"
+        "*/explore*  -  Expedition for bigger loot (1hr, 2x per day)\n"
+        "*/pool*  -  Take a pool shot: EXP, gold, find items (8s cooldown)\n"
         "   Rarer shots drop better loot  -  some items only found here\n"
         "*/dungeon*  -  Solo hall run for EXP + loot (1x per day)\n"
         "*/dungeonhard*  -  Harder version with better rewards\n"
         "*/dungeonlegendary*  -  Toughest version, best loot\n"
-        "   Dungeon difficulty scales with your level and Combat Power\n"
         "\n"
         "💡 *Tip:* Chatting earns passive EXP. Level-ups broadcast at x10."
     ),
@@ -8946,6 +8947,127 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
+# ── HUSTLE ────────────────────────────────────────────────────────────────────
+async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Run all ready activities (daily, train, quest, pool) in one shot."""
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if is_defeated(p):
+        await send_group(update, "💀 Too beaten up to hustle right now.", delay=9); return
+
+    now    = datetime.now()
+    lines  = []
+    ran    = []
+    skipped = []
+    w      = get_weather()
+
+    # ── Daily ──────────────────────────────────────────────────────────────────
+    if check_cooldown(p.get("last_daily"), 86400):
+        p["last_daily"] = now.isoformat()
+        gold = 50 + p["level"] * 5; p["gold"] = p.get("gold",0) + gold
+        item = None
+        if random.random() < 0.10:
+            item = random.choice(["Chalk Vial","Premium Chalk Draft","Champion's Chalk Flask"])
+            add_item(p, item)
+        daily_exp = 200 + p["level"] * 10
+        lmsgs, _ = add_exp(p, daily_exp)
+        entry = f"🎁 *Daily:* +{daily_exp} EXP, +{gold}g"
+        if item: entry += f", *{item}*!"
+        ran.append(entry)
+        if lmsgs: ran.extend(f"  {m}" for m in lmsgs)
+    else:
+        skipped.append(f"🎁 Daily  -  {time_remaining(p.get('last_daily'), 86400)}")
+
+    # ── Train ──────────────────────────────────────────────────────────────────
+    if check_cooldown(p.get("last_train"), 1800):
+        p["last_train"] = now.isoformat()
+        base = 150 + p["level"] * 5
+        cls  = get_player_class(p)
+        if cls:
+            pk = cls.get("passive_key","")
+            if pk in ("arcane_mind","spell_surge","arcane_mastery","mana_overload","eternal_wisdom"):
+                base = round(base * 1.30)
+            elif pk in ("iron_will","holy_stance","devotion","bulwark","divine_judgment"):
+                base = round(base * 1.20)
+            elif pk in ("quick_hands","evasion","shadowstep","ghost_form","deaths_shadow",
+                        "eagle_eye","trailblazer","natures_bond","guardian_stance","pathfinder"):
+                base = round(base * 1.35)
+            elif pk in ("mending_aura","divine_grace","sacred_ground","resurrection","divine_presence",
+                        "dark_sense","purge","judgement","wrath_of_the_righteous"):
+                base = round(base * 1.15)
+        lmsgs, _ = add_exp(p, base)
+        ran.append(f"🏋️ *Train:* +{base} EXP")
+        if lmsgs: ran.extend(f"  {m}" for m in lmsgs)
+    else:
+        skipped.append(f"🏋️ Train  -  {time_remaining(p.get('last_train'), 1800)}")
+
+    # ── Quest ──────────────────────────────────────────────────────────────────
+    if check_cooldown(p.get("last_quest"), 3600):
+        p["last_quest"] = now.isoformat()
+        if p["level"] <= 3:   qpool = [q for q in SOLO_QUESTS if q["tier"]=="Easy"]
+        elif p["level"] <= 7: qpool = [q for q in SOLO_QUESTS if q["tier"] in ["Easy","Medium"]]
+        else:                 qpool = SOLO_QUESTS
+        q  = random.choice(qpool or SOLO_QUESTS)
+        item_found = roll_loot_table(q.get("loot_table",[]))
+        if item_found: add_item(p, item_found)
+        luk_val = get_stat(p, "LUK")
+        gold    = round(q["gold"] * (1 + luk_val * 0.002))
+        p["gold"] = p.get("gold",0) + gold
+        p["quests_done"] = p.get("quests_done",0) + 1
+        lmsgs, _ = add_exp(p, q["exp"], w)
+        check_titles(p)
+        entry = f"🗺️ *Quest:* +{q['exp']} EXP, +{gold}g"
+        if item_found: entry += f", *{item_found}*!"
+        ran.append(entry)
+        if lmsgs: ran.extend(f"  {m}" for m in lmsgs)
+    else:
+        skipped.append(f"🗺️ Quest  -  {time_remaining(p.get('last_quest'), 3600)}")
+
+    # ── Pool shot ──────────────────────────────────────────────────────────────
+    last_pool = p.get("last_pool")
+    pool_ready = True
+    if last_pool:
+        try:
+            elapsed = (now - datetime.fromisoformat(last_pool)).total_seconds()
+            if elapsed < 8:
+                pool_ready = False
+                skipped.append(f"🎱 Pool  -  {int(8 - elapsed)}s")
+        except: pass
+    if pool_ready:
+        p["last_pool"] = now.isoformat()
+        shot      = roll_pool_shot_with_luk(p)
+        exp_gain  = shot["exp"]; gold_gain = shot["gold"]
+        p["gold"] = p.get("gold",0) + gold_gain
+        item_found = None
+        if shot.get("loot"):
+            item_found = roll_loot_table(shot["loot"])
+            if item_found: add_item(p, item_found)
+        bonus_item = roll_loot_table(POOL_ITEM_TABLE, p)
+        if bonus_item: add_item(p, bonus_item)
+        lmsgs, _ = add_exp(p, exp_gain)
+        rarity_prefix = {"common":"🎱","uncommon":"🎯","rare":"🔵","epic":"🟣","legendary":"🟡"}.get(shot["rarity"],"🎱")
+        entry = f"{rarity_prefix} *Pool:* +{exp_gain} EXP"
+        if gold_gain: entry += f", +{gold_gain}g"
+        if item_found: entry += f", *{item_found}*!"
+        if bonus_item: entry += f"\n  🎱 Table drop: *{bonus_item}*!"
+        ran.append(entry)
+        if lmsgs: ran.extend(f"  {m}" for m in lmsgs)
+
+    if not ran:
+        cd_list = "\n".join(f"  {s}" for s in skipped)
+        await send_group(update,
+            f"🎱 *{user.first_name}*  -  nothing ready yet.\n\n{cd_list}", delay=15); return
+
+    save_player(p)
+
+    out = [f"🎱 *{user.first_name}* runs the table!\n"]
+    out += ran
+    if skipped:
+        out += ["", "⏳ *Still cooling down:*"] + [f"  {s}" for s in skipped]
+    await send_group(update, "\n".join(out), delay=45)
+
+
 # ── RESETSTATS ────────────────────────────────────────────────────────────────
 async def resetstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -9403,6 +9525,7 @@ def main():
     app.add_handler(CommandHandler("quest",     quest_cmd))
     app.add_handler(CommandHandler("explore",   explore_cmd))
     app.add_handler(CommandHandler("pool",      pool_cmd))
+    app.add_handler(CommandHandler("hustle",    hustle_cmd))
 
     # Economy
     app.add_handler(CommandHandler("shop",      shop_cmd))
