@@ -4112,6 +4112,18 @@ def _exp_bar(current, needed, length=10):
     bar    = "█" * filled + "░" * (length - filled)
     return f"✨ [{bar}] {current:,}/{needed:,} EXP ({int(pct*100)}%)"
 
+def _paginate_lines_10(header, lines):
+    size = 10
+    total_pages = max(1, -(-len(lines) // size))  # ceiling div
+    pages = []
+    for i in range(total_pages):
+        chunk = list(lines[i*size:(i+1)*size])
+        while len(chunk) < size:
+            chunk.append("")
+        pages.append(f"{header}  -  Page {i+1}/{total_pages}\n\n" + "\n".join(chunk))
+    return pages
+
+
 def _build_stats_pages(p, viewing_name=None):
     real_max     = calc_max_hp(p)
     defeated_str = " *(Defeated)*" if is_defeated(p) else ""
@@ -4152,14 +4164,12 @@ def _build_stats_pages(p, viewing_name=None):
         for k, v in inv.items()
     ] or ["  Empty"]
 
-    # Page 1 - Profile & Stats
-    p1 = [
-        f"🎱 *{name}*{defeated_str}{recovering}  (1/3)",
+    lines = [
+        f"🎱 *{name}*{defeated_str}{recovering}",
         f"🏅 {p['active_title']}",
-        f"{tier['name']}  -  Level {p['level']}",
+        f"{tier['emoji']} Level {p['level']}  -  {tier['name']}",
         f"🏰 {guild_str}",
         f"🌍 {w['name']}",
-        "",
         f"❤️ HP: {p['hp']}/{real_max}",
         f"{_exp_bar(p['exp'], exp_for_level(p['level']))}",
         f"🏆 Lifetime EXP: {safe_int(p.get('total_exp')):,}",
@@ -4167,43 +4177,31 @@ def _build_stats_pages(p, viewing_name=None):
         f"⚔️ Wins: {p['wins']}   Losses: {p.get('losses',0)}",
         "",
         f"🧙 Class: {cls_name}{path_str}",
-        "",
-        f"📊 *Stats (effective)*",
-        f"STR {eff['STR']}  |  AGI {eff['AGI']}  |  INT {eff['INT']}",
-        f"WIS {eff['WIS']}  |  DEX {eff['DEX']}  |  LUK {eff['LUK']}",
+        f"📊 STR {eff['STR']}  |  AGI {eff['AGI']}  |  INT {eff['INT']}",
+        f"      WIS {eff['WIS']}  |  DEX {eff['DEX']}  |  LUK {eff['LUK']}",
         f"🛡️ DEF: {get_armor_def(p)} (from gear)",
-    ]
-    if sp > 0:
-        p1.append(f"💡 {sp} stat point{'s' if sp != 1 else ''} available  -  /allocate")
-
-    # Page 2 - Gear & Combat
-    p2 = [
-        f"🎱 *{name}*  -  Gear & Combat  (2/3)",
+        f"💡 {sp} stat pts to spend  -  /allocate" if sp > 0 else "",
         "",
-        f"🎽 *Equipped Gear*",
-        f"⚔️ Weapon:  {quick_gear(weap_name)}",
-        f"🛡️ Armor:   {quick_gear(armr_name)}",
-        f"🔰 Shield:  {quick_gear(shld_name)}",
-        f"💍 Access:  {quick_gear(acc_name)}",
-        f"_/gear for full enhancement + enchant details_",
+        f"🎽 *Gear*",
+        f"⚔️ {quick_gear(weap_name)}",
+        f"🛡️ {quick_gear(armr_name)}",
+        f"🔰 {quick_gear(shld_name)}",
+        f"💍 {quick_gear(acc_name)}",
+        f"_/gear for full details_",
+        f"⚡ Combat Power: *{cp:,}*" if cp > 0 else "",
+        "",
     ]
-    if cp > 0:
-        p2 += ["", f"⚡ *Combat Power: {cp:,}*"]
+
     if statuses:
-        p2 += ["", "⚠️ *Active Effects*"] + [f"  {st}" for st in statuses]
+        lines += ["⚠️ *Active Effects*"] + [f"  {st}" for st in statuses]
     else:
-        p2 += ["", "_No active effects_"]
+        lines += ["_No active effects_"]
 
-    # Page 3 - Inventory & Titles
-    p3 = [f"🎱 *{name}*  -  Inventory & Titles  (3/3)", "", "🎒 *Inventory*"]
-    p3 += inv_lines[:20]
-    if len(inv_lines) > 20:
-        p3.append(f"  _...and {len(inv_lines)-20} more  -  /inventory for full list_")
-    else:
-        p3.append("_Use /inventory for paginated full view_")
-    p3 += ["", "🏅 *Titles*", f"  {', '.join(safe_titles(p)) or 'None'}"]
+    lines += ["", "🎒 *Inventory*"] + inv_lines
+    lines += ["", "_/inventory for paginated full view_"]
+    lines += ["", "🏅 *Titles*"] + ([f"  {t}" for t in safe_titles(p)] or ["  None"])
 
-    return ["\n".join(p1), "\n".join(p2), "\n".join(p3)]
+    return _paginate_lines_10(f"🎱 *{name}  -  Stats*", lines)
 
 
 async def _send_stats_page(target, target_uid: int, page: int, edit: bool = False,
@@ -5975,180 +5973,217 @@ async def strike_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── GUILD ─────────────────────────────────────────────────────────────────────
 async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    p = get_player(update.effective_user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    await send_group(update,
+        "🏰 *Hall Commands*\n\n"
+        "/guildcreate [name]  -  Found a hall (100g)\n"
+        "/guildjoin  -  Browse and join available halls\n"
+        "/guildinfo  -  Your hall info and perks\n"
+        "/guildlist  -  Top halls leaderboard\n"
+        "/guilddonate [amount]  -  Donate gold to hall bank\n"
+        "/guildkick @user  -  Kick a member (leader only)\n"
+        "/guildleave  -  Leave your current hall\n"
+        "/guilddisband  -  Disband your hall (leader only)",
+        delay=15)
+
+
+async def guildcreate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if not context.args:
-        await send_group(update,
-            "🏰 *Hall Commands:*\n"
-            "/guild create [name]  -  100g to found\n"
-            "/guild join [name]  -  request to join\n"
-            "/guild approve [name]  -  leader approves\n"
-            "/guild deny [name]  -  leader denies\n"
-            "/guild info  -  your hall info\n"
-            "/guild list  -  top halls\n"
-            "/guild bank [amount]  -  donate gold\n"
-            "/guild leave  -  leave your hall\n"
-            "/guild disband  -  disband the hall (leader only)", delay=15); return
-    sub = context.args[0].lower()
-    if sub == "create":
-        if len(context.args) < 2:
-            await send_group(update, "Usage: /guild create [name]", delay=9); return
-        if p.get("guild_id") and str(p.get("guild_id")) != "None":
-            await send_group(update, "You're already in a hall!", delay=9); return
-        if p.get("gold",0) < 100:
-            await send_group(update, "Need 100 gold to found a hall!", delay=9); return
-        name = " ".join(context.args[1:])
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-        try:
-            c.execute("INSERT INTO guilds (name,leader_id,members,level,exp,bank) VALUES(?,?,?,1,0,0)",
-                      (name, user.id, json.dumps([user.id])))
-            conn.commit(); gid = c.lastrowid
-        except sqlite3.IntegrityError:
-            await send_group(update, f"Hall '{name}' already exists!", delay=9)
-            conn.close(); return
-        conn.close()
-        p["guild_id"] = gid; p["gold"] = p.get("gold",0)-100
-        award_title(p,"Hall Founder"); save_player(p)
-        asyncio.create_task(announce(context.bot, update.effective_chat.id,
-            f"🏰 *{name}* hall founded by *{user.first_name}*!"))
-        await send_group(update, f"🏰 *{name}* founded!\n🏅 Title: *Hall Founder*!", delay=15)
-    elif sub == "join":
-        if len(context.args) < 2:
-            await send_group(update, "Usage: /guild join [name]", delay=9); return
-        name = " ".join(context.args[1:]); g = get_guild_by_name(name)
-        if not g:
-            await send_group(update, f"No hall named *{name}*.", delay=9); return
-        gid = g["guild_id"]
-        if gid not in pending_guild_reqs: pending_guild_reqs[gid] = []
-        if any(r["user_id"]==user.id for r in pending_guild_reqs[gid]):
-            await send_group(update, "Request already pending.", delay=9); return
-        _uname = user.username or user.first_name
-        pending_guild_reqs[gid].append({"user_id":user.id,"username":_uname})
-        leader = get_player(g["leader_id"])
-        try:
-            await context.bot.send_message(chat_id=update.effective_chat.id,
-                text=f"🏰 *@{_uname}* wants to join *{g['name']}*!\n"
-                     f"Leader: `/guild approve {_uname}` or `/guild deny {_uname}`",
-                parse_mode="Markdown")
-        except: pass
-        await send_group(update, f"📨 Request sent to *{g['name']}*!", delay=9)
-    elif sub == "approve":
-        if len(context.args) < 2:
-            await send_group(update, "Usage: /guild approve [username]", delay=9); return
-        if not p.get("guild_id"):
-            await send_group(update, "You're not in a hall!", delay=9); return
-        g = get_guild(p["guild_id"])
-        if not g or g["leader_id"] != user.id:
-            await send_group(update, "Only the hall leader can approve.", delay=9); return
-        tn = " ".join(context.args[1:]).lower()
-        reqs = pending_guild_reqs.get(g["guild_id"],[])
-        match = next((r for r in reqs if r["username"].lower()==tn), None)
-        if not match:
-            await send_group(update, f"No pending request from *{tn}*.", delay=9); return
-        tp = get_player(match["user_id"])
-        if not tp:
-            await send_group(update, "Player not found.", delay=9); return
-        members = sjl(g["members"],[]); members.append(match["user_id"])
+        await send_group(update, "Usage: /guildcreate [name]", delay=9); return
+    if p.get("guild_id") and str(p.get("guild_id")) != "None":
+        await send_group(update, "You're already in a hall!", delay=9); return
+    if p.get("gold",0) < 100:
+        await send_group(update, "Need 100 gold to found a hall!", delay=9); return
+    name = " ".join(context.args)
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    try:
+        c.execute("INSERT INTO guilds (name,leader_id,members,level,exp,bank) VALUES(?,?,?,1,0,0)",
+                  (name, user.id, json.dumps([user.id])))
+        conn.commit(); gid = c.lastrowid
+    except sqlite3.IntegrityError:
+        await send_group(update, f"Hall '{name}' already exists!", delay=9)
+        conn.close(); return
+    conn.close()
+    p["guild_id"] = gid; p["gold"] = p.get("gold",0) - 100
+    award_title(p, "Hall Founder"); save_player(p)
+    asyncio.create_task(announce(context.bot, update.effective_chat.id,
+        f"🏰 *{name}* hall founded by *{user.first_name}*!"))
+    await send_group(update, f"🏰 *{name}* founded!\n🏅 Title: *Hall Founder*!", delay=15)
+
+
+async def guildjoin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    p = get_player(user.id)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if p.get("guild_id") and str(p.get("guild_id")) != "None":
+        await query.answer("You're already in a hall!", show_alert=True); return
+    gid = int(query.data.split("_")[-1])
+    g = get_guild(gid)
+    if not g:
+        await query.answer("Hall no longer exists.", show_alert=True); return
+    members = sjl(g["members"], [])
+    if user.id in members:
+        await query.answer("You're already in this hall.", show_alert=True); return
+    members.append(user.id)
+    g["members"] = json.dumps(members); save_guild(g)
+    p["guild_id"] = gid; save_player(p)
+    asyncio.create_task(announce(context.bot, query.message.chat.id,
+        f"🏰 *{user.first_name}* joined *{g['name']}*!"))
+    await query.edit_message_text(f"✅ You joined *{g['name']}*!", parse_mode="Markdown")
+
+
+async def guildjoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if p.get("guild_id") and str(p.get("guild_id")) != "None":
+        await send_group(update, "You're already in a hall! Use /guildleave first.", delay=9); return
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    c.execute("SELECT guild_id,name,level,members FROM guilds ORDER BY level DESC LIMIT 10")
+    rows = c.fetchall(); conn.close()
+    if not rows:
+        await send_group(update, "No halls exist yet  -  use /guildcreate to found one!", delay=9); return
+    medals = ["🥇","🥈","🥉"] + ["🏰"]*7
+    lines = ["🏰 *Available Halls  -  tap to join:*\n"]
+    buttons = []
+    for i, row in enumerate(rows):
+        mcount = len(sjl(row["members"], []))
+        lines.append(f"{medals[i]} *{row['name']}*  -  Lv {safe_int(row['level'],1)} | {mcount} members")
+        buttons.append([InlineKeyboardButton(
+            f"Join {row['name']}", callback_data=f"guildjoin_{row['guild_id']}")])
+    markup = InlineKeyboardMarkup(buttons)
+    await send_group(update, "\n".join(lines), reply_markup=markup, delay=20)
+
+
+async def guildinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if not p.get("guild_id"):
+        await send_group(update, "You're not in a hall! Use /guildjoin.", delay=9); return
+    g = get_guild(p["guild_id"])
+    if not g:
+        await send_group(update, "Hall not found.", delay=9); return
+    members = sjl(g["members"],[]); leader = get_player(g["leader_id"])
+    glvl = safe_int(g.get("level"),1); perk = GUILD_PERKS.get(glvl,{})
+    nxt = guild_exp_for_level(glvl) if glvl < 10 else "MAX"
+    await send_group(update,
+        f"🏰 *{g['name']}*\n"
+        f"👑 Leader: {leader['username'] if leader else '?'}\n"
+        f"👥 Members: {len(members)}\n"
+        f"⭐ Level: {glvl}/10  |  EXP: {safe_int(g.get('exp'))}/{nxt}\n"
+        f"💰 Bank: {safe_int(g.get('bank'))}g\n"
+        f"🎁 Perks: _{perk.get('desc','None')}_",
+        permanent=True)
+
+
+async def guildlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    c.execute("SELECT name,level,members FROM guilds ORDER BY level DESC LIMIT 10")
+    rows = c.fetchall(); conn.close()
+    if not rows:
+        await send_group(update, "No halls yet!", delay=9); return
+    medals = ["🥇","🥈","🥉"] + ["🏰"]*7
+    lines = ["🏰 *Hall Standings*\n"]
+    for i, row in enumerate(rows):
+        mcount = len(sjl(row["members"], []))
+        lines.append(f"{medals[i]} *{row['name']}*  -  Lv {safe_int(row['level'],1)} | {mcount} members")
+    await send_group(update, "\n".join(lines), delay=15)
+
+
+async def guilddonate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if not context.args:
+        await send_group(update, "Usage: /guilddonate [amount]", delay=9); return
+    if not p.get("guild_id"):
+        await send_group(update, "You're not in a hall!", delay=9); return
+    try: amount = int(context.args[0])
+    except:
+        await send_group(update, "Usage: /guilddonate [amount]", delay=9); return
+    if amount <= 0 or p.get("gold",0) < amount:
+        await send_group(update, f"Not enough gold! Have {p.get('gold',0)}g.", delay=9); return
+    g = get_guild(p["guild_id"])
+    if not g:
+        await send_group(update, "Hall not found.", delay=9); return
+    p["gold"] -= amount; g["bank"] = safe_int(g.get("bank")) + amount
+    gmsgs = add_guild_exp(g, amount//10); save_guild(g); save_player(p)
+    msg = f"💰 *{user.first_name}* donated {amount}g to *{g['name']}*! Bank: {g['bank']}g"
+    if gmsgs: msg += "\n" + "\n".join(gmsgs)
+    await send_group(update, msg, delay=15)
+
+
+async def guildkick_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if not p.get("guild_id"):
+        await send_group(update, "You're not in a hall!", delay=9); return
+    g = get_guild(p["guild_id"])
+    if not g or g["leader_id"] != user.id:
+        await send_group(update, "Only the hall leader can kick members.", delay=9); return
+    target = update.message.reply_to_message
+    if not target:
+        await send_group(update, "Reply to the player you want to kick.", delay=9); return
+    tp = get_player(target.from_user.id)
+    if not tp or tp.get("guild_id") != p.get("guild_id"):
+        await send_group(update, "That player isn't in your hall.", delay=9); return
+    if target.from_user.id == user.id:
+        await send_group(update, "You can't kick yourself! Use /guilddisband to close the hall.", delay=9); return
+    members = sjl(g["members"], [])
+    if target.from_user.id in members: members.remove(target.from_user.id)
+    g["members"] = json.dumps(members); save_guild(g)
+    tp["guild_id"] = None; save_player(tp)
+    await send_group(update, f"🚫 *{tp['username']}* has been kicked from *{g['name']}*.", delay=9)
+
+
+async def guildleave_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if not p.get("guild_id"):
+        await send_group(update, "You're not in a hall!", delay=9); return
+    g = get_guild(p["guild_id"])
+    if g and g["leader_id"] == user.id:
+        await send_group(update, "Leaders can't leave  -  use /guilddisband to close the hall.", delay=9); return
+    if g:
+        members = sjl(g["members"], [])
+        if user.id in members: members.remove(user.id)
         g["members"] = json.dumps(members); save_guild(g)
-        tp["guild_id"] = g["guild_id"]; save_player(tp)
-        pending_guild_reqs[g["guild_id"]] = [r for r in reqs if r["user_id"]!=match["user_id"]]
-        await send_group(update, f"✅ *@{match['username']}* joined *{g['name']}*!", delay=9)
-    elif sub == "deny":
-        if len(context.args) < 2:
-            await send_group(update, "Usage: /guild deny [username]", delay=9); return
-        if not p.get("guild_id"):
-            await send_group(update, "You're not in a hall!", delay=9); return
-        g = get_guild(p["guild_id"])
-        if not g or g["leader_id"] != user.id:
-            await send_group(update, "Only the hall leader can deny.", delay=9); return
-        tn = " ".join(context.args[1:]).lower()
-        reqs = pending_guild_reqs.get(g["guild_id"],[])
-        match = next((r for r in reqs if r["username"].lower()==tn), None)
-        if not match:
-            await send_group(update, f"No pending request from *{tn}*.", delay=9); return
-        pending_guild_reqs[g["guild_id"]] = [r for r in reqs if r["user_id"]!=match["user_id"]]
-        await send_group(update, f"❌ *@{match['username']}*'s request denied.", delay=9)
-    elif sub == "disband":
-        if p.get("guild_id") is None:
-            await send_group(update, "You're not in a Hall.", delay=9); return
-        g = get_guild(p["guild_id"])
-        if not g:
-            await send_group(update, "Hall not found.", delay=9); return
-        if g["leader_id"] != user.id:
-            await send_group(update, "Only the Hall Leader can disband the Hall.", delay=9); return
-        # Confirm step  -  require /guild disband confirm
-        if len(context.args) < 2 or context.args[1].lower() != "confirm":
-            await send_group(update,
-                f"⚠️ This will permanently disband *{g['name']}* and remove all members.\n"
-                f"Type `/guild disband confirm` to proceed.", delay=15); return
-        # Disband: remove guild_id from all members
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-        c.execute("UPDATE players SET guild_id=NULL WHERE guild_id=?", (p["guild_id"],))
-        c.execute("DELETE FROM guilds WHERE guild_id=?", (p["guild_id"],))
-        conn.commit(); conn.close()
-        p["guild_id"] = None
-        save_player(p)
-        await send_group(update, f"🏚️ *{g['name']}* has been disbanded.", permanent=True); return
-    elif sub == "info":
-        if not p.get("guild_id"):
-            await send_group(update, "You're not in a hall!", delay=9); return
-        g = get_guild(p["guild_id"])
-        if not g:
-            await send_group(update, "Hall not found.", delay=9); return
-        members = sjl(g["members"],[]); leader = get_player(g["leader_id"])
-        glvl = safe_int(g.get("level"),1); perk = GUILD_PERKS.get(glvl,{})
-        nxt = guild_exp_for_level(glvl) if glvl < 10 else "MAX"
+    p["guild_id"] = None; save_player(p)
+    await send_group(update, f"👋 You've left *{g['name'] if g else 'your hall'}*.", delay=9)
+
+
+async def guilddisband_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if not p.get("guild_id"):
+        await send_group(update, "You're not in a hall.", delay=9); return
+    g = get_guild(p["guild_id"])
+    if not g:
+        await send_group(update, "Hall not found.", delay=9); return
+    if g["leader_id"] != user.id:
+        await send_group(update, "Only the hall leader can disband the hall.", delay=9); return
+    if not context.args or context.args[0].lower() != "confirm":
         await send_group(update,
-            f"🏰 *{g['name']}*\n"
-            f"👑 Leader: {leader['username'] if leader else '?'}\n"
-            f"👥 Members: {len(members)}\n"
-            f"⭐ Level: {glvl}/10 | EXP: {safe_int(g.get('exp'))}/{nxt}\n"
-            f"💰 Bank: {safe_int(g.get('bank'))}g\n"
-            f"🎁 Perks: _{perk.get('desc','None')}_",
-            permanent=True)
-    elif sub == "bank":
-        if len(context.args) < 2:
-            await send_group(update, "Usage: /guild bank [amount]", delay=9); return
-        if not p.get("guild_id"):
-            await send_group(update, "You're not in a hall!", delay=9); return
-        try: amount = int(context.args[1])
-        except:
-            await send_group(update, "Usage: /guild bank [amount]", delay=9); return
-        if amount <= 0 or p.get("gold",0) < amount:
-            await send_group(update, f"Not enough gold! Have {p.get('gold',0)}g.", delay=9); return
-        g = get_guild(p["guild_id"])
-        if not g:
-            await send_group(update, "Hall not found.", delay=9); return
-        p["gold"] -= amount; g["bank"] = safe_int(g.get("bank"))+amount
-        gmsgs = add_guild_exp(g, amount//10); save_guild(g); save_player(p)
-        msg = f"💰 *{user.first_name}* donated {amount}g! Bank: {g['bank']}g"
-        if gmsgs: msg += "\n" + "\n".join(gmsgs)
-        await send_group(update, msg, delay=15)
-    elif sub == "list":
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
-        c.execute("SELECT name,level,members FROM guilds ORDER BY level DESC LIMIT 10")
-        rows = c.fetchall(); conn.close()
-        if not rows:
-            await send_group(update, "No halls yet!", delay=9); return
-        medals = ["🥇","🥈","🥉"]+["🏰"]*7
-        lines = ["🏰 *Hall Standings:*\n"]
-        for i, row in enumerate(rows):
-            members = len(sjl(row["members"],[]))
-            lines.append(f"{medals[i]} *{row['name']}*  -  Lv {safe_int(row['level'],1)} | {members} members")
-        await send_group(update, "\n".join(lines), delay=15)
-    elif sub == "leave":
-        if not p.get("guild_id"):
-            await send_group(update, "You're not in a hall!", delay=9); return
-        g = get_guild(p["guild_id"])
-        if g and g["leader_id"] == user.id:
-            await send_group(update, "Hall leaders can't leave!", delay=9); return
-        if g:
-            members = sjl(g["members"],[])
-            if user.id in members: members.remove(user.id)
-            g["members"] = json.dumps(members); save_guild(g)
-        p["guild_id"] = None; save_player(p)
-        await send_group(update, "You've left your hall.", delay=9)
+            f"⚠️ This permanently disbands *{g['name']}* and removes all members.\n"
+            f"Type /guilddisband confirm to proceed.", delay=15); return
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("UPDATE players SET guild_id=NULL WHERE guild_id=?", (p["guild_id"],))
+    c.execute("DELETE FROM guilds WHERE guild_id=?", (p["guild_id"],))
+    conn.commit(); conn.close()
+    p["guild_id"] = None; save_player(p)
+    await send_group(update, f"🏚️ *{g['name']}* has been disbanded.", permanent=True)
 
 # ── SKILL ─────────────────────────────────────────────────────────────────────
 async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -8272,22 +8307,39 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_dungeons[user.id] = task
 
 
+async def dungeonhard_cmd(update, context):
+    context.args = ["hard"]
+    await dungeon_cmd(update, context)
+
+async def dungeonlegendary_cmd(update, context):
+    context.args = ["legendary"]
+    await dungeon_cmd(update, context)
+
+async def rankme_cmd(update, context):
+    context.args = ["me"]
+    await rank_cmd(update, context)
+
+async def rankwins_cmd(update, context):
+    context.args = ["wins"]
+    await rank_cmd(update, context)
+
+
 HELP_PAGES = [
     # Page 1 - General & Character
     (
         "📖 *Commands  -  General & Character* (1/5)\n"
         "\n"
         "*/ascend*  -  Join the RPG (start here, use in private chat)\n"
-        "*/stats*  -  View your full profile and equipped gear\n"
+        "*/stats*  -  View your full profile (paginated)\n"
         "*/rank*  -  Leaderboard; RPG players first, then Shadows\n"
-        "*/rank me*  -  Find your own rank position\n"
-        "*/rank wins*  -  Top PvP win leaderboard\n"
+        "*/rankme*  -  Find your own rank position\n"
+        "*/rankwins*  -  Top PvP win leaderboard\n"
         "*/who*  -  Players active in the last 24 hours\n"
         "*/weather*  -  Current table conditions (affects drops + EXP)\n"
         "*/cooldowns*  -  Check all your active timers at once\n"
         "*/class*  -  Choose your class at Lv 5\n"
         "*/prestige*  -  Pick your specialization path at Lv 10\n"
-        "*/allocate STR 5*  -  Spend stat points (STR/INT/AGI/LUK/WIS/DEF)\n"
+        "*/allocate STR 5*  -  Spend stat points (STR/INT/AGI/LUK/WIS/DEX)\n"
         "*/resetstats*  -  Refund all stat points and reallocate fresh\n"
         "*/skill*  -  View + use your class skill (costs SP)\n"
         "*/title [name]*  -  Equip a title for passive stat bonuses"
@@ -8303,8 +8355,8 @@ HELP_PAGES = [
         "*/pool*  -  Take a pool shot: earn EXP, gold, find items (1min)\n"
         "   Rarer shots drop better loot  -  some items only found here\n"
         "*/dungeon*  -  Solo hall run for EXP + loot (1x per day)\n"
-        "*/dungeon hard*  -  Harder version with better rewards\n"
-        "*/dungeon legendary*  -  Toughest version, best loot\n"
+        "*/dungeonhard*  -  Harder version with better rewards\n"
+        "*/dungeonlegendary*  -  Toughest version, best loot\n"
         "   Dungeon difficulty scales with your level and Combat Power\n"
         "\n"
         "💡 *Tip:* Chatting earns passive EXP. Level-ups broadcast at x10."
@@ -8324,7 +8376,6 @@ HELP_PAGES = [
         "*/sell [item] confirm*  -  Bypass sell warning\n"
         "*/sell [rarity]*  -  Bulk sell all items of that rarity\n"
         "   Rarities: common, uncommon, rare, epic, legendary\n"
-        "   Skips equipped items and higher rarities automatically\n"
         "*/trade @user [item] [price]*  -  Offer a trade to another player\n"
         "*/accept*  -  Accept an incoming trade offer\n"
         "*/decline*  -  Decline a trade offer"
@@ -8341,13 +8392,11 @@ HELP_PAGES = [
         "\n"
         "*/attack*  -  Smart attack: routes to boss/raid/PvP automatically\n"
         "   Reply to a player to PvP; routes to raid/boss if in an instance\n"
-        "   Players in raids/bosses cannot be targeted for PvP\n"
         "*/heal*  -  Reply to heal a target (needs Chalk Vial)\n"
-        "*/skill*  -  In a boss or raid instance, targets the enemy directly\n"
+        "*/skill*  -  In a boss or raid, targets the enemy directly\n"
         "*/duel @user [wager]*  -  Quick duel decided by Combat Power\n"
         "*/arena @user [wager]*  -  Full turn-based arena fight\n"
-        "*/boss [name]*  -  Start a boss encounter in the group\n"
-        "   Type boss name or leave blank to see available bosses"
+        "*/boss [name]*  -  Start a boss encounter in the group"
     ),
     # Page 5 - Raids & Hall
     (
@@ -8355,21 +8404,24 @@ HELP_PAGES = [
         "\n"
         "⚔️ *Group Raids:*\n"
         "*/raid*  -  Create a raid party (Lv 5+, up to 4 players)\n"
-        "   Other players reply with /raid to join the party\n"
         "*/raidstart*  -  Lock the party and begin the raid\n"
         "*/raidstrike*  -  Attack on your turn (25s or auto-advance)\n"
-        "*/raidstatus*  -  Current raid wave, enemy HP, and turn order\n"
+        "*/raidstatus*  -  Current wave, enemy HP, and turn order\n"
         "*/raidparty*  -  Party HP bars and damage dealt mid-raid\n"
-        "\n"
         "🗡️ *Solo Raids:*\n"
-        "*/soloraid*  -  Start a solo raid instance\n"
-        "   Choose tier based on your level (Lv 1/5/10/15)\n"
+        "*/soloraid*  -  Start a solo raid (choose tier by level)\n"
         "*/solostrike*  -  Attack in your solo raid\n"
         "*/soloraidstatus*  -  Check solo raid HP and wave progress\n"
-        "\n"
         "🏰 *Hall (Guild):*\n"
-        "*/guild*  -  All hall commands: create, join, upgrade, donate\n"
-        "\n"
+        "*/guild*  -  Hall commands overview\n"
+        "*/guildcreate [name]*  -  Found a new hall (100g)\n"
+        "*/guildjoin*  -  Browse + tap to join a hall\n"
+        "*/guildinfo*  -  Your hall info and current perks\n"
+        "*/guildlist*  -  Top halls leaderboard\n"
+        "*/guilddonate [amount]*  -  Donate gold to hall bank\n"
+        "*/guildkick*  -  Reply to kick a member (leader only)\n"
+        "*/guildleave*  -  Leave your current hall\n"
+        "*/guilddisband confirm*  -  Permanently disband your hall\n"
         "💬 *Secrets lurk in the felt...* 🎱"
     ),
 ]
@@ -9231,13 +9283,15 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     # Universal
-    app.add_handler(CommandHandler("rank",      rank_cmd))
-    app.add_handler(CommandHandler("stats",     stats_cmd))
-    app.add_handler(CommandHandler("help",      help_cmd))
-    app.add_handler(CommandHandler("weather",   weather_cmd))
-    app.add_handler(CommandHandler("ascend",    ascend_cmd))
-    app.add_handler(CommandHandler("cooldowns", cooldowns_cmd))
-    app.add_handler(CommandHandler("who",       who_cmd))
+    app.add_handler(CommandHandler("rank",         rank_cmd))
+    app.add_handler(CommandHandler("rankme",       rankme_cmd))
+    app.add_handler(CommandHandler("rankwins",     rankwins_cmd))
+    app.add_handler(CommandHandler("stats",        stats_cmd))
+    app.add_handler(CommandHandler("help",         help_cmd))
+    app.add_handler(CommandHandler("weather",      weather_cmd))
+    app.add_handler(CommandHandler("ascend",       ascend_cmd))
+    app.add_handler(CommandHandler("cooldowns",    cooldowns_cmd))
+    app.add_handler(CommandHandler("who",          who_cmd))
 
     # Class & progression
     app.add_handler(CommandHandler("class",     class_cmd))
@@ -9275,7 +9329,9 @@ def main():
     app.add_handler(CommandHandler("boss",       boss_cmd))
     # strike_cmd kept for reference but unregistered  -  use /attack instead
     # app.add_handler(CommandHandler("strike",     strike_cmd))
-    app.add_handler(CommandHandler("dungeon",    dungeon_cmd))
+    app.add_handler(CommandHandler("dungeon",          dungeon_cmd))
+    app.add_handler(CommandHandler("dungeonhard",      dungeonhard_cmd))
+    app.add_handler(CommandHandler("dungeonlegendary", dungeonlegendary_cmd))
     app.add_handler(CommandHandler("raid",          raid_cmd))
     app.add_handler(CommandHandler("raidstart",     raidstart_cmd))
     app.add_handler(CommandHandler("raidstrike",    raidstrike_cmd))
@@ -9286,7 +9342,15 @@ def main():
     app.add_handler(CommandHandler("soloraidstatus",soloraidstatus_cmd))
 
     # Guild
-    app.add_handler(CommandHandler("guild",     guild_cmd))
+    app.add_handler(CommandHandler("guild",          guild_cmd))
+    app.add_handler(CommandHandler("guildcreate",    guildcreate_cmd))
+    app.add_handler(CommandHandler("guildjoin",      guildjoin_cmd))
+    app.add_handler(CommandHandler("guildinfo",      guildinfo_cmd))
+    app.add_handler(CommandHandler("guildlist",      guildlist_cmd))
+    app.add_handler(CommandHandler("guilddonate",    guilddonate_cmd))
+    app.add_handler(CommandHandler("guildkick",      guildkick_cmd))
+    app.add_handler(CommandHandler("guildleave",     guildleave_cmd))
+    app.add_handler(CommandHandler("guilddisband",   guilddisband_cmd))
 
     # Events
     app.add_handler(CommandHandler("greet",     greet_event))
@@ -9303,6 +9367,7 @@ def main():
     app.add_handler(CallbackQueryHandler(inventory_callback, pattern="^inv_p_"))
     app.add_handler(CallbackQueryHandler(help_callback,      pattern="^help_p_"))
     app.add_handler(CallbackQueryHandler(stats_callback,     pattern="^stats_p_"))
+    app.add_handler(CallbackQueryHandler(guildjoin_callback, pattern="^guildjoin_"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
