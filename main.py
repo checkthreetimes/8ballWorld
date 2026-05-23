@@ -2409,7 +2409,11 @@ async def _announce_turn(bot, chat_id, raid_state):
     msg = (f"⚔️ *{name}'s turn!* ({php}/{pmhp} HP)\n"
            f"Enemy: *{enemy['name']}* ❤️ {raid_state['enemy_hp']}/{raid_state['enemy_max_hp']}\n"
            f"Use /attack within 25 seconds!")
-    await bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+    raid_turn_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚔️ Attack", callback_data=f"raid_atk_{uid}"),
+    ]])
+    await bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown",
+                           reply_markup=raid_turn_markup)
 
     task = asyncio.create_task(
         _raid_turn_timeout(bot, chat_id, raid_state, uid, name))
@@ -4608,6 +4612,24 @@ async def raidparty_cmd(update, context):
 
     await send_group(update, "No active raid.", delay=9)
 
+async def raid_atk_callback(update, context):
+    """Handle raid attack button press — delegates to raidstrike_cmd."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data  # raid_atk_{uid}
+    parts = data.split("_")
+    if len(parts) < 3:
+        return
+    try:
+        uid = int(parts[2])
+    except (ValueError, IndexError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your turn button!", show_alert=True)
+        return
+    # Delegate to raidstrike_cmd — it uses update.effective_user and effective_chat
+    await raidstrike_cmd(update, context)
+
 # ── SOLO RAID ─────────────────────────────────────────────────────────────────
 async def soloraid_cmd(update, context):
     user = update.effective_user
@@ -4860,7 +4882,15 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"  🔹 {sk['passive']}\n"
                 f"  🔸 {sk['name']}: {sk['desc']}\n"
                 f"  /class {cid}\n")
-        await send_group(update, "\n".join(lines), delay=30); return
+        CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
+        class_buttons = [[
+            InlineKeyboardButton(
+                f"{CLASS_EMOJIS.get(cid,'⚔️')} {CLASS_TREE[cid]['name']}",
+                callback_data=f"class_pick_{user.id}_{cid}"
+            ) for cid in BASE_CLASSES
+        ]]
+        class_markup = InlineKeyboardMarkup(class_buttons)
+        await send_group(update, "\n".join(lines), delay=30, reply_markup=class_markup); return
 
     chosen = context.args[0].lower()
     if chosen not in BASE_CLASSES:
@@ -4887,6 +4917,67 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{skill_lines}\n\n"
         f"At *Level 10*, use /prestige to choose your path (A or B).",
         delay=30)
+
+async def class_pick_callback(update, context):
+    """Handle class picker buttons."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data  # class_pick_{uid}_{class_id}
+    parts = data.split("_")
+    # Format: class_pick_{uid}_{class_id}
+    # parts: ['class','pick',uid,class_id]
+    if len(parts) < 4:
+        return
+    try:
+        uid = int(parts[2])
+    except (ValueError, IndexError):
+        return
+    class_id = parts[3]
+
+    if query.from_user.id != uid:
+        await query.answer("This class picker isn't for you!", show_alert=True)
+        return
+
+    p = get_player(uid)
+    if not p:
+        await query.answer("Player not found!", show_alert=True)
+        return
+    if p.get("class_id"):
+        await query.answer("You already have a class!", show_alert=True)
+        return
+    if class_id not in BASE_CLASSES:
+        await query.answer("Invalid class!", show_alert=True)
+        return
+
+    cls = CLASS_TREE[class_id]
+    p["class_id"] = class_id
+    sd = safe_stats(p)
+    for stat, bonus in cls.get("stat_bonus", {}).items():
+        sd[stat] = sd.get(stat, 5) + bonus
+    p["stats"] = json.dumps(sd)
+    all_tier1 = [sk for sk in cls.get("skills", []) if sk.get("tier", 1) == 1]
+    if not all_tier1:
+        all_tier1 = cls["skills"][:1]
+    p["all_skills"] = json.dumps(all_tier1)
+    save_player(p)
+    sk = all_tier1[0]
+    skill_lines = "\n".join(f"🔸 *{s['name']}*  -  {s['desc']}" for s in all_tier1)
+    result = (f"⚔️ *You are now a {cls['name']}!*\n\n"
+              f"_{cls['desc']}_\n\n"
+              f"🔹 Passive: {sk['passive']}\n"
+              f"{skill_lines}\n\n"
+              f"At *Level 10*, use /prestige to choose your path (A or B).")
+    try:
+        await query.edit_message_text(result, parse_mode="Markdown")
+    except Exception:
+        pass
+    try:
+        await query.get_bot().send_message(
+            chat_id=query.message.chat.id,
+            text=f"⚔️ *{p['username']}* has chosen *{cls['name']}*!",
+            parse_mode="Markdown")
+    except Exception:
+        pass
 
 # ── CLASS RESET ───────────────────────────────────────────────────────────────
 def _calc_applied_class_bonuses(p):
@@ -4931,6 +5022,10 @@ async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cost     = 300
 
     if not context.args or context.args[0].lower() != "confirm":
+        rscls_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Confirm Reset", callback_data=f"rscls_confirm_{user.id}"),
+            InlineKeyboardButton("❌ Cancel",        callback_data=f"rscls_cancel_{user.id}"),
+        ]])
         await send_group(update,
             f"⚠️ *Class Reset*\n\n"
             f"Current class: *{cls_name}*{path_str}\n\n"
@@ -4940,7 +5035,8 @@ async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"  - Reverse class stat bonuses\n"
             f"  - Keep your level, allocated stat points, gear, and gold\n\n"
             f"Cost: *{cost}g*\n\n"
-            f"Type /resetclass confirm to proceed.", delay=20); return
+            f"Tap Confirm or type /resetclass confirm to proceed.",
+            delay=20, reply_markup=rscls_markup); return
 
     if safe_int(p.get("gold")) < cost:
         await send_group(update,
@@ -4963,6 +5059,59 @@ async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Class bonuses from *{cls_name}* have been reversed.\n"
         f"Use /class to choose a new class.",
         delay=15)
+
+async def resetclass_callback(update, context):
+    """Handle resetclass confirm/cancel buttons."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data  # rscls_confirm_{uid} or rscls_cancel_{uid}
+    parts = data.split("_")
+    if len(parts) < 3:
+        return
+    action = parts[1]  # 'confirm' or 'cancel'
+    try:
+        uid = int(parts[2])
+    except (ValueError, IndexError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your reset button!", show_alert=True)
+        return
+
+    if action == "cancel":
+        try:
+            await query.edit_message_text("❌ Class reset cancelled.", parse_mode="Markdown")
+        except Exception:
+            pass
+        return
+
+    # action == "confirm"
+    p = get_player(uid)
+    if not p or not p.get("class_id"):
+        await query.answer("No class to reset!", show_alert=True)
+        return
+    cost = 300
+    if safe_int(p.get("gold")) < cost:
+        await query.answer(f"Not enough gold! Need {cost}g.", show_alert=True)
+        return
+    cls = get_player_class(p)
+    cls_name = cls["name"] if cls else "Unknown"
+    bonuses = _calc_applied_class_bonuses(p)
+    sd = safe_stats(p)
+    for stat, val in bonuses.items():
+        sd[stat] = max(0, sd.get(stat, 0) - val)
+    p["stats"]      = json.dumps(sd)
+    p["class_id"]   = None
+    p["class_path"] = None
+    p["all_skills"] = json.dumps([])
+    p["gold"]       = safe_int(p.get("gold")) - cost
+    save_player(p)
+    result = (f"🔄 *Class reset complete!*\n\n"
+              f"Class bonuses from *{cls_name}* have been reversed.\n"
+              f"Use /class to choose a new class.")
+    try:
+        await query.edit_message_text(result, parse_mode="Markdown")
+    except Exception:
+        pass
 
 
 # ── PRESTIGE (path selection at Lv 10, auto-advance after) ───────────────────
@@ -6372,15 +6521,64 @@ async def guilddisband_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if g["leader_id"] != user.id:
         await send_group(update, "Only the hall leader can disband the hall.", delay=9); return
     if not context.args or context.args[0].lower() != "confirm":
+        gdisband_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Disband Hall", callback_data=f"gdisband_confirm_{user.id}"),
+            InlineKeyboardButton("❌ Cancel",       callback_data=f"gdisband_cancel_{user.id}"),
+        ]])
         await send_group(update,
             f"⚠️ This permanently disbands *{g['name']}* and removes all members.\n"
-            f"Type /guilddisband confirm to proceed.", delay=15); return
+            f"Tap Confirm or type /guilddisband confirm to proceed.",
+            delay=15, reply_markup=gdisband_markup); return
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("UPDATE players SET guild_id=NULL WHERE guild_id=?", (p["guild_id"],))
     c.execute("DELETE FROM guilds WHERE guild_id=?", (p["guild_id"],))
     conn.commit(); conn.close()
     p["guild_id"] = None; save_player(p)
     await send_group(update, f"🏚️ *{g['name']}* has been disbanded.", permanent=True)
+
+async def guilddisband_callback(update, context):
+    """Handle guild disband confirm/cancel buttons."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data  # gdisband_confirm_{uid} or gdisband_cancel_{uid}
+    parts = data.split("_")
+    if len(parts) < 3:
+        return
+    action = parts[1]  # 'confirm' or 'cancel'
+    try:
+        uid = int(parts[2])
+    except (ValueError, IndexError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your button!", show_alert=True)
+        return
+
+    if action == "cancel":
+        try:
+            await query.edit_message_text("❌ Guild disband cancelled.", parse_mode="Markdown")
+        except Exception:
+            pass
+        return
+
+    # action == "confirm"
+    p = get_player(uid)
+    if not p or not p.get("guild_id"):
+        await query.answer("No hall found!", show_alert=True)
+        return
+    g = get_guild(p["guild_id"])
+    if not g or g["leader_id"] != uid:
+        await query.answer("Only the hall leader can disband!", show_alert=True)
+        return
+    guild_name = g["name"]
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("UPDATE players SET guild_id=NULL WHERE guild_id=?", (p["guild_id"],))
+    c.execute("DELETE FROM guilds WHERE guild_id=?", (p["guild_id"],))
+    conn.commit(); conn.close()
+    p["guild_id"] = None; save_player(p)
+    try:
+        await query.edit_message_text(f"🏚️ *{guild_name}* has been disbanded.", parse_mode="Markdown")
+    except Exception:
+        pass
 
 # ── SKILL ─────────────────────────────────────────────────────────────────────
 async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7381,11 +7579,110 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     cp_self = calc_combat_power(p)
     wager_str = f" for *{wager}g*" if wager > 0 else " (no wager)"
+    duel_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Accept", callback_data=f"duel_acc_{user.id}_{du.id}"),
+        InlineKeyboardButton("❌ Decline", callback_data=f"duel_dec_{user.id}_{du.id}"),
+    ]])
     await send_group(update,
         f"⚔️ *{user.first_name}* challenges *{du.first_name}* to a duel{wager_str}!\n\n"
         f"🔢 {user.first_name}'s CP: *{cp_self:,}*\n\n"
-        f"_{du.first_name}: type `/duel accept` to accept. Expires in 5 minutes._",
-        permanent=False, delay=60)
+        f"_{du.first_name}: tap Accept/Decline or type `/duel accept`. Expires in 5 minutes._",
+        permanent=False, delay=60, reply_markup=duel_markup)
+
+async def duel_response_callback(update, context):
+    """Handle duel Accept/Decline button presses."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data  # duel_acc_{challenger_uid}_{target_uid} or duel_dec_...
+    parts = data.split("_")
+    # parts: ['duel','acc'/'dec', challenger_uid, target_uid]
+    if len(parts) < 4:
+        return
+    action = parts[1]  # 'acc' or 'dec'
+    try:
+        challenger_uid = int(parts[2])
+        target_uid     = int(parts[3])
+    except (ValueError, IndexError):
+        return
+
+    if query.from_user.id != target_uid:
+        await query.answer("This duel challenge isn't for you!", show_alert=True)
+        return
+
+    if action == "dec":
+        pending_duels.pop(challenger_uid, None)
+        try:
+            await query.edit_message_text("❌ Duel declined.", parse_mode="Markdown")
+        except Exception:
+            pass
+        return
+
+    # action == "acc" — run the accept logic
+    duel = pending_duels.get(challenger_uid)
+    if not duel:
+        await query.answer("No pending duel found!", show_alert=True)
+        return
+    if duel["target_id"] != target_uid:
+        await query.answer("This duel challenge isn't for you!", show_alert=True)
+        return
+    if datetime.now() > datetime.fromisoformat(duel["expires"]):
+        pending_duels.pop(challenger_uid, None)
+        await query.answer("Duel challenge has expired!", show_alert=True)
+        return
+
+    p = get_player(target_uid)
+    challenger = get_player(challenger_uid)
+    if not p or not challenger:
+        await query.answer("Player data not found!", show_alert=True)
+        return
+
+    wager = duel["wager"]
+    if wager > 0 and p.get("gold", 0) < wager:
+        await query.answer(f"You need {wager}g for the wager!", show_alert=True)
+        return
+    if wager > 0 and challenger.get("gold", 0) < wager:
+        pending_duels.pop(challenger_uid, None)
+        await query.answer("Challenger can no longer afford the wager!", show_alert=True)
+        return
+
+    pending_duels.pop(challenger_uid, None)
+    cp_a = calc_combat_power(challenger)
+    cp_b = calc_combat_power(p)
+    total = cp_a + cp_b
+    winner = challenger if random.random() < (cp_a / total) else p
+    loser  = p if winner["user_id"] == challenger["user_id"] else challenger
+    if wager > 0:
+        winner["gold"] = winner.get("gold",0) + wager
+        loser["gold"]  = max(0, loser.get("gold",0) - wager)
+    winner["wins"] = winner.get("wins",0) + 1
+    save_player(winner); save_player(loser)
+    lines = [
+        f"⚔️ *DUEL  -  {challenger['username']} vs {p['username']}*",
+        f"━━━━━━━━━━━━━━━━",
+        f"🔢 {challenger['username']} CP: *{cp_a:,}*",
+        f"🔢 {p['username']} CP: *{cp_b:,}*",
+        f"━━━━━━━━━━━━━━━━",
+    ]
+    advantage = abs(cp_a - cp_b)
+    if advantage < total * 0.05:
+        lines.append("⚡ *Perfectly matched!* It could have gone either way...")
+    elif winner["user_id"] == challenger["user_id"]:
+        lines.append(f"📈 {challenger['username']} had the edge  -  *{cp_a - cp_b:,} CP advantage!*")
+    else:
+        lines.append(f"📈 {p['username']} had the edge  -  *{cp_b - cp_a:,} CP advantage!*")
+    lines.append(f"\n🏆 *{winner['username']}* wins the duel!")
+    if wager > 0:
+        lines.append(f"💰 +{wager}g collected from {loser['username']}.")
+    result_text = "\n".join(lines)
+    try:
+        await query.edit_message_text(text=result_text[:4096], parse_mode="Markdown")
+    except Exception:
+        try:
+            await query.get_bot().send_message(
+                chat_id=duel.get("chat_id", query.message.chat.id),
+                text=result_text[:4096], parse_mode="Markdown")
+        except Exception:
+            pass
 
 # ── ARENA ─────────────────────────────────────────────────────────────────────
 def _arena_state():
@@ -7435,6 +7732,17 @@ def build_arena_card(arena):
     for entry in arena["log"][-5:]:
         lines.append(f"  {entry}")
     return "\n".join(lines)
+
+def build_arena_markup(arena, chat_id):
+    """Return InlineKeyboardMarkup for the current player's turn, or None if done."""
+    if arena["status"] == "done":
+        return None
+    uid = arena["turn"]
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚔️ Attack", callback_data=f"arena_act_{chat_id}_{uid}_atk"),
+        InlineKeyboardButton("✨ Skill",  callback_data=f"arena_act_{chat_id}_{uid}_skl"),
+        InlineKeyboardButton("🏃 Flee",   callback_data=f"arena_act_{chat_id}_{uid}_flee"),
+    ]])
 
 async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -7492,9 +7800,11 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         arena["status"] = "active"
         arena["log"]    = ["⚔️ Arena battle begins!"]
         card_text = build_arena_card(arena)
+        markup = build_arena_markup(arena, chat_id)
         try:
             msg = await update.get_bot().send_message(
-                chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown")
+                chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown",
+                reply_markup=markup)
             arena["msg_id"] = msg.message_id
         except Exception:
             arena["msg_id"] = None
@@ -7554,13 +7864,15 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             arena["turn"] = arena["p2_id"] if is_p1 else arena["p1_id"]
             arena["round"] += 1
             card_text = build_arena_card(arena)
+            stun_markup = build_arena_markup(arena, chat_id)
             if arena.get("msg_id"):
                 try:
                     await update.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
                 except Exception: pass
             try:
                 msg = await update.get_bot().send_message(
-                    chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown")
+                    chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown",
+                    reply_markup=stun_markup)
                 arena["msg_id"] = msg.message_id
             except Exception: pass
             return
@@ -8056,13 +8368,15 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             arena["round"] += 1
 
         card_text = build_arena_card(arena)
+        end_markup = build_arena_markup(arena, chat_id)
         if arena.get("msg_id"):
             try:
                 await update.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
             except Exception: pass
         try:
             msg = await update.get_bot().send_message(
-                chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown")
+                chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown",
+                reply_markup=end_markup)
             arena["msg_id"] = msg.message_id
         except Exception: pass
         return
@@ -8108,6 +8422,259 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"_{du.first_name}: type `/arena accept` to begin._\n"
         f"_HP changes are arena-only  -  your real HP is safe._\n\n"
         f"Challenge expires in 5 minutes.", permanent=False, delay=300)
+
+async def arena_act_callback(update, context):
+    """Handle arena button presses: attack, skill, flee."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data  # arena_act_{chat_id}_{uid}_{action}
+    parts = data.split("_")
+    # Format: arena_act_{chat_id}_{uid}_{action}
+    # parts: ['arena','act',chat_id,uid,action]
+    if len(parts) < 5:
+        return
+    try:
+        chat_id = int(parts[2])
+        uid     = int(parts[3])
+        action  = parts[4]
+    except (ValueError, IndexError):
+        return
+
+    if query.from_user.id != uid:
+        await query.answer("It's not your turn!", show_alert=True)
+        return
+
+    arena = active_arenas.get(chat_id)
+    if not arena or arena["status"] != "active":
+        await query.answer("No active arena.", show_alert=True)
+        return
+    if arena["turn"] != uid:
+        await query.answer("It's not your turn!", show_alert=True)
+        return
+
+    is_p1 = (uid == arena["p1_id"])
+    attacker_data = arena["p1"] if is_p1 else arena["p2"]
+    defender_data = arena["p2"] if is_p1 else arena["p1"]
+    atk_hp_key    = "p1_hp" if is_p1 else "p2_hp"
+    def_hp_key    = "p2_hp" if is_p1 else "p1_hp"
+    atk_max_key   = "p1_max" if is_p1 else "p2_max"
+    atk_state_key = "p1_state" if is_p1 else "p2_state"
+    def_state_key = "p2_state" if is_p1 else "p1_state"
+    atk_name  = attacker_data["username"]
+    def_name  = defender_data["username"]
+    atk_state = arena[atk_state_key]
+    def_state = arena[def_state_key]
+
+    # Turn-start DOT / regen effects
+    if atk_state["dot_turns"] > 0:
+        arena[atk_hp_key] = max(0, arena[atk_hp_key] - atk_state["dot_dmg"])
+        atk_state["dot_turns"] -= 1
+        arena["log"].append(f"🩸 {atk_name} takes {atk_state['dot_dmg']} from {atk_state['dot_type']}!")
+        if atk_state["dot_turns"] == 0:
+            atk_state["dot_type"] = None; atk_state["dot_dmg"] = 0
+    if atk_state["regen_turns"] > 0:
+        arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + atk_state["regen_hp"])
+        atk_state["regen_turns"] -= 1
+        arena["log"].append(f"💚 {atk_name} regenerates {atk_state['regen_hp']} HP!")
+    if atk_state["buff_turns"] > 0:
+        atk_state["buff_turns"] -= 1
+        if atk_state["buff_turns"] == 0: atk_state["atk_mod"] = 1.0
+    if atk_state["debuff_turns"] > 0:
+        atk_state["debuff_turns"] -= 1
+        if atk_state["debuff_turns"] == 0:
+            atk_state["def_mod"] = 1.0; atk_state["acc_debuff"] = False; atk_state["acc_debuff_pct"] = 0.0
+    for timer_key in ["heal_block_turns","bind_turns","skill_block_turns","extra_dmg_turns"]:
+        if atk_state.get(timer_key, 0) > 0:
+            atk_state[timer_key] -= 1
+
+    # Stun check
+    if atk_state.get("skip_turns", 0) > 0:
+        atk_state["skip_turns"] -= 1
+        arena["log"].append(f"⚡ {atk_name} is stunned — turn skipped!")
+        arena["turn"] = arena["p2_id"] if is_p1 else arena["p1_id"]
+        arena["round"] += 1
+        card_text = build_arena_card(arena)
+        markup = build_arena_markup(arena, chat_id)
+        if arena.get("msg_id"):
+            try:
+                await query.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
+            except Exception: pass
+        try:
+            msg = await query.get_bot().send_message(
+                chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown",
+                reply_markup=markup)
+            arena["msg_id"] = msg.message_id
+        except Exception: pass
+        return
+
+    log_entry = ""
+    w = get_weather()
+
+    if action == "flee":
+        # End the arena — declare the other player winner
+        arena["status"] = "done"
+        winner_id = arena["p2_id"] if is_p1 else arena["p1_id"]
+        loser_id  = uid
+        wp = get_player(winner_id); lp = get_player(loser_id)
+        wager = arena["wager"]
+        if wp and lp:
+            if wager > 0:
+                wp["gold"] = wp.get("gold",0) + wager * 2
+            wp["wins"] = wp.get("wins",0) + 1
+            exp_gain = 50 + wp["level"] * 5
+            add_exp(wp, exp_gain)
+            save_player(wp); save_player(lp)
+        w_name = defender_data["username"]
+        arena["log"].append(f"🏃 {atk_name} flees! 🏆 *{w_name}* wins the arena!")
+        arena["p1_hp"] = 0  # Force done display
+        active_arenas.pop(chat_id, None)
+        card_text = build_arena_card(arena)
+        if arena.get("msg_id"):
+            try:
+                await query.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
+            except Exception: pass
+        try:
+            await query.get_bot().send_message(
+                chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown")
+        except Exception: pass
+        return
+
+    elif action == "atk":
+        dmg = calc_attack_damage(attacker_data, w)
+        dmg = round(dmg * atk_state["atk_mod"])
+        if atk_state.get("mark_attacks", 0) > 0:
+            dmg = round(dmg * atk_state.get("mark_bonus", 1.0))
+            atk_state["mark_attacks"] -= 1
+            if atk_state["mark_attacks"] == 0: atk_state["mark_bonus"] = 1.0
+        if atk_state.get("ambush_bonus", 1.0) > 1.0:
+            dmg = round(dmg * atk_state["ambush_bonus"])
+            atk_state["ambush_bonus"] = 1.0
+            arena["log"].append(f"🌑 *Ambush!* Bonus damage!")
+        if atk_state.get("next_atk_bonus", 1.0) > 1.0:
+            dmg = round(dmg * atk_state["next_atk_bonus"])
+            atk_state["next_atk_bonus"] = 1.0
+        if atk_state.get("charge_ready"):
+            dmg = round(dmg * atk_state.get("charge_mult", 2.0))
+            atk_state["charge_ready"] = False; atk_state["charge_mult"] = 1.0
+            arena["log"].append(f"💥 *CHARGED STRIKE!*")
+        if atk_state.get("acc_debuff") and random.random() < atk_state.get("acc_debuff_pct", 0.40):
+            arena["log"].append(f"😵 {atk_name} missed — accuracy debuffed!")
+            dmg = 0
+        if def_state.get("miss_next_enemy"):
+            def_state["miss_next_enemy"] = False
+            arena["log"].append(f"🌫️ {def_name}'s evasion causes {atk_name} to miss!")
+            dmg = 0
+        if dmg > 0 and check_crit(attacker_data):
+            dmg = apply_crit(attacker_data, dmg)
+            log_entry = f"💥 CRIT! {atk_name} hits {def_name} for *{dmg}*!"
+        else:
+            log_entry = f"⚔️ {atk_name} hits {def_name} for *{dmg}*." if dmg > 0 else f"🌀 {atk_name} missed!"
+        if dmg > 0:
+            dmg = round(dmg * def_state.get("def_mod", 1.0))
+            dmg = round(dmg * def_state.get("amplify_pct", 1.0))
+            if def_state.get("extra_dmg_turns", 0) > 0:
+                dmg += def_state.get("extra_dmg_per_hit", 0)
+            if def_state["shield_turns"] > 0:
+                dmg = round(dmg * (1 - def_state["shield_pct"]))
+                def_state["shield_turns"] -= 1
+                if def_state["shield_turns"] == 0: def_state["shield_pct"] = 0.0
+            if def_state.get("reflect_on_hit", 0) > 0 and def_state.get("reflect_turns", 0) > 0:
+                arena[atk_hp_key] = max(0, arena[atk_hp_key] - def_state["reflect_on_hit"])
+                arena["log"].append(f"⚡ {def_name} reflects {def_state['reflect_on_hit']} dmg!")
+            if def_state.get("bind_turns", 0) > 0:
+                dmg = round(dmg * def_state.get("bind_dmg_mod", 1.0))
+        arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+
+    elif action == "skl":
+        if atk_state.get("skill_block_turns", 0) > 0:
+            await query.answer("You're silenced — no skills this turn!", show_alert=True)
+            return
+        skills = sjl(attacker_data.get("all_skills"), [])
+        sk = skills[0] if skills else None
+        if not sk:
+            await query.answer("No skills available!", show_alert=True)
+            return
+        stype = sk.get("type", "damage")
+        base_dmg = calc_attack_damage(attacker_data, w)
+        base_dmg = round(base_dmg * atk_state["atk_mod"])
+        dmg = 0
+
+        if stype == "atk_buff":
+            atk_state["atk_mod"] = sk.get("atk_mod", 1.40)
+            atk_state["buff_turns"] = sk.get("buff_turns", 3)
+            log_entry = f"💪 {atk_name} uses *{sk['name']}*! ATK ×{sk.get('atk_mod',1.4)} for {sk.get('buff_turns',3)} turns."
+        elif stype in ("def_buff","dmg_reduction_buff"):
+            def_mod = sk.get("def_mod", 0.65)
+            atk_state["def_mod"] = def_mod
+            atk_state["buff_turns"] = sk.get("buff_turns", 2)
+            log_entry = f"🛡️ {atk_name} uses *{sk['name']}*! Damage reduced for {sk.get('buff_turns',2)} turns."
+        elif stype in ("self_heal","revive_heal"):
+            if atk_state.get("heal_block_turns", 0) > 0:
+                log_entry = f"🚫 {atk_name}'s healing is blocked!"
+            else:
+                stat_name = sk.get("stat","WIS")
+                heal_mult = sk.get("mult", sk.get("wis_mult", 4.0))
+                heal = round(get_stat(attacker_data, stat_name) * heal_mult)
+                arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
+                log_entry = f"💚 {atk_name} uses *{sk['name']}*! Restored {heal} HP."
+        elif stype == "stun":
+            dmg = round(base_dmg * sk.get("dmg_mult", 0.80))
+            arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+            if random.random() < sk.get("stun_chance", 0.75):
+                def_state["skip_turns"] = def_state.get("skip_turns", 0) + 1
+                log_entry = f"💫 {atk_name} uses *{sk['name']}*! {dmg} dmg + STUN!"
+            else:
+                log_entry = f"⚔️ {atk_name} uses *{sk['name']}*! {dmg} dmg. (Stun missed)"
+        elif stype == "dodge_buff":
+            atk_state["miss_next_enemy"] = sk.get("dodge_next", True)
+            atk_state["next_atk_bonus"] = sk.get("next_atk_bonus", 1.40)
+            log_entry = f"🌫️ {atk_name} uses *{sk['name']}*! Next hit on them misses, next attack boosted!"
+        elif stype == "regen":
+            atk_state["regen_hp"] = sk.get("regen_hp", 12)
+            atk_state["regen_turns"] = sk.get("regen_turns", 3)
+            log_entry = f"🌿 {atk_name} uses *{sk['name']}*! Regenerating {sk.get('regen_hp',12)} HP/turn for {sk.get('regen_turns',3)} turns."
+        else:
+            dmg = round(base_dmg * sk.get("dmg_mult", sk.get("mult", 1.2)))
+            arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
+            log_entry = f"⚡ {atk_name} uses *{sk['name']}*! {dmg} dmg."
+    else:
+        return
+
+    if log_entry:
+        arena["log"].append(log_entry)
+
+    if arena["p1_hp"] <= 0 or arena["p2_hp"] <= 0:
+        arena["status"] = "done"
+        winner_id = arena["p1_id"] if arena["p1_hp"] > 0 else arena["p2_id"]
+        loser_id  = arena["p2_id"] if winner_id == arena["p1_id"] else arena["p1_id"]
+        wp = get_player(winner_id); lp = get_player(loser_id)
+        wager = arena["wager"]
+        if wp and lp:
+            if wager > 0:
+                wp["gold"] = wp.get("gold",0) + wager * 2
+            wp["wins"] = wp.get("wins",0) + 1
+            exp_gain = 50 + wp["level"] * 5
+            add_exp(wp, exp_gain)
+            save_player(wp); save_player(lp)
+        w_name = arena["p1"]["username"] if arena["p1_hp"] > 0 else arena["p2"]["username"]
+        arena["log"].append(f"🏆 *{w_name}* wins the arena!")
+        active_arenas.pop(chat_id, None)
+    else:
+        arena["turn"] = arena["p2_id"] if is_p1 else arena["p1_id"]
+        arena["round"] += 1
+
+    card_text = build_arena_card(arena)
+    markup = build_arena_markup(arena, chat_id)
+    if arena.get("msg_id"):
+        try:
+            await query.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
+        except Exception: pass
+    try:
+        msg = await query.get_bot().send_message(
+            chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown",
+            reply_markup=markup)
+        arena["msg_id"] = msg.message_id
+    except Exception: pass
 
 # ── DUNGEON ───────────────────────────────────────────────────────────────────
 def _resolve_dungeon_room(p, room_type, theme, diff, room_num, hp_remaining, class_line):
@@ -9262,26 +9829,19 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── RESETSTATS ────────────────────────────────────────────────────────────────
-async def resetstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user; p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-
+def _do_resetstats(p):
+    """Execute the stat reset and return (new_stats, refunded)."""
     sd = safe_stats(p)
     base_defaults = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
-
     total_allocated = 0
     for stat, base in base_defaults.items():
         current = sd.get(stat, base)
         if current > base:
             total_allocated += (current - base)
-
     def_points = sd.get("DEF", 0)
     if def_points > 0:
         total_allocated += def_points
-
     new_stats = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
-
     cid = p.get("class_id")
     if cid:
         base_line = CLASS_TREE.get(cid, {}).get("line")
@@ -9294,12 +9854,34 @@ async def resetstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for stat, bonus in current_cls.get("stat_bonus", {}).items():
             if stat in new_stats:
                 new_stats[stat] = new_stats.get(stat, 5) + bonus
-
     refunded = total_allocated + safe_int(p.get("stat_points"))
     p["stats"] = json.dumps(new_stats)
     p["stat_points"] = refunded
     save_player(p)
+    return new_stats, refunded
 
+async def resetstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    if not context.args or context.args[0].lower() != "confirm":
+        rsstat_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Confirm Reset", callback_data=f"rsstat_confirm_{user.id}"),
+            InlineKeyboardButton("❌ Cancel",        callback_data=f"rsstat_cancel_{user.id}"),
+        ]])
+        sd = safe_stats(p)
+        await send_group(update,
+            f"⚠️ *Stat Reset*\n\n"
+            f"This will refund ALL allocated stat points back to your pool.\n"
+            f"Your class stat bonuses will be preserved.\n\n"
+            f"Current stats: STR:{sd.get('STR',5)} AGI:{sd.get('AGI',5)} "
+            f"INT:{sd.get('INT',5)} WIS:{sd.get('WIS',5)} "
+            f"DEX:{sd.get('DEX',5)} LUK:{sd.get('LUK',5)}\n\n"
+            f"Tap Confirm or type /resetstats confirm to proceed.",
+            delay=20, reply_markup=rsstat_markup); return
+
+    new_stats, refunded = _do_resetstats(p)
     await send_group(update,
         f"🔄 *Stat Reset Complete!*\n\n"
         f"All allocated stat points have been refunded.\n"
@@ -9311,6 +9893,50 @@ async def resetstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"INT:{new_stats['INT']} WIS:{new_stats['WIS']} "
         f"DEX:{new_stats['DEX']} LUK:{new_stats['LUK']}",
         delay=60)
+
+async def resetstats_callback(update, context):
+    """Handle resetstats confirm/cancel buttons."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data  # rsstat_confirm_{uid} or rsstat_cancel_{uid}
+    parts = data.split("_")
+    if len(parts) < 3:
+        return
+    action = parts[1]  # 'confirm' or 'cancel'
+    try:
+        uid = int(parts[2])
+    except (ValueError, IndexError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your reset button!", show_alert=True)
+        return
+
+    if action == "cancel":
+        try:
+            await query.edit_message_text("❌ Stat reset cancelled.", parse_mode="Markdown")
+        except Exception:
+            pass
+        return
+
+    # action == "confirm"
+    p = get_player(uid)
+    if not p:
+        await query.answer("Player not found!", show_alert=True)
+        return
+    new_stats, refunded = _do_resetstats(p)
+    result = (f"🔄 *Stat Reset Complete!*\n\n"
+              f"All allocated stat points have been refunded.\n"
+              f"💡 *{refunded} points* returned to your pool.\n\n"
+              f"DEF is now gear-only  -  armor and shields provide your defense.\n\n"
+              f"Use `/allocate` to redistribute your points.\n"
+              f"Current stats after class bonuses:\n"
+              f"STR:{new_stats['STR']} AGI:{new_stats['AGI']} "
+              f"INT:{new_stats['INT']} WIS:{new_stats['WIS']} "
+              f"DEX:{new_stats['DEX']} LUK:{new_stats['LUK']}")
+    try:
+        await query.edit_message_text(result, parse_mode="Markdown")
+    except Exception:
+        pass
 
 # ── WIPE (admin only) ─────────────────────────────────────────────────────────
 async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -9986,19 +10612,32 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"❤️ Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}")
 
         # Counter-attack
-        alive = [u for u in boss_dict["participants"] if not is_defeated(get_player(u["id"]))]
+        alive = [u for u in boss_dict["participants"]
+                 if not is_defeated(get_player(u["id"])) and boss_dict.get("player_hp",{}).get(u["id"],1) > 0]
         if alive and boss_dict["hp"] > 0 and random.random() < 0.90:
             target = random.choice(alive)
             tp = get_player(target["id"])
             if tp:
+                if "player_hp" not in boss_dict:
+                    boss_dict["player_hp"] = {}; boss_dict["player_max_hp"] = {}
+                    for u in boss_dict["participants"]:
+                        pp2 = get_player(u["id"])
+                        if pp2:
+                            mhp2 = calc_max_hp(pp2)
+                            boss_dict["player_hp"][u["id"]] = mhp2
+                            boss_dict["player_max_hp"][u["id"]] = mhp2
                 bdmg = calc_defense(tp, random.randint(
                     boss_dict["data"]["dmg_min"], boss_dict["data"]["dmg_max"]))
-                tp["hp"] = max(0, tp["hp"] - bdmg)
-                if tp["hp"] == 0:
-                    tp["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
-                    lines.append(f"💀 *{boss_dict['data']['name']}* kills *{target['name']}*!")
+                boss_dict["player_hp"][target["id"]] = max(0,
+                    boss_dict["player_hp"].get(target["id"], calc_max_hp(tp)) - bdmg)
+                php  = boss_dict["player_hp"][target["id"]]
+                pmhp = boss_dict["player_max_hp"].get(target["id"], calc_max_hp(tp))
+                if php == 0:
+                    exp_loss = apply_pvp_death(tp)
+                    save_player(tp)
+                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 6hr defeat. -{exp_loss} EXP.")
                 else:
-                    lines.append(f"💥 Boss hits *{target['name']}* for {bdmg}!")
+                    lines.append(f"💥 Boss hits *{target['name']}* for *{bdmg}!* ({php}/{pmhp} HP)")
                 save_player(tp)
 
         if boss_dict["hp"] <= 0:
@@ -10127,6 +10766,12 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
             add_exp(pp, data["exp"], w2); save_player(pp)
             lines.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
+        save_player(p)
+        try:
+            await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
+        except Exception:
+            pass
+        return
 
     save_player(p)
     boss_markup = InlineKeyboardMarkup([[
@@ -10561,6 +11206,14 @@ def main():
     app.add_handler(CallbackQueryHandler(dungeon_diff_callback, pattern="^dungeon_d_"))
     app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shop_b_"))
     app.add_handler(CallbackQueryHandler(allocate_callback,     pattern="^alloc_"))
+    # New inline button callbacks
+    app.add_handler(CallbackQueryHandler(arena_act_callback,     pattern="^arena_act_"))
+    app.add_handler(CallbackQueryHandler(raid_atk_callback,      pattern="^raid_atk_"))
+    app.add_handler(CallbackQueryHandler(duel_response_callback, pattern="^duel_(acc|dec)_"))
+    app.add_handler(CallbackQueryHandler(resetclass_callback,    pattern="^rscls_"))
+    app.add_handler(CallbackQueryHandler(resetstats_callback,    pattern="^rsstat_"))
+    app.add_handler(CallbackQueryHandler(guilddisband_callback,  pattern="^gdisband_"))
+    app.add_handler(CallbackQueryHandler(class_pick_callback,    pattern="^class_pick_"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
