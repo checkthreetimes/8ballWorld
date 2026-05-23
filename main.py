@@ -5276,19 +5276,9 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if p["level"] < 5:
         await send_group(update, f"⚔️ Classes unlock at *Level 5*. You're Level {p['level']}.", delay=9); return
     if p.get("class_id"):
-        cls = get_player_class(p)
-        path = p.get("class_path","")
-        path_str = f" (Path {path})" if path else " (choose path at Lv 10 with /prestige)"
-        skills = sjl(p.get("all_skills"), [])
-        skill_lines = []
-        for sk in skills:
-            skill_lines.append(f"  🔸 *{sk['name']}*  -  {sk['desc']}")
-        await send_group(update,
-            f"⚔️ You are a *{cls['name']}*{path_str}\n\n"
-            f"_{cls['desc']}_\n\n"
-            f"🔹 Passive: {cls['skills'][0]['passive']}\n\n"
-            f"🔮 Your Skills:\n" + "\n".join(skill_lines) if skill_lines else "None yet",
-            delay=30); return
+        # Show paginated class progression tree
+        await _send_skill_tree(update.message, user.id, page=0, edit=False)
+        return
     CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
     if not context.args:
         # Paginated class browser — send first page
@@ -7263,8 +7253,11 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
     if not replying:
-        # Paginated skill tree
-        await _send_skill_tree(update.message, user.id, page=0, edit=False)
+        lines = [f"🔮 *Your Skills* ({get_player_class(p)['name']}):\n"]
+        for i, s in enumerate(all_skills, 1):
+            lines.append(f"*{i}.* *{s['name']}*  -  {s['desc']}")
+        lines.append("\n_Reply to a message with /skill [name or number] to use a skill._")
+        await send_group(update, "\n".join(lines), delay=20)
         return
 
     # Replying to a target  -  pick skill
