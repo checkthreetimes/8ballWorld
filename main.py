@@ -3034,7 +3034,10 @@ def save_shadow(s):
     conn.commit(); conn.close()
 
 def save_player(p):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    # Normalize any legacy item names in inventory
+    inv = sjl(p.get("inventory"), [])
+    inv = ["The Custom Tip Scroll" if i == "Custom Tip Scroll" else i for i in inv]
+    p["inventory"] = json.dumps(inv)
     fields = [
         "user_id","username","hp","max_hp","exp","level","total_exp",
         "gold","wins","losses","quests_done","heals_given","dodges",
