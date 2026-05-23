@@ -5390,7 +5390,14 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _send_inventory_page(target, p, page=1, edit=False):
     inv_list = sjl(p.get("inventory"), [])
     inv = Counter(inv_list)
-    items = list(inv.items())
+    def _item_sort_key(name):
+        if name in WEAPONS:    return 0
+        if name in ARMORS:     return 1
+        if name in SHIELDS:    return 2
+        if name in ACCESSORIES:return 3
+        if name in CONSUMABLES:return 4
+        return 5
+    items = sorted(inv.items(), key=lambda kv: _item_sort_key(kv[0]))
     INV_PAGE_SIZE = 10
     total = len(items)
     start = (page - 1) * INV_PAGE_SIZE
@@ -8418,140 +8425,151 @@ async def rankwins_cmd(update, context):
     await rank_cmd(update, context)
 
 
-HELP_PAGES = [
-    # Page 1 - General & Character
+GUIDE_PAGES = [
+    # Page 1 - Getting Started
     (
-        "📖 *Commands  -  General & Character* (1/5)\n"
+        "🎱 *8Ball World  -  Getting Started* (1/5)\n"
         "\n"
-        "*/ascend*  -  Join the RPG (start here, use in private chat)\n"
-        "*/stats*  -  View your full profile (paginated)\n"
-        "*/rank*  -  Leaderboard; RPG players first, then Shadows\n"
-        "*/rankme*  -  Find your own rank position\n"
-        "*/rankwins*  -  Top PvP win leaderboard\n"
-        "*/who*  -  Players active in the last 24 hours\n"
-        "*/weather*  -  Current table conditions (affects drops + EXP)\n"
-        "*/cooldowns*  -  Check all your active timers at once\n"
-        "*/class*  -  Choose your class at Lv 5\n"
-        "*/prestige*  -  Pick your specialization path at Lv 10\n"
-        "*/allocate STR 5*  -  Spend stat points (STR/INT/AGI/LUK/WIS/DEX)\n"
-        "*/resetstats*  -  Refund all stat points and reallocate from scratch\n"
-        "*/resetclass confirm*  -  Reset your class and path (300g)\n"
-        "*/skill*  -  View + use your class skill (costs SP)\n"
-        "*/title [name]*  -  Equip a title for passive stat bonuses"
+        "Welcome to 8Ball World  -  a pool hall RPG built inside Telegram.\n"
+        "\n"
+        "*Two ways to play:*\n"
+        "Shadow  -  Just chat in the group. You earn EXP automatically from messages and level up over time. No setup needed.\n"
+        "\n"
+        "RPG  -  Full game with classes, gear, combat, raids, and gold. To join, send /ascend to this bot in a *private message*.\n"
+        "\n"
+        "*Your first steps as an RPG player:*\n"
+        "1. Send /ascend in DM to create your character\n"
+        "2. Use /hustle daily to earn EXP, gold, and loot\n"
+        "3. Pick a class at Level 5 with /class\n"
+        "4. Equip gear and start fighting at Level 3+\n"
+        "\n"
+        "💡 Chatting in the group earns passive EXP. Your Shadow and RPG levels stay in sync. Level-up announcements broadcast at every 10th level."
     ),
-    # Page 2 - Daily Activities
+    # Page 2 - Character Building
     (
-        "📖 *Commands  -  Daily Activities* (2/5)\n"
+        "🎱 *8Ball World  -  Building Your Character* (2/5)\n"
         "\n"
-        "*/hustle*  -  Run all ready activities at once (daily, train, quest, pool)\n"
-        "   Shows what ran and what's still on cooldown\n"
-        "*/daily*  -  Claim daily reward: EXP + gold + chance at an item (24hr)\n"
-        "*/train*  -  Train for EXP with class bonus (30min)\n"
-        "*/quest*  -  Quest for EXP, gold, and loot (1hr)\n"
-        "*/explore*  -  Expedition for bigger loot (1hr, 2x per day)\n"
-        "*/pool*  -  Take a pool shot: EXP, gold, find items (8s cooldown)\n"
-        "   Rarer shots drop better loot  -  some items only found here\n"
-        "*/dungeon*  -  Solo hall run for EXP + loot (1x per day)\n"
-        "*/dungeonhard*  -  Harder version with better rewards\n"
-        "*/dungeonlegendary*  -  Toughest version, best loot\n"
+        "*Classes* unlock at Level 5 via /class:\n"
+        "Warrior  -  STR-based, tough and hard-hitting\n"
+        "Mage     -  INT-based, powerful spells and pool EXP bonuses\n"
+        "Thief    -  LUK-based, crits and gold find\n"
+        "Archer   -  DEX-based, accuracy and ranged damage\n"
+        "Priest   -  WIS-based, heals and group buffs\n"
         "\n"
-        "💡 *Tip:* Chatting earns passive EXP. Level-ups broadcast at x10."
+        "At Level 10, use /prestige to choose Path A or B. Your class then evolves automatically at levels 30, 60, and 100.\n"
+        "\n"
+        "*Stats* (spend points with /allocate):\n"
+        "STR  -  Physical damage\n"
+        "INT  -  Magic damage, pool EXP bonus\n"
+        "AGI  -  Dodge chance, turn speed\n"
+        "DEX  -  Accuracy, crit chance\n"
+        "WIS  -  Heal power, EXP gain\n"
+        "LUK  -  Better loot rolls, gold drops\n"
+        "\n"
+        "You earn stat points on level-up. /resetstats refunds them all. /resetclass resets your class (costs 300g)."
     ),
-    # Page 3 - Economy
+    # Page 3 - Daily Activities
     (
-        "📖 *Commands  -  Economy* (3/5)\n"
+        "🎱 *8Ball World  -  Daily Activities* (3/5)\n"
         "\n"
-        "*/shop*  -  Browse the daily rotating shop\n"
-        "*/inventory*  -  View your items (paginated, 10 per page)\n"
-        "*/equip [item]*  -  Equip a weapon, armor, or accessory\n"
-        "   Shows old stat -> new stat comparison on equip\n"
-        "   Items show [Warrior], [Mage] etc. class tags\n"
-        "*/use [item]*  -  Use a consumable from your bag\n"
-        "*/sell [item]*  -  Sell an item for 50% of its value\n"
-        "   Warns before selling rare+/equipped items\n"
-        "*/sell [item] confirm*  -  Bypass sell warning\n"
-        "*/sell [rarity]*  -  Bulk sell all items of that rarity\n"
-        "   Rarities: common, uncommon, rare, epic, legendary\n"
-        "*/trade @user [item] [price]*  -  Offer a trade to another player\n"
-        "*/accept*  -  Accept an incoming trade offer\n"
-        "*/decline*  -  Decline a trade offer"
+        "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
+        "\n"
+        "*Activities and their cooldowns:*\n"
+        "/daily  -  Gold + EXP reward  (24 hours)\n"
+        "/train  -  EXP gain with class bonus  (30 min)\n"
+        "/quest  -  EXP + gold + possible loot  (1 hour)\n"
+        "/explore  -  Best loot drops, big EXP  (1hr, 2x per day)\n"
+        "/pool  -  Pool shot for EXP, gold, and items  (8 seconds)\n"
+        "/dungeon  -  Solo boss run  (once per day)\n"
+        "/dungeonhard  -  Harder dungeon, better rewards\n"
+        "/dungeonlegendary  -  Hardest version, best loot\n"
+        "\n"
+        "💡 /pool is your main source of rare weapons and accessories. The rarer the shot (epic, legendary), the better the potential drop. Keep shooting."
     ),
-    # Page 4 - Gear & Combat
+    # Page 4 - Combat & Raids
     (
-        "📖 *Commands  -  Gear & Combat* (4/5)\n"
+        "🎱 *8Ball World  -  Combat & Raids* (4/5)\n"
         "\n"
-        "*/gear*  -  Full breakdown of your equipped gear and stats\n"
-        "*/enhance [weapon/armor/shield]*  -  Upgrade gear with Slate Fragments\n"
-        "   Each enhance adds +ATK or +DEF (up to 10 levels)\n"
-        "*/enchant [weapon/armor/shield/accessory]*  -  Add enchantments\n"
-        "   Costs Custom Tip Scrolls  -  up to 3 enchants per item\n"
+        "*PvP  -  Player vs Player*\n"
+        "Reply to any player's message and use /attack to fight them. Winners steal gold and EXP. Losers are defeated for 6 hours and lose 10% EXP. You cannot attack players who are currently in a raid or boss fight.\n"
         "\n"
-        "*/attack*  -  Smart attack: routes to boss/raid/PvP automatically\n"
-        "   Reply to a player to PvP; routes to raid/boss if in an instance\n"
-        "*/heal*  -  Reply to heal a target (needs Chalk Vial)\n"
-        "*/skill*  -  In a boss or raid, targets the enemy directly\n"
-        "*/duel @user [wager]*  -  Quick duel decided by Combat Power\n"
-        "*/arena @user [wager]*  -  Full turn-based arena fight\n"
-        "*/boss [name]*  -  Start a boss encounter in the group"
+        "*Duels and Arena*\n"
+        "/duel @user [wager]  -  Instant fight decided by Combat Power\n"
+        "/arena @user [wager]  -  Turn-based fight using skills\n"
+        "\n"
+        "*Boss Fights*\n"
+        "Use /boss to start a group boss encounter. While in a boss fight, /attack hits the boss automatically. Your /skill also redirects to the boss.\n"
+        "\n"
+        "*Raids*\n"
+        "/raid  -  Create a party (up to 4 players). Others type /raid to join. Use /raidstart when ready.\n"
+        "Turn-based: each player has 25 seconds to /attack before it auto-advances. After all players act, the enemy hits back. Death in a raid counts as a full PvP death.\n"
+        "\n"
+        "*Solo Raids*\n"
+        "/soloraid  -  Start a private raid scaled to your level. Use /attack or /solostrike to fight."
     ),
-    # Page 5 - Raids & Hall
+    # Page 5 - Gear, Economy & Halls
     (
-        "📖 *Commands  -  Raids & Hall* (5/5)\n"
+        "🎱 *8Ball World  -  Gear, Economy & Halls* (5/5)\n"
         "\n"
-        "⚔️ *Group Raids:*\n"
-        "*/raid*  -  Create a raid party (Lv 5+, up to 4 players)\n"
-        "*/raidstart*  -  Lock the party and begin the raid\n"
-        "*/raidstrike*  -  Attack on your turn (25s or auto-advance)\n"
-        "*/raidstatus*  -  Current wave, enemy HP, and turn order\n"
-        "*/raidparty*  -  Party HP bars and damage dealt mid-raid\n"
-        "🗡️ *Solo Raids:*\n"
-        "*/soloraid*  -  Start a solo raid (choose tier by level)\n"
-        "*/solostrike*  -  Attack in your solo raid\n"
-        "*/soloraidstatus*  -  Check solo raid HP and wave progress\n"
-        "🏰 *Hall (Guild):*\n"
-        "*/guild*  -  Hall commands overview\n"
-        "*/guildcreate [name]*  -  Found a new hall (100g)\n"
-        "*/guildjoin*  -  Browse + tap to join a hall\n"
-        "*/guildinfo*  -  Your hall info and current perks\n"
-        "*/guildlist*  -  Top halls leaderboard\n"
-        "*/guilddonate [amount]*  -  Donate gold to hall bank\n"
-        "*/guildkick*  -  Reply to kick a member (leader only)\n"
-        "*/guildleave*  -  Leave your current hall\n"
-        "*/guilddisband confirm*  -  Permanently disband your hall\n"
-        "💬 *Secrets lurk in the felt...* 🎱"
+        "*Gear*\n"
+        "You have four slots: Weapon, Armor, Shield, Accessory. Gear drops from /pool, quests, dungeons, raids, and bosses. Items show class tags like [Warrior] or [Mage]  -  any class can equip anything, but matching gear deals bonus damage.\n"
+        "/equip [item]  -  Equip from your inventory (shows stat comparison)\n"
+        "/enhance [item]  -  Upgrade with Slate Fragments (+ATK or +DEF, up to +10)\n"
+        "/enchant [item]  -  Add enchants using Custom Tip Scrolls (max 3 per item)\n"
+        "\n"
+        "*Economy*\n"
+        "/sell [item]  -  Sell for 50% value (warns on rare+ items)\n"
+        "/sell [rarity]  -  Bulk sell all items of that rarity\n"
+        "/trade @user [item] [price]  -  Trade with another player\n"
+        "/shop  -  Daily rotating shop\n"
+        "\n"
+        "*Halls (Guilds)*\n"
+        "Halls are groups that level up together and share EXP bonuses. Use /guildjoin to browse and join one. Halls level up as members donate gold via /guilddonate, unlocking stronger perks for everyone.\n"
+        "\n"
+        "🎱 *Good luck at the table.*"
     ),
 ]
 
-async def _send_help_page(target, page: int, edit: bool = False):
-    total = len(HELP_PAGES)
-    page  = max(1, min(page, total))
-    text  = HELP_PAGES[page - 1]
-    buttons = []
-    row = []
-    if page > 1:
-        row.append(InlineKeyboardButton("◀ Prev", callback_data=f"help_p_{page-1}"))
-    if page < total:
-        row.append(InlineKeyboardButton("Next ▶", callback_data=f"help_p_{page+1}"))
-    if row:
-        buttons.append(row)
-    markup = InlineKeyboardMarkup(buttons) if buttons else None
-    if edit:
-        await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
-    else:
-        await send_group(target, text, permanent=True, reply_markup=markup)
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy"]
 
-async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
+    total = len(GUIDE_PAGES)
+    page  = max(1, min(page, total))
+    text  = GUIDE_PAGES[page - 1]
+    row   = []
+    if page > 1:
+        row.append(InlineKeyboardButton(f"◀ {GUIDE_PAGE_LABELS[page-2]}", callback_data=f"guide_p_{page-1}"))
+    if page < total:
+        row.append(InlineKeyboardButton(f"{GUIDE_PAGE_LABELS[page]} ▶", callback_data=f"guide_p_{page+1}"))
+    markup = InlineKeyboardMarkup([row]) if row else None
+    if edit_msg:
+        await edit_msg.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    else:
+        await bot.send_message(chat_id=chat_id, text=text,
+                               parse_mode="Markdown", reply_markup=markup)
+
+async def guide_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     page = int(query.data.split("_")[-1])
-    await _send_help_page(query, page, edit=True)
+    await _send_guide_page(query.message.chat.id, context.bot, page, edit_msg=query.message)
 
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    page = 1
-    if context.args:
-        try: page = int(context.args[0])
-        except ValueError: pass
-    await _send_help_page(update, page)
+async def guide_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    try:
+        await _send_guide_page(user.id, context.bot, page=1)
+        if update.effective_chat.id != user.id:
+            try: await update.message.delete()
+            except: pass
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"📖 *{user.first_name}*, check your DMs for the guide!",
+                parse_mode="Markdown")
+    except Exception:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"📖 *{user.first_name}*  -  start a DM with me first, then use /guide again!",
+            parse_mode="Markdown")
 
 # ── POOL ACTIVITY ─────────────────────────────────────────────────────────────
 POOL_SHOTS = [
@@ -9504,7 +9522,8 @@ def main():
     app.add_handler(CommandHandler("rankme",       rankme_cmd))
     app.add_handler(CommandHandler("rankwins",     rankwins_cmd))
     app.add_handler(CommandHandler("stats",        stats_cmd))
-    app.add_handler(CommandHandler("help",         help_cmd))
+    app.add_handler(CommandHandler("guide",        guide_cmd))
+    app.add_handler(CommandHandler("help",         guide_cmd))
     app.add_handler(CommandHandler("weather",      weather_cmd))
     app.add_handler(CommandHandler("ascend",       ascend_cmd))
     app.add_handler(CommandHandler("cooldowns",    cooldowns_cmd))
@@ -9584,7 +9603,7 @@ def main():
     # Callbacks
     app.add_handler(CallbackQueryHandler(rank_callback,      pattern="^rank_p_"))
     app.add_handler(CallbackQueryHandler(inventory_callback, pattern="^inv_p_"))
-    app.add_handler(CallbackQueryHandler(help_callback,      pattern="^help_p_"))
+    app.add_handler(CallbackQueryHandler(guide_callback,     pattern="^guide_p_"))
     app.add_handler(CallbackQueryHandler(stats_callback,     pattern="^stats_p_"))
     app.add_handler(CallbackQueryHandler(guildjoin_callback, pattern="^guildjoin_"))
 
