@@ -7036,8 +7036,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(all_skills) == 1:
                 sk = all_skills[0]
             else:
-                keyboard = [[InlineKeyboardButton(f"⚡ {s['name']}  —  {s['desc'][:40]}", callback_data=f"skillpick_{user.id}_{i}")] for i, s in enumerate(all_skills)]
-                markup = InlineKeyboardMarkup(keyboard)
+                markup = _build_skill_picker_keyboard(all_skills, user.id, 0)
                 await update.message.reply_text(
                     f"🔮 *vs {raid_state['enemy']['name']}* — choose a skill:",
                     parse_mode="Markdown", reply_markup=markup)
@@ -7123,8 +7122,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(all_skills) == 1:
                 sk = all_skills[0]
             else:
-                keyboard = [[InlineKeyboardButton(f"⚡ {s['name']}  —  {s['desc'][:40]}", callback_data=f"skillpick_{user.id}_{i}")] for i, s in enumerate(all_skills)]
-                markup = InlineKeyboardMarkup(keyboard)
+                markup = _build_skill_picker_keyboard(all_skills, user.id, 0)
                 await update.message.reply_text(
                     f"🔮 *vs {boss_dict['data']['name']}* — choose a skill:",
                     parse_mode="Markdown", reply_markup=markup)
@@ -7271,8 +7269,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             # Show numbered selection prompt
             target_uid = update.message.reply_to_message.from_user.id
-            keyboard = [[InlineKeyboardButton(f"⚡ {s['name']}  —  {s['desc'][:40]}", callback_data=f"skillpick_{user.id}_{i}_{target_uid}")] for i, s in enumerate(all_skills)]
-            markup = InlineKeyboardMarkup(keyboard)
+            markup = _build_skill_picker_keyboard(all_skills, user.id, 0, target_uid)
             await update.message.reply_text(
                 "🔮 Choose a skill to use:",
                 parse_mode="Markdown", reply_markup=markup)
@@ -7280,6 +7277,55 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     await _execute_skill(update, context, p, sk)
+
+_SKILL_PAGE_SIZE = 4
+
+def _build_skill_picker_keyboard(all_skills, uid, page, target_uid=None):
+    """Return InlineKeyboardMarkup for a page of skills (4 per page)."""
+    start = page * _SKILL_PAGE_SIZE
+    end   = min(start + _SKILL_PAGE_SIZE, len(all_skills))
+    keyboard = []
+    for real_idx in range(start, end):
+        s  = all_skills[real_idx]
+        cb = f"skillpick_{uid}_{real_idx}" if target_uid is None else f"skillpick_{uid}_{real_idx}_{target_uid}"
+        keyboard.append([InlineKeyboardButton(f"⚡ {s['name']}  —  {s['desc'][:50]}", callback_data=cb)])
+    nav = []
+    if page > 0:
+        cb = f"skillpage_{uid}_{page-1}" if target_uid is None else f"skillpage_{uid}_{page-1}_{target_uid}"
+        nav.append(InlineKeyboardButton("◀ Prev", callback_data=cb))
+    if end < len(all_skills):
+        cb = f"skillpage_{uid}_{page+1}" if target_uid is None else f"skillpage_{uid}_{page+1}_{target_uid}"
+        nav.append(InlineKeyboardButton("Next ▶", callback_data=cb))
+    if nav:
+        keyboard.append(nav)
+    return InlineKeyboardMarkup(keyboard)
+
+async def skillpage_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle ◀/▶ navigation inside the skill picker."""
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")  # skillpage_{uid}_{page} or skillpage_{uid}_{page}_{target_uid}
+    try:
+        uid = int(parts[1]); page = int(parts[2])
+        target_uid = int(parts[3]) if len(parts) > 3 else None
+    except (IndexError, ValueError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("Not your picker!", show_alert=True); return
+    p = get_player(uid)
+    if not p: return
+    all_skills = sjl(p.get("all_skills"), [])
+    chat_id = query.message.chat_id
+    raid_state, _ = in_active_raid(uid, chat_id)
+    boss_dict = active_bosses.get(chat_id) or secret_boss_active.get(chat_id)
+    if raid_state:
+        header = f"🔮 *vs {raid_state['enemy']['name']}* — choose a skill:"
+    elif boss_dict:
+        header = f"🔮 *vs {boss_dict['data']['name']}* — choose a skill:"
+    else:
+        header = "🔮 Choose a skill to use:"
+    markup = _build_skill_picker_keyboard(all_skills, uid, page, target_uid)
+    await query.edit_message_text(header, parse_mode="Markdown", reply_markup=markup)
 
 async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Inline button handler for skill picker in raids, boss fights, and PVP."""
@@ -12404,6 +12450,7 @@ def main():
     app.add_handler(CallbackQueryHandler(class_browse_callback,  pattern="^classbrowse_"))
     app.add_handler(CallbackQueryHandler(skill_tree_callback,    pattern="^sktree_"))
     app.add_handler(CallbackQueryHandler(skill_pick_callback,   pattern="^skillpick_"))
+    app.add_handler(CallbackQueryHandler(skillpage_callback,    pattern="^skillpage_"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
