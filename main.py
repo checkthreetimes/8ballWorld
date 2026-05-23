@@ -1718,6 +1718,19 @@ def time_remaining(ts, secs):
         return f"{s}s"
     except: return "Ready!"
 
+def time_until(ts):
+    """Format time remaining until a target timestamp (e.g. defeated_until)."""
+    if not ts: return None
+    try:
+        diff = datetime.fromisoformat(ts) - datetime.now()
+        if diff.total_seconds() <= 0: return None
+        m, s = divmod(int(diff.total_seconds()), 60)
+        h, m = divmod(m, 60)
+        if h > 0: return f"{h}h {m}m"
+        if m > 0: return f"{m}m {s}s"
+        return f"{s}s"
+    except: return None
+
 def set_status(p, key, duration_seconds):
     p[key] = (datetime.now() + timedelta(seconds=duration_seconds)).isoformat()
 
@@ -2155,14 +2168,36 @@ def calc_defense(defender, dmg):
  
     return final
 
-def apply_pvp_death(p, killer_name="the enemy"):
+def apply_pvp_death(p, killer_name="the enemy", cause="PvP"):
     """Apply full PvP-style death: 6hr defeat, 10% EXP loss, losses++"""
     exp_loss = round(p.get("exp", 0) * 0.10)
-    p["exp"]          = max(0, p.get("exp", 0) - exp_loss)
-    p["hp"]           = 0
-    p["losses"]       = p.get("losses", 0) + 1
-    p["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
+    p["exp"]             = max(0, p.get("exp", 0) - exp_loss)
+    p["hp"]              = 0
+    p["losses"]          = p.get("losses", 0) + 1
+    p["defeated_until"]  = (datetime.now() + timedelta(hours=6)).isoformat()
+    p["last_defeated_by"] = f"{killer_name} ({cause})"
     return exp_loss
+
+def _defeated_msg(p):
+    """Build a consistent 'you are defeated' message with countdown."""
+    countdown = time_until(p.get("defeated_until"))
+    cause     = p.get("last_defeated_by")
+    msg = "💀 You're defeated!"
+    if cause:  msg += f"\n☠️ Defeated by: _{cause}_"
+    if countdown: msg += f"\n⏳ Back in: *{countdown}*"
+    msg += "\n_Ask a Chalker to revive you, or wait it out._"
+    return msg
+
+async def _notify_defeat(bot, p, cause_str):
+    """DM the player letting them know what defeated them."""
+    try:
+        countdown = time_until(p.get("defeated_until")) or "6 hours"
+        await bot.send_message(
+            chat_id=p["user_id"],
+            text=f"💀 You were defeated by *{cause_str}*!\n⏳ Back in: *{countdown}*\n_Use /heal or ask a Chalker to get back sooner._",
+            parse_mode="Markdown")
+    except Exception:
+        pass
 
 def in_active_raid(user_id, chat_id=None):
     """Returns (raid_dict, kind) where kind is 'solo', 'group', or None."""
@@ -2865,11 +2900,21 @@ def init_db():
             pass
 
     migrations_v15 = [
-        ("players",         "last_pool",    "TEXT DEFAULT NULL"),
-        ("shadow_profiles", "last_pool",    "TEXT DEFAULT NULL"),
-        ("shadow_profiles", "pending_items","TEXT DEFAULT '[]'"),
+        ("players",         "last_pool",         "TEXT DEFAULT NULL"),
+        ("shadow_profiles", "last_pool",         "TEXT DEFAULT NULL"),
+        ("shadow_profiles", "pending_items",     "TEXT DEFAULT '[]'"),
     ]
     for table, col, definition in migrations_v15:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+    migrations_v16 = [
+        ("players", "last_defeated_by", "TEXT DEFAULT NULL"),
+    ]
+    for table, col, definition in migrations_v16:
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
             conn.commit()
@@ -3067,7 +3112,7 @@ def save_player(p):
         "explore_count_today","explore_date","shop_discount_until",
         "guild_id","prestige_count","shadow_level_at_ascension","created_at",
         "DEX","LUK","enhancements","enchants",
-        "last_dungeon","last_pool"
+        "last_dungeon","last_pool","last_defeated_by"
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -3659,7 +3704,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not a:
         await send_group(update, "Use /ascend first!", delay=9); return
     if is_defeated(a):
-        await send_group(update, "💀 You're defeated! Wait for a heal or sit out.", delay=9); return
+        await send_group(update, _defeated_msg(a), delay=15); return
     if is_vanished(a):
         await send_group(update, "👻 You're vanished  -  you can't attack while hidden.", delay=9); return
     if cannot_attack(a):
@@ -3745,6 +3790,8 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if d["hp"] <= 0:
             d["hp"] = 0
             d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
+            d["last_defeated_by"] = f"{a['username']} (Killshot)"
+            asyncio.create_task(_notify_defeat(update.get_bot(), d, a['username'] + " (Killshot)"))
             exp_loss = round(d.get("exp",0) * 0.10)
             d["exp"]  = max(0, d.get("exp",0) - exp_loss)
             d["losses"] = d.get("losses",0) + 1
@@ -3965,10 +4012,12 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if d["hp"] <= 0:
         d["hp"] = 0
         d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
+        d["last_defeated_by"] = f"{a['username']} (PvP)"
         exp_loss = round(d.get("exp",0) * 0.10)
         d["exp"]  = max(0, d.get("exp",0) - exp_loss)
         d["losses"] = d.get("losses",0) + 1
         a["wins"]   = a.get("wins",0) + 1
+        asyncio.create_task(_notify_defeat(update.get_bot(), d, a['username'] + " (PvP)"))
 
         # Deadeye Last Shot  -  double timer
         if cls_a and cls_a.get("passive_key") == "dead_or_alive":
@@ -4200,6 +4249,17 @@ def _build_stats_pages(p, viewing_name=None):
     msg_count = safe_int(shadow.get("message_count")) if shadow else 0
 
     # Page 1 - Profile
+    defeated_cause   = p.get("last_defeated_by")
+    defeat_countdown = time_until(p.get("defeated_until"))
+    defeat_line = (
+        f"☠️ Defeated by: _{defeated_cause}_\n"
+        f"⏳ Back in: *{defeat_countdown}*"
+        if is_defeated(p) and defeated_cause and defeat_countdown
+        else f"☠️ Defeated by: _{defeated_cause}_" if is_defeated(p) and defeated_cause
+        else f"⏳ Back in: *{defeat_countdown}*" if is_defeated(p) and defeat_countdown
+        else None
+    )
+
     page1_lines = [
         f"🎱 *{name}*{defeated_str}{recovering}",
         f"🏅 {p['active_title']}",
@@ -4214,6 +4274,8 @@ def _build_stats_pages(p, viewing_name=None):
         f"💰 Gold: {p['gold']}",
         f"⚔️ Wins: {p['wins']}   Losses: {p.get('losses',0)}",
     ]
+    if defeat_line:
+        page1_lines.append(defeat_line)
 
     # Page 2 - Class & Stats
     page2_lines = [
@@ -4764,7 +4826,8 @@ async def solostrike_cmd(update, context):
                 edm = calc_defense(p, raw)
                 sr["player_hp"] = max(0, sr["player_hp"] - edm)
                 if sr["player_hp"] == 0:
-                    exp_loss = apply_pvp_death(p)
+                    exp_loss = apply_pvp_death(p, killer_name=enemy["name"], cause="Solo Raid")
+                    asyncio.create_task(_notify_defeat(context.bot, p, enemy["name"] + " (Solo Raid)"))
                     active_soloraids.pop(user.id, None)
                     save_player(p)
                     lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6hr defeat. -{exp_loss} EXP.")
@@ -4871,21 +4934,22 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔹 Passive: {cls['skills'][0]['passive']}\n\n"
             f"🔮 Your Skills:\n" + "\n".join(skill_lines) if skill_lines else "None yet",
             delay=30); return
+    CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
     if not context.args:
-        lines = ["⚔️ *Choose your starting class!*\n"]
+        lines = ["🎱 *Choose your starting class!*\n"]
         for cid in BASE_CLASSES:
             cls = CLASS_TREE[cid]
             sk  = cls["skills"][0]
+            emoji = CLASS_EMOJIS.get(cid, "⚔️")
             lines.append(
-                f"*{cls['name']}*  -  {cls['desc']}\n"
+                f"{emoji} *{cls['name']}*  -  {cls['desc']}\n"
                 f"  📈 Primary: {cls['primary_stat']}\n"
                 f"  🔹 {sk['passive']}\n"
                 f"  🔸 {sk['name']}: {sk['desc']}\n"
                 f"  /class {cid}\n")
-        CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
         class_buttons = [[
             InlineKeyboardButton(
-                f"{CLASS_EMOJIS.get(cid,'⚔️')} {CLASS_TREE[cid]['name']}",
+                CLASS_EMOJIS.get(cid, "⚔️"),
                 callback_data=f"class_pick_{user.id}_{cid}"
             ) for cid in BASE_CLASSES
         ]]
@@ -5370,7 +5434,7 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if is_defeated(p):
-        await send_group(update, "💀 You're defeated!", delay=9); return
+        await send_group(update, _defeated_msg(p), delay=15); return
     if not check_cooldown(p.get("last_quest"), 3600):
         await send_group(update,
             f"⏳ Next quest in {time_remaining(p.get('last_quest'), 3600)}.", delay=9); return
@@ -5907,7 +5971,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  vials won't help.\n"
                 "Use a *The Re-Rack* to revive yourself, or wait for a Chalker.", delay=9)
             return
-        p["hp"] = min(p["max_hp"], p["hp"]+50); msg += f"❤️ +50 HP ({p['hp']}/{p['max_hp']})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+50);   msg += f"❤️ +50 HP ({p['hp']}/{calc_max_hp(p)})"
     elif item == "Premium Chalk Draft":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -5916,7 +5980,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  vials won't help.\n"
                 "Use a *The Re-Rack* to revive yourself, or wait for a Chalker.", delay=9)
             return
-        p["hp"] = min(p["max_hp"], p["hp"]+100); msg += f"❤️ +100 HP ({p['hp']}/{p['max_hp']})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+100);  msg += f"❤️ +100 HP ({p['hp']}/{calc_max_hp(p)})"
     elif item == "Champion's Chalk Flask":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -5925,7 +5989,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  vials won't help.\n"
                 "Use a *The Re-Rack* to revive yourself, or wait for a Chalker.", delay=9)
             return
-        p["hp"] = min(p["max_hp"], p["hp"]+200); msg += f"❤️ +200 HP ({p['hp']}/{p['max_hp']})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+200);  msg += f"❤️ +200 HP ({p['hp']}/{calc_max_hp(p)})"
     elif item == "The Re-Rack":
         if not is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -6101,7 +6165,7 @@ async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if is_defeated(p):
-        await send_group(update, "💀 You're defeated!", delay=9); return
+        await send_group(update, _defeated_msg(p), delay=15); return
     chat_id = update.effective_chat.id
     if chat_id in active_bosses:
         boss = active_bosses[chat_id]
@@ -6135,7 +6199,7 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
     is_secret = chat_id in secret_boss_active
 
     if is_defeated(p):
-        await send_group(update, "💀 You're defeated!", delay=9); return
+        await send_group(update, _defeated_msg(p), delay=15); return
     if cannot_attack(p):
         await send_group(update, "⚡ Stunned or rooted  -  can't act!", delay=9); return
 
@@ -6191,7 +6255,8 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
                 php  = boss_dict["player_hp"][target["id"]]
                 pmhp = boss_dict["player_max_hp"].get(target["id"], calc_max_hp(tp))
                 if php == 0:
-                    exp_loss = apply_pvp_death(tp)
+                    exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
+                    asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                     save_player(tp)
                     lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 6hr defeat. -{exp_loss} EXP.")
                 else:
@@ -6236,7 +6301,7 @@ async def strike_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if is_defeated(p):
-        await send_group(update, "💀 You're defeated!", delay=9); return
+        await send_group(update, _defeated_msg(p), delay=15); return
 
     boss_dict = active_bosses.get(chat_id) or secret_boss_active.get(chat_id)
     is_secret = chat_id in secret_boss_active
@@ -6268,7 +6333,8 @@ async def strike_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             edm = calc_defense(tp, raw)
             tp["hp"] = max(0, tp["hp"] - edm)
             if tp["hp"] == 0:
-                exp_loss = apply_pvp_death(tp)
+                exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
+                asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                 lines.append(
                     f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! "
                     f"6hr defeat. -{exp_loss} EXP.")
@@ -6787,6 +6853,8 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 tp["hp"] = max(0, tp["hp"] - bdmg)
                 if tp["hp"] == 0:
                     tp["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
+                    tp["last_defeated_by"] = f"{boss_dict['data']['name']} (Boss)"
+                    asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                     lines.append(f"💀 *{boss_dict['data']['name']}* kills *{target['name']}*!")
                 else:
                     lines.append(f"💥 Boss hits *{target['name']}* for {bdmg}!")
@@ -7089,11 +7157,15 @@ async def _execute_skill(update, context, p, sk):
         # Check Zealot condemn  -  revival blocked
         if stype == "condemn":
             d["defeated_until"] = (datetime.now()+timedelta(hours=6)).isoformat()
+            d["last_defeated_by"] = f"{p['username']} (Condemned)"
+            asyncio.create_task(_notify_defeat(context.bot, d, p['username'] + " — Condemned (cannot be revived for 2h)"))
             set_status(d, "revival_blocked_until", 7200)
             lines.append(f"☠️ *{d['username']}* is condemned! Cannot be revived for 2 hours.\n"
                          f"Only a *Saint's Absolution* can counter this.")
         else:
             d["defeated_until"] = (datetime.now()+timedelta(hours=6)).isoformat()
+            d["last_defeated_by"] = f"{p['username']} using {sk['name']} (Skill)"
+            asyncio.create_task(_notify_defeat(context.bot, d, f"{p['username']} using {sk['name']}"))
         d["losses"] = d.get("losses",0)+1
         p["wins"]   = p.get("wins",0)+1
         exp_gain = 80 + p["level"]*8
@@ -10054,6 +10126,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tick_dmg:
             if p["hp"] <= 0:
                 p["defeated_until"] = (datetime.now()+timedelta(hours=6)).isoformat()
+                p["last_defeated_by"] = "Bleed damage (DoT)"
+                asyncio.create_task(_notify_defeat(context.bot, p, "Bleed damage (you bled out)"))
                 asyncio.create_task(announce(context.bot, chat_id,
                     f"🩸 *{p['username']}* bled out and is defeated for 6 hours!",
                     permanent=True))
@@ -10494,7 +10568,8 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 edm = calc_defense(p, raw)
                 sr["player_hp"] = max(0, sr["player_hp"] - edm)
                 if sr["player_hp"] == 0:
-                    exp_loss = apply_pvp_death(p)
+                    exp_loss = apply_pvp_death(p, killer_name=enemy["name"], cause="Solo Raid")
+                    asyncio.create_task(_notify_defeat(context.bot, p, enemy["name"] + " (Solo Raid)"))
                     active_soloraids.pop(uid, None)
                     save_player(p)
                     lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6hr defeat. -{exp_loss} EXP.")
@@ -10633,7 +10708,8 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 php  = boss_dict["player_hp"][target["id"]]
                 pmhp = boss_dict["player_max_hp"].get(target["id"], calc_max_hp(tp))
                 if php == 0:
-                    exp_loss = apply_pvp_death(tp)
+                    exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
+                    asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                     save_player(tp)
                     lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 6hr defeat. -{exp_loss} EXP.")
                 else:
@@ -10726,7 +10802,8 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 php = boss_dict["player_hp"][target["id"]]
                 pmhp = boss_dict["player_max_hp"].get(target["id"], calc_max_hp(tp))
                 if php == 0:
-                    exp_loss = apply_pvp_death(tp)
+                    exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
+                    asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                     save_player(tp)
                     lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 6hr defeat. -{exp_loss} EXP.")
                 else:
