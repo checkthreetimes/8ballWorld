@@ -5268,6 +5268,112 @@ async def class_browse_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Not your class picker!", show_alert=True); return
     await _send_class_browser(query.message, uid, page, edit=True)
 
+# ── CLASS PROGRESSION BROWSER ─────────────────────────────────────────────────
+def _build_class_progression_pages(p):
+    """
+    Returns a list of text pages, one per class in the player's progression chain:
+    [base class, tier-2, tier-3, tier-4, tier-5].
+    If no path chosen yet, only page 0 (base) + a "choose path" page.
+    """
+    CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
+    TIER_UNLOCK  = {2:10, 3:30, 4:60, 5:100}
+
+    line       = get_class_line(p) or p.get("class_id")
+    if not line or line not in CLASS_TREE:
+        return ["No class yet."]
+    path       = p.get("class_path")        # "A", "B", or None
+    base_cls   = CLASS_TREE[line]
+    emoji      = CLASS_EMOJIS.get(line, "⚔️")
+    unlocked   = {s["name"] for s in sjl(p.get("all_skills"), [])}
+    cur_class  = p.get("class_id")
+
+    def _skill_lines(cls_data, tier_label=""):
+        lines = []
+        for sk in cls_data.get("skills", []):
+            status = "✅" if sk["name"] in unlocked else "🔒"
+            lines.append(f"{status} *{sk['name']}*")
+            lines.append(f"   ☀️ {sk.get('passive','—')}")
+            lines.append(f"   ⚡ {sk['desc']}")
+        return lines
+
+    # Page 0: base class
+    pages = []
+    base_lines = [
+        f"{emoji} *{base_cls['name']}* — Tier 1 (Base)",
+        f"_{base_cls.get('desc','')}_\n",
+        "*Skills:*",
+    ]
+    base_lines += _skill_lines(base_cls)
+    if not path:
+        base_lines += ["", "_Prestige at Level 10 (/prestige) to choose Path A or B._"]
+    pages.append("\n".join(base_lines))
+
+    if not path:
+        pages.append(
+            f"{emoji} *Choose Your Path at Level 10!*\n\n"
+            f"Use /prestige at Level 10 to unlock Path A or Path B.\n"
+            f"Each path leads to 4 unique prestige classes with different playstyles.\n\n"
+            f"Use /class when you have a class to preview what's ahead."
+        )
+        return pages
+
+    # Pages 1-4: tier 2-5 classes along chosen path
+    path_cids = CLASS_PATHS.get(line, {}).get(path, [])
+    for i, cid in enumerate(path_cids):
+        tier = i + 2
+        req  = TIER_UNLOCK.get(tier, 10)
+        pc   = CLASS_TREE.get(cid, {})
+        is_current = (cur_class == cid)
+        is_locked  = p["level"] < req
+        header = f"{emoji} *{pc.get('name', cid)}* — Path {path}, Tier {tier}"
+        if is_current:
+            header += "  _(Current)_"
+        elif is_locked:
+            header += f"  🔒 _(Requires Lv {req})_"
+        lines = [header, f"_{pc.get('desc','')}_\n", "*Skills unlocked:*"]
+        lines += _skill_lines(pc)
+        lines += ["", f"_Prestige at Level {req} to advance to this class._"]
+        pages.append("\n".join(lines))
+
+    return pages
+
+async def _send_class_progression(target, uid, page, edit=False):
+    p = get_player(uid)
+    if not p: return
+    pages = _build_class_progression_pages(p)
+    total = len(pages)
+    page  = max(0, min(page, total - 1))
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"clsprog_{uid}_{page-1}"))
+    if page < total - 1:
+        pc_next = pages[page + 1].split("*")[1] if page + 1 < total else "Next"
+        nav.append(InlineKeyboardButton(f"Next ▶", callback_data=f"clsprog_{uid}_{page+1}"))
+    markup = InlineKeyboardMarkup([nav]) if nav else None
+    text   = pages[page][:4096]
+
+    if edit:
+        try:
+            await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        except Exception as e:
+            await target.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+    else:
+        await target.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+
+async def class_progression_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")   # clsprog_{uid}_{page}
+    try:
+        uid  = int(parts[1])
+        page = int(parts[2])
+    except (IndexError, ValueError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("Not your class info!", show_alert=True); return
+    await _send_class_progression(query.message, uid, page, edit=True)
+
 # ── CLASS ─────────────────────────────────────────────────────────────────────
 async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -5276,8 +5382,7 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if p["level"] < 5:
         await send_group(update, f"⚔️ Classes unlock at *Level 5*. You're Level {p['level']}.", delay=9); return
     if p.get("class_id"):
-        # Show paginated class progression tree
-        await _send_skill_tree(update.message, user.id, page=0, edit=False)
+        await _send_class_progression(update.message, user.id, page=0, edit=False)
         return
     CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
     if not context.args:
@@ -11547,7 +11652,12 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
         if not all_skills:
             await query.answer("No skills unlocked yet!", show_alert=True); return
         sr = active_soloraids[uid]
-        # Use first available skill
+        if len(all_skills) > 1:
+            markup = _build_skill_picker_keyboard(all_skills, uid, 0)
+            await query.edit_message_text(
+                f"🔮 *vs {sr['enemy']['name']}* — choose a skill:",
+                parse_mode="Markdown", reply_markup=markup)
+            return
         sk = all_skills[0]
         w = get_weather()
         sk_lines, sk_dmg = apply_skill_to_raid_enemy(p, sk, sr, w)
@@ -11760,6 +11870,12 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         all_skills = sjl(p.get("all_skills"), [])
         if not all_skills:
             await query.answer("No skills unlocked yet!", show_alert=True); return
+        if len(all_skills) > 1:
+            markup = _build_skill_picker_keyboard(all_skills, uid, 0)
+            await query.edit_message_text(
+                f"🔮 *vs {boss_dict['data']['name']}* — choose a skill:",
+                parse_mode="Markdown", reply_markup=markup)
+            return
         sk = all_skills[0]
 
         if uid not in [u["id"] for u in boss_dict["participants"]]:
@@ -12447,7 +12563,8 @@ def main():
     app.add_handler(CallbackQueryHandler(resetstats_callback,    pattern="^rsstat_"))
     app.add_handler(CallbackQueryHandler(guilddisband_callback,  pattern="^gdisband_"))
     app.add_handler(CallbackQueryHandler(class_pick_callback,    pattern="^class_pick_"))
-    app.add_handler(CallbackQueryHandler(class_browse_callback,  pattern="^classbrowse_"))
+    app.add_handler(CallbackQueryHandler(class_browse_callback,      pattern="^classbrowse_"))
+    app.add_handler(CallbackQueryHandler(class_progression_callback, pattern="^clsprog_"))
     app.add_handler(CallbackQueryHandler(skill_tree_callback,    pattern="^sktree_"))
     app.add_handler(CallbackQueryHandler(skill_pick_callback,   pattern="^skillpick_"))
     app.add_handler(CallbackQueryHandler(skillpage_callback,    pattern="^skillpage_"))
