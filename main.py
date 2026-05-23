@@ -2404,7 +2404,7 @@ def raid_enemy_counter(p, raid_state, lines):
 
     p["hp"] = max(0, p["hp"] - edm)
     if p["hp"] == 0:
-        exp_loss = apply_pvp_death(p)
+        exp_loss = apply_pvp_death(p, killer_name=enemy["name"], cause="Solo Raid")
         lines.append(
             f"💀 *{enemy['name']}* kills *{p['username']}*! "
             f"Defeated 6hrs. -{exp_loss} EXP.")
@@ -2554,7 +2554,7 @@ async def _enemy_phase(bot, chat_id, raid_state):
         pmhp = raid_state["player_max_hp"].get(uid, php)
 
         if php == 0:
-            exp_loss = apply_pvp_death(p)
+            exp_loss = apply_pvp_death(p, killer_name=enemy["name"], cause="Raid")
             save_player(p)
             lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6hr defeat. -{exp_loss} EXP.")
         else:
