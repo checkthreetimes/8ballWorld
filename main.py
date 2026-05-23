@@ -2400,7 +2400,7 @@ async def _notify_defeat(bot, p, cause_str):
         pass
 
 async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
-    """Check for active bounty on target; award attacker if found. Returns reward or 0."""
+    """Check for active bounty on target; award attacker. Railrunner self-collect gets +25% bonus."""
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; bc = conn.cursor()
     bc.execute("SELECT * FROM bounties WHERE target_id=? AND claimed_by IS NULL AND expires_at > ?",
                (target["user_id"], datetime.now().isoformat()))
@@ -2410,31 +2410,44 @@ async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
     bc.execute("UPDATE bounties SET claimed_by=? WHERE bounty_id=?",
                (attacker["user_id"], bounty["bounty_id"]))
     conn.commit(); conn.close()
-    reward = bounty["reward"]
-    attacker["gold"] = attacker.get("gold",0) + reward
-    placer_p = get_player(bounty["placer_id"])
-    if placer_p and placer_p["user_id"] != attacker["user_id"]:
-        placer_p["gold"] = placer_p.get("gold",0) + round(reward * 0.25)
-        save_player(placer_p)
-        try:
-            await bot.send_message(
-                chat_id=placer_p["user_id"],
-                text=f"💰 Your bounty on *{target['username']}* was claimed by *{attacker['username']}*!\n"
-                     f"You received *{round(reward*0.25)}g* back.",
-                parse_mode="Markdown")
-        except Exception: pass
+
+    reward      = bounty["reward"]
+    self_placed = (bounty["placer_id"] == attacker["user_id"])
+    is_railrunner = (attacker.get("class_id") == "bounty_hunter")
+
+    if self_placed and is_railrunner:
+        # Railrunner collects their own contract: full reward + 25% bonus
+        total = reward + round(reward * 0.25)
+        attacker["gold"] = attacker.get("gold",0) + total
+        bonus_msg = f"🎯 *Railrunner bonus!* You collected your own contract: *+{total}g* (+25% self-collect!)"
+    else:
+        attacker["gold"] = attacker.get("gold",0) + reward
+        bonus_msg = None
+        if not self_placed:
+            placer_p = get_player(bounty["placer_id"])
+            if placer_p:
+                placer_p["gold"] = placer_p.get("gold",0) + round(reward * 0.25)
+                save_player(placer_p)
+                try:
+                    await bot.send_message(
+                        chat_id=placer_p["user_id"],
+                        text=f"💰 Your bounty on *{target['username']}* was claimed by *{attacker['username']}*!\n"
+                             f"You received *{round(reward*0.25)}g* back.",
+                        parse_mode="Markdown")
+                except Exception: pass
     try:
         if chat_id:
+            payout = reward + round(reward*0.25) if (self_placed and is_railrunner) else reward
             await bot.send_message(
                 chat_id=chat_id,
                 text=f"💰 *BOUNTY CLAIMED!* *{attacker['username']}* defeated *{target['username']}*!\n"
-                     f"+{reward}g bounty reward! 🎯",
+                     f"+{payout}g collected! 🎯" + (f"\n{bonus_msg}" if bonus_msg else ""),
                 parse_mode="Markdown")
     except Exception: pass
     try:
         await bot.send_message(
             chat_id=target["user_id"],
-            text=f"🎯 There was a *{reward}g bounty* on your head — *{attacker['username']}* collected it!",
+            text=f"🎯 The *{reward}g bounty* on your head was collected by *{attacker['username']}*!",
             parse_mode="Markdown")
     except Exception: pass
     return reward
@@ -5180,6 +5193,81 @@ async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚔️ *{user.first_name}* has ASCENDED! "
         f"Level {slvl} → RPG! 🎱", permanent=True))
 
+# ── CLASS BROWSER ─────────────────────────────────────────────────────────────
+_CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
+_TIER_REQ     = {2:10, 3:30, 4:60, 5:100}
+
+def _build_class_page(cid):
+    """Build a full class info page for /class browsing."""
+    base  = CLASS_TREE[cid]
+    emoji = _CLASS_EMOJIS.get(cid, "⚔️")
+    paths = CLASS_PATHS.get(cid, {})
+    lines = [
+        f"{emoji} *{base['name']}* — _{base['desc']}_\n",
+        f"📈 *Primary Stat:* {base['primary_stat']}",
+        f"🔢 *Stat Bonus:* {', '.join(f'+{v} {k}' for k,v in base.get('stat_bonus',{}).items())}\n",
+        "─── *Tier 1 Skills (unlocked at Lv 5)* ───",
+    ]
+    for sk in base.get("skills", []):
+        lines.append(f"• *{sk['name']}*")
+        lines.append(f"  ☀️ Passive: {sk.get('passive','—')}")
+        lines.append(f"  ⚡ Active: {sk['desc']}")
+    lines.append("")
+
+    for path_key in ["A","B"]:
+        path_cids = paths.get(path_key, [])
+        if not path_cids: continue
+        path_label = f"Path {path_key}"
+        lines.append(f"─── *{path_label}* ───")
+        for i, pcid in enumerate(path_cids):
+            pc  = CLASS_TREE.get(pcid, {})
+            req = _TIER_REQ.get(i+2, 10)
+            lines.append(f"🔒 *Tier {i+2} — {pc.get('name',pcid)}* _(Lv {req}+)_")
+            lines.append(f"   _{pc.get('desc','')}_")
+            for sk in pc.get("skills", []):
+                lines.append(f"   • *{sk['name']}*: {sk['desc']}")
+        lines.append("")
+
+    lines.append(f"_Tap a button below to pick this class, or browse others._")
+    return "\n".join(lines)
+
+async def _send_class_browser(target, uid, page, edit=False):
+    total = len(BASE_CLASSES)
+    page  = max(0, min(page, total-1))
+    cid   = BASE_CLASSES[page]
+    text  = _build_class_page(cid)[:4096]
+
+    nav_btns = []
+    if page > 0:
+        prev_cid = BASE_CLASSES[page-1]
+        nav_btns.append(InlineKeyboardButton(
+            f"◀ {_CLASS_EMOJIS.get(prev_cid,'')} {CLASS_TREE[prev_cid]['name']}",
+            callback_data=f"classbrowse_{uid}_{page-1}"))
+    if page < total-1:
+        next_cid = BASE_CLASSES[page+1]
+        nav_btns.append(InlineKeyboardButton(
+            f"{_CLASS_EMOJIS.get(next_cid,'')} {CLASS_TREE[next_cid]['name']} ▶",
+            callback_data=f"classbrowse_{uid}_{page+1}"))
+
+    pick_btn = InlineKeyboardButton(
+        f"✅ Pick {_CLASS_EMOJIS.get(cid,'')} {CLASS_TREE[cid]['name']}",
+        callback_data=f"class_pick_{uid}_{cid}")
+    markup = InlineKeyboardMarkup([nav_btns, [pick_btn]] if nav_btns else [[pick_btn]])
+
+    if edit:
+        try: await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        except Exception: pass
+    else:
+        await target.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+
+async def class_browse_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    _, uid, page = query.data.split("_")
+    uid = int(uid); page = int(page)
+    if query.from_user.id != uid:
+        await query.answer("Not your class picker!", show_alert=True); return
+    await _send_class_browser(query.message, uid, page, edit=True)
+
 # ── CLASS ─────────────────────────────────────────────────────────────────────
 async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -5203,25 +5291,9 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             delay=30); return
     CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
     if not context.args:
-        lines = ["🎱 *Choose your starting class!*\n"]
-        for cid in BASE_CLASSES:
-            cls = CLASS_TREE[cid]
-            sk  = cls["skills"][0]
-            emoji = CLASS_EMOJIS.get(cid, "⚔️")
-            lines.append(
-                f"{emoji} *{cls['name']}*  -  {cls['desc']}\n"
-                f"  📈 Primary: {cls['primary_stat']}\n"
-                f"  🔹 {sk['passive']}\n"
-                f"  🔸 {sk['name']}: {sk['desc']}\n"
-                f"  /class {cid}\n")
-        class_buttons = [[
-            InlineKeyboardButton(
-                CLASS_EMOJIS.get(cid, "⚔️"),
-                callback_data=f"class_pick_{user.id}_{cid}"
-            ) for cid in BASE_CLASSES
-        ]]
-        class_markup = InlineKeyboardMarkup(class_buttons)
-        await send_group(update, "\n".join(lines), delay=30, reply_markup=class_markup); return
+        # Paginated class browser — send first page
+        await _send_class_browser(update.message, user.id, page=0, edit=False)
+        return
 
     chosen = context.args[0].lower()
     if chosen not in BASE_CLASSES:
@@ -7191,20 +7263,9 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
     if not replying:
-        # Just show the skill list
-        base_est = 5 + get_weapon_atk(p) + get_stat(p, get_primary_stat(p))//2 + p["level"]//2
-        lines = [f"🔮 *{p['username']}'s Skills*\n",
-                 f"_Skills are used in /arena turn-based combat._\n",
-                 f"_In open PVP, your class procs fire automatically on /attack._\n"]
-        if cls:
-            lines.append(f"🔹 *Passive  -  {cls['name']}:* {cls['skills'][0]['passive']}\n")
-        for i, s in enumerate(all_skills, 1):
-            mult = s.get("mult", 1.0)
-            dmg_est = round(base_est * mult) if mult else "varies"
-            lines.append(f"*{i}.* *{s['name']}*  -  {s['desc']}\n   Est. damage: ~{dmg_est}")
-        lines.append("\n_To use offensive skills, challenge someone to `/arena`._\n"
-                     "_Support skills (heals, buffs) work anywhere._")
-        await send_group(update, "\n".join(lines), delay=30); return
+        # Paginated skill tree
+        await _send_skill_tree(update.message, user.id, page=0, edit=False)
+        return
 
     # Replying to a target  -  pick skill
     if sk is None:
@@ -7410,23 +7471,33 @@ async def _execute_skill(update, context, p, sk):
         set_status(d, "frozen_until", 60)
         lines.append(f"🧊 *Absolute Zero!* {d['username']} frozen for 60 seconds!")
     elif stype == "bounty":
-        # Railrunner: Execution Order — place a FREE 500g bounty on target, deal light damage
+        # Railrunner: Execution Order — place a FREE 750g bounty, check 2-contract limit
         dmg = round(base * 0.6)
-        expires = (datetime.now() + timedelta(hours=24)).isoformat()
+        expires = (datetime.now() + timedelta(hours=48)).isoformat()
+        placed = False
         try:
             bconn = sqlite3.connect(DB_PATH); bc2 = bconn.cursor()
-            bc2.execute("DELETE FROM bounties WHERE target_id=? AND claimed_by IS NULL", (d["user_id"],))
-            bc2.execute("INSERT INTO bounties (placer_id,target_id,reward,expires_at) VALUES (?,?,?,?)",
-                        (p["user_id"], d["user_id"], 500, expires))
-            bconn.commit(); bconn.close()
+            active_count = bc2.execute(
+                "SELECT COUNT(*) FROM bounties WHERE placer_id=? AND claimed_by IS NULL AND expires_at > ?",
+                (p["user_id"], datetime.now().isoformat())).fetchone()[0]
+            if active_count < 2:
+                bc2.execute("DELETE FROM bounties WHERE target_id=? AND placer_id=? AND claimed_by IS NULL",
+                            (d["user_id"], p["user_id"]))
+                bc2.execute("INSERT INTO bounties (placer_id,target_id,reward,expires_at) VALUES (?,?,?,?)",
+                            (p["user_id"], d["user_id"], 750, expires))
+                bconn.commit(); placed = True
+            bconn.close()
         except Exception: pass
-        lines.append(f"🎯 *Execution Order!* A *500g bounty* has been placed on *{d['username']}*!\n"
-                     f"First to defeat them collects. Expires in 24h.")
-        asyncio.create_task(context.bot.send_message(
-            chat_id=d["user_id"],
-            text=f"🎯 *{p['username']}* has placed a 500g bounty on your head!\n"
-                 "Watch your back — anyone who defeats you claims it.",
-            parse_mode="Markdown"))
+        if placed:
+            lines.append(f"🎯 *Execution Order!* A *750g bounty* placed on *{d['username']}*!\n"
+                         f"Expires in 48h. First to defeat them collects.")
+            asyncio.create_task(context.bot.send_message(
+                chat_id=d["user_id"],
+                text=f"🎯 *{p['username']}* (Railrunner) placed a *750g bounty* on you!\n"
+                     "Watch your back — anyone who defeats you claims it.",
+                parse_mode="Markdown"))
+        else:
+            lines.append(f"🎯 *Execution Order!* You already have 2 active contracts  -  collect or wait.")
     elif stype == "bounty_mark":
         dmg = round(base * 0.8)
         lines.append(f"🔴 *Contract!* Marking *{d['username']}*  -  increased threat level.")
@@ -7829,6 +7900,149 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✨ *Enchanted!*\n\n"
         f"*{item_name}*  -  Enchants ({len(new_encs)}/3):\n{all_str}", delay=20)
 
+# ── SKILL TREE PAGE BUILDER ───────────────────────────────────────────────────
+def _build_skill_tree_pages(p):
+    """Build 3 pages: current skills, Path A tree, Path B tree."""
+    line         = get_class_line(p) or (p.get("class_id") and CLASS_TREE.get(p["class_id"],{}).get("line"))
+    if not line: return ["No class chosen yet. Use /class at Level 5."]
+    path_chosen  = p.get("class_path")           # "A", "B", or None
+    player_level = p["level"]
+    unlocked     = {s["name"] for s in sjl(p.get("all_skills"), [])}
+    cls          = get_player_class(p)
+    cls_name     = cls["name"] if cls else "Base"
+    prestige_lvl = safe_int(p.get("prestige_count"))
+
+    CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
+    line_emoji   = CLASS_EMOJIS.get(line, "⚔️")
+
+    # Tier/level labels
+    TIER_LABELS = {1:"Lv 5", 2:"Prestige (Lv 10)", 3:"Lv 30", 4:"Lv 60", 5:"Lv 100"}
+
+    def _skill_block(sk, cls_data, path_label, player_path, player_lvl, has_unlocked):
+        tier    = sk.get("tier", 1)
+        req_lvl = sk.get("unlock", 5)
+        name    = sk["name"]
+        # Determine status
+        if name in has_unlocked:
+            status = "✅"
+        elif tier == 1 or (path_label == player_path and player_lvl >= req_lvl):
+            status = "🔓"  # qualifies but not synced (edge case)
+        elif path_label and path_label != player_path and player_path:
+            status = "🚫"  # wrong path chosen
+        else:
+            req_str = TIER_LABELS.get(tier, f"Lv {req_lvl}")
+            status = f"🔒 _{req_str}_"
+        passive_line = f"   ☀️ *Passive:* {sk.get('passive','—')}"
+        active_line  = f"   ⚡ *Active:* {sk['desc']}"
+        return f"{status} *{name}*\n{passive_line}\n{active_line}"
+
+    # ── Page 1: Current status + unlocked skills ────────────────────────────
+    base_cls     = CLASS_TREE.get(line, {})
+    path_tier    = {1:"Base",2:"Tier 2",3:"Tier 3",4:"Tier 4",5:"Tier 5"}
+    cur_tier     = get_class_tier(p) if callable(get_class_tier) else 1
+    path_str     = f"Path {path_chosen}" if path_chosen else "No path yet (prestige at Lv 10)"
+    path_classes = CLASS_PATHS.get(line, {}).get(path_chosen, []) if path_chosen else []
+
+    # Build progression chain for current path
+    chain_parts = [f"{line_emoji} *{base_cls.get('name','Base')}*"]
+    if path_chosen:
+        paths = CLASS_PATHS.get(line, {})
+        for cid in paths.get(path_chosen, []):
+            pc = CLASS_TREE.get(cid, {})
+            chain_parts.append(f"*{pc.get('name',cid)}*")
+    chain = " → ".join(chain_parts[:cur_tier+1 if path_chosen else 1])
+
+    p1_lines = [
+        f"{line_emoji} *{p['username']}'s Skill Tree*\n",
+        f"*Class:* {cls_name}  |  *{path_str}*",
+        f"*Progression:* {chain}\n",
+    ]
+    if not sjl(p.get("all_skills"), []):
+        p1_lines.append("_No skills unlocked yet. Reach Level 5 and use /class._")
+    else:
+        p1_lines.append("*Your Unlocked Skills:*\n")
+        for sk in sjl(p.get("all_skills"), []):
+            p1_lines.append(f"✅ *{sk['name']}*")
+            p1_lines.append(f"   ☀️ *Passive:* {sk.get('passive','—')}")
+            p1_lines.append(f"   ⚡ *Active:* {sk['desc']}\n")
+    p1_lines.append("_Use buttons to explore Path A and Path B skill trees._")
+    if path_chosen:
+        p1_lines.append(f"_You are on *Path {path_chosen}*. Path {('B' if path_chosen=='A' else 'A')} skills are unavailable._")
+
+    # ── Page 2 & 3: Full path trees ─────────────────────────────────────────
+    def _build_path_page(path_key):
+        paths      = CLASS_PATHS.get(line, {})
+        path_cids  = paths.get(path_key, [])
+        path_name  = f"Path {path_key}"
+        is_chosen  = (path_chosen == path_key)
+        is_blocked = (path_chosen and path_chosen != path_key)
+        pg = [f"{line_emoji} *{LINE_ARCHETYPE.get(line,line.title())} — {path_name}*\n"]
+        if is_blocked:
+            pg.append(f"🚫 _You chose Path {path_chosen}. These skills are unavailable._\n")
+        elif is_chosen:
+            pg.append(f"✅ _Your chosen path!_\n")
+        else:
+            pg.append(f"_Prestige at Level 10 to choose this path._\n")
+
+        # Tier 1: base class skills
+        pg.append(f"*── Tier 1 (Base Class: {base_cls.get('name','')})* ──")
+        for sk in base_cls.get("skills", []):
+            pg.append(_skill_block(sk, base_cls, None, path_chosen, player_level, unlocked))
+        pg.append("")
+
+        # Tiers 2-5: path classes
+        tier_unlock = {2: 10, 3: 30, 4: 60, 5: 100}
+        for i, cid in enumerate(path_cids):
+            pc   = CLASS_TREE.get(cid, {})
+            tier = i + 2
+            req  = tier_unlock.get(tier, 10)
+            pc_name = pc.get("name", cid)
+            if is_blocked:
+                pg.append(f"*── Tier {tier} ({pc_name})* ── 🚫 _Unavailable_")
+            elif player_level < req and not is_chosen:
+                pg.append(f"*── Tier {tier} ({pc_name})* ── 🔒 _Requires Lv {req} + prestige_")
+            else:
+                pg.append(f"*── Tier {tier} ({pc_name})* ── _{pc.get('desc','')}_ ")
+            for sk in pc.get("skills", []):
+                pg.append(_skill_block(sk, pc, path_key, path_chosen, player_level, unlocked))
+            pg.append("")
+        return "\n".join(pg)
+
+    return [
+        "\n".join(p1_lines),
+        _build_path_page("A"),
+        _build_path_page("B"),
+    ]
+
+async def _send_skill_tree(target, uid, page, edit=False):
+    p = get_player(uid)
+    if not p: return
+    pages = _build_skill_tree_pages(p)
+    total = len(pages)
+    page  = max(0, min(page, total - 1))
+    labels = ["Your Skills", "Path A", "Path B"]
+    btns = []
+    if page > 0:
+        btns.append(InlineKeyboardButton(f"◀ {labels[page-1]}", callback_data=f"sktree_{uid}_{page-1}"))
+    if page < total - 1:
+        btns.append(InlineKeyboardButton(f"{labels[page+1]} ▶", callback_data=f"sktree_{uid}_{page+1}"))
+    markup = InlineKeyboardMarkup([btns]) if btns else None
+    text   = pages[page][:4096]
+    if edit:
+        try:
+            await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        except Exception: pass
+    else:
+        await target.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+
+async def skill_tree_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    parts = query.data.split("_")          # sktree_{uid}_{page}
+    uid   = int(parts[1]); page = int(parts[2])
+    if query.from_user.id != uid:
+        await query.answer("This isn't your skill tree!", show_alert=True); return
+    await _send_skill_tree(query.message, uid, page, edit=True)
+
 # ── BOUNTY ────────────────────────────────────────────────────────────────────
 async def bounty_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -7888,8 +8102,9 @@ async def bounty_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if p.get("gold",0) < amount:
         await send_group(update, f"❌ Not enough gold. You have *{p.get('gold',0)}g*.", delay=9); return
 
-    # Check if target already has an active bounty from this player
-    bconn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; bc = bconn.cursor()
+    # Railrunners can hold 2 active contracts, everyone else 1 per target
+    is_railrunner = (p.get("class_id") == "bounty_hunter")
+    bconn = sqlite3.connect(DB_PATH); bconn.row_factory = sqlite3.Row; bc = bconn.cursor()
     existing = bc.execute(
         "SELECT bounty_id, reward FROM bounties WHERE target_id=? AND placer_id=? AND claimed_by IS NULL AND expires_at > ?",
         (target["user_id"], p["user_id"], datetime.now().isoformat())).fetchone()
@@ -7898,6 +8113,16 @@ async def bounty_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update,
             f"❌ You already have an active *{existing['reward']}g* bounty on *{target['username']}*.", delay=10)
         return
+    if not is_railrunner:
+        total_active = bc.execute(
+            "SELECT COUNT(*) FROM bounties WHERE placer_id=? AND claimed_by IS NULL AND expires_at > ?",
+            (p["user_id"], datetime.now().isoformat())).fetchone()[0]
+        if total_active >= 1:
+            bconn.close()
+            await send_group(update,
+                "❌ You can only have *1 active bounty* at a time.\n"
+                "_Railrunners (Archer Path B) can hold 2 contracts._", delay=12)
+            return
 
     expires = (datetime.now() + timedelta(hours=24)).isoformat()
     bc.execute("INSERT INTO bounties (placer_id,target_id,reward,expires_at) VALUES (?,?,?,?)",
@@ -7939,11 +8164,24 @@ async def bounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "💰 *Bounty Board*\n\n_No active bounties right now._", delay=15)
         return
 
+    # Check which placers are Railrunners
+    placer_ids = [row["placer_id"] for row in rows]
+    railrunner_ids = set()
+    if placer_ids:
+        rconn = sqlite3.connect(DB_PATH); rconn.row_factory = sqlite3.Row
+        for row in rconn.execute(
+            f"SELECT user_id FROM players WHERE class_id='bounty_hunter' AND user_id IN ({','.join('?'*len(placer_ids))})",
+            placer_ids).fetchall():
+            railrunner_ids.add(row["user_id"])
+        rconn.close()
+
     lines = ["💰 *Bounty Board* — Active Contracts\n"]
     for i, row in enumerate(rows, 1):
         target_name = row["target_name"] or "Unknown"
         placer_name = row["placer_name"] or "Unknown"
-        lines.append(f"{i}. 🎯 *{target_name}* — *{row['reward']}g*\n   _Posted by {placer_name}_")
+        star = "⭐ " if row["placer_id"] in railrunner_ids else ""
+        lines.append(f"{i}. {star}🎯 *{target_name}* — *{row['reward']}g*\n   _Posted by {placer_name}_")
+    lines.append("\n⭐ = Railrunner contract (professional bounty hunter)")
 
     await send_group(update, "\n".join(lines), delay=30)
 
@@ -9786,24 +10024,35 @@ GUIDE_PAGES = [
     (
         "🎱 *8Ball World  -  Building Your Character* (2/6)\n"
         "\n"
-        "*Classes* unlock at Level 5 via /class:\n"
-        "Warrior  -  STR-based, tough and hard-hitting\n"
-        "Mage     -  INT-based, powerful spells and pool EXP bonuses\n"
-        "Thief    -  LUK-based, crits and gold find\n"
-        "Archer   -  DEX-based, accuracy and ranged damage\n"
-        "Priest   -  WIS-based, heals and group buffs\n"
+        "Use /class at Level 5 to pick your starting class. Browse with arrows to see each class's full Path A and Path B skill trees before committing.\n"
         "\n"
-        "At Level 10, use /prestige to choose Path A or B. Your class then evolves automatically at levels 30, 60, and 100.\n"
+        "⚔️ *Warrior (Breaker)* — STR-based. Absorbs hits, controls the table.\n"
+        "  Path A (Godbank): Holy tank — shields, wards, group buffs, divine nukes\n"
+        "  Path B (8ball Lord): Pure damage — Triple Strike, Rampage, Decimation\n"
         "\n"
-        "*Stats* (spend points with /allocate):\n"
-        "STR  -  Physical damage\n"
-        "INT  -  Magic damage, pool EXP bonus\n"
-        "AGI  -  Dodge chance, turn speed\n"
-        "DEX  -  Accuracy, crit chance\n"
-        "WIS  -  Heal power, EXP gain\n"
-        "LUK  -  Better loot rolls, gold drops\n"
+        "🔮 *Mage (Baizer)* — INT-based. Powerful spells and crowd control.\n"
+        "  Path A (Sage): Pure magic — Chain Lightning, Meteor AOE, Absolute Zero (freeze)\n"
+        "  Path B (Void Mage): Dark arts — Hexes, drain, void nuke, void collapse\n"
         "\n"
-        "You earn stat points on level-up. /resetstats refunds them all. /resetclass resets your class (costs 300g)."
+        "🔪 *Thief (Shark)* — LUK/AGI-based. Crits, evasion, gold generation.\n"
+        "  Path A (Wraith): Ghost — stealth, phantom strike, undetectable dodge\n"
+        "  Path B (Specialist): Assassination — poison, bleeds, execute on low HP\n"
+        "\n"
+        "🏹 *Archer (Marksman)* — DEX-based. Precision and bounty hunting.\n"
+        "  Path A (Strider): Ranger — steady aim, nature bond, sniper shot\n"
+        "  Path B (Railrunner): Bounty Hunter — place contracts, track targets, 750g bounties\n"
+        "\n"
+        "📿 *Priest (Chalker)* — WIS-based. The only class that can revive players.\n"
+        "  Path A (Saint): Holy healer — group heals, divine shield, mass resurrection\n"
+        "  Path B (Zealot): Dark cleric — condemn (unrevivable), curse, inquisition\n"
+        "\n"
+        "At Lv 10, use /prestige to choose Path A or B. Your class evolves automatically at Lv 30, 60, and 100.\n"
+        "\n"
+        "*Stats* (spend with /allocate):\n"
+        "STR — Physical dmg | INT — Magic dmg | AGI — Dodge/speed\n"
+        "DEX — Crit/accuracy | WIS — Heals/EXP | LUK — Loot/gold\n"
+        "\n"
+        "Use /skill to browse your full skill tree including locked tiers."
     ),
     # Page 3 - Daily Activities
     (
@@ -10673,6 +10922,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         s["last_seen"]     = datetime.now().isoformat()
         save_shadow(s)
         return
+
+    # Railrunner target-spotted notification (rate-limited: once per 10 min per target)
+    _bounty_spot_cache = context.bot_data.setdefault("bounty_spot_cache", {})
+    cache_key = (user.id, chat_id)
+    last_spot = _bounty_spot_cache.get(cache_key, 0)
+    if (datetime.now().timestamp() - last_spot) > 600:
+        try:
+            bconn = sqlite3.connect(DB_PATH); bconn.row_factory = sqlite3.Row
+            rows = bconn.execute(
+                "SELECT b.placer_id FROM bounties b "
+                "JOIN players rp ON rp.user_id = b.placer_id AND rp.class_id = 'bounty_hunter' "
+                "WHERE b.target_id=? AND b.claimed_by IS NULL AND b.expires_at > ?",
+                (user.id, datetime.now().isoformat())).fetchall()
+            bconn.close()
+            for row in rows:
+                if row["placer_id"] != user.id:
+                    asyncio.create_task(context.bot.send_message(
+                        chat_id=row["placer_id"],
+                        text=f"🔭 *Target spotted!* Your bounty target *{user.first_name}* "
+                             f"just sent a message in the group.",
+                        parse_mode="Markdown"))
+            if rows:
+                _bounty_spot_cache[cache_key] = datetime.now().timestamp()
+        except Exception: pass
 
     # Random events  -  every 2500 messages
     message_counters[chat_id] = message_counters.get(chat_id, 0) + 1
@@ -11937,6 +12210,8 @@ def main():
     app.add_handler(CallbackQueryHandler(resetstats_callback,    pattern="^rsstat_"))
     app.add_handler(CallbackQueryHandler(guilddisband_callback,  pattern="^gdisband_"))
     app.add_handler(CallbackQueryHandler(class_pick_callback,    pattern="^class_pick_"))
+    app.add_handler(CallbackQueryHandler(class_browse_callback,  pattern="^classbrowse_"))
+    app.add_handler(CallbackQueryHandler(skill_tree_callback,    pattern="^sktree_"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
