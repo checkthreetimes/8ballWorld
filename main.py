@@ -4188,6 +4188,8 @@ def _build_stats_pages(p, viewing_name=None):
     ] or ["Empty"]
 
     title_list = safe_titles(p)
+    shadow = get_shadow(p["user_id"])
+    msg_count = safe_int(shadow.get("message_count")) if shadow else 0
 
     # Page 1 - Profile
     page1_lines = [
@@ -4200,6 +4202,7 @@ def _build_stats_pages(p, viewing_name=None):
         f"❤️ HP: {p['hp']}/{real_max}",
         f"✨ {exp_cur:,}/{exp_need:,} EXP ({exp_pct}%)",
         f"🏆 Lifetime EXP: {safe_int(p.get('total_exp')):,}",
+        f"💬 Messages: {msg_count:,}",
         f"💰 Gold: {p['gold']}",
         f"⚔️ Wins: {p['wins']}   Losses: {p.get('losses',0)}",
     ]
