@@ -5398,7 +5398,7 @@ async def _send_inventory_page(target, p, page=1, edit=False):
         if name in CONSUMABLES:return 4
         return 5
     items = sorted(inv.items(), key=lambda kv: _item_sort_key(kv[0]))
-    INV_PAGE_SIZE = 10
+    INV_PAGE_SIZE = 5
     total = len(items)
     start = (page - 1) * INV_PAGE_SIZE
     end   = start + INV_PAGE_SIZE
