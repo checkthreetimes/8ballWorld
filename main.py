@@ -4049,10 +4049,12 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not h:
         await send_group(update, "Use /ascend first!", delay=9); return
     if not update.message.reply_to_message:
-        await send_group(update, "Reply to someone's message with /heal!", delay=9); return
-
-    tu = update.message.reply_to_message.from_user
-    t  = get_player(tu.id)
+        # No reply — heal yourself
+        tu = hu
+        t  = h
+    else:
+        tu = update.message.reply_to_message.from_user
+        t  = get_player(tu.id)
     if not t:
         await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
 
@@ -4118,7 +4120,9 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     h["heals_given"] = h.get("heals_given",0) + 1
     new_t = check_titles(h)
     lmsgs, leveled = add_exp(h, 20)
-    save_player(h); save_player(t)
+    save_player(h)
+    if tu.id != hu.id:
+        save_player(t)
 
     if is_priest_healer:
         who = f"🙏 *{h['username']}* ({get_player_class(h)['name']}) heals"
@@ -4642,6 +4646,10 @@ async def soloraid_cmd(update, context):
         "player_max_hp": mhp,
     }
     wave_count = len(tier["wave_enemies"]) + 1
+    sr_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚔️ Attack", callback_data=f"sr_act_{user.id}_atk"),
+        InlineKeyboardButton("✨ Skill",  callback_data=f"sr_act_{user.id}_skl"),
+    ]])
     await send_group(update,
         f"🎱 *SOLO RAID  -  {tier['name']}*\n\n"
         f"🌊 {wave_count} waves + final boss\n\n"
@@ -4649,7 +4657,7 @@ async def soloraid_cmd(update, context):
         f"❤️ HP: {first_enemy['hp']}\n"
         f"💀 Damage: {first_enemy['dmg_min']}–{first_enemy['dmg_max']}\n\n"
         f"Use /solostrike to attack!",
-        permanent=True)
+        permanent=True, reply_markup=sr_markup)
 
 
 async def solostrike_cmd(update, context):
@@ -4745,8 +4753,12 @@ async def solostrike_cmd(update, context):
                     if sr["player_hp"] > 0 and sr["player_hp"] <= round(sr["player_max_hp"] * 0.30):
                         lines.append(f"⚠️ *Critically low HP!* ({sr['player_hp']}/{sr['player_max_hp']}) Use /skill or a vial!")
 
+    sr_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚔️ Attack", callback_data=f"sr_act_{user.id}_atk"),
+        InlineKeyboardButton("✨ Skill",  callback_data=f"sr_act_{user.id}_skl"),
+    ]])
     save_player(p)
-    await send_group(update, "\n".join(lines), delay=20)
+    await send_group(update, "\n".join(lines), delay=20, reply_markup=sr_markup)
 
 
 async def soloraidstatus_cmd(update, context):
@@ -5014,8 +5026,12 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🔹 {sk.get('passive','')}\n"
                 f"🔸 {sk.get('name','?')}: {sk.get('desc','')}\n"
                 f"📜 Full path: {path_names}\n")
-        lines.append("Use `/prestige A` or `/prestige B` to choose.")
-        await send_group(update, "\n".join(lines), delay=60); return
+        prestige_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("Path A", callback_data=f"prestige_{user.id}_A"),
+            InlineKeyboardButton("Path B", callback_data=f"prestige_{user.id}_B"),
+        ]])
+        lines.append("_Tap a button below or use `/prestige A` / `/prestige B` to choose._")
+        await send_group(update, "\n".join(lines), delay=60, reply_markup=prestige_markup); return
 
     if context.args[0].upper() == "RESET" and p["level"] >= 100:
         # Prestige reset
@@ -5085,8 +5101,7 @@ async def allocate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cls = get_player_class(p)
     rec = cls["primary_stat"] + " recommended" if cls else "Free to allocate"
     if not context.args or len(context.args) < 2:
-        await send_group(update,
-            f"📊 *Stat Allocation*  -  *{sp}* points available\n\n"
+        alloc_text = (f"📊 *Stat Allocation*  -  *{sp}* points available\n\n"
             f"STR:{sd.get('STR',5)} AGI:{sd.get('AGI',5)} INT:{sd.get('INT',5)} "
             f"WIS:{sd.get('WIS',5)} DEX:{sd.get('DEX',5)} LUK:{sd.get('LUK',5)}\n\n"
             f"📌 STR  -  Attack damage (Breaker)\n"
@@ -5096,7 +5111,16 @@ async def allocate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📌 DEX  -  Accuracy & crit (Marksman)\n"
             f"📌 LUK  -  Crit & gold bonus (Shark)\n"
             f"📌 DEF  -  From gear only (cannot allocate)\n\n"
-            f"🧭 {rec}\n\nUsage: `/allocate STR 5`", delay=30); return
+            f"🧭 {rec}\n\nUsage: `/allocate STR 5`")
+        alloc_rows = []
+        if sp > 0:
+            for s in STAT_NAMES:
+                row = [InlineKeyboardButton(f"{s} +1", callback_data=f"alloc_{user.id}_{s}_1")]
+                if sp >= 5:
+                    row.append(InlineKeyboardButton(f"{s} +5", callback_data=f"alloc_{user.id}_{s}_5"))
+                alloc_rows.append(row)
+        alloc_markup = InlineKeyboardMarkup(alloc_rows) if alloc_rows else None
+        await send_group(update, alloc_text, delay=30, reply_markup=alloc_markup); return
     stat = context.args[0].upper()
     if stat not in STAT_NAMES:
         await send_group(update, f"Unknown stat. Choose: {', '.join(STAT_NAMES)}", delay=9); return
@@ -5398,11 +5422,15 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         shop = get_daily_shop()
         lines = [f"🛒 *Daily Shop* | 💰 {p['gold']} gold\n"]
         if discount: lines.append(f"🏷️ Discount active: *{int(discount*100)}% off!*\n")
-        for i, entry in enumerate(shop, 1):
+        shop_buttons = []
+        for i, entry in enumerate(shop):
             price = round(entry["price"] * (1-discount))
-            lines.append(f"{i}. *{entry['item']}*  -  {price}g\n   _{entry['desc']}_")
+            lines.append(f"{i+1}. *{entry['item']}*  -  {price}g\n   _{entry['desc']}_")
+            shop_buttons.append([InlineKeyboardButton(
+                f"Buy {i+1}: {entry['item']}", callback_data=f"shop_b_{user.id}_{i}")])
         lines.append(f"\n`/shop buy [1-{len(shop)}]` to purchase.")
-        await send_group(update, "\n".join(lines), delay=30); return
+        shop_markup = InlineKeyboardMarkup(shop_buttons)
+        await send_group(update, "\n".join(lines), delay=30, reply_markup=shop_markup); return
 
     if context.args[0].lower() == "buy":
         if len(context.args) < 2:
@@ -5942,11 +5970,15 @@ async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Unknown boss. Try `/boss` to see the list.", delay=9); return
     active_bosses[chat_id] = {"data":bd.copy(),"hp":bd["max_hp"],
                                "participants":[{"id":user.id,"name":user.first_name,"dmg":0}]}
+    boss_spawn_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚔️ Attack", callback_data=f"boss_act_{user.id}_atk"),
+        InlineKeyboardButton("✨ Skill",  callback_data=f"boss_act_{user.id}_skl"),
+    ]])
     await send_group(update,
         f"🎱 *{bd['name']} HAS APPEARED!*\n\n_{bd['desc']}_\n\n"
         f"❤️ HP: {bd['max_hp']} | 💀 {bd['dmg_min']}–{bd['dmg_max']} dmg\n\n"
         f"*{user.first_name}* engaged!\nOthers: `/boss {key}` | All: /strike",
-        permanent=True)
+        permanent=True, reply_markup=boss_spawn_markup)
 
 async def _attack_boss(update, context, p, boss_dict, chat_id):
     """Handle /attack routing to boss fight."""
@@ -8382,11 +8414,25 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id in active_dungeons:
         await send_group(update, "🏰 You're already in a hall run! Wait for your return.", delay=9); return
 
+    if not context.args:
+        # Show difficulty picker with inline buttons
+        dungeon_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("Normal",    callback_data=f"dungeon_d_{user.id}_normal"),
+            InlineKeyboardButton("Hard",      callback_data=f"dungeon_d_{user.id}_hard"),
+            InlineKeyboardButton("Legendary", callback_data=f"dungeon_d_{user.id}_legendary"),
+        ]])
+        await send_group(update,
+            f"🏰 *Choose your difficulty:*\n\n"
+            f"⚔️ Normal  -  Level 1+\n"
+            f"🔥 Hard  -  Level 15+\n"
+            f"👑 Legendary  -  Level 40+",
+            delay=30, reply_markup=dungeon_markup)
+        return
+
     diff = "normal"
-    if context.args:
-        arg = context.args[0].lower()
-        if arg in ("hard","h"):             diff = "hard"
-        elif arg in ("legendary","l","leg"): diff = "legendary"
+    arg = context.args[0].lower()
+    if arg in ("hard","h"):             diff = "hard"
+    elif arg in ("legendary","l","leg"): diff = "legendary"
 
     level_reqs = {"normal": 1, "hard": 15, "legendary": 40}
     if p["level"] < level_reqs[diff]:
@@ -9641,6 +9687,780 @@ async def claim_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def pray_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await greet_event(update, context)  # shrine handled in greet
 
+# ── INLINE CALLBACKS ──────────────────────────────────────────────────────────
+
+# ── Solo Raid Attack/Skill callback ──
+async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    # format: sr_act_{uid}_{action}
+    if len(parts) < 4:
+        return
+    try:
+        uid = int(parts[2])
+        action = parts[3]
+    except (ValueError, IndexError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your raid!", show_alert=True)
+        return
+
+    user = query.from_user
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if uid not in active_soloraids:
+        await query.answer("No active solo raid! Use /soloraid.", show_alert=True); return
+    if is_defeated(p):
+        await query.answer("You're defeated — can't act!", show_alert=True); return
+    if cannot_attack(p):
+        await query.answer("You're stunned or rooted — can't act!", show_alert=True); return
+
+    chat_id = query.message.chat.id
+
+    if action == "skl":
+        # Trigger skill against solo raid enemy
+        all_skills = sjl(p.get("all_skills"), [])
+        if not all_skills:
+            await query.answer("No skills unlocked yet!", show_alert=True); return
+        sr = active_soloraids[uid]
+        # Use first available skill
+        sk = all_skills[0]
+        w = get_weather()
+        sk_lines, sk_dmg = apply_skill_to_raid_enemy(p, sk, sr, w)
+        enemy = sr["enemy"]
+        out = [f"⚡ *{user.first_name}* uses *{sk['name']}* on *{enemy['name']}*!"]
+        out.extend(sk_lines)
+        if sk_dmg > 0:
+            out.append(f"💥 *{sk_dmg} damage!* Enemy HP: {sr['enemy_hp']}/{sr['enemy_max_hp']}")
+
+        if sr["enemy_hp"] <= 0:
+            out.append(f"\n✅ *{enemy['name']}* destroyed!")
+            tier = sr["tier"]; wave_enemies = tier["wave_enemies"]; cw = sr["wave"]
+            if cw < len(wave_enemies):
+                sr["wave"] += 1; ne = wave_enemies[cw].copy()
+                sr["enemy"] = ne; sr["enemy_hp"] = ne["hp"]; sr["enemy_max_hp"] = ne["hp"]
+                sr.pop("enemy_statuses", None)
+                out.append(f"\n🌊 *Wave {sr['wave']}  -  {ne['name']}*")
+                out.append(f"❤️ HP: {ne['hp']} | 💀 {ne['dmg_min']}–{ne['dmg_max']}")
+            elif cw == len(wave_enemies):
+                bd = BOSSES[tier["wave_boss_key"]]; boss_hp = bd["max_hp"] // 2
+                sr["wave"] = len(wave_enemies) + 1
+                sr["enemy"] = {"name": bd["name"] + " ⚡","dmg_min": round(bd["dmg_min"]*0.6),"dmg_max": round(bd["dmg_max"]*0.6)}
+                sr["enemy_hp"] = boss_hp; sr["enemy_max_hp"] = boss_hp
+                sr.pop("enemy_statuses", None)
+                out.append(f"\n🎱 *FINAL BOSS  -  {bd['name']}!* ❤️ HP: {boss_hp}")
+            else:
+                active_soloraids.pop(uid, None)
+                exp_r = tier["exp_reward"]; gold_r = tier["gold_reward"]
+                p["gold"] = p.get("gold", 0) + gold_r; p["quests_done"] = p.get("quests_done", 0) + 1
+                loot = roll_loot_table(tier.get("loot_table", []), p)
+                if loot:
+                    add_item(p, loot)
+                    r = ""
+                    for pool in [WEAPONS, ARMORS, ACCESSORIES]:
+                        if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), ""); break
+                    out.append(f"🎒 Found: {r} *{loot}*!")
+                add_exp(p, exp_r, get_weather())
+                out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{exp_r:,} EXP | +{gold_r}g")
+                save_player(p)
+                try:
+                    await context.bot.send_message(chat_id=chat_id, text="\n".join(out)[:4096], parse_mode="Markdown")
+                except Exception:
+                    pass
+                return
+        else:
+            killed = raid_enemy_counter(p, sr, out)
+            if killed:
+                active_soloraids.pop(uid, None)
+                save_player(p)
+                try:
+                    await context.bot.send_message(chat_id=chat_id, text="\n".join(out)[:4096], parse_mode="Markdown")
+                except Exception:
+                    pass
+                return
+
+        save_player(p)
+        sr_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⚔️ Attack", callback_data=f"sr_act_{uid}_atk"),
+            InlineKeyboardButton("✨ Skill",  callback_data=f"sr_act_{uid}_skl"),
+        ]])
+        try:
+            await context.bot.send_message(chat_id=chat_id, text="\n".join(out)[:4096],
+                                           parse_mode="Markdown", reply_markup=sr_markup)
+        except Exception:
+            pass
+        return
+
+    # action == "atk" — standard attack
+    sr = active_soloraids[uid]
+    enemy = sr["enemy"]
+    w = get_weather()
+    dmg = calc_attack_damage(p, w)
+    is_crit = check_crit(p)
+    if is_crit: dmg = apply_crit(p, dmg)
+    if safe_int(p.get("charging_killshot")):
+        p["charging_killshot"] = 0; dmg = get_stat(p, "AGI") * 4; is_crit = False
+
+    sr["enemy_hp"] = max(0, sr["enemy_hp"] - dmg)
+    sr["total_dmg"] = sr.get("total_dmg", 0) + dmg
+
+    lines = [
+        f"⚔️ *{user.first_name}* strikes *{enemy['name']}* for *{dmg}{'💥' if is_crit else ''}!*",
+        f"❤️ Enemy HP: {sr['enemy_hp']}/{sr['enemy_max_hp']}  |  Your HP: {sr['player_hp']}/{sr['player_max_hp']}",
+    ]
+    bleed_dmg = tick_enemy_bleed(sr)
+    if bleed_dmg:
+        lines.append(f"🩸 *{enemy['name']}* bleeds for {bleed_dmg}! HP: {sr['enemy_hp']}/{sr['enemy_max_hp']}")
+
+    if sr["enemy_hp"] <= 0:
+        tier = sr["tier"]; wave_enemies = tier["wave_enemies"]; cw = sr["wave"]
+        lines.append(f"\n✅ *Wave {cw} cleared!*")
+        sr.pop("enemy_statuses", None)
+        if cw < len(wave_enemies):
+            sr["wave"] += 1; ne = wave_enemies[cw].copy()
+            sr["enemy"] = ne; sr["enemy_hp"] = ne["hp"]; sr["enemy_max_hp"] = ne["hp"]
+            lines.append(f"\n🌊 *Wave {sr['wave']}  -  {ne['name']}*")
+            lines.append(f"❤️ HP: {ne['hp']} | 💀 {ne['dmg_min']}–{ne['dmg_max']}")
+        elif cw == len(wave_enemies):
+            bd = BOSSES[tier["wave_boss_key"]]; boss_hp = bd["max_hp"] // 2
+            sr["wave"] = len(wave_enemies) + 1
+            sr["enemy"] = {"name": bd["name"] + " ⚡","dmg_min": round(bd["dmg_min"]*0.6),"dmg_max": round(bd["dmg_max"]*0.6)}
+            sr["enemy_hp"] = boss_hp; sr["enemy_max_hp"] = boss_hp
+            lines.append(f"\n🎱 *FINAL BOSS  -  {bd['name']}!* ❤️ HP: {boss_hp}")
+        else:
+            active_soloraids.pop(uid, None)
+            exp_r = tier["exp_reward"]; gold_r = tier["gold_reward"]
+            p["gold"] = p.get("gold", 0) + gold_r; p["quests_done"] = p.get("quests_done", 0) + 1
+            loot = roll_loot_table(tier.get("loot_table", []), p)
+            loot_line = ""
+            if loot:
+                add_item(p, loot); r = ""
+                for pool in [WEAPONS, ARMORS, ACCESSORIES]:
+                    if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), ""); break
+                loot_line = f"\n🎒 Found: {r} *{loot}*!"
+            add_exp(p, exp_r, get_weather())
+            lines.append(f"\n🏆 *SOLO RAID COMPLETE  -  {tier['name']}!*")
+            lines.append(f"✅ +{exp_r:,} EXP | +{gold_r}g{loot_line}")
+            save_player(p)
+            try:
+                await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+    else:
+        enemy = sr["enemy"]
+        if enemy_status_active(sr, "stunned_until"):
+            lines.append(f"⚡ *{enemy['name']}* is stunned  -  no counter!")
+        elif enemy_status_active(sr, "frozen_until"):
+            lines.append(f"❄️ *{enemy['name']}* is frozen  -  no counter!")
+        else:
+            raw = random.randint(enemy["dmg_min"], enemy["dmg_max"])
+            if enemy_status_active(sr, "weakened_until") or enemy_status_active(sr, "hexed_until"):
+                raw = round(raw * 0.75)
+            dodge = get_accessory_bonus(p, "dodge_bonus") + get_enchant_bonus(p, "dodge_bonus")
+            cls_p = get_player_class(p)
+            if cls_p and cls_p.get("passive_key") == "evasion": dodge += 0.10
+            if dodge > 0 and random.random() < dodge:
+                lines.append(f"💨 *{p['username']}* dodges!")
+            else:
+                edm = calc_defense(p, raw)
+                sr["player_hp"] = max(0, sr["player_hp"] - edm)
+                if sr["player_hp"] == 0:
+                    exp_loss = apply_pvp_death(p)
+                    active_soloraids.pop(uid, None)
+                    save_player(p)
+                    lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6hr defeat. -{exp_loss} EXP.")
+                    try:
+                        await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
+                    except Exception:
+                        pass
+                    return
+                else:
+                    lines.append(f"🩸 *{enemy['name']}* hits *{p['username']}* for *{edm}!* "
+                                 f"({sr['player_hp']}/{sr['player_max_hp']} raid HP)")
+                    if sr["player_hp"] <= round(sr["player_max_hp"] * 0.30):
+                        lines.append(f"⚠️ *Critically low HP!* Use /skill or a vial!")
+
+    sr_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚔️ Attack", callback_data=f"sr_act_{uid}_atk"),
+        InlineKeyboardButton("✨ Skill",  callback_data=f"sr_act_{uid}_skl"),
+    ]])
+    save_player(p)
+    try:
+        await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096],
+                                       parse_mode="Markdown", reply_markup=sr_markup)
+    except Exception:
+        pass
+
+
+# ── Boss Attack/Skill callback ──
+async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    # format: boss_act_{uid}_{action}
+    if len(parts) < 4:
+        return
+    try:
+        uid = int(parts[2])
+        action = parts[3]
+    except (ValueError, IndexError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your fight!", show_alert=True)
+        return
+
+    user = query.from_user
+    p = get_player(uid)
+    chat_id = query.message.chat.id
+
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if is_defeated(p):
+        await query.answer("You're defeated!", show_alert=True); return
+    if cannot_attack(p):
+        await query.answer("Stunned or rooted — can't act!", show_alert=True); return
+
+    boss_dict = active_bosses.get(chat_id) or secret_boss_active.get(chat_id)
+    if not boss_dict:
+        await query.answer("No active boss in this chat!", show_alert=True); return
+
+    is_secret = chat_id in secret_boss_active
+
+    if action == "skl":
+        all_skills = sjl(p.get("all_skills"), [])
+        if not all_skills:
+            await query.answer("No skills unlocked yet!", show_alert=True); return
+        sk = all_skills[0]
+
+        if uid not in [u["id"] for u in boss_dict["participants"]]:
+            boss_dict["participants"].append({"id": uid, "name": user.first_name, "dmg": 0})
+        participant = next(u for u in boss_dict["participants"] if u["id"] == uid)
+
+        w = get_weather()
+        stype = sk.get("type", "damage")
+        lines = [f"⚡ *{user.first_name}* uses *{sk['name']}* on *{boss_dict['data']['name']}*!"]
+
+        if stype in ("self_heal", "group_heal", "mass_cleanse",
+                     "dmg_reduction_buff", "self_heal_buff", "revive_heal"):
+            if stype == "self_heal":
+                heal = round(get_stat(p, "WIS") * sk.get("mult", 3.0))
+                p["hp"] = min(p["max_hp"], p["hp"] + heal)
+                lines.append(f"💚 Healed self for *{heal} HP*!")
+            elif stype == "self_heal_buff":
+                heal = round(p["max_hp"] * 0.30)
+                p["hp"] = min(p["max_hp"], p["hp"] + heal)
+                lines.append(f"💚 *Rally!* +{heal} HP restored.")
+            dmg = 0
+        else:
+            mult = sk.get("mult", 1.0) or 1.0
+            hits = sk.get("hits", 1)
+            if hits and hits > 1:
+                total = 0; hit_log = []
+                for _ in range(hits):
+                    h = round(calc_attack_damage(p, w) * mult)
+                    if check_crit(p): h = apply_crit(p, h); hit_log.append(f"💥{h}")
+                    else: hit_log.append(str(h))
+                    total += h
+                dmg = total
+                lines.append(f"⚡ {hits}-hit combo! [{' + '.join(hit_log)}] = {dmg}")
+            elif stype in ("freeze_nuke", "execute_nuke", "holy_nuke", "fear_kill"):
+                stat_key = sk.get("stat", get_primary_stat(p))
+                dmg = round(get_stat(p, stat_key) * sk.get("mult", 3.0))
+                lines.append(f"💥 *{sk['name']}!* {dmg} damage!")
+            elif stype in ("drain", "drain_kill", "hp_drain"):
+                drain_pct = sk.get("drain_pct", 0.30)
+                dmg = round(boss_dict["hp"] * drain_pct)
+                heal = round(dmg * 0.50)
+                p["hp"] = min(p["max_hp"], p["hp"] + heal)
+                lines.append(f"🩸 *{sk['name']}!* Drained {dmg} HP! Healed {heal}.")
+            else:
+                dmg = round(calc_attack_damage(p, w) * mult)
+            if stype not in ("multihit", "multi_hit") and hits == 1 and check_crit(p):
+                dmg = apply_crit(p, dmg)
+                lines.append("💥 *CRITICAL HIT!*")
+            boss_dict["hp"] = max(0, boss_dict["hp"] - dmg)
+            participant["dmg"] += dmg
+            lines.append(f"❤️ Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}")
+
+        # Counter-attack
+        alive = [u for u in boss_dict["participants"] if not is_defeated(get_player(u["id"]))]
+        if alive and boss_dict["hp"] > 0 and random.random() < 0.90:
+            target = random.choice(alive)
+            tp = get_player(target["id"])
+            if tp:
+                bdmg = calc_defense(tp, random.randint(
+                    boss_dict["data"]["dmg_min"], boss_dict["data"]["dmg_max"]))
+                tp["hp"] = max(0, tp["hp"] - bdmg)
+                if tp["hp"] == 0:
+                    tp["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
+                    lines.append(f"💀 *{boss_dict['data']['name']}* kills *{target['name']}*!")
+                else:
+                    lines.append(f"💥 Boss hits *{target['name']}* for {bdmg}!")
+                save_player(tp)
+
+        if boss_dict["hp"] <= 0:
+            data = boss_dict["data"]
+            if is_secret: secret_boss_active.pop(chat_id, None)
+            else: active_bosses.pop(chat_id, None)
+            lines.append(f"\n🏆 *{data['name']} DEFEATED by {sk['name']}!*\n")
+            w2 = get_weather()
+            for u in boss_dict["participants"]:
+                pp = get_player(u["id"])
+                if not pp: continue
+                pp["gold"] = pp.get("gold", 0) + data["gold"]
+                loot = roll_loot_table(data.get("loot_table", []))
+                if loot:
+                    add_item(pp, loot)
+                    r = ""
+                    for pool in [WEAPONS, ARMORS, ACCESSORIES]:
+                        if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), ""); break
+                    lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
+                if award_title(pp, data["title"]):
+                    lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
+                lmsgs, leveled = add_exp(pp, data["exp"], w2)
+                save_player(pp)
+                lines.append(f"✅ *{pp['username']}*  -  +{data['exp']:,} EXP | +{data['gold']} Gold")
+            save_player(p)
+            try:
+                await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+
+        save_player(p)
+        boss_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⚔️ Attack", callback_data=f"boss_act_{uid}_atk"),
+            InlineKeyboardButton("✨ Skill",  callback_data=f"boss_act_{uid}_skl"),
+        ]])
+        try:
+            await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096],
+                                           parse_mode="Markdown", reply_markup=boss_markup)
+        except Exception:
+            pass
+        return
+
+    # action == "atk"
+    if uid not in [u["id"] for u in boss_dict["participants"]]:
+        boss_dict["participants"].append({"id": uid, "name": user.first_name, "dmg": 0})
+        if "player_hp" not in boss_dict:
+            boss_dict["player_hp"] = {}; boss_dict["player_max_hp"] = {}
+        mhp = calc_max_hp(p)
+        boss_dict["player_hp"][uid] = mhp; boss_dict["player_max_hp"][uid] = mhp
+    elif "player_hp" not in boss_dict:
+        boss_dict["player_hp"] = {}; boss_dict["player_max_hp"] = {}
+        for u in boss_dict["participants"]:
+            pp = get_player(u["id"])
+            if pp:
+                mhp = calc_max_hp(pp)
+                boss_dict["player_hp"][u["id"]] = mhp; boss_dict["player_max_hp"][u["id"]] = mhp
+    participant = next(u for u in boss_dict["participants"] if u["id"] == uid)
+
+    w = get_weather()
+    dmg = calc_attack_damage(p, w)
+    if check_crit(p): dmg = apply_crit(p, dmg)
+    if safe_int(p.get("charging_killshot")):
+        p["charging_killshot"] = 0; dmg = get_stat(p, "AGI") * 4
+
+    boss_dict["hp"] = max(0, boss_dict["hp"] - dmg)
+    participant["dmg"] += dmg
+
+    lines = [
+        f"⚔️ *{user.first_name}* strikes *{boss_dict['data']['name']}* for *{dmg}!*",
+        f"❤️ Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}"
+    ]
+
+    alive = [u for u in boss_dict["participants"]
+             if not is_defeated(get_player(u["id"])) and boss_dict.get("player_hp", {}).get(u["id"], 1) > 0]
+    if alive and boss_dict["hp"] > 0 and random.random() < 0.90:
+        hit_count = 2 if random.random() < 0.30 else 1
+        targets = random.sample(alive, min(hit_count, len(alive)))
+        for target in targets:
+            tp = get_player(target["id"])
+            if tp and not is_defeated(tp):
+                raw = random.randint(boss_dict["data"]["dmg_min"], boss_dict["data"]["dmg_max"])
+                edm = calc_defense(tp, raw)
+                boss_dict["player_hp"][target["id"]] = max(0,
+                    boss_dict["player_hp"].get(target["id"], calc_max_hp(tp)) - edm)
+                php = boss_dict["player_hp"][target["id"]]
+                pmhp = boss_dict["player_max_hp"].get(target["id"], calc_max_hp(tp))
+                if php == 0:
+                    exp_loss = apply_pvp_death(tp)
+                    save_player(tp)
+                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 6hr defeat. -{exp_loss} EXP.")
+                else:
+                    lines.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for *{edm}!* ({php}/{pmhp} HP)")
+                save_player(tp)
+
+    alive_after = [u for u in boss_dict["participants"]
+                   if not is_defeated(get_player(u["id"])) and boss_dict.get("player_hp", {}).get(u["id"], 1) > 0]
+    if not alive_after and boss_dict["hp"] > 0:
+        if is_secret: secret_boss_active.pop(chat_id, None)
+        else: active_bosses.pop(chat_id, None)
+        lines.append("💀 *ALL PLAYERS DEFEATED!* The boss wins...")
+        save_player(p)
+        try:
+            await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
+        except Exception:
+            pass
+        return
+
+    if boss_dict["hp"] <= 0:
+        data = boss_dict["data"]
+        if is_secret: secret_boss_active.pop(chat_id, None)
+        else: active_bosses.pop(chat_id, None)
+        lines.append(f"\n🏆 *{data['name']} DEFEATED!*\n")
+        w2 = get_weather()
+        for u in boss_dict["participants"]:
+            pp = get_player(u["id"])
+            if not pp: continue
+            pp["gold"] = pp.get("gold", 0) + data["gold"]
+            loot = roll_loot_table(data.get("loot_table", []))
+            if loot:
+                add_item(pp, loot); r = ""
+                for pool in [WEAPONS, ARMORS, ACCESSORIES]:
+                    if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), ""); break
+                lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
+            if award_title(pp, data["title"]):
+                lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
+            add_exp(pp, data["exp"], w2); save_player(pp)
+            lines.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
+
+    save_player(p)
+    boss_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚔️ Attack", callback_data=f"boss_act_{uid}_atk"),
+        InlineKeyboardButton("✨ Skill",  callback_data=f"boss_act_{uid}_skl"),
+    ]])
+    try:
+        await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096],
+                                       parse_mode="Markdown", reply_markup=boss_markup)
+    except Exception:
+        pass
+
+
+# ── Prestige Path callback ──
+async def prestige_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    # format: prestige_{uid}_{path}
+    if len(parts) < 3:
+        return
+    try:
+        uid = int(parts[1])
+        path = parts[2].upper()
+    except (ValueError, IndexError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your prestige menu!", show_alert=True)
+        return
+
+    user = query.from_user
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+
+    cid = p.get("class_id")
+    if not cid:
+        await query.answer("Choose a class first with /class.", show_alert=True); return
+    cls = CLASS_TREE.get(cid, {})
+    line = cls.get("line")
+    existing_path = p.get("class_path")
+    if existing_path:
+        await query.answer("You already chose a path!", show_alert=True); return
+    if p["level"] < 10:
+        await query.answer("Path selection requires Level 10!", show_alert=True); return
+    if path not in ("A", "B"):
+        await query.answer("Invalid path.", show_alert=True); return
+
+    paths = CLASS_PATHS.get(line, {})
+    first_class = paths.get(path, [])[0] if paths.get(path) else None
+    if not first_class:
+        await query.answer("Invalid path for your class.", show_alert=True); return
+
+    p["class_path"] = path
+    p["class_id"] = first_class
+    new_cls = CLASS_TREE.get(first_class, {})
+    sd = safe_stats(p)
+    for stat, bonus in new_cls.get("stat_bonus", {}).items():
+        sd[stat] = sd.get(stat, 5) + bonus
+    p["stats"] = json.dumps(sd)
+    existing_skills = sjl(p.get("all_skills"), [])
+    for sk in new_cls.get("skills", []):
+        if sk["name"] not in [s["name"] for s in existing_skills]:
+            existing_skills.append(sk)
+    p["all_skills"] = json.dumps(existing_skills)
+    save_player(p)
+
+    asyncio.create_task(announce(context.bot, query.message.chat.id,
+        f"🌟 *{p['username']}* chose *Path {path}*  -  *{new_cls['name']}*!"))
+    full_path = paths.get(path, [])
+    path_names = " → ".join(CLASS_TREE.get(k, {}).get("name", "?") for k in full_path)
+    msg = (f"🌟 *Path {path} chosen!* You are now a *{new_cls['name']}*!\n\n"
+           f"_{new_cls['desc']}_\n\n"
+           f"📜 Your journey: {path_names}\n\n"
+           f"_Your class evolves automatically at Levels 30, 60, and 100._")
+    try:
+        await query.edit_message_text(msg, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+# ── Dungeon difficulty callback ──
+async def dungeon_diff_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    # format: dungeon_d_{uid}_{diff}
+    if len(parts) < 4:
+        return
+    try:
+        uid = int(parts[2])
+        diff = parts[3].lower()
+    except (ValueError, IndexError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your dungeon picker!", show_alert=True)
+        return
+
+    user = query.from_user
+    p = get_player(uid)
+    chat_id = query.message.chat.id
+
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if is_defeated(p):
+        await query.answer("You're too beaten up to enter a hall run!", show_alert=True); return
+    if not check_cooldown(p.get("last_dungeon"), 86400):
+        remaining = time_remaining(p.get("last_dungeon"), 86400)
+        await query.answer(f"Hall run cooldown: {remaining}", show_alert=True); return
+    if uid in active_dungeons:
+        await query.answer("You're already in a hall run!", show_alert=True); return
+
+    if diff not in ("normal", "hard", "legendary"):
+        diff = "normal"
+
+    level_reqs = {"normal": 1, "hard": 15, "legendary": 40}
+    if p["level"] < level_reqs[diff]:
+        await query.answer(
+            f"{diff.capitalize()} requires Level {level_reqs[diff]}. You're Level {p['level']}.",
+            show_alert=True); return
+
+    # Delete the picker message
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
+
+    theme = random.choice(DUNGEON_THEMES)
+    room_distributions = {
+        "normal":    ["monster","trap","treasure","puzzle","rest"],
+        "hard":      ["monster","trap","treasure","puzzle","rest","monster","mini_boss"],
+        "legendary": ["monster","trap","treasure","puzzle","rest",
+                      "ambush","merchant","altar","monster","mini_boss"],
+    }
+    rooms = room_distributions[diff].copy()
+    random.shuffle(rooms)
+    timers        = {"normal": 2700, "hard": 3600, "legendary": 5400}
+    timer_display = {"normal": "45 minutes", "hard": "1 hour", "legendary": "90 minutes"}
+
+    p["last_dungeon"] = datetime.now().isoformat()
+    save_player(p)
+    cls      = get_player_class(p)
+    cls_name = cls["name"] if cls else "Player"
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(f"🏰 *{user.first_name}* enters *{theme['name']}!*\n\n"
+                  f"_{theme['desc']}_\n\n"
+                  f"⚔️ Class: {cls_name} | 📊 Level {p['level']}\n"
+                  f"🎯 Difficulty: *{diff.capitalize()}*\n"
+                  f"🚪 {len(rooms)} rooms + final boss\n\n"
+                  f"_Results in {timer_display[diff]}._")[:4096],
+            parse_mode="Markdown")
+    except Exception:
+        pass
+
+    async def run_dungeon():
+        await asyncio.sleep(timers[diff])
+        active_dungeons.pop(uid, None)
+        fp = get_player(uid)
+        if not fp: return
+        results      = []
+        total_exp    = 0
+        total_gold   = 0
+        items_found  = []
+        hp_remaining = fp["max_hp"]
+        run_failed   = False
+        line = get_class_line(fp)
+        for i, room_type in enumerate(rooms, 1):
+            if run_failed: break
+            result = _resolve_dungeon_room(fp, room_type, theme, diff, i, hp_remaining, line)
+            hp_remaining = max(1, hp_remaining - result.get("hp_cost", 0))
+            total_exp  += result.get("exp", 0)
+            total_gold += result.get("gold", 0)
+            if result.get("item"): items_found.append(result["item"])
+            results.append(result)
+            if hp_remaining <= 1 and not result.get("success"):
+                run_failed = True
+                results.append({"type":"defeat","narrative":(
+                    f"Room {i+1} would have finished you. "
+                    f"You make the call to retreat while you still can. "
+                    f"The hall lets you go. This time.")})
+        if not run_failed:
+            boss_result = _resolve_dungeon_boss(fp, theme, diff, line)
+            total_exp  += boss_result.get("exp", 0)
+            total_gold += boss_result.get("gold", 0)
+            if boss_result.get("item"): items_found.append(boss_result["item"])
+            results.append(boss_result)
+            bonus = DUNGEON_LOOT[diff]["completion_bonus"]
+            total_exp  += bonus["exp"]
+            total_gold += bonus["gold"]
+        lmsgs, leveled = add_exp(fp, total_exp)
+        fp["gold"] = fp.get("gold", 0) + total_gold
+        for item in items_found: add_item(fp, item)
+        save_player(fp)
+        recap = _build_dungeon_recap(fp, theme, diff, results, total_exp, total_gold,
+                                     items_found, run_failed, lmsgs)
+        await announce(context.bot, chat_id, recap, permanent=True)
+        if leveled and fp["level"] % 10 == 0:
+            asyncio.create_task(announce(context.bot, chat_id,
+                f"🎉 *{fp['username']}* reached *Level {fp['level']}* "
+                f"from the depths of *{theme['name']}*! 🏰", permanent=True))
+
+    task = asyncio.create_task(run_dungeon())
+    active_dungeons[uid] = task
+
+
+# ── Shop Buy callback ──
+async def shop_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    # format: shop_b_{uid}_{idx}
+    if len(parts) < 4:
+        return
+    try:
+        uid = int(parts[2])
+        idx = int(parts[3])
+    except (ValueError, IndexError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your shop!", show_alert=True)
+        return
+
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+
+    discount = 0
+    if _ts_active(p, "shop_discount_until"): discount = 0.20
+    if p.get("guild_id") and str(p.get("guild_id")) != "None":
+        g = get_guild(p["guild_id"])
+        if g:
+            glvl = safe_int(g.get("level"), 1)
+            guild_disc = 0.10 if glvl >= 7 else (0.15 if glvl >= 10 else 0)
+            discount = max(discount, guild_disc)
+
+    shop = get_daily_shop()
+    if idx < 0 or idx >= len(shop):
+        await query.answer("Invalid item.", show_alert=True); return
+
+    entry = shop[idx]
+    price = round(entry["price"] * (1 - discount))
+    if p["gold"] < price:
+        await query.answer(f"Not enough gold! Need {price}g, have {p['gold']}g.", show_alert=True); return
+
+    p["gold"] -= price
+    add_item(p, entry["item"])
+    save_player(p)
+
+    # Rebuild the shop display with updated gold
+    lines = [f"🛒 *Daily Shop* | 💰 {p['gold']} gold\n"]
+    if discount: lines.append(f"🏷️ Discount active: *{int(discount*100)}% off!*\n")
+    buttons = []
+    for i, e in enumerate(shop):
+        ep = round(e["price"] * (1 - discount))
+        lines.append(f"{i+1}. *{e['item']}*  -  {ep}g\n   _{e['desc']}_")
+        buttons.append([InlineKeyboardButton(f"Buy {i+1}: {e['item']}", callback_data=f"shop_b_{uid}_{i}")])
+    markup = InlineKeyboardMarkup(buttons)
+    lines.append(f"\n✅ Bought *{entry['item']}* for {price}g!")
+
+    try:
+        await query.edit_message_text("\n".join(lines)[:4096], parse_mode="Markdown",
+                                      reply_markup=markup)
+    except Exception:
+        pass
+
+
+# ── Allocate Stats callback ──
+async def allocate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    # format: alloc_{uid}_{stat}_{amt}
+    if len(parts) < 4:
+        await query.answer(); return
+    try:
+        uid  = int(parts[1])
+        stat = parts[2].upper()
+        amt  = int(parts[3])
+    except (ValueError, IndexError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your stat screen!", show_alert=True)
+        return
+
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+
+    STAT_NAMES = ["STR","AGI","INT","WIS","DEX","LUK"]
+    if stat not in STAT_NAMES:
+        await query.answer("Invalid stat.", show_alert=True); return
+
+    sp = safe_int(p.get("stat_points"))
+    if amt > sp:
+        await query.answer("Not enough stat points!", show_alert=True); return
+
+    sd = safe_stats(p)
+    sd[stat] = sd.get(stat, 5) + amt
+    p["stats"] = json.dumps(sd)
+    p["stat_points"] = sp - amt
+    save_player(p)
+    sp = p["stat_points"]
+
+    await query.answer(f"+{amt} {stat}! {sp} points left.")
+
+    # Rebuild the allocate message with updated stats and buttons
+    cls = get_player_class(p)
+    rec = cls["primary_stat"] + " recommended" if cls else "Free to allocate"
+    text = (f"📊 *Stat Allocation*  -  *{sp}* points available\n\n"
+            f"STR:{sd.get('STR',5)} AGI:{sd.get('AGI',5)} INT:{sd.get('INT',5)} "
+            f"WIS:{sd.get('WIS',5)} DEX:{sd.get('DEX',5)} LUK:{sd.get('LUK',5)}\n\n"
+            f"📌 STR  -  Attack damage (Breaker)\n"
+            f"📌 AGI  -  Dodge & crit\n"
+            f"📌 INT  -  Spell damage (Hustler)\n"
+            f"📌 WIS  -  Heal power (Chalker)\n"
+            f"📌 DEX  -  Accuracy & crit (Marksman)\n"
+            f"📌 LUK  -  Crit & gold bonus (Shark)\n"
+            f"📌 DEF  -  From gear only (cannot allocate)\n\n"
+            f"🧭 {rec}")
+    rows = []
+    if sp > 0:
+        for s in STAT_NAMES:
+            row = [InlineKeyboardButton(f"{s} +1", callback_data=f"alloc_{uid}_{s}_1")]
+            if sp >= 5:
+                row.append(InlineKeyboardButton(f"{s} +5", callback_data=f"alloc_{uid}_{s}_5"))
+            rows.append(row)
+    markup = InlineKeyboardMarkup(rows) if rows else None
+    try:
+        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
+
+
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def main():
     init_db()
@@ -9730,11 +10550,17 @@ def main():
     app.add_handler(CommandHandler("wipe",      wipe_cmd))
 
     # Callbacks
-    app.add_handler(CallbackQueryHandler(rank_callback,      pattern="^rank_p_"))
-    app.add_handler(CallbackQueryHandler(inventory_callback, pattern="^inv_s_"))
-    app.add_handler(CallbackQueryHandler(guide_callback,     pattern="^guide_p_"))
-    app.add_handler(CallbackQueryHandler(stats_callback,     pattern="^stats_p_"))
-    app.add_handler(CallbackQueryHandler(guildjoin_callback, pattern="^guildjoin_"))
+    app.add_handler(CallbackQueryHandler(rank_callback,         pattern="^rank_p_"))
+    app.add_handler(CallbackQueryHandler(inventory_callback,    pattern="^inv_s_"))
+    app.add_handler(CallbackQueryHandler(guide_callback,        pattern="^guide_p_"))
+    app.add_handler(CallbackQueryHandler(stats_callback,        pattern="^stats_p_"))
+    app.add_handler(CallbackQueryHandler(guildjoin_callback,    pattern="^guildjoin_"))
+    app.add_handler(CallbackQueryHandler(soloraid_act_callback, pattern="^sr_act_"))
+    app.add_handler(CallbackQueryHandler(boss_act_callback,     pattern="^boss_act_"))
+    app.add_handler(CallbackQueryHandler(prestige_callback,     pattern="^prestige_"))
+    app.add_handler(CallbackQueryHandler(dungeon_diff_callback, pattern="^dungeon_d_"))
+    app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shop_b_"))
+    app.add_handler(CallbackQueryHandler(allocate_callback,     pattern="^alloc_"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
