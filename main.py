@@ -7036,11 +7036,13 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(all_skills) == 1:
                 sk = all_skills[0]
             else:
-                lines = [f"🔮 Choose a skill to use against *{raid_state['enemy']['name']}*:\n"]
-                for i, s in enumerate(all_skills, 1):
-                    lines.append(f"*{i}.* *{s['name']}*  -  {s['desc']}")
-                lines.append("\n_Use /skill [name or number]_")
-                await send_group(update, "\n".join(lines), delay=20); return
+                keyboard = [[InlineKeyboardButton(f"⚡ {s['name']}  —  {s['desc'][:40]}", callback_data=f"skillpick_{user.id}_{i}")] for i, s in enumerate(all_skills)]
+                markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(
+                    f"🔮 *vs {raid_state['enemy']['name']}* — choose a skill:",
+                    parse_mode="Markdown", reply_markup=markup)
+                await update.message.delete()
+                return
 
         w = get_weather()
         sk_lines, sk_dmg = apply_skill_to_raid_enemy(p, sk, raid_state, w)
@@ -7121,11 +7123,13 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(all_skills) == 1:
                 sk = all_skills[0]
             else:
-                lines = [f"🔮 Choose a skill to use against *{boss_dict['data']['name']}*:\n"]
-                for i, s in enumerate(all_skills, 1):
-                    lines.append(f"*{i}.* *{s['name']}*  -  {s['desc']}")
-                lines.append("\n_Use /skill [name or number]_")
-                await send_group(update, "\n".join(lines), delay=20); return
+                keyboard = [[InlineKeyboardButton(f"⚡ {s['name']}  —  {s['desc'][:40]}", callback_data=f"skillpick_{user.id}_{i}")] for i, s in enumerate(all_skills)]
+                markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(
+                    f"🔮 *vs {boss_dict['data']['name']}* — choose a skill:",
+                    parse_mode="Markdown", reply_markup=markup)
+                await update.message.delete()
+                return
 
         if user.id not in [u["id"] for u in boss_dict["participants"]]:
             boss_dict["participants"].append({"id": user.id, "name": user.first_name, "dmg": 0})
@@ -7266,13 +7270,207 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sk = all_skills[0]
         else:
             # Show numbered selection prompt
-            lines = [f"🔮 Choose a skill to use:\n"]
-            for i, s in enumerate(all_skills, 1):
-                lines.append(f"*{i}.* *{s['name']}*  -  {s['desc']}")
-            lines.append("\n_Reply to the same message again with /skill [name or number]._")
-            await send_group(update, "\n".join(lines), delay=20); return
+            target_uid = update.message.reply_to_message.from_user.id
+            keyboard = [[InlineKeyboardButton(f"⚡ {s['name']}  —  {s['desc'][:40]}", callback_data=f"skillpick_{user.id}_{i}_{target_uid}")] for i, s in enumerate(all_skills)]
+            markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "🔮 Choose a skill to use:",
+                parse_mode="Markdown", reply_markup=markup)
+            await update.message.delete()
+            return
 
     await _execute_skill(update, context, p, sk)
+
+async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Inline button handler for skill picker in raids, boss fights, and PVP."""
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    # formats: skillpick_{uid}_{idx}  or  skillpick_{uid}_{idx}_{target_uid}
+    try:
+        uid = int(parts[1])
+        skill_idx = int(parts[2])
+        target_uid = int(parts[3]) if len(parts) > 3 else None
+    except (IndexError, ValueError):
+        return
+
+    if query.from_user.id != uid:
+        await query.answer("This skill picker isn't for you!", show_alert=True)
+        return
+
+    p = get_player(uid)
+    if not p:
+        await query.edit_message_text("Player not found!")
+        return
+
+    all_skills = sjl(p.get("all_skills"), [])
+    if skill_idx >= len(all_skills):
+        await query.edit_message_text("Invalid skill selection.")
+        return
+
+    sk = all_skills[skill_idx]
+    chat_id = query.message.chat_id
+    w = get_weather()
+
+    async def send_result(text):
+        try:
+            await query.edit_message_text(text[:4096], parse_mode="Markdown")
+        except Exception:
+            await context.bot.send_message(chat_id, text[:4096], parse_mode="Markdown")
+
+    # ── Raid context ──────────────────────────────────────────────────────────
+    raid_state, raid_kind = in_active_raid(uid, chat_id)
+    if raid_state:
+        if cannot_attack(p):
+            await send_result("⚡ You're stunned or rooted — can't use skills!")
+            return
+        sk_lines, sk_dmg = apply_skill_to_raid_enemy(p, sk, raid_state, w)
+        enemy = raid_state["enemy"]
+        out = [f"🎱 *{p['username']}* uses *{sk['name']}* on *{enemy['name']}*!"]
+        out.extend(sk_lines)
+        if sk_dmg > 0:
+            out.append(f"💥 *{sk_dmg} damage!* Enemy HP: {raid_state['enemy_hp']}/{raid_state['enemy_max_hp']}")
+            if raid_kind == "group":
+                raid = active_raids.get(chat_id)
+                if raid:
+                    raid["damage_dealt"][uid] = raid["damage_dealt"].get(uid, 0) + sk_dmg
+        if raid_state["enemy_hp"] <= 0:
+            out.append(f"\n✅ *{enemy['name']}* is destroyed!")
+            if raid_kind == "solo":
+                tier = raid_state["tier"]
+                wave_enemies = tier["wave_enemies"]
+                cw = raid_state["wave"]
+                if cw < len(wave_enemies):
+                    raid_state["wave"] += 1
+                    ne = wave_enemies[cw].copy()
+                    raid_state["enemy"] = ne
+                    raid_state["enemy_hp"] = ne["hp"]
+                    raid_state["enemy_max_hp"] = ne["hp"]
+                    raid_state.pop("enemy_statuses", None)
+                    out.append(f"\n🌊 *Wave {raid_state['wave']} — {ne['name']}*")
+                    out.append(f"❤️ HP: {ne['hp']} | 💀 {ne['dmg_min']}–{ne['dmg_max']}")
+                elif cw == len(wave_enemies):
+                    bd = BOSSES[tier["wave_boss_key"]]
+                    boss_hp = bd["max_hp"] // 2
+                    raid_state["wave"] = len(wave_enemies) + 1
+                    raid_state["enemy"] = {"name": bd["name"] + " ⚡", "dmg_min": round(bd["dmg_min"]*0.6), "dmg_max": round(bd["dmg_max"]*0.6)}
+                    raid_state["enemy_hp"] = boss_hp
+                    raid_state["enemy_max_hp"] = boss_hp
+                    raid_state.pop("enemy_statuses", None)
+                    out.append(f"\n🎱 *FINAL BOSS — {bd['name']}!* ❤️ HP: {boss_hp}")
+                else:
+                    active_soloraids.pop(uid, None)
+                    exp_reward = tier["exp_reward"]; gold_reward = tier["gold_reward"]
+                    p["gold"] = p.get("gold", 0) + gold_reward
+                    p["quests_done"] = p.get("quests_done", 0) + 1
+                    for _d, _e, _g in track_objective(p, "solo_win"):
+                        p["gold"] = p.get("gold", 0) + _g; add_exp(p, _e)
+                    loot = roll_loot_table(tier.get("loot_table", []), p)
+                    if loot:
+                        add_item(p, loot)
+                        r = ""
+                        for pool in [WEAPONS, ARMORS, ACCESSORIES]:
+                            if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity",""), ""); break
+                        out.append(f"🎒 Found: {r} *{loot}*!")
+                    add_exp(p, exp_reward, w)
+                    out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{exp_reward:,} EXP | +{gold_reward}g")
+        else:
+            killed = raid_enemy_counter(p, raid_state, out)
+            if killed and raid_kind == "solo":
+                active_soloraids.pop(uid, None)
+        save_player(p)
+        await send_result("\n".join(out))
+        return
+
+    # ── Boss context ──────────────────────────────────────────────────────────
+    boss_dict = active_bosses.get(chat_id) or secret_boss_active.get(chat_id)
+    is_secret_boss = chat_id in secret_boss_active
+    if boss_dict and uid in [u["id"] for u in boss_dict["participants"]]:
+        participant = next(u for u in boss_dict["participants"] if u["id"] == uid)
+        stype = sk.get("type", "damage")
+        out = [f"⚡ *{p['username']}* uses *{sk['name']}* on *{boss_dict['data']['name']}*!"]
+        if stype in ("self_heal", "self_heal_buff"):
+            heal = round(p["max_hp"] * 0.30) if stype == "self_heal_buff" else round(get_stat(p, "WIS") * sk.get("mult", 3.0))
+            p["hp"] = min(p["max_hp"], p["hp"] + heal)
+            out.append(f"💚 Healed self for *{heal} HP*!")
+            dmg = 0
+        else:
+            mult = sk.get("mult", 1.0) or 1.0
+            hits = sk.get("hits", 1)
+            if hits and hits > 1:
+                total = 0; hit_log = []
+                for _ in range(hits):
+                    h = round(calc_attack_damage(p, w) * mult)
+                    if check_crit(p): h = apply_crit(p, h); hit_log.append(f"💥{h}")
+                    else: hit_log.append(str(h))
+                    total += h
+                dmg = total
+                out.append(f"⚡ {hits}-hit combo! [{' + '.join(hit_log)}] = {dmg}")
+            elif stype in ("freeze_nuke", "execute_nuke", "holy_nuke", "fear_kill"):
+                stat_key = sk.get("stat", get_primary_stat(p))
+                dmg = round(get_stat(p, stat_key) * sk.get("mult", 3.0))
+                out.append(f"💥 *{sk['name']}!* {dmg} damage!")
+            elif stype in ("drain", "drain_kill", "hp_drain"):
+                drain_pct = sk.get("drain_pct", 0.30)
+                dmg = round(boss_dict["data"]["max_hp"] * drain_pct)
+                heal = round(dmg * sk.get("heal_pct", 0.50))
+                p["hp"] = min(p["max_hp"], p["hp"] + heal)
+                out.append(f"🩸 *{sk['name']}!* Drained {dmg} HP! Healed {heal}.")
+            else:
+                dmg = round(calc_attack_damage(p, w) * mult)
+            if hits == 1 and check_crit(p):
+                dmg = apply_crit(p, dmg)
+                out.append("💥 *CRITICAL HIT!*")
+            boss_dict["data"]["hp"] = max(0, boss_dict["data"].get("hp", boss_dict["data"]["max_hp"]) - dmg)
+            participant["dmg"] += dmg
+            out.append(f"❤️ Boss HP: {boss_dict['data'].get('hp', 0)}/{boss_dict['data']['max_hp']}")
+        save_player(p)
+        await send_result("\n".join(out))
+        return
+
+    # ── PVP context (target_uid provided) ────────────────────────────────────
+    if target_uid:
+        tp = get_player(target_uid)
+        if not tp:
+            await send_result("Target player not found!"); return
+        if is_defeated(tp):
+            await send_result(f"{tp['username']} is already defeated!"); return
+        if is_silenced(p):
+            await send_result("🤐 You are silenced — can't use skills!"); return
+        base = calc_attack_damage(p, w)
+        stype = sk.get("type", "damage")
+        out = [f"⚡ *{p['username']}* uses *{sk['name']}* on *{tp['username']}*!"]
+        if stype in ("self_heal", "self_heal_buff", "group_heal", "dmg_reduction_buff"):
+            await send_result("Use support skills with /skill (no target).")
+            return
+        dmg = round(base * sk.get("mult", 1.0))
+        if stype == "multihit":
+            hits = sk.get("hits", 2)
+            dmg = sum(round(calc_attack_damage(p, w) * sk.get("mult", 0.8)) for _ in range(hits))
+            out.append(f"⚡ {hits}-hit combo! Total: {dmg}")
+        elif stype == "crit_dmg":
+            dmg = round(base * sk.get("mult", 1.8) * 2)
+            out.append("💥 *Guaranteed Critical!*")
+        elif stype == "pierce_dmg":
+            dmg = round(get_stat(p, "AGI") * 3)
+            out.append("🌑 *Pierce!* Ignores dodge and block.")
+        elif stype == "pierce_all":
+            dmg = round(get_stat(p, "STR") * sk.get("str_mult", 2))
+            out.append("🏹 *Piercing Shot!*")
+        if check_crit(p):
+            dmg = apply_crit(p, dmg); out.append("💥 *CRITICAL HIT!*")
+        tp["hp"] = max(0, tp["hp"] - dmg)
+        out.append(f"💥 *{dmg} damage!* {tp['username']} HP: {tp['hp']}/{tp['max_hp']}")
+        if tp["hp"] == 0:
+            apply_pvp_death(tp, p["username"], sk["name"])
+            out.append(f"💀 *{tp['username']}* has been defeated by {sk['name']}!")
+            completed = await check_and_claim_bounty(context.bot, p, tp, chat_id)
+            if completed:
+                out.append(f"🎯 Bounty claimed!")
+            for _d, _e, _g in track_objective(p, "pvp_win"):
+                p["gold"] = p.get("gold", 0) + _g; add_exp(p, _e)
+        save_player(p); save_player(tp)
+        await send_result("\n".join(out))
 
 async def _execute_skill(update, context, p, sk):
     """Core skill execution logic."""
@@ -12205,6 +12403,7 @@ def main():
     app.add_handler(CallbackQueryHandler(class_pick_callback,    pattern="^class_pick_"))
     app.add_handler(CallbackQueryHandler(class_browse_callback,  pattern="^classbrowse_"))
     app.add_handler(CallbackQueryHandler(skill_tree_callback,    pattern="^sktree_"))
+    app.add_handler(CallbackQueryHandler(skill_pick_callback,   pattern="^skillpick_"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
