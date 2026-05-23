@@ -5485,7 +5485,7 @@ async def _send_inventory_page(target, p, page=1, edit=False):
             chat_id=target.effective_chat.id, text=text,
             parse_mode="Markdown", reply_markup=markup)
         last_bot_message[key] = new_msg.message_id
-        asyncio.create_task(_auto_delete(target.get_bot(), target.effective_chat.id, new_msg.message_id, 30))
+        asyncio.create_task(_auto_delete(target.get_bot(), target.effective_chat.id, new_msg.message_id, 60))
 
 async def inventory_callback(update, context):
     query = update.callback_query
@@ -8538,7 +8538,7 @@ async def _send_help_page(target, page: int, edit: bool = False):
     if edit:
         await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
     else:
-        await send_group(target, text, delay=60, reply_markup=markup)
+        await send_group(target, text, permanent=True, reply_markup=markup)
 
 async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
