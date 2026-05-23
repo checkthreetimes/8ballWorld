@@ -5356,8 +5356,8 @@ async def _send_class_progression(target, uid, page, edit=False):
     if edit:
         try:
             await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
-        except Exception as e:
-            await target.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+        except Exception:
+            pass
     else:
         await target.reply_text(text, parse_mode="Markdown", reply_markup=markup)
 
@@ -9729,15 +9729,8 @@ async def arena_act_callback(update, context):
         arena["round"] += 1
         card_text = build_arena_card(arena)
         markup = build_arena_markup(arena, chat_id)
-        if arena.get("msg_id"):
-            try:
-                await query.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
-            except Exception: pass
         try:
-            msg = await query.get_bot().send_message(
-                chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown",
-                reply_markup=markup)
-            arena["msg_id"] = msg.message_id
+            await query.edit_message_text(text=card_text[:4096], parse_mode="Markdown", reply_markup=markup)
         except Exception: pass
         return
 
@@ -9766,13 +9759,8 @@ async def arena_act_callback(update, context):
         arena["p1_hp"] = 0  # Force done display
         active_arenas.pop(chat_id, None)
         card_text = build_arena_card(arena)
-        if arena.get("msg_id"):
-            try:
-                await query.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
-            except Exception: pass
         try:
-            await query.get_bot().send_message(
-                chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown")
+            await query.edit_message_text(text=card_text[:4096], parse_mode="Markdown")
         except Exception: pass
         return
 
@@ -9905,15 +9893,8 @@ async def arena_act_callback(update, context):
 
     card_text = build_arena_card(arena)
     markup = build_arena_markup(arena, chat_id)
-    if arena.get("msg_id"):
-        try:
-            await query.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
-        except Exception: pass
     try:
-        msg = await query.get_bot().send_message(
-            chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown",
-            reply_markup=markup)
-        arena["msg_id"] = msg.message_id
+        await query.edit_message_text(text=card_text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception: pass
 
 # ── DUNGEON ───────────────────────────────────────────────────────────────────
@@ -11700,9 +11681,8 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{exp_r:,} EXP | +{gold_r}g")
                 save_player(p)
                 try:
-                    await context.bot.send_message(chat_id=chat_id, text="\n".join(out)[:4096], parse_mode="Markdown")
-                except Exception:
-                    pass
+                    await query.edit_message_text(text="\n".join(out)[:4096], parse_mode="Markdown")
+                except Exception: pass
                 return
         else:
             killed = raid_enemy_counter(p, sr, out)
@@ -11710,7 +11690,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 active_soloraids.pop(uid, None)
                 save_player(p)
                 try:
-                    await context.bot.send_message(chat_id=chat_id, text="\n".join(out)[:4096], parse_mode="Markdown")
+                    await query.edit_message_text(text="\n".join(out)[:4096], parse_mode="Markdown")
                 except Exception:
                     pass
                 return
@@ -11721,10 +11701,8 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
             InlineKeyboardButton("✨ Skill",  callback_data=f"sr_act_{uid}_skl"),
         ]])
         try:
-            await context.bot.send_message(chat_id=chat_id, text="\n".join(out)[:4096],
-                                           parse_mode="Markdown", reply_markup=sr_markup)
-        except Exception:
-            pass
+            await query.edit_message_text(text="\n".join(out)[:4096], parse_mode="Markdown", reply_markup=sr_markup)
+        except Exception: pass
         return
 
     # action == "atk" — standard attack
@@ -11781,9 +11759,8 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
             lines.append(f"✅ +{exp_r:,} EXP | +{gold_r}g{loot_line}")
             save_player(p)
             try:
-                await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
-            except Exception:
-                pass
+                await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
+            except Exception: pass
             return
     else:
         enemy = sr["enemy"]
@@ -11810,9 +11787,8 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     save_player(p)
                     lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6hr defeat. -{exp_loss} EXP.")
                     try:
-                        await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
-                    except Exception:
-                        pass
+                        await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
+                    except Exception: pass
                     return
                 else:
                     lines.append(f"🩸 *{enemy['name']}* hits *{p['username']}* for *{edm}!* "
@@ -11826,10 +11802,8 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
     ]])
     save_player(p)
     try:
-        await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096],
-                                       parse_mode="Markdown", reply_markup=sr_markup)
-    except Exception:
-        pass
+        await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=sr_markup)
+    except Exception: pass
 
 
 # ── Boss Attack/Skill callback ──
@@ -11982,9 +11956,8 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append(f"✅ *{pp['username']}*  -  +{data['exp']:,} EXP | +{data['gold']} Gold")
             save_player(p)
             try:
-                await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
-            except Exception:
-                pass
+                await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
+            except Exception: pass
             return
 
         save_player(p)
@@ -11993,10 +11966,8 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("✨ Skill",  callback_data=f"boss_act_{uid}_skl"),
         ]])
         try:
-            await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096],
-                                           parse_mode="Markdown", reply_markup=boss_markup)
-        except Exception:
-            pass
+            await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=boss_markup)
+        except Exception: pass
         return
 
     # action == "atk"
@@ -12060,9 +12031,8 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("💀 *ALL PLAYERS DEFEATED!* The boss wins...")
         save_player(p)
         try:
-            await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
-        except Exception:
-            pass
+            await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
+        except Exception: pass
         return
 
     if boss_dict["hp"] <= 0:
@@ -12087,9 +12057,8 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
         save_player(p)
         try:
-            await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
-        except Exception:
-            pass
+            await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
+        except Exception: pass
         return
 
     save_player(p)
@@ -12098,10 +12067,8 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("✨ Skill",  callback_data=f"boss_act_{uid}_skl"),
     ]])
     try:
-        await context.bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096],
-                                       parse_mode="Markdown", reply_markup=boss_markup)
-    except Exception:
-        pass
+        await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=boss_markup)
+    except Exception: pass
 
 
 # ── Prestige Path callback ──
