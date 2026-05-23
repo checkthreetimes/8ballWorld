@@ -886,6 +886,15 @@ CLASS_PATHS = {
 }
 BASE_CLASSES = ["warrior","mage","thief","archer","priest"]
 
+# Maps line key → display label showing class name + archetype for players
+LINE_ARCHETYPE = {
+    "warrior": "Warrior (Breaker)",
+    "mage":    "Mage (Baizer)",
+    "thief":   "Thief (Shark)",
+    "archer":  "Archer (Marksman)",
+    "priest":  "Priest (Chalker)",
+}
+
 # Priest classes that can revive for free
 HEALER_CLASSES = {"priest","cleric","bishop","high_priest","saint"}
 
@@ -5387,96 +5396,127 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ Bought *{entry['item']}* for {price}g!\n💰 Remaining: {p['gold']}g", delay=15)
 
 # ── INVENTORY / EQUIP / USE / SELL ────────────────────────────────────────────
-async def _send_inventory_page(target, p, page=1, edit=False):
-    inv_list = sjl(p.get("inventory"), [])
-    inv = Counter(inv_list)
-    def _item_sort_key(name):
-        if name in WEAPONS:    return 0
-        if name in ARMORS:     return 1
-        if name in SHIELDS:    return 2
-        if name in ACCESSORIES:return 3
-        if name in CONSUMABLES:return 4
-        return 5
-    items = sorted(inv.items(), key=lambda kv: _item_sort_key(kv[0]))
-    INV_PAGE_SIZE = 5
-    total = len(items)
-    start = (page - 1) * INV_PAGE_SIZE
-    end   = start + INV_PAGE_SIZE
-    page_items = items[start:end]
+INV_SECTIONS = ["Equipped", "Weapons", "Armors", "Shields", "Accessories", "Consumables", "Materials"]
 
-    equipped = {p.get("equipped_weapon"), p.get("equipped_armor"),
-                p.get("equipped_shield"), p.get("equipped_accessory")}
+def _build_inv_sections(p):
+    """Return ordered list of section names that have content for this player."""
+    inv = Counter(sjl(p.get("inventory"), []))
+    present = []
+    has_equipped = any(p.get(k) for k in ["equipped_weapon","equipped_armor","equipped_shield","equipped_accessory"])
+    if has_equipped:
+        present.append("Equipped")
+    if any(k in WEAPONS for k in inv):     present.append("Weapons")
+    if any(k in ARMORS for k in inv):      present.append("Armors")
+    if any(k in SHIELDS for k in inv):     present.append("Shields")
+    if any(k in ACCESSORIES for k in inv): present.append("Accessories")
+    if any(k in CONSUMABLES for k in inv): present.append("Consumables")
+    if any(k not in {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**CONSUMABLES} for k in inv):
+        present.append("Materials")
+    if not present:
+        present.append("Equipped")
+    return present
 
-    lines = [f"🎒 *{p['username']}'s Inventory* - Page {page}\n"]
-    # Equipped gear header (only on page 1)
-    if page == 1:
-        eq_header = False
+def _render_bag_item(p, item, count):
+    """Return formatted line(s) for a single bag item."""
+    if item in WEAPONS:
+        d = WEAPONS[item]
+        line = d.get("line", "")
+        arch = LINE_ARCHETYPE.get(line, line.capitalize())
+        weap_emoji = {"mage": "🪄", "thief": "🔪", "archer": "🏹", "priest": "📿"}.get(line, "⚔️")
+        type_tag = f"{weap_emoji} Weapon [{arch}]" if arch else f"{weap_emoji} Weapon"
+        rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
+        stat_str = f"+{d['atk']} ATK"
+    elif item in ARMORS:
+        d = ARMORS[item]
+        line = d.get("line", "")
+        arch = LINE_ARCHETYPE.get(line, line.capitalize())
+        type_tag = f"🛡️ Armor [{arch}]" if arch else "🛡️ Armor"
+        rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
+        stat_str = f"+{d['def']} DEF"
+    elif item in SHIELDS:
+        d = SHIELDS[item]
+        line = d.get("line", "")
+        arch = LINE_ARCHETYPE.get(line, line.capitalize())
+        type_tag = f"🔰 Shield [{arch}]" if arch else "🔰 Shield"
+        rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
+        stat_str = f"+{d['def']} DEF"
+    elif item in ACCESSORIES:
+        d = ACCESSORIES[item]
+        type_tag = "💍 Accessory"
+        rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
+        stat_str = d.get("desc","")[:40]
+    elif item in CONSUMABLES:
+        d = CONSUMABLES[item]
+        type_tag = "🧪 Consumable"
+        rarity = "⚪"
+        stat_str = d.get("desc","")
+    else:
+        type_tag = "📦 Material"; rarity = "⚪"; stat_str = ""
+    enh = get_enhancement(p, item)
+    encs = get_enchant(p, item) if item in {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES} else []
+    enh_str = f" *+{enh}*" if enh > 0 else ""
+    enc_str = f" ✨×{len(encs)}" if encs else ""
+    return f"{rarity} *{item}*{enh_str}{enc_str} x{count}\n  {type_tag} - _{stat_str}_"
+
+async def _send_inventory_section(target, p, section="Equipped", edit=False):
+    sections = _build_inv_sections(p)
+    if section not in sections:
+        section = sections[0]
+
+    inv = Counter(sjl(p.get("inventory"), []))
+    lines = [f"🎒 *{p['username']}'s Inventory*\n"]
+
+    if section == "Equipped":
+        has_any = False
         for slot_key, emoji in [("equipped_weapon","⚔️"),("equipped_armor","🛡️"),
                                   ("equipped_shield","🔰"),("equipped_accessory","💍")]:
             name = p.get(slot_key)
             if not name: continue
-            if not eq_header:
-                lines.append("* -  Equipped  - *")
-                eq_header = True
+            has_any = True
             enh = get_enhancement(p, name)
             encs_slot = get_enchant(p, name)
             tags = []
             if enh: tags.append(f"+{enh}")
             if encs_slot: tags.append(f"✨×{len(encs_slot)}")
             tag_str = " " + " ".join(tags) if tags else ""
-            lines.append(f"{emoji} {name}{tag_str} _(equipped)_")
-        if any(p.get(k) for k in ["equipped_weapon","equipped_armor","equipped_shield","equipped_accessory"]):
-            lines.append("")
-
-    if page_items:
-        lines.append("* -  Bag  - *")
-        for item, count in page_items:
-            if item in WEAPONS:
-                d = WEAPONS[item]; type_tag = "⚔️ Weapon"
-                line_tag = f" [{d.get('line','').capitalize()}]" if d.get('line') else ""
-                type_tag += line_tag
-                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪"); stat_str = f"+{d['atk']} ATK"
-            elif item in ARMORS:
-                d = ARMORS[item]; type_tag = "🛡️ Armor"
-                line_tag = f" [{d.get('line','').capitalize()}]" if d.get('line') else ""
-                type_tag += line_tag
-                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪"); stat_str = f"+{d['def']} DEF"
-            elif item in SHIELDS:
-                d = SHIELDS[item]; type_tag = "🔰 Shield"
-                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪"); stat_str = f"+{d['def']} DEF"
-            elif item in ACCESSORIES:
-                d = ACCESSORIES[item]; type_tag = "💍 Accessory"
-                rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪"); stat_str = d.get("desc","")[:40]
-            elif item in CONSUMABLES:
-                d = CONSUMABLES[item]; type_tag = "🧪 Consumable"
-                rarity = "⚪"; stat_str = d.get("desc","")
-            else:
-                type_tag = "📦 Material"; rarity = "⚪"; stat_str = ""
-            enh = get_enhancement(p, item)
-            encs = get_enchant(p, item) if item in {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES} else []
-            enh_str = f" *+{enh}*" if enh > 0 else ""
-            enc_str = f" ✨×{len(encs)}" if encs else ""
-            lines.append(f"{rarity} *{item}*{enh_str}{enc_str} x{count}\n  {type_tag} - _{stat_str}_")
+            slot_label = slot_key.replace("equipped_","").capitalize()
+            lines.append(f"{emoji} *{name}*{tag_str}  _({slot_label})_")
+        if not has_any:
+            lines.append("_Nothing equipped._")
     else:
-        if page == 1 and not any(p.get(k) for k in ["equipped_weapon","equipped_armor","equipped_shield","equipped_accessory"]):
-            lines.append("🎒 Inventory is empty!")
+        pool_map = {
+            "Weapons":     (WEAPONS,     lambda k: k in WEAPONS),
+            "Armors":      (ARMORS,      lambda k: k in ARMORS),
+            "Shields":     (SHIELDS,     lambda k: k in SHIELDS),
+            "Accessories": (ACCESSORIES, lambda k: k in ACCESSORIES),
+            "Consumables": (CONSUMABLES, lambda k: k in CONSUMABLES),
+            "Materials":   ({},          lambda k: k not in {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**CONSUMABLES}),
+        }
+        _, pred = pool_map[section]
+        bucket = [(k, v) for k, v in inv.items() if pred(k)]
+        if bucket:
+            for item, count in sorted(bucket, key=lambda kv: kv[0]):
+                lines.append(_render_bag_item(p, item, count))
         else:
-            lines.append("Bag is empty.")
+            lines.append(f"_No {section.lower()} in bag._")
 
     lines.append(f"\n_/equip [item] | /enhance [item] | /enchant [item] | /sell [item] | /use [item]_")
 
-    keyboard = []
-    if page > 1:
-        keyboard.append(InlineKeyboardButton(f"⬅️ Page {page-1}", callback_data=f"inv_p_{page-1}"))
-    if end < total:
-        keyboard.append(InlineKeyboardButton(f"➡️ Page {page+1}", callback_data=f"inv_p_{page+1}"))
-    markup = InlineKeyboardMarkup([keyboard]) if keyboard else None
+    # Navigation buttons — named like /stats
+    idx = sections.index(section)
+    btn_row = []
+    if idx > 0:
+        prev = sections[idx - 1]
+        btn_row.append(InlineKeyboardButton(f"◀ {prev}", callback_data=f"inv_s_{prev}"))
+    if idx < len(sections) - 1:
+        nxt = sections[idx + 1]
+        btn_row.append(InlineKeyboardButton(f"{nxt} ▶", callback_data=f"inv_s_{nxt}"))
+    markup = InlineKeyboardMarkup([btn_row]) if btn_row else None
 
     text = "\n".join(lines)[:4096]
     if edit:
         await target.edit_message_text(text=text, parse_mode="Markdown", reply_markup=markup)
     else:
-        # target is the update object
         try:
             await target.message.delete()
         except Exception:
@@ -5492,23 +5532,22 @@ async def _send_inventory_page(target, p, page=1, edit=False):
             chat_id=target.effective_chat.id, text=text,
             parse_mode="Markdown", reply_markup=markup)
         last_bot_message[key] = new_msg.message_id
-        asyncio.create_task(_auto_delete(target.get_bot(), target.effective_chat.id, new_msg.message_id, 60))
 
 async def inventory_callback(update, context):
     query = update.callback_query
     await query.answer()
-    if not query.data.startswith("inv_p_"): return
-    page = int(query.data.split("_")[-1])
+    if not query.data.startswith("inv_s_"): return
+    section = query.data[len("inv_s_"):]
     user = update.effective_user
     p = get_player(user.id)
     if not p: return
-    await _send_inventory_page(query, p, page, edit=True)
+    await _send_inventory_section(query, p, section, edit=True)
 
 async def inventory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-    await _send_inventory_page(update, p, page=1, edit=False)
+    await _send_inventory_section(update, p, section="Equipped", edit=False)
 
 async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -8428,7 +8467,7 @@ async def rankwins_cmd(update, context):
 GUIDE_PAGES = [
     # Page 1 - Getting Started
     (
-        "🎱 *8Ball World  -  Getting Started* (1/5)\n"
+        "🎱 *8Ball World  -  Getting Started* (1/6)\n"
         "\n"
         "Welcome to 8Ball World  -  a pool hall RPG built inside Telegram.\n"
         "\n"
@@ -8447,7 +8486,7 @@ GUIDE_PAGES = [
     ),
     # Page 2 - Character Building
     (
-        "🎱 *8Ball World  -  Building Your Character* (2/5)\n"
+        "🎱 *8Ball World  -  Building Your Character* (2/6)\n"
         "\n"
         "*Classes* unlock at Level 5 via /class:\n"
         "Warrior  -  STR-based, tough and hard-hitting\n"
@@ -8470,7 +8509,7 @@ GUIDE_PAGES = [
     ),
     # Page 3 - Daily Activities
     (
-        "🎱 *8Ball World  -  Daily Activities* (3/5)\n"
+        "🎱 *8Ball World  -  Daily Activities* (3/6)\n"
         "\n"
         "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
         "\n"
@@ -8488,7 +8527,7 @@ GUIDE_PAGES = [
     ),
     # Page 4 - Combat & Raids
     (
-        "🎱 *8Ball World  -  Combat & Raids* (4/5)\n"
+        "🎱 *8Ball World  -  Combat & Raids* (4/6)\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
         "Reply to any player's message and use /attack to fight them. Winners steal gold and EXP. Losers are defeated for 6 hours and lose 10% EXP. You cannot attack players who are currently in a raid or boss fight.\n"
@@ -8509,7 +8548,7 @@ GUIDE_PAGES = [
     ),
     # Page 5 - Gear, Economy & Halls
     (
-        "🎱 *8Ball World  -  Gear, Economy & Halls* (5/5)\n"
+        "🎱 *8Ball World  -  Gear, Economy & Halls* (5/6)\n"
         "\n"
         "*Gear*\n"
         "You have four slots: Weapon, Armor, Shield, Accessory. Gear drops from /pool, quests, dungeons, raids, and bosses. Items show class tags like [Warrior] or [Mage]  -  any class can equip anything, but matching gear deals bonus damage.\n"
@@ -8528,9 +8567,74 @@ GUIDE_PAGES = [
         "\n"
         "🎱 *Good luck at the table.*"
     ),
+    # Page 6 - Command Reference
+    (
+        "🎱 *8Ball World  -  Command Reference* (6/6)\n"
+        "\n"
+        "*Character*\n"
+        "/ascend  -  Create your RPG character (DM only)\n"
+        "/stats  -  Your profile (or /stats @user)\n"
+        "/class  -  Pick or view classes\n"
+        "/prestige  -  Choose Path A or B (Lv 10+)\n"
+        "/allocate [stat] [amt]  -  Spend stat points\n"
+        "/resetstats  -  Refund all stat points\n"
+        "/resetclass  -  Reset class (300g)\n"
+        "/inventory  -  View your bag\n"
+        "/gear  -  View equipped gear\n"
+        "\n"
+        "*Activities*\n"
+        "/hustle  -  Run all ready cooldowns at once\n"
+        "/daily  -  Daily gold + EXP (24hr)\n"
+        "/train  -  EXP training (30min)\n"
+        "/quest  -  EXP + gold + loot (1hr)\n"
+        "/explore  -  Big drops, big EXP (1hr, 2x/day)\n"
+        "/pool  -  Pool shot for EXP, gold, items (8s)\n"
+        "/dungeon  -  Solo boss run (daily)\n"
+        "/dungeonhard  -  Hard dungeon\n"
+        "/dungeonlegendary  -  Legendary dungeon\n"
+        "\n"
+        "*Combat*\n"
+        "/attack  -  Attack reply target or active boss\n"
+        "/skill  -  Use your class skill\n"
+        "/duel @user [wager]  -  Quick PvP duel\n"
+        "/arena @user [wager]  -  Turn-based fight\n"
+        "/heal  -  Heal yourself\n"
+        "/boss  -  Start a group boss\n"
+        "/raid  -  Create or join a raid party\n"
+        "/raidstart  -  Start the raid\n"
+        "/raidparty  -  View current party\n"
+        "/soloraid  -  Private raid scaled to you\n"
+        "\n"
+        "*Gear & Economy*\n"
+        "/equip [item]  -  Equip from inventory\n"
+        "/enhance [item]  -  Upgrade gear with Slate Fragments\n"
+        "/enchant [item]  -  Add enchants via Custom Tip Scrolls\n"
+        "/sell [item]  -  Sell item for 50% value\n"
+        "/sell [rarity]  -  Bulk sell by rarity\n"
+        "/use [item]  -  Use a consumable\n"
+        "/trade @user [item] [price]  -  Trade with a player\n"
+        "/shop  -  Daily rotating shop\n"
+        "\n"
+        "*Leaderboards & Info*\n"
+        "/rank  -  Leaderboard\n"
+        "/rankme  -  Your rank\n"
+        "/rankwins  -  Wins leaderboard\n"
+        "/who @user  -  Quick player lookup\n"
+        "/world  -  Current world info\n"
+        "\n"
+        "*Halls (Guilds)*\n"
+        "/guildjoin  -  Browse + join a hall\n"
+        "/guildcreate [name]  -  Create a hall (100g)\n"
+        "/guildinfo  -  Your hall details\n"
+        "/guildlist  -  All active halls\n"
+        "/guilddonate [amt]  -  Donate gold to hall\n"
+        "/guildkick @user  -  Kick member (leader)\n"
+        "/guildleave  -  Leave your hall\n"
+        "/guilddisband confirm  -  Disband your hall"
+    ),
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands"]
 
 async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
     total = len(GUIDE_PAGES)
@@ -9602,7 +9706,7 @@ def main():
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(rank_callback,      pattern="^rank_p_"))
-    app.add_handler(CallbackQueryHandler(inventory_callback, pattern="^inv_p_"))
+    app.add_handler(CallbackQueryHandler(inventory_callback, pattern="^inv_s_"))
     app.add_handler(CallbackQueryHandler(guide_callback,     pattern="^guide_p_"))
     app.add_handler(CallbackQueryHandler(stats_callback,     pattern="^stats_p_"))
     app.add_handler(CallbackQueryHandler(guildjoin_callback, pattern="^guildjoin_"))
