@@ -23,7 +23,7 @@ DB_PATH  = os.environ.get("DB_PATH", "/data/8ball.db")
 ADMIN_ID = 15941534
 
 # ── CHANGELOG ─────────────────────────────────────────────────────────────────
-CURRENT_VERSION = "v1.18"
+CURRENT_VERSION = "v1.19"
 CHANGELOG = [
     {"version": "v1.0",  "date": "2025-01-01", "changes": [
         "Initial release — shadow profile, /pool, /daily, /quest, /train, /explore",
@@ -74,6 +74,25 @@ CHANGELOG = [
         "Bounty claims now also trigger in arena, duel, and skill kills (not just /attack)",
         "Added /changelog — view recent bot updates",
         "Bot now DMs admin automatically on startup when a new version is detected",
+    ]},
+    {"version": "v1.19", "date": "2026-05-23", "changes": [
+        "Fixed boss skill picker: damage now written to boss_dict['hp'] (boss was unkillable via picker)",
+        "Fixed dead boss no longer counter-attacks after picker kill",
+        "Fixed duel wager: gold deducted from both players at accept; no more free-gold exploit",
+        "Fixed prestige_skills field added to save_player (was silently lost on every save)",
+        "Fixed guild shop discount: level-10 guilds now correctly get 15% (was unreachable branch)",
+        "Fixed check_and_claim_bounty: attacker gold now saved (was lost when called via create_task)",
+        "Fixed dungeon_run daily objective now tracked on dungeon completion",
+        "Fixed Railrunner /bounty contract cap now enforced (max 2, was unlimited)",
+        "Fixed arena flee: correct player's HP set to 0 in display (was always p1)",
+        "Fixed arena DOT: fight now ends correctly if DOT kills active player mid-turn",
+        "Fixed arena: defeated players can no longer issue challenges",
+        "Fixed duel: target checked for defeat before challenge is issued",
+        "Fixed mig_conn wrapped in try/finally to prevent DB connection leak",
+        "Fixed skill_tree_callback: added try/except for IndexError on malformed data",
+        "Fixed class_browse_callback: safe parse replaces bare unpack",
+        "Fixed double query.answer() removed from class progression/browse callbacks",
+        "Fixed level 60/100 auto-advance now gated on class_path like level 30",
     ]},
 ]
 
@@ -2435,6 +2454,7 @@ async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
                              f"You received *{round(reward*0.25)}g* back.",
                         parse_mode="Markdown")
                 except Exception: pass
+    save_player(attacker)
     try:
         if chat_id:
             payout = reward + round(reward*0.25) if (self_placed and is_railrunner) else reward
@@ -3189,6 +3209,16 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    migrations_v19 = [
+        ("players", "prestige_skills", "TEXT DEFAULT '[]'"),
+    ]
+    for table, col, definition in migrations_v19:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
     conn.close()
 
     # Clear stale explore locks on startup
@@ -3286,41 +3316,43 @@ def init_db():
 
     try:
         mig_conn = sqlite3.connect(DB_PATH)
-        mig_conn.row_factory = sqlite3.Row
-        mig_c = mig_conn.cursor()
-        mig_c.execute("""SELECT user_id,inventory,equipped_weapon,equipped_armor,
-                                equipped_shield,equipped_accessory,enhancements,enchants
-                         FROM players""")
-        rows = mig_c.fetchall()
-        migrated = 0
-        for row in rows:
-            changed = False
-            uid = row["user_id"]
-            inv  = sjl(row["inventory"], [])
-            new_inv = _migrate_item_list(inv)
-            if new_inv != inv: changed = True
-            ew  = ITEM_NAME_MAP.get(row["equipped_weapon"],  row["equipped_weapon"])
-            ea  = ITEM_NAME_MAP.get(row["equipped_armor"],   row["equipped_armor"])
-            es  = ITEM_NAME_MAP.get(row["equipped_shield"],  row["equipped_shield"])
-            eac = ITEM_NAME_MAP.get(row["equipped_accessory"], row["equipped_accessory"])
-            if ew != row["equipped_weapon"] or ea != row["equipped_armor"] or \
-               es != row["equipped_shield"] or eac != row["equipped_accessory"]:
-                changed = True
-            enh = sjl(row["enhancements"], {}); new_enh = _migrate_item_dict(enh)
-            if new_enh != enh: changed = True
-            enc = sjl(row["enchants"], {});     new_enc = _migrate_item_dict(enc)
-            if new_enc != enc: changed = True
-            if changed:
-                mig_c.execute("""UPDATE players SET inventory=?,equipped_weapon=?,
-                                  equipped_armor=?,equipped_shield=?,equipped_accessory=?,
-                                  enhancements=?,enchants=? WHERE user_id=?""",
-                    (json.dumps(new_inv), ew, ea, es, eac,
-                     json.dumps(new_enh), json.dumps(new_enc), uid))
-                migrated += 1
-        mig_conn.commit()
-        mig_conn.close()
-        if migrated > 0:
-            logger.info(f"v15 item migration: updated {migrated} player(s)")
+        try:
+            mig_conn.row_factory = sqlite3.Row
+            mig_c = mig_conn.cursor()
+            mig_c.execute("""SELECT user_id,inventory,equipped_weapon,equipped_armor,
+                                    equipped_shield,equipped_accessory,enhancements,enchants
+                             FROM players""")
+            rows = mig_c.fetchall()
+            migrated = 0
+            for row in rows:
+                changed = False
+                uid = row["user_id"]
+                inv  = sjl(row["inventory"], [])
+                new_inv = _migrate_item_list(inv)
+                if new_inv != inv: changed = True
+                ew  = ITEM_NAME_MAP.get(row["equipped_weapon"],  row["equipped_weapon"])
+                ea  = ITEM_NAME_MAP.get(row["equipped_armor"],   row["equipped_armor"])
+                es  = ITEM_NAME_MAP.get(row["equipped_shield"],  row["equipped_shield"])
+                eac = ITEM_NAME_MAP.get(row["equipped_accessory"], row["equipped_accessory"])
+                if ew != row["equipped_weapon"] or ea != row["equipped_armor"] or \
+                   es != row["equipped_shield"] or eac != row["equipped_accessory"]:
+                    changed = True
+                enh = sjl(row["enhancements"], {}); new_enh = _migrate_item_dict(enh)
+                if new_enh != enh: changed = True
+                enc = sjl(row["enchants"], {});     new_enc = _migrate_item_dict(enc)
+                if new_enc != enc: changed = True
+                if changed:
+                    mig_c.execute("""UPDATE players SET inventory=?,equipped_weapon=?,
+                                      equipped_armor=?,equipped_shield=?,equipped_accessory=?,
+                                      enhancements=?,enchants=? WHERE user_id=?""",
+                        (json.dumps(new_inv), ew, ea, es, eac,
+                         json.dumps(new_enh), json.dumps(new_enc), uid))
+                    migrated += 1
+            mig_conn.commit()
+            if migrated > 0:
+                logger.info(f"v15 item migration: updated {migrated} player(s)")
+        finally:
+            mig_conn.close()
     except Exception as e:
         logger.error(f"v15 item migration failed: {e}")
 
@@ -3378,7 +3410,7 @@ def save_player(p):
         "holy_field_until","devotion_charge",
         "last_daily","last_quest","last_train","last_explore",
         "explore_count_today","explore_date","shop_discount_until",
-        "guild_id","prestige_count","shadow_level_at_ascension","created_at",
+        "guild_id","prestige_count","prestige_skills","shadow_level_at_ascension","created_at",
         "DEX","LUK","enhancements","enchants",
         "last_dungeon","last_pool","last_defeated_by",
         "item_reinforce_data","daily_objectives","daily_obj_date",
@@ -3565,9 +3597,9 @@ def add_exp(p, amount, weather=None):
             msgs.append("🌟 Choose your path! Use /prestige.")
         if p["level"] == 30 and p.get("class_path"):
             _auto_advance_class(p, 30)
-        if p["level"] == 60:
+        if p["level"] == 60 and p.get("class_path"):
             _auto_advance_class(p, 60)
-        if p["level"] == 100:
+        if p["level"] == 100 and p.get("class_path"):
             _auto_advance_class(p, 100)
             msgs.append("🏆 *LEVEL 100!* You have reached the pinnacle!")
             award_title(p, "Century Break")
@@ -5261,12 +5293,15 @@ async def _send_class_browser(target, uid, page, edit=False):
         await target.reply_text(text, parse_mode="Markdown", reply_markup=markup)
 
 async def class_browse_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query; await query.answer()
-    _, uid, page = query.data.split("_")
-    uid = int(uid); page = int(page)
+    query = update.callback_query
+    parts = query.data.split("_")
+    try:
+        uid = int(parts[1]); page = int(parts[2])
+    except (IndexError, ValueError): return
     if query.from_user.id != uid:
         await query.answer("Not your class picker!", show_alert=True); return
-    await _send_class_browser(query.message, uid, page, edit=True)
+    await query.answer()
+    await _send_class_browser(query, uid, page, edit=True)
 
 # ── CLASS PROGRESSION BROWSER ─────────────────────────────────────────────────
 def _build_class_progression_pages(p):
@@ -5363,7 +5398,6 @@ async def _send_class_progression(target, uid, page, edit=False):
 
 async def class_progression_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     parts = query.data.split("_")   # clsprog_{uid}_{page}
     try:
         uid  = int(parts[1])
@@ -5372,7 +5406,8 @@ async def class_progression_callback(update: Update, context: ContextTypes.DEFAU
         return
     if query.from_user.id != uid:
         await query.answer("Not your class info!", show_alert=True); return
-    await _send_class_progression(query.message, uid, page, edit=True)
+    await query.answer()
+    await _send_class_progression(query, uid, page, edit=True)
 
 # ── CLASS ─────────────────────────────────────────────────────────────────────
 async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6064,7 +6099,7 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         g = get_guild(p["guild_id"])
         if g:
             glvl = safe_int(g.get("level"),1)
-            guild_disc = 0.10 if glvl >= 7 else (0.15 if glvl >= 10 else 0)
+            guild_disc = 0.15 if glvl >= 10 else (0.10 if glvl >= 7 else 0)
             discount = max(discount, guild_disc)
 
     if not context.args:
@@ -6611,9 +6646,16 @@ async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚔️ *{user.first_name}* joins *{boss['data']['name']}*!\n"
             f"❤️ {boss['hp']}/{boss['data']['max_hp']} HP | Use /strike!", delay=15); return
     if not context.args:
-        bl = "\n".join(f"• `{k}`  -  {v['name']} (HP:{v['max_hp']} | EXP:{v['exp']})"
-                       for k,v in BOSSES.items() if not v.get("secret"))
-        await send_group(update, f"⚔️ *Available Bosses:*\n\n{bl}\n\nExample: `/boss 1 ball`", delay=30); return
+        lines = ["⚔️ *Choose a Boss to Summon:*\n"]
+        buttons = []
+        for k, v in BOSSES.items():
+            if v.get("secret"): continue
+            lines.append(f"🎱 *{v['name']}*  ❤️ {v['max_hp']} HP | +{v['exp']:,} EXP | +{v['gold']}g")
+            buttons.append([InlineKeyboardButton(
+                f"⚔️ {v['name']}  ({v['max_hp']} HP)",
+                callback_data=f"bossstart_{user.id}_{k}")])
+        markup = InlineKeyboardMarkup(buttons)
+        await send_group(update, "\n".join(lines), delay=60, reply_markup=markup); return
     key = " ".join(context.args).lower(); bd = BOSSES.get(key)
     if not bd or bd.get("secret"):
         await send_group(update, "Unknown boss. Try `/boss` to see the list.", delay=9); return
@@ -6628,6 +6670,51 @@ async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"❤️ HP: {bd['max_hp']} | 💀 {bd['dmg_min']}–{bd['dmg_max']} dmg\n\n"
         f"*{user.first_name}* engaged!\nOthers: `/boss {key}` | All: /strike",
         permanent=True, reply_markup=boss_spawn_markup)
+
+async def boss_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle boss selection button from /boss menu."""
+    query = update.callback_query
+    await query.answer()
+    # format: bossstart_{uid}_{boss_key}  (boss key may contain spaces)
+    parts = query.data.split("_", 2)
+    try:
+        uid = int(parts[1])
+        key = parts[2]
+    except (IndexError, ValueError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("Use /boss to summon your own!", show_alert=True); return
+
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if is_defeated(p):
+        await query.answer("You're defeated — can't summon!", show_alert=True); return
+
+    chat_id = query.message.chat_id
+    if chat_id in active_bosses:
+        await query.answer("A boss is already active here!", show_alert=True); return
+
+    bd = BOSSES.get(key)
+    if not bd or bd.get("secret"):
+        await query.answer("Unknown boss.", show_alert=True); return
+
+    active_bosses[chat_id] = {
+        "data": bd.copy(), "hp": bd["max_hp"],
+        "participants": [{"id": uid, "name": query.from_user.first_name, "dmg": 0}]
+    }
+    boss_spawn_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚔️ Attack", callback_data=f"boss_act_{uid}_atk"),
+        InlineKeyboardButton("✨ Skill",  callback_data=f"boss_act_{uid}_skl"),
+    ]])
+    try:
+        await query.edit_message_text(
+            f"🎱 *{bd['name']} HAS APPEARED!*\n\n_{bd['desc']}_\n\n"
+            f"❤️ HP: {bd['max_hp']} | 💀 {bd['dmg_min']}–{bd['dmg_max']} dmg\n\n"
+            f"*{query.from_user.first_name}* engaged! Use /strike to attack.",
+            parse_mode="Markdown", reply_markup=boss_spawn_markup)
+    except Exception:
+        pass
 
 async def _attack_boss(update, context, p, boss_dict, chat_id):
     """Handle /attack routing to boss fight."""
@@ -7572,9 +7659,31 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             if hits == 1 and check_crit(p):
                 dmg = apply_crit(p, dmg)
                 out.append("💥 *CRITICAL HIT!*")
-            boss_dict["data"]["hp"] = max(0, boss_dict["data"].get("hp", boss_dict["data"]["max_hp"]) - dmg)
+            boss_dict["hp"] = max(0, boss_dict["hp"] - dmg)
             participant["dmg"] += dmg
-            out.append(f"❤️ Boss HP: {boss_dict['data'].get('hp', 0)}/{boss_dict['data']['max_hp']}")
+            out.append(f"❤️ Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}")
+        if boss_dict["hp"] > 0:
+            alive = [u for u in boss_dict["participants"]
+                     if not is_defeated(get_player(u["id"])) and boss_dict.get("player_hp",{}).get(u["id"],1) > 0]
+            if alive and random.random() < 0.90:
+                hit_count = 2 if random.random() < 0.30 else 1
+                targets = random.sample(alive, min(hit_count, len(alive)))
+                for target in targets:
+                    tp = get_player(target["id"])
+                    if tp and not is_defeated(tp):
+                        raw = random.randint(boss_dict["data"]["dmg_min"], boss_dict["data"]["dmg_max"])
+                        edm = calc_defense(tp, raw)
+                        boss_dict["player_hp"][target["id"]] = max(0,
+                            boss_dict["player_hp"].get(target["id"], calc_max_hp(tp)) - edm)
+                        php  = boss_dict["player_hp"][target["id"]]
+                        pmhp = boss_dict["player_max_hp"].get(target["id"], calc_max_hp(tp))
+                        if php == 0:
+                            exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
+                            save_player(tp)
+                            out.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! -{exp_loss} EXP.")
+                        else:
+                            out.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for *{edm}!* ({php}/{pmhp} HP)")
+                        save_player(tp)
         save_player(p)
         await send_result("\n".join(out))
         return
@@ -8098,26 +8207,27 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
 
     if not context.args:
-        lines = ["⚒️ *Enhancement Status:*\n"]
-        for slot_label, slot_key in [
-                ("Weapon", "equipped_weapon"),
-                ("Armor",  "equipped_armor"),
-                ("Shield", "equipped_shield")]:
+        lines = ["⚒️ *Enhancement* — choose a slot:\n"]
+        inv = sjl(p.get("inventory"), [])
+        lines.append(f"🪨 Slate Fragments: {inv.count('Slate Fragment')}\n")
+        buttons = []
+        for slot_label, slot_key, slot_id in [
+                ("⚔️ Weapon", "equipped_weapon", "weapon"),
+                ("🛡️ Armor",  "equipped_armor",  "armor"),
+                ("🔰 Shield", "equipped_shield", "shield")]:
             name = p.get(slot_key)
             if not name: continue
-            lv   = get_enhancement(p, name)
-            stars = "⭐" * lv if lv else "none"
-            if lv < 10:
-                cost = ENHANCE_COSTS[lv + 1]
-                rate = int(ENHANCE_RATES[lv + 1] * 100)
-                nxt  = f"+{lv+1} | Cost: {cost} Slate Fragment(s) | {rate}% success"
-            else:
-                nxt = "MAX"
-            lines.append(f"*{slot_label}:* {name} +{lv} {stars}\n  Next: {nxt}")
-        inv = sjl(p.get("inventory"), [])
-        lines.append(f"\n🪨 Slate Fragments: {inv.count('Slate Fragment')}")
-        lines.append("`/enhance weapon` | `/enhance armor` | `/enhance shield`")
-        await send_group(update, "\n".join(lines), delay=30); return
+            lv    = get_enhancement(p, name)
+            stars = "⭐" * lv if lv else "+0"
+            nxt   = "MAX" if lv >= 10 else f"+{lv+1} ({int(ENHANCE_RATES[lv+1]*100)}% | {ENHANCE_COSTS[lv+1]} Slate)"
+            lines.append(f"{slot_label}: *{name}* {stars}\n  → {nxt}")
+            buttons.append([InlineKeyboardButton(
+                f"{slot_label}: {name} {stars}",
+                callback_data=f"enhance_{user.id}_{slot_id}")])
+        if not buttons:
+            await send_group(update, "⚒️ No enhanceable gear equipped!", delay=9); return
+        markup = InlineKeyboardMarkup(buttons)
+        await send_group(update, "\n".join(lines), delay=30, reply_markup=markup); return
 
     slot = context.args[0].lower()
     slot_map = {
@@ -8175,6 +8285,59 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"*{item_name}* stays at +{current}.\n"
                 f"Used {cost} Slate Fragment(s). Try again.", delay=20)
 
+async def enhance_slot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle slot button from /enhance menu."""
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")  # enhance_{uid}_{slot}
+    try:
+        uid  = int(parts[1])
+        slot = parts[2]
+    except (IndexError, ValueError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("Not your enhance menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    slot_map = {"weapon": ("equipped_weapon", "ATK"), "armor": ("equipped_armor", "DEF"), "shield": ("equipped_shield", "DEF")}
+    if slot not in slot_map:
+        return
+    slot_key, stat_label = slot_map[slot]
+    item_name = p.get(slot_key)
+    if not item_name:
+        await query.answer(f"No {slot} equipped!", show_alert=True); return
+    current = get_enhancement(p, item_name)
+    if current >= 10:
+        await query.answer(f"{item_name} is already +10 MAX!", show_alert=True); return
+    next_lv = current + 1
+    cost = ENHANCE_COSTS[next_lv]; rate = ENHANCE_RATES[next_lv]
+    inv = sjl(p.get("inventory"), [])
+    if inv.count("Slate Fragment") < cost:
+        await query.answer(f"Need {cost} Slate Fragment(s), have {inv.count('Slate Fragment')}.", show_alert=True); return
+    for _ in range(cost):
+        inv.remove("Slate Fragment")
+    p["inventory"] = json.dumps(inv)
+    if random.random() < rate:
+        set_enhancement(p, item_name, next_lv)
+        bonus = get_enhance_bonus(p, item_name)
+        save_player(p)
+        await query.edit_message_text(
+            f"⚒️ *Enhancement Success!*\n\n*{item_name}* → *+{next_lv}* {'⭐' * next_lv}\n"
+            f"+{bonus} {stat_label} total from enhancement\nUsed {cost} Slate Fragment(s).",
+            parse_mode="Markdown")
+    else:
+        if current >= 6:
+            set_enhancement(p, item_name, current - 1); save_player(p)
+            await query.edit_message_text(
+                f"💔 *Enhancement Failed!*\n\n*{item_name}* dropped from +{current} to +{current-1}!\n"
+                f"Used {cost} Slate Fragment(s).", parse_mode="Markdown")
+        else:
+            save_player(p)
+            await query.edit_message_text(
+                f"💔 *Enhancement Failed!*\n\n*{item_name}* stays at +{current}.\n"
+                f"Used {cost} Slate Fragment(s).", parse_mode="Markdown")
+
 # ── ENCHANT ───────────────────────────────────────────────────────────────────
 async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -8182,24 +8345,28 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
 
     if not context.args:
-        lines = ["✨ *Enchanting Status:*\n"]
-        for slot_label, slot_key in [
-                ("Weapon",    "equipped_weapon"),
-                ("Armor",     "equipped_armor"),
-                ("Shield",    "equipped_shield"),
-                ("Accessory", "equipped_accessory")]:
+        lines = ["✨ *Enchanting* — choose a slot:\n"]
+        inv = sjl(p.get("inventory"), [])
+        lines.append(f"📜 Custom Tip Scrolls: {inv.count('The Custom Tip Scroll')}\n")
+        buttons = []
+        for slot_label, slot_key, slot_id in [
+                ("⚔️ Weapon",    "equipped_weapon",    "weapon"),
+                ("🛡️ Armor",     "equipped_armor",     "armor"),
+                ("🔰 Shield",    "equipped_shield",    "shield"),
+                ("💍 Accessory", "equipped_accessory", "accessory")]:
             name = p.get(slot_key)
             if not name: continue
             encs = get_enchant(p, name)
-            count = len(encs)
-            remaining = 3 - count
+            count = len(encs); remaining = 3 - count
             enc_str = ", ".join(e["id"].capitalize() for e in encs) if encs else "None"
-            lines.append(f"*{slot_label}:* {name}\n  Enchants ({count}/3): {enc_str}\n  Slots remaining: {remaining}")
-        inv = sjl(p.get("inventory"), [])
-        lines.append(f"\n📜 Custom Tip Scrolls: {inv.count('The Custom Tip Scroll')}")
-        lines.append("`/enchant weapon` | `/enchant armor` | "
-                     "`/enchant shield` | `/enchant accessory`")
-        await send_group(update, "\n".join(lines), delay=30); return
+            lines.append(f"{slot_label}: *{name}*\n  Enchants ({count}/3): {enc_str} | {remaining} slot(s) left")
+            buttons.append([InlineKeyboardButton(
+                f"{slot_label}: {name}  ({remaining} slot{'s' if remaining != 1 else ''} left)",
+                callback_data=f"enchant_{user.id}_{slot_id}")])
+        if not buttons:
+            await send_group(update, "✨ No gear equipped to enchant!", delay=9); return
+        markup = InlineKeyboardMarkup(buttons)
+        await send_group(update, "\n".join(lines), delay=30, reply_markup=markup); return
 
     slot = context.args[0].lower()
     slot_map = {
@@ -8241,6 +8408,51 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update,
         f"✨ *Enchanted!*\n\n"
         f"*{item_name}*  -  Enchants ({len(new_encs)}/3):\n{all_str}", delay=20)
+
+async def enchant_slot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle slot button from /enchant menu."""
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")  # enchant_{uid}_{slot}
+    try:
+        uid  = int(parts[1])
+        slot = parts[2]
+    except (IndexError, ValueError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("Not your enchant menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    slot_map = {
+        "weapon":    ("equipped_weapon",    "weapon"),
+        "armor":     ("equipped_armor",     "armor"),
+        "shield":    ("equipped_shield",    "armor"),
+        "accessory": ("equipped_accessory", "accessory"),
+    }
+    if slot not in slot_map:
+        return
+    slot_key, effect_pool_key = slot_map[slot]
+    item_name = p.get(slot_key)
+    if not item_name:
+        await query.answer(f"No {slot} equipped!", show_alert=True); return
+    inv = sjl(p.get("inventory"), [])
+    if "The Custom Tip Scroll" not in inv:
+        await query.answer("Need a Custom Tip Scroll to enchant!", show_alert=True); return
+    encs = get_enchant(p, item_name)
+    if len(encs) >= 3:
+        await query.answer(f"{item_name} already has 3 enchants (max)!", show_alert=True); return
+    inv.remove("The Custom Tip Scroll")
+    p["inventory"] = json.dumps(inv)
+    pool = ENCHANT_EFFECTS.get(effect_pool_key, [])
+    effect = random.choice(pool)
+    set_enchant(p, item_name, effect)
+    save_player(p)
+    new_encs = get_enchant(p, item_name)
+    all_str = "\n".join(f"✨ {e['id'].capitalize()}  —  {e['desc']}" for e in new_encs)
+    await query.edit_message_text(
+        f"✨ *Enchanted!*\n\n*{item_name}*  —  Enchants ({len(new_encs)}/3):\n{all_str}",
+        parse_mode="Markdown")
 
 # ── SKILL TREE PAGE BUILDER ───────────────────────────────────────────────────
 def _build_skill_tree_pages(p):
@@ -8380,10 +8592,13 @@ async def _send_skill_tree(target, uid, page, edit=False):
 async def skill_tree_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     parts = query.data.split("_")          # sktree_{uid}_{page}
-    uid   = int(parts[1]); page = int(parts[2])
+    try:
+        uid  = int(parts[1]); page = int(parts[2])
+    except (IndexError, ValueError):
+        return
     if query.from_user.id != uid:
         await query.answer("This isn't your skill tree!", show_alert=True); return
-    await _send_skill_tree(query.message, uid, page, edit=True)
+    await _send_skill_tree(query, uid, page, edit=True)
 
 # ── BOUNTY ────────────────────────────────────────────────────────────────────
 async def bounty_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -8455,15 +8670,20 @@ async def bounty_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update,
             f"❌ You already have an active *{existing['reward']}g* bounty on *{target['username']}*.", delay=10)
         return
+    total_active = bc.execute(
+        "SELECT COUNT(*) FROM bounties WHERE placer_id=? AND claimed_by IS NULL AND expires_at > ?",
+        (p["user_id"], datetime.now().isoformat())).fetchone()[0]
     if not is_railrunner:
-        total_active = bc.execute(
-            "SELECT COUNT(*) FROM bounties WHERE placer_id=? AND claimed_by IS NULL AND expires_at > ?",
-            (p["user_id"], datetime.now().isoformat())).fetchone()[0]
         if total_active >= 1:
             bconn.close()
             await send_group(update,
                 "❌ You can only have *1 active bounty* at a time.\n"
                 "_Railrunners (Archer Path B) can hold 2 contracts._", delay=12)
+            return
+    else:
+        if total_active >= 2:
+            bconn.close()
+            await send_group(update, "⚠️ Railrunners can hold max 2 active contracts.", delay=9)
             return
 
     expires = (datetime.now() + timedelta(hours=24)).isoformat()
@@ -8755,14 +8975,17 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_duels.pop(challenger_id, None)
             await send_group(update, "Challenger can no longer afford the wager.", delay=9); return
         pending_duels.pop(challenger_id, None)
+        # Deduct wager from both players upfront, then award wager*2 to winner
+        if wager > 0:
+            p["gold"]          = max(0, p.get("gold", 0) - wager)
+            challenger["gold"] = max(0, challenger.get("gold", 0) - wager)
         cp_a = calc_combat_power(challenger)
         cp_b = calc_combat_power(p)
         total = cp_a + cp_b
         winner = challenger if random.random() < (cp_a / total) else p
         loser  = p if winner["user_id"] == challenger["user_id"] else challenger
         if wager > 0:
-            winner["gold"] = winner.get("gold",0) + wager
-            loser["gold"]  = max(0, loser.get("gold",0) - wager)
+            winner["gold"] = winner.get("gold",0) + wager * 2
         winner["wins"] = winner.get("wins",0) + 1
         save_player(winner); save_player(loser)
         lines = [
@@ -8796,6 +9019,7 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tp = get_player(du.id)
     if not tp:
         await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+    if is_defeated(tp): await send_group(update, f"{tp['username']} is currently defeated — can't duel them.", delay=9); return
     wager = 0
     if context.args:
         try: wager = max(0, int(context.args[0]))
@@ -8877,14 +9101,17 @@ async def duel_response_callback(update, context):
         return
 
     pending_duels.pop(challenger_uid, None)
+    # Deduct wager from both players upfront, then award wager*2 to winner
+    if wager > 0:
+        p["gold"]          = max(0, p.get("gold", 0) - wager)
+        challenger["gold"] = max(0, challenger.get("gold", 0) - wager)
     cp_a = calc_combat_power(challenger)
     cp_b = calc_combat_power(p)
     total = cp_a + cp_b
     winner = challenger if random.random() < (cp_a / total) else p
     loser  = p if winner["user_id"] == challenger["user_id"] else challenger
     if wager > 0:
-        winner["gold"] = winner.get("gold",0) + wager
-        loser["gold"]  = max(0, loser.get("gold",0) - wager)
+        winner["gold"] = winner.get("gold",0) + wager * 2
     winner["wins"] = winner.get("wins",0) + 1
     save_player(winner); save_player(loser)
     lines = [
@@ -8980,6 +9207,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
+    if is_defeated(p): await send_group(update, _defeated_msg(p), delay=15); return
 
     # Reply-to-message shortcut: replying to a challenge message counts as /arena accept
     if update.message.reply_to_message and (not context.args or context.args[0].lower() != "accept"):
@@ -9721,6 +9949,28 @@ async def arena_act_callback(update, context):
         if atk_state.get(timer_key, 0) > 0:
             atk_state[timer_key] -= 1
 
+    # DOT death check — if attacker dies to DOT, end the fight
+    if arena[atk_hp_key] <= 0:
+        arena["status"] = "done"
+        winner_id = arena["p2_id"] if is_p1 else arena["p1_id"]
+        loser_id  = arena["p1_id"] if is_p1 else arena["p2_id"]
+        wp = get_player(winner_id); lp = get_player(loser_id)
+        wager = arena["wager"]
+        if wp and lp:
+            if wager > 0:
+                wp["gold"] = wp.get("gold",0) + wager * 2
+            wp["wins"] = wp.get("wins",0) + 1
+            save_player(wp); save_player(lp)
+        w_name = arena["p1"]["username"] if winner_id == arena["p1_id"] else arena["p2"]["username"]
+        arena["log"].append(f"☠️ {atk_name} dies to damage over time! 🏆 *{w_name}* wins!")
+        active_arenas.pop(chat_id, None)
+        card_text = build_arena_card(arena)
+        markup = build_arena_markup(arena, chat_id)
+        try:
+            await query.edit_message_text(text=card_text[:4096], parse_mode="Markdown", reply_markup=markup)
+        except Exception: pass
+        return
+
     # Stun check
     if atk_state.get("skip_turns", 0) > 0:
         atk_state["skip_turns"] -= 1
@@ -9756,7 +10006,10 @@ async def arena_act_callback(update, context):
             save_player(wp); save_player(lp)
         w_name = defender_data["username"]
         arena["log"].append(f"🏃 {atk_name} flees! 🏆 *{w_name}* wins the arena!")
-        arena["p1_hp"] = 0  # Force done display
+        if is_p1:
+            arena["p1_hp"] = 0  # Force done display
+        else:
+            arena["p2_hp"] = 0  # Force done display
         active_arenas.pop(chat_id, None)
         card_text = build_arena_card(arena)
         try:
@@ -10292,6 +10545,9 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lmsgs, leveled = add_exp(fp, total_exp)
         fp["gold"] = fp.get("gold", 0) + total_gold
         for item in items_found: add_item(fp, item)
+        if not run_failed:
+            for _d, _e, _g in track_objective(fp, "dungeon_run"):
+                fp["gold"] = fp.get("gold", 0) + _g; add_exp(fp, _e)
         save_player(fp)
         recap = _build_dungeon_recap(
             fp, theme, diff, results, total_exp, total_gold,
@@ -12252,6 +12508,9 @@ async def dungeon_diff_callback(update: Update, context: ContextTypes.DEFAULT_TY
         lmsgs, leveled = add_exp(fp, total_exp)
         fp["gold"] = fp.get("gold", 0) + total_gold
         for item in items_found: add_item(fp, item)
+        if not run_failed:
+            for _d, _e, _g in track_objective(fp, "dungeon_run"):
+                fp["gold"] = fp.get("gold", 0) + _g; add_exp(fp, _e)
         save_player(fp)
         recap = _build_dungeon_recap(fp, theme, diff, results, total_exp, total_gold,
                                      items_found, run_failed, lmsgs)
@@ -12292,7 +12551,7 @@ async def shop_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         g = get_guild(p["guild_id"])
         if g:
             glvl = safe_int(g.get("level"), 1)
-            guild_disc = 0.10 if glvl >= 7 else (0.15 if glvl >= 10 else 0)
+            guild_disc = 0.15 if glvl >= 10 else (0.10 if glvl >= 7 else 0)
             discount = max(discount, guild_disc)
 
     shop = get_daily_shop()
@@ -12521,6 +12780,9 @@ def main():
     app.add_handler(CallbackQueryHandler(prestige_callback,     pattern="^prestige_"))
     app.add_handler(CallbackQueryHandler(dungeon_diff_callback, pattern="^dungeon_d_"))
     app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shop_b_"))
+    app.add_handler(CallbackQueryHandler(boss_start_callback,   pattern="^bossstart_"))
+    app.add_handler(CallbackQueryHandler(enhance_slot_callback, pattern="^enhance_"))
+    app.add_handler(CallbackQueryHandler(enchant_slot_callback, pattern="^enchant_"))
     app.add_handler(CallbackQueryHandler(allocate_callback,     pattern="^alloc_"))
     # New inline button callbacks
     app.add_handler(CallbackQueryHandler(arena_act_callback,     pattern="^arena_act_"))
