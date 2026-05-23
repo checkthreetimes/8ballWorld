@@ -22,6 +22,61 @@ logger = logging.getLogger(__name__)
 DB_PATH  = os.environ.get("DB_PATH", "/data/8ball.db")
 ADMIN_ID = 15941534
 
+# ── CHANGELOG ─────────────────────────────────────────────────────────────────
+CURRENT_VERSION = "v1.18"
+CHANGELOG = [
+    {"version": "v1.0",  "date": "2025-01-01", "changes": [
+        "Initial release — shadow profile, /pool, /daily, /quest, /train, /explore",
+    ]},
+    {"version": "v1.1",  "date": "2025-02-01", "changes": [
+        "Added 5 base classes and prestige paths",
+        "Added /skill, /duel, /arena, /boss, /raid, /soloraid",
+        "Added gear system: /equip, /enhance, /enchant",
+    ]},
+    {"version": "v1.2",  "date": "2025-03-01", "changes": [
+        "Added 33 titles with stat bonuses",
+        "Added halls (guilds): /guildcreate, /guildjoin, /guilddonate",
+        "Added weather system affecting EXP and DMG",
+    ]},
+    {"version": "v1.13", "date": "2025-05-01", "changes": [
+        "Inventory redesigned with named section buttons (Equipped, Weapons, Armors, etc.)",
+        "Added class archetype labels and weapon emojis per class",
+        "Added /guide page 6 with full command reference",
+        "Added 30-minute offline PvP protection with DM notification",
+    ]},
+    {"version": "v1.14", "date": "2025-05-10", "changes": [
+        "Fixed Custom Tip Scroll name mismatch (enchant now works)",
+        "Fixed Chalk Vial showing max HP instead of actual capped HP",
+        "Added 💬 message count to /stats page 1",
+        "Added inline buttons to soloraid, boss, prestige, dungeon, shop, allocate, arena, raid, duel, resetclass, resetstats, guilddisband, class picker",
+    ]},
+    {"version": "v1.15", "date": "2025-05-15", "changes": [
+        "Fixed boss fight: skill HP tracking, alive check, and missing return after defeat",
+        "Fixed self-heal inventory overwrite bug",
+        "Fixed /heal with no reply now heals yourself",
+        "Added defeat logging: last_defeated_by field, DM on defeat, countdown timer",
+    ]},
+    {"version": "v1.16", "date": "2025-05-20", "changes": [
+        "Fixed defeat cause showing generic 'the enemy' for solo/group raid deaths",
+        "Defeat cause now records exact enemy name in all combat paths",
+    ]},
+    {"version": "v1.17", "date": "2025-05-23", "changes": [
+        "Added /reinforce [item] — sacrifice duplicate to raise base stats (+1 ATK/DEF per reinforce, max 20)",
+        "Added /reinforce ascend [item] — ascend to ★ tier at 20 reinforces (+5 flat bonus, max ★★★)",
+        "Added /objectives — 3 daily objectives with EXP/gold rewards, resets midnight",
+        "Added 6 item set bonuses for matching legendary gear (shown in /stats gear page)",
+        "Added 6 new titles: The Forger, Diamond Grinder, The Ascendant, Three Star General, Objective Rookie, Objective Master",
+    ]},
+    {"version": "v1.18", "date": "2025-05-23", "changes": [
+        "Added /bounty @user [amount] — any player can place a gold bounty on someone",
+        "Fixed Railrunner's Execution Order to actually place a free 500g bounty",
+        "Added /bounties — public bounty board showing all active bounties",
+        "Bounty claims now also trigger in arena, duel, and skill kills (not just /attack)",
+        "Added /changelog — view recent bot updates",
+        "Bot now DMs admin automatically on startup when a new version is detected",
+    ]},
+]
+
 # ── GLOBAL STATE ──────────────────────────────────────────────────────────────
 last_bot_message   = {}   # (chat_id, user_id) -> msg_id
 active_bosses      = {}   # chat_id -> boss dict
@@ -2344,6 +2399,46 @@ async def _notify_defeat(bot, p, cause_str):
     except Exception:
         pass
 
+async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
+    """Check for active bounty on target; award attacker if found. Returns reward or 0."""
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; bc = conn.cursor()
+    bc.execute("SELECT * FROM bounties WHERE target_id=? AND claimed_by IS NULL AND expires_at > ?",
+               (target["user_id"], datetime.now().isoformat()))
+    bounty = bc.fetchone()
+    if not bounty:
+        conn.close(); return 0
+    bc.execute("UPDATE bounties SET claimed_by=? WHERE bounty_id=?",
+               (attacker["user_id"], bounty["bounty_id"]))
+    conn.commit(); conn.close()
+    reward = bounty["reward"]
+    attacker["gold"] = attacker.get("gold",0) + reward
+    placer_p = get_player(bounty["placer_id"])
+    if placer_p and placer_p["user_id"] != attacker["user_id"]:
+        placer_p["gold"] = placer_p.get("gold",0) + round(reward * 0.25)
+        save_player(placer_p)
+        try:
+            await bot.send_message(
+                chat_id=placer_p["user_id"],
+                text=f"💰 Your bounty on *{target['username']}* was claimed by *{attacker['username']}*!\n"
+                     f"You received *{round(reward*0.25)}g* back.",
+                parse_mode="Markdown")
+        except Exception: pass
+    try:
+        if chat_id:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"💰 *BOUNTY CLAIMED!* *{attacker['username']}* defeated *{target['username']}*!\n"
+                     f"+{reward}g bounty reward! 🎯",
+                parse_mode="Markdown")
+    except Exception: pass
+    try:
+        await bot.send_message(
+            chat_id=target["user_id"],
+            text=f"🎯 There was a *{reward}g bounty* on your head — *{attacker['username']}* collected it!",
+            parse_mode="Markdown")
+    except Exception: pass
+    return reward
+
 def in_active_raid(user_id, chat_id=None):
     """Returns (raid_dict, kind) where kind is 'solo', 'group', or None."""
     if user_id in active_soloraids:
@@ -4214,21 +4309,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_status(d, "weakened_until", 3600)
 
         # Bounty check
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; bc = conn.cursor()
-        bc.execute("SELECT * FROM bounties WHERE target_id=? AND claimed_by IS NULL AND expires_at > ?",
-                   (d["user_id"], datetime.now().isoformat()))
-        bounty = bc.fetchone()
-        if bounty:
-            bc.execute("UPDATE bounties SET claimed_by=? WHERE bounty_id=?",
-                       (au.id, bounty["bounty_id"]))
-            conn.commit()
-            a["gold"] = a.get("gold",0) + bounty["reward"]
-            placer_p = get_player(bounty["placer_id"])
-            if placer_p:
-                placer_p["gold"] = placer_p.get("gold",0) + 250
-                save_player(placer_p)
-            action += f"\n💰 BOUNTY CLAIMED! +{bounty['reward']} gold!"
-        conn.close()
+        asyncio.create_task(check_and_claim_bounty(update.get_bot(), a, d, chat))
 
         # Deadeye kill bonus
         if cls_a and cls_a.get("passive_key") == "dead_or_alive":
@@ -7328,8 +7409,29 @@ async def _execute_skill(update, context, p, sk):
         dmg   = int_v * 6
         set_status(d, "frozen_until", 60)
         lines.append(f"🧊 *Absolute Zero!* {d['username']} frozen for 60 seconds!")
+    elif stype == "bounty":
+        # Railrunner: Execution Order — place a FREE 500g bounty on target, deal light damage
+        dmg = round(base * 0.6)
+        expires = (datetime.now() + timedelta(hours=24)).isoformat()
+        try:
+            bconn = sqlite3.connect(DB_PATH); bc2 = bconn.cursor()
+            bc2.execute("DELETE FROM bounties WHERE target_id=? AND claimed_by IS NULL", (d["user_id"],))
+            bc2.execute("INSERT INTO bounties (placer_id,target_id,reward,expires_at) VALUES (?,?,?,?)",
+                        (p["user_id"], d["user_id"], 500, expires))
+            bconn.commit(); bconn.close()
+        except Exception: pass
+        lines.append(f"🎯 *Execution Order!* A *500g bounty* has been placed on *{d['username']}*!\n"
+                     f"First to defeat them collects. Expires in 24h.")
+        asyncio.create_task(context.bot.send_message(
+            chat_id=d["user_id"],
+            text=f"🎯 *{p['username']}* has placed a 500g bounty on your head!\n"
+                 "Watch your back — anyone who defeats you claims it.",
+            parse_mode="Markdown"))
+    elif stype == "bounty_mark":
+        dmg = round(base * 0.8)
+        lines.append(f"🔴 *Contract!* Marking *{d['username']}*  -  increased threat level.")
     elif stype in ("aoe_recent_attackers","holy_nuke","execute_nuke","fear_kill",
-                   "random_aoe","bounce_spell","raid_aoe","bounty","bounty_mark",
+                   "random_aoe","bounce_spell","raid_aoe",
                    "bind_attacker","dmg_field","combo_dmg","self_heal_buff",
                    "revive_heal","execution_shot","multihit_crit","pierce_dodge"):
         # Simplified fallback for complex skills
@@ -7361,6 +7463,7 @@ async def _execute_skill(update, context, p, sk):
             asyncio.create_task(_notify_defeat(context.bot, d, f"{p['username']} using {sk['name']}"))
         d["losses"] = d.get("losses",0)+1
         p["wins"]   = p.get("wins",0)+1
+        asyncio.create_task(check_and_claim_bounty(context.bot, p, d, chat_id))
         exp_gain = 80 + p["level"]*8
         lmsgs, leveled = add_exp(p, exp_gain, w); lvl_msgs = lmsgs
         lines.append(f"\n💀 *{d['username']}* defeated by *{sk['name']}*! +{exp_gain} EXP")
@@ -7725,6 +7828,142 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update,
         f"✨ *Enchanted!*\n\n"
         f"*{item_name}*  -  Enchants ({len(new_encs)}/3):\n{all_str}", delay=20)
+
+# ── BOUNTY ────────────────────────────────────────────────────────────────────
+async def bounty_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    if not context.args:
+        await send_group(update,
+            "💰 *Bounty Board*\n\n"
+            "Place a gold bounty on any player. Whoever defeats them first collects.\n"
+            "You receive 25% back when it's claimed.\n\n"
+            "Usage: `/bounty @username [amount]`\n"
+            "Minimum: 100g | Maximum: 5000g | Expires: 24 hours\n\n"
+            "View active bounties: `/bounties`", delay=20)
+        return
+
+    # Find target from reply or @mention
+    target_user = None
+    if update.message.reply_to_message:
+        target_user = update.message.reply_to_message.from_user
+        amount_args = context.args
+    else:
+        # First arg should be @mention or username, rest is amount
+        raw = context.args[0].lstrip("@")
+        amount_args = context.args[1:]
+        # Try to find by username in DB
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT user_id, username FROM players WHERE username=? COLLATE NOCASE", (raw,)).fetchone()
+        conn.close()
+        if row:
+            class _FakeUser:
+                id = row["user_id"]
+                first_name = row["username"]
+            target_user = _FakeUser()
+        else:
+            await send_group(update, f"❌ Player *{raw}* not found.", delay=10); return
+
+    if target_user.id == user.id:
+        await send_group(update, "❌ You can't place a bounty on yourself.", delay=9); return
+
+    target = get_player(target_user.id)
+    if not target:
+        await send_group(update, "❌ That player hasn't ascended yet.", delay=9); return
+
+    if not amount_args:
+        await send_group(update, "❌ Specify an amount. Example: `/bounty @username 500`", delay=10); return
+
+    try:
+        amount = int(amount_args[0])
+    except ValueError:
+        await send_group(update, "❌ Amount must be a number.", delay=9); return
+
+    if amount < 100:
+        await send_group(update, "❌ Minimum bounty is *100g*.", delay=9); return
+    if amount > 5000:
+        await send_group(update, "❌ Maximum bounty is *5000g*.", delay=9); return
+    if p.get("gold",0) < amount:
+        await send_group(update, f"❌ Not enough gold. You have *{p.get('gold',0)}g*.", delay=9); return
+
+    # Check if target already has an active bounty from this player
+    bconn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; bc = bconn.cursor()
+    existing = bc.execute(
+        "SELECT bounty_id, reward FROM bounties WHERE target_id=? AND placer_id=? AND claimed_by IS NULL AND expires_at > ?",
+        (target["user_id"], p["user_id"], datetime.now().isoformat())).fetchone()
+    if existing:
+        bconn.close()
+        await send_group(update,
+            f"❌ You already have an active *{existing['reward']}g* bounty on *{target['username']}*.", delay=10)
+        return
+
+    expires = (datetime.now() + timedelta(hours=24)).isoformat()
+    bc.execute("INSERT INTO bounties (placer_id,target_id,reward,expires_at) VALUES (?,?,?,?)",
+               (p["user_id"], target["user_id"], amount, expires))
+    bconn.commit(); bconn.close()
+
+    p["gold"] = p.get("gold",0) - amount
+    save_player(p)
+
+    await send_group(update,
+        f"🎯 *BOUNTY PLACED!*\n\n"
+        f"Target: *{target['username']}*\n"
+        f"Reward: *{amount}g*\n"
+        f"Placed by: *{p['username']}*\n"
+        f"Expires: 24 hours\n\n"
+        f"_First to defeat them claims the gold!_", delay=30)
+
+    try:
+        await context.bot.send_message(
+            chat_id=target["user_id"],
+            text=f"🎯 *{p['username']}* placed a *{amount}g bounty* on your head!\n"
+                 "Watch your back — anyone who defeats you claims it.",
+            parse_mode="Markdown")
+    except Exception: pass
+
+async def bounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT b.*, p.username as target_name, p2.username as placer_name "
+        "FROM bounties b "
+        "LEFT JOIN players p  ON b.target_id  = p.user_id "
+        "LEFT JOIN players p2 ON b.placer_id  = p2.user_id "
+        "WHERE b.claimed_by IS NULL AND b.expires_at > ? "
+        "ORDER BY b.reward DESC LIMIT 10",
+        (datetime.now().isoformat(),)).fetchall()
+    conn.close()
+
+    if not rows:
+        await send_group(update, "💰 *Bounty Board*\n\n_No active bounties right now._", delay=15)
+        return
+
+    lines = ["💰 *Bounty Board* — Active Contracts\n"]
+    for i, row in enumerate(rows, 1):
+        target_name = row["target_name"] or "Unknown"
+        placer_name = row["placer_name"] or "Unknown"
+        lines.append(f"{i}. 🎯 *{target_name}* — *{row['reward']}g*\n   _Posted by {placer_name}_")
+
+    await send_group(update, "\n".join(lines), delay=30)
+
+# ── CHANGELOG ─────────────────────────────────────────────────────────────────
+async def changelog_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    entries = CHANGELOG[-3:]  # Last 3 versions
+    lines = [f"📋 *8Ball World  -  Recent Updates*\n"]
+    for entry in reversed(entries):
+        lines.append(f"*{entry['version']}* _{entry['date']}_")
+        for c in entry["changes"]:
+            lines.append(f"• {c}")
+        lines.append("")
+    try:
+        await context.bot.send_message(
+            chat_id=user.id, text="\n".join(lines), parse_mode="Markdown")
+        if update.effective_chat.id != user.id:
+            await send_group(update, "📬 Changelog sent to your DM!", delay=10)
+    except Exception:
+        await send_group(update, "\n".join(lines), delay=40)
 
 # ── REINFORCE ─────────────────────────────────────────────────────────────────
 async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -8771,6 +9010,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 wp["wins"] = wp.get("wins",0) + 1
                 for _d, _e, _g in track_objective(wp, "arena_win"):
                     wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
+                asyncio.create_task(check_and_claim_bounty(update.get_bot(), wp, lp, chat_id))
                 exp_gain = 50 + wp["level"] * 5
                 add_exp(wp, exp_gain)
                 save_player(wp); save_player(lp)
@@ -8937,6 +9177,7 @@ async def arena_act_callback(update, context):
             wp["wins"] = wp.get("wins",0) + 1
             for _d, _e, _g in track_objective(wp, "arena_win"):
                 wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
+            asyncio.create_task(check_and_claim_bounty(query.get_bot(), wp, lp, chat_id))
             exp_gain = 50 + wp["level"] * 5
             add_exp(wp, exp_gain)
             save_player(wp); save_player(lp)
@@ -9071,6 +9312,7 @@ async def arena_act_callback(update, context):
             wp["wins"] = wp.get("wins",0) + 1
             for _d, _e, _g in track_objective(wp, "arena_win"):
                 wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
+            asyncio.create_task(check_and_claim_bounty(query.get_bot(), wp, lp, chat_id))
             exp_gain = 50 + wp["level"] * 5
             add_exp(wp, exp_gain)
             save_player(wp); save_player(lp)
@@ -9693,6 +9935,12 @@ GUIDE_PAGES = [
         "/rankwins  -  Wins leaderboard\n"
         "/who @user  -  Quick player lookup\n"
         "/world  -  Current world info\n"
+        "/changelog  -  Recent bot updates\n"
+        "\n"
+        "*Bounties*\n"
+        "/bounty @user [amount]  -  Place a gold bounty on a player (100-5000g)\n"
+        "/bounties  -  View the active bounty board\n"
+        "_Railrunner's Execution Order places a free 500g bounty via skill_\n"
         "\n"
         "*Halls (Guilds)*\n"
         "/guildjoin  -  Browse + join a hall\n"
@@ -11552,9 +11800,34 @@ async def allocate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
+async def _post_init(application):
+    """On startup: DM admin if bot version changed."""
+    version_file = "/data/bot_version.txt"
+    try:
+        with open(version_file) as f:
+            last_version = f.read().strip()
+    except Exception:
+        last_version = None
+    if last_version == CURRENT_VERSION:
+        return
+    try:
+        with open(version_file, "w") as f:
+            f.write(CURRENT_VERSION)
+    except Exception: pass
+    entry = next((e for e in reversed(CHANGELOG) if e["version"] == CURRENT_VERSION), None)
+    if not entry: return
+    changes_text = "\n".join(f"• {c}" for c in entry["changes"])
+    msg = (f"🎱 *Bot Updated to {CURRENT_VERSION}*\n"
+           f"_{entry['date']}_\n\n"
+           f"{changes_text}")
+    try:
+        await application.bot.send_message(
+            chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+    except Exception: pass
+
 def main():
     init_db()
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
     # Universal
     app.add_handler(CommandHandler("rank",         rank_cmd))
@@ -11598,6 +11871,9 @@ def main():
     app.add_handler(CommandHandler("enchant",    enchant_cmd))
     app.add_handler(CommandHandler("reinforce",  reinforce_cmd))
     app.add_handler(CommandHandler("objectives", objectives_cmd))
+    app.add_handler(CommandHandler("bounty",     bounty_cmd))
+    app.add_handler(CommandHandler("bounties",   bounties_cmd))
+    app.add_handler(CommandHandler("changelog",  changelog_cmd))
     app.add_handler(CommandHandler("gear",       gear_cmd))
 
     # Combat & Dungeons
@@ -11666,7 +11942,7 @@ def main():
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
 
     explore_timers.clear()
-    print(f"🎱 {WORLD_NAME} v15 is running...")
+    print(f"🎱 {WORLD_NAME} {CURRENT_VERSION} is running...")
     app.run_polling(poll_interval=0.3)
 
 if __name__ == "__main__":
