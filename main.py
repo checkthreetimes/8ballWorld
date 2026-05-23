@@ -931,6 +931,16 @@ TITLES = {
     "Cue Maker":    {"type":"crafts","threshold":10},
     "Master Craftsman":         {"type":"crafts","threshold":20},
     "Century Break":         {"type":"level","threshold":100},
+    # Reinforce / Ascend
+    "The Forger":            {"type":"reinforce","threshold":1},
+    "Diamond Grinder":       {"type":"reinforce","threshold":50},
+    "The Ascendant":         {"type":"ascensions","threshold":1},
+    "Three Star General":    {"type":"ascensions","threshold":3},
+    # Daily Objectives
+    "Objective Rookie":      {"type":"objectives_done","threshold":5},
+    "Objective Master":      {"type":"objectives_done","threshold":25},
+    # Item Sets
+    "Full Set":              {"type":"special","threshold":0},
 }
 
 TITLE_BONUSES = {
@@ -965,7 +975,62 @@ TITLE_BONUSES = {
     "Cue Maker":            {"STR": 6, "DEX": 8},
     "Master Craftsman":     {"all_stats": 8},
     "Century Break":        {"all_stats": 20, "LUK": 15},
+    "The Forger":           {"STR": 5, "DEX": 5},
+    "Diamond Grinder":      {"STR": 10, "DEX": 10},
+    "The Ascendant":        {"all_stats": 8},
+    "Three Star General":   {"all_stats": 15},
+    "Objective Rookie":     {"LUK": 6, "all_stats": 3},
+    "Objective Master":     {"all_stats": 10, "LUK": 8},
+    "Full Set":             {"all_stats": 5},
 }
+
+# ── ITEM SETS ─────────────────────────────────────────────────────────────────
+ITEM_SETS = {
+    "Breaker's Legacy": {
+        "pieces": ["The Rack Splitter", "Diamond Felt Armor"],
+        "bonus": {"STR": 12, "DEF": 8},
+        "desc": "Warrior 2pc — Legendary power",
+    },
+    "The Diamond Court": {
+        "pieces": ["The Rack Splitter", "Diamond Felt Armor", "The Diamond Aegis"],
+        "bonus": {"STR": 20, "DEF": 15, "hp": 50},
+        "desc": "Warrior 3pc — Full legendary dominance",
+    },
+    "Baizer's Throne": {
+        "pieces": ["The Grand Bridge", "The Nap Robe"],
+        "bonus": {"INT": 14, "WIS": 8},
+        "desc": "Mage 2pc — Legendary mastery",
+    },
+    "Shadow Runner": {
+        "pieces": ["The Ball Return", "The Ghost Coat"],
+        "bonus": {"AGI": 14, "DEX": 10},
+        "desc": "Thief 2pc — Legendary evasion",
+    },
+    "Perfect Break": {
+        "pieces": ["The Perfect Break Rack", "The Rack Scale"],
+        "bonus": {"DEX": 14, "AGI": 8},
+        "desc": "Archer 2pc — Legendary precision",
+    },
+    "Diamond Devotion": {
+        "pieces": ["The Diamond Staff", "The House Saint Surplice"],
+        "bonus": {"WIS": 14, "INT": 8, "hp": 30},
+        "desc": "Priest 2pc — Legendary blessing",
+    },
+}
+
+# ── DAILY QUEST POOL ──────────────────────────────────────────────────────────
+DAILY_QUEST_POOL = [
+    {"id":"arena_win",    "desc":"Win {n} arena match(es)",          "targets":[1,2,3],  "exp":[400,700,1000],"gold":[80,140,200]},
+    {"id":"dungeon_run",  "desc":"Complete {n} dungeon run(s)",       "targets":[1,2,3],  "exp":[600,1000,1500],"gold":[100,180,250]},
+    {"id":"pvp_win",      "desc":"Win {n} PvP fight(s)",              "targets":[1,2,3],  "exp":[300,600,900],"gold":[60,120,180]},
+    {"id":"skill_use",    "desc":"Use your skill {n} time(s)",        "targets":[3,5,8],  "exp":[200,400,600],"gold":[40,80,120]},
+    {"id":"quest_run",    "desc":"Complete /quest {n} time(s)",       "targets":[2,4,6],  "exp":[300,500,800],"gold":[60,100,160]},
+    {"id":"boss_attempt", "desc":"Participate in {n} boss fight(s)",  "targets":[1,2,3],  "exp":[500,800,1200],"gold":[100,160,220]},
+    {"id":"pool_run",     "desc":"Play /pool {n} time(s)",            "targets":[3,6,10], "exp":[200,400,700],"gold":[40,80,140]},
+    {"id":"heal_ally",    "desc":"Heal {n} ally(s)",                  "targets":[1,2,4],  "exp":[300,600,900],"gold":[60,120,180]},
+    {"id":"solo_win",     "desc":"Win {n} solo raid(s)",              "targets":[1,2,3],  "exp":[500,900,1400],"gold":[100,180,260]},
+    {"id":"raid_hit",     "desc":"Land {n} raid hit(s)",              "targets":[5,10,15],"exp":[300,600,900],"gold":[60,120,180]},
+]
 
 # ── GEAR SYSTEM ───────────────────────────────────────────────────────────────
 WEAPONS = {
@@ -1821,11 +1886,81 @@ def set_enhancement(p, item_name, level):
 def get_enhance_bonus(p, item_name):
     return get_enhancement(p, item_name) * 2
 
+# ── REINFORCE HELPERS ─────────────────────────────────────────────────────────
+def get_reinforce_data(p):
+    return json.loads(p.get("item_reinforce_data") or "{}")
+
+def set_reinforce_data(p, data):
+    p["item_reinforce_data"] = json.dumps(data)
+
+def get_item_reinforce(p, item_name):
+    if not item_name: return {"r": 0, "s": 0}
+    return get_reinforce_data(p).get(item_name, {"r": 0, "s": 0})
+
+def star_str(s):
+    return ("★" * s + "☆" * (3 - s)) if s < 3 else "★★★"
+
+def reinforce_atk_bonus(p, item_name):
+    if not item_name: return 0
+    d = get_item_reinforce(p, item_name)
+    return d["r"] + d["s"] * 5
+
+# ── ITEM SET HELPERS ───────────────────────────────────────────────────────────
+def get_active_set_bonuses(p):
+    equipped = {p.get("equipped_weapon"), p.get("equipped_armor"),
+                p.get("equipped_shield"), p.get("equipped_accessory")}
+    equipped.discard(None)
+    bonuses = {}; active_sets = []
+    for set_name, data in ITEM_SETS.items():
+        if set(data["pieces"]).issubset(equipped):
+            active_sets.append(set_name)
+            for stat, val in data["bonus"].items():
+                bonuses[stat] = bonuses.get(stat, 0) + val
+    return bonuses, active_sets
+
+# ── DAILY OBJECTIVE HELPERS ────────────────────────────────────────────────────
+def refresh_daily_objectives(p):
+    today = datetime.now().strftime("%Y-%m-%d")
+    if p.get("daily_obj_date") == today:
+        return
+    selected = random.sample(DAILY_QUEST_POOL, min(3, len(DAILY_QUEST_POOL)))
+    objs = []
+    for q in selected:
+        tier = random.randint(0, 2)
+        target = q["targets"][tier]
+        objs.append({
+            "id":          q["id"],
+            "desc":        q["desc"].format(n=target),
+            "progress":    0,
+            "target":      target,
+            "reward_exp":  q["exp"][tier],
+            "reward_gold": q["gold"][tier],
+            "done":        False,
+        })
+    p["daily_objectives"] = json.dumps(objs)
+    p["daily_obj_date"]   = today
+
+def track_objective(p, obj_id, amount=1):
+    """Increment objective progress. Returns list of (desc, exp, gold) for newly completed ones."""
+    refresh_daily_objectives(p)
+    objs = json.loads(p.get("daily_objectives") or "[]")
+    completed = []
+    for obj in objs:
+        if obj["id"] == obj_id and not obj.get("done"):
+            obj["progress"] = min(obj["progress"] + amount, obj["target"])
+            if obj["progress"] >= obj["target"]:
+                obj["done"] = True
+                completed.append((obj["desc"], obj["reward_exp"], obj["reward_gold"]))
+    p["daily_objectives"] = json.dumps(objs)
+    if completed:
+        p["total_obj_completed"] = safe_int(p.get("total_obj_completed")) + len(completed)
+    return completed
+
 def get_weapon_atk(p):
     w = get_equipped_weapon(p)
     if not w: return 0
     name = p.get("equipped_weapon")
-    base = w["atk"] + get_enhance_bonus(p, name)
+    base = w["atk"] + get_enhance_bonus(p, name) + reinforce_atk_bonus(p, name)
     for enchant in get_enchant(p, name):
         if enchant.get("type") == "flat_dmg":
             base += enchant["val"]
@@ -1836,8 +1971,8 @@ def get_weapon_atk(p):
 def get_armor_def(p):
     a = get_equipped_armor(p); s = get_equipped_shield(p)
     a_name = p.get("equipped_armor"); s_name = p.get("equipped_shield")
-    a_val = (a["def"] + get_enhance_bonus(p, a_name)) if a else 0
-    s_val = (s["def"] + get_enhance_bonus(p, s_name)) if s else 0
+    a_val = (a["def"] + get_enhance_bonus(p, a_name) + reinforce_atk_bonus(p, a_name)) if a else 0
+    s_val = (s["def"] + get_enhance_bonus(p, s_name) + reinforce_atk_bonus(p, s_name)) if s else 0
     for enc in (get_enchant(p, a_name) if a_name else []):
         if enc.get("type") == "armor_def": a_val += enc["val"]
     for enc in (get_enchant(p, s_name) if s_name else []):
@@ -1845,13 +1980,17 @@ def get_armor_def(p):
     return a_val + s_val
 
 def gear_line(p, slot_key):
-    """Return a display string for an equipped item slot with +enh and ✨enchant tags."""
+    """Return a display string for an equipped item slot with reinforce, +enh and ✨enchant tags."""
     name = p.get(slot_key)
     if not name:
         return "None"
     enh   = get_enhancement(p, name)
     encs  = get_enchant(p, name)
+    rd    = get_item_reinforce(p, name)
     parts = [name]
+    if rd["s"] > 0 or rd["r"] > 0:
+        parts.append(star_str(rd["s"]))
+        if rd["r"] > 0: parts.append(f"[{rd['r']}/20]")
     if enh:
         parts.append(f"+{enh}")
     if encs:
@@ -1945,8 +2084,12 @@ def get_stat(p, stat):
     title_bonus_dict = TITLE_BONUSES.get(active_title, {})
     title_bonus = title_bonus_dict.get(stat, 0)
     all_title = title_bonus_dict.get("all_stats", 0)
+    # Item set bonus
+    set_bonuses, _ = get_active_set_bonuses(p)
+    set_stat  = set_bonuses.get(stat, 0)
+    set_all   = set_bonuses.get("all_stats", 0)
     if stat in ("STR","AGI","INT","WIS","DEX","LUK"):
-        return base + acc + all_s + blessed_bonus + title_bonus + all_title
+        return base + acc + all_s + blessed_bonus + title_bonus + all_title + set_stat + set_all
     return base + acc + all_s + blessed_bonus
 
 def calc_max_hp(p):
@@ -1954,7 +2097,9 @@ def calc_max_hp(p):
     acc_hp = get_accessory_bonus(p, "hp")
     enc_hp = get_enchant_bonus(p, "max_hp")
     temp   = safe_int(p.get("temp_hp_bonus")) if _ts_active(p, "temp_hp_until") else 0
-    return base + acc_hp + enc_hp + temp
+    set_bonuses, _ = get_active_set_bonuses(p)
+    set_hp = set_bonuses.get("hp", 0)
+    return base + acc_hp + enc_hp + temp + set_hp
 
 TIER_THRESHOLDS = {1: 5, 2: 10, 3: 30, 4: 60, 5: 100}
  
@@ -2921,6 +3066,21 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    migrations_v17 = [
+        ("players", "item_reinforce_data", "TEXT DEFAULT '{}'"),
+        ("players", "daily_objectives",    "TEXT DEFAULT '[]'"),
+        ("players", "daily_obj_date",      "TEXT DEFAULT NULL"),
+        ("players", "total_reinforces",    "INTEGER DEFAULT 0"),
+        ("players", "total_ascensions",    "INTEGER DEFAULT 0"),
+        ("players", "total_obj_completed", "INTEGER DEFAULT 0"),
+    ]
+    for table, col, definition in migrations_v17:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
     conn.close()
 
     # Clear stale explore locks on startup
@@ -3112,7 +3272,9 @@ def save_player(p):
         "explore_count_today","explore_date","shop_discount_until",
         "guild_id","prestige_count","shadow_level_at_ascension","created_at",
         "DEX","LUK","enhancements","enchants",
-        "last_dungeon","last_pool","last_defeated_by"
+        "last_dungeon","last_pool","last_defeated_by",
+        "item_reinforce_data","daily_objectives","daily_obj_date",
+        "total_reinforces","total_ascensions","total_obj_completed",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -3206,6 +3368,12 @@ def new_player(s):
         "guild_id": None, "prestige_count": 0,
         "shadow_level_at_ascension": slvl,
         "created_at": datetime.now().isoformat(),
+        "item_reinforce_data": "{}",
+        "daily_objectives":    "[]",
+        "daily_obj_date":      None,
+        "total_reinforces":    0,
+        "total_ascensions":    0,
+        "total_obj_completed": 0,
     }
     # Transfer any pending items from shadow profile
     s_pending = sjl(s.get("pending_items"), [])
@@ -3248,13 +3416,16 @@ def check_titles(p):
     for title, data in TITLES.items():
         if title in earned: continue
         t, v = data["type"], data["threshold"]
-        if   t == "level"    and p["level"]                        >= v: pass
-        elif t == "wins"     and p["wins"]                         >= v: pass
-        elif t == "quests"   and p["quests_done"]                  >= v: pass
-        elif t == "heals"    and p["heals_given"]                  >= v: pass
-        elif t == "dodges"   and p["dodges"]                       >= v: pass
-        elif t == "crafts"   and safe_int(p.get("crafts_done"))    >= v: pass
-        elif t == "prestige" and safe_int(p.get("prestige_count")) >= v: pass
+        if   t == "level"           and p["level"]                              >= v: pass
+        elif t == "wins"            and p["wins"]                               >= v: pass
+        elif t == "quests"          and p["quests_done"]                        >= v: pass
+        elif t == "heals"           and p["heals_given"]                        >= v: pass
+        elif t == "dodges"          and p["dodges"]                             >= v: pass
+        elif t == "crafts"          and safe_int(p.get("crafts_done"))          >= v: pass
+        elif t == "prestige"        and safe_int(p.get("prestige_count"))       >= v: pass
+        elif t == "reinforce"       and safe_int(p.get("total_reinforces"))     >= v: pass
+        elif t == "ascensions"      and safe_int(p.get("total_ascensions"))     >= v: pass
+        elif t == "objectives_done" and safe_int(p.get("total_obj_completed"))  >= v: pass
         else: continue
         earned.append(title); new.append(title)
     p["titles"] = json.dumps(earned)
@@ -3796,6 +3967,8 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             d["exp"]  = max(0, d.get("exp",0) - exp_loss)
             d["losses"] = d.get("losses",0) + 1
             a["wins"]   = a.get("wins",0) + 1
+            for _desc, _exp, _gold in track_objective(a, "pvp_win"):
+                a["gold"] = a.get("gold",0) + _gold; add_exp(a, _exp)
             exp_gain = 60 + a["level"] * 8
             lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
             action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}."
@@ -4017,6 +4190,8 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         d["exp"]  = max(0, d.get("exp",0) - exp_loss)
         d["losses"] = d.get("losses",0) + 1
         a["wins"]   = a.get("wins",0) + 1
+        for _desc, _exp, _gold in track_objective(a, "pvp_win"):
+            a["gold"] = a.get("gold",0) + _gold; add_exp(a, _exp)
         asyncio.create_task(_notify_defeat(update.get_bot(), d, a['username'] + " (PvP)"))
 
         # Deadeye Last Shot  -  double timer
@@ -4171,6 +4346,9 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         t["hp"] = min(t["max_hp"], heal_amount)
 
     h["heals_given"] = h.get("heals_given",0) + 1
+    if tu.id != hu.id:
+        for _d, _e, _g in track_objective(h, "heal_ally"):
+            h["gold"] = h.get("gold",0) + _g; add_exp(h, _e)
     new_t = check_titles(h)
     lmsgs, leveled = add_exp(h, 20)
     save_player(h)
@@ -4297,14 +4475,18 @@ def _build_stats_pages(p, viewing_name=None):
         page2_lines += ["", "⚠️ *Active Effects*"] + [f"  {st}" for st in statuses]
 
     # Page 3 - Gear
+    _, active_sets = get_active_set_bonuses(p)
+    set_lines = [f"✨ *{sn}*" for sn in active_sets]
     page3_lines = [
         f"⚔️ {quick_gear(weap_name)}",
         f"🛡️ {quick_gear(armr_name)}",
         f"🔰 {quick_gear(shld_name)}",
         f"💍 {quick_gear(acc_name)}",
         "",
-        f"_/gear for full enhancement + enchant details_",
     ]
+    if set_lines:
+        page3_lines += ["🌟 *Active Set Bonuses:*"] + set_lines + [""]
+    page3_lines.append("_/gear for full enhancement + enchant details_")
 
     # Page 4 - Inventory
     page4_lines = ["🎒 *Inventory*", ""] + inv_lines + ["", "_/inventory for paginated full view_"]
@@ -4578,6 +4760,8 @@ async def raidstrike_cmd(update, context):
 
     raid["enemy_hp"] = max(0, raid["enemy_hp"] - dmg)
     raid["damage_dealt"][user.id] = raid["damage_dealt"].get(user.id, 0) + dmg
+    for _d, _e, _g in track_objective(p, "raid_hit"):
+        p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
 
     # Mark player as acted this round
     if "acted_this_round" not in raid or not isinstance(raid["acted_this_round"], set):
@@ -4795,6 +4979,8 @@ async def solostrike_cmd(update, context):
             active_soloraids.pop(user.id, None)
             exp_r = tier["exp_reward"]; gold_r = tier["gold_reward"]
             p["gold"] = p.get("gold",0) + gold_r; p["quests_done"] = p.get("quests_done",0) + 1
+            for _d, _e, _g in track_objective(p, "solo_win"):
+                p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
             loot = roll_loot_table(tier.get("loot_table",[]), p)
             loot_line = ""
             if loot:
@@ -5452,6 +5638,8 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gold = round(q["gold"] * (1 + gold_bonus_pct))
     p["gold"] = p.get("gold",0) + gold
     p["quests_done"] = p.get("quests_done",0) + 1
+    for _d, _e, _g in track_objective(p, "quest_run"):
+        p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
     gid = p.get("guild_id")
     if gid and str(gid) != "None":
         g = get_guild(gid)
@@ -6232,6 +6420,9 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
 
     boss_dict["hp"] = max(0, boss_dict["hp"] - dmg)
     participant["dmg"] += dmg
+    for _d, _e, _g in track_objective(p, "boss_attempt"):
+        p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
+    save_player(p)
 
     lines = [
         f"⚔️ *{user.first_name}* strikes *{boss_dict['data']['name']}* for *{dmg}!*",
@@ -6753,6 +6944,8 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     exp_reward = tier["exp_reward"]; gold_reward = tier["gold_reward"]
                     p["gold"] = p.get("gold", 0) + gold_reward
                     p["quests_done"] = p.get("quests_done", 0) + 1
+                    for _d, _e, _g in track_objective(p, "solo_win"):
+                        p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
                     loot = roll_loot_table(tier.get("loot_table", []), p)
                     if loot:
                         add_item(p, loot)
@@ -7176,6 +7369,8 @@ async def _execute_skill(update, context, p, sk):
                 f"🎉 *{p['username']}* reached *Level {p['level']}* via {sk['name']}! ⚡",
                 permanent=True))
 
+    for _d, _e, _g in track_objective(p, "skill_use"):
+        p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
     check_titles(p); check_titles(d)
     save_player(p); save_player(d)
     full = "\n".join(lines)
@@ -7530,6 +7725,151 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update,
         f"✨ *Enchanted!*\n\n"
         f"*{item_name}*  -  Enchants ({len(new_encs)}/3):\n{all_str}", delay=20)
+
+# ── REINFORCE ─────────────────────────────────────────────────────────────────
+async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    args = context.args or []
+
+    # /reinforce ascend [item name]
+    if args and args[0].lower() == "ascend":
+        item_name = " ".join(args[1:]).strip()
+        if not item_name:
+            await send_group(update,
+                "Usage: `/reinforce ascend [item name]`\n"
+                "Ascend an item that has reached 20 reinforces.", delay=15)
+            return
+        inv = json.loads(p.get("inventory") or "[]")
+        equipped_slots = [p.get("equipped_weapon"), p.get("equipped_armor"),
+                          p.get("equipped_shield"), p.get("equipped_accessory")]
+        if item_name not in inv and item_name not in equipped_slots:
+            await send_group(update, f"❌ *{item_name}* not found in your inventory or equipped slots.", delay=10)
+            return
+        rd = get_reinforce_data(p)
+        entry = rd.get(item_name, {"r": 0, "s": 0})
+        if entry["r"] < 20:
+            await send_group(update,
+                f"❌ *{item_name}* needs 20 reinforces before it can ascend. "
+                f"Currently at *{entry['r']}/20*.", delay=12)
+            return
+        if entry["s"] >= 3:
+            await send_group(update,
+                f"⭐ *{item_name}* is already at maximum ascension (★★★)! "
+                "It can be reinforced up to 20 more times.", delay=12)
+            return
+        entry["s"] += 1
+        entry["r"]  = 0
+        rd[item_name] = entry
+        set_reinforce_data(p, rd)
+        p["total_ascensions"] = safe_int(p.get("total_ascensions")) + 1
+        new_titles = check_titles(p)
+        save_player(p)
+        title_line = "\n".join(f"🏅 New title: *{t}*!" for t in new_titles)
+        await send_group(update,
+            f"🌟 *ASCENSION!*\n\n"
+            f"*{item_name}* → {star_str(entry['s'])}\n"
+            f"+5 permanent ATK/DEF bonus per star!\n"
+            f"Reinforces reset to 0/20 — keep grinding!\n"
+            + (f"\n{title_line}" if title_line else ""), delay=25)
+        return
+
+    # /reinforce [item name]
+    if not args:
+        await send_group(update,
+            "⚒️ *Reinforce*\n\n"
+            "Sacrifice a duplicate item to raise its base stats.\n"
+            "• Each reinforce: *+1 ATK or DEF*\n"
+            "• Max 20 reinforces, then use `/reinforce ascend`\n"
+            "• Each ★ ascension adds *+5 flat bonus*\n\n"
+            "Usage: `/reinforce [item name]`\n"
+            "Usage: `/reinforce ascend [item name]`", delay=20)
+        return
+
+    item_name = " ".join(args).strip()
+    inv = json.loads(p.get("inventory") or "[]")
+    count = inv.count(item_name)
+
+    # Check if it's a valid reinforceable item
+    if item_name not in WEAPONS and item_name not in ARMORS and item_name not in SHIELDS:
+        await send_group(update,
+            f"❌ *{item_name}* cannot be reinforced. Only weapons, armors, and shields can be reinforced.", delay=12)
+        return
+
+    if count < 2:
+        rd = get_reinforce_data(p)
+        entry = rd.get(item_name, {"r": 0, "s": 0})
+        await send_group(update,
+            f"❌ You need *at least 2 copies* of *{item_name}* to reinforce.\n"
+            f"You have: *{count}* copy(s).\n"
+            f"Current: {star_str(entry['s'])} [{entry['r']}/20 reinforces]", delay=15)
+        return
+
+    rd = get_reinforce_data(p)
+    entry = rd.get(item_name, {"r": 0, "s": 0})
+
+    if entry["r"] >= 20:
+        await send_group(update,
+            f"⭐ *{item_name}* is maxed at 20 reinforces!\n"
+            f"Use `/reinforce ascend {item_name}` to ascend it to {star_str(entry['s']+1)}.", delay=15)
+        return
+
+    # Consume one copy
+    inv.remove(item_name)
+    p["inventory"] = json.dumps(inv)
+    entry["r"] += 1
+    rd[item_name] = entry
+    set_reinforce_data(p, rd)
+    p["total_reinforces"] = safe_int(p.get("total_reinforces")) + 1
+    new_titles = check_titles(p)
+    save_player(p)
+
+    bonus_total = entry["r"] + entry["s"] * 5
+    slot_type = "ATK" if item_name in WEAPONS else "DEF"
+    title_line = "\n".join(f"🏅 New title: *{t}*!" for t in new_titles)
+    ready_to_ascend = entry["r"] == 20
+
+    msg = (
+        f"⚒️ *Reinforced!*\n\n"
+        f"*{item_name}* {star_str(entry['s'])}\n"
+        f"Reinforces: *{entry['r']}/20*\n"
+        f"Total {slot_type} bonus: *+{bonus_total}*\n"
+        f"1 copy consumed from inventory."
+    )
+    if ready_to_ascend:
+        msg += f"\n\n⭐ *Max reinforces reached!* Use `/reinforce ascend {item_name}` to ascend!"
+    if title_line:
+        msg += f"\n\n{title_line}"
+    await send_group(update, msg, delay=20)
+
+# ── OBJECTIVES ────────────────────────────────────────────────────────────────
+async def objectives_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    refresh_daily_objectives(p)
+    save_player(p)
+
+    objs = json.loads(p.get("daily_objectives") or "[]")
+    total_done = safe_int(p.get("total_obj_completed"))
+    lines = ["📋 *Daily Objectives*\n_Reset each day at midnight_\n"]
+    for obj in objs:
+        prog  = obj["progress"]
+        tgt   = obj["target"]
+        done  = obj.get("done", False)
+        bar   = "█" * prog + "░" * (tgt - prog)
+        check = "✅" if done else "🔲"
+        reward = f"+{obj['reward_exp']} EXP, +{obj['reward_gold']}g"
+        lines.append(
+            f"{check} *{obj['desc']}*\n"
+            f"   Progress: {bar} ({prog}/{tgt})\n"
+            f"   Reward: _{reward}_"
+        )
+    lines.append(f"\n📊 Total objectives completed: *{total_done}*")
+    await send_group(update, "\n\n".join(lines), delay=40)
 
 # ── DUEL ──────────────────────────────────────────────────────────────────────
 def calc_combat_power(p):
@@ -8429,6 +8769,8 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if wager > 0:
                     wp["gold"] = wp.get("gold",0) + wager * 2
                 wp["wins"] = wp.get("wins",0) + 1
+                for _d, _e, _g in track_objective(wp, "arena_win"):
+                    wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
                 exp_gain = 50 + wp["level"] * 5
                 add_exp(wp, exp_gain)
                 save_player(wp); save_player(lp)
@@ -8593,6 +8935,8 @@ async def arena_act_callback(update, context):
             if wager > 0:
                 wp["gold"] = wp.get("gold",0) + wager * 2
             wp["wins"] = wp.get("wins",0) + 1
+            for _d, _e, _g in track_objective(wp, "arena_win"):
+                wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
             exp_gain = 50 + wp["level"] * 5
             add_exp(wp, exp_gain)
             save_player(wp); save_player(lp)
@@ -8725,6 +9069,8 @@ async def arena_act_callback(update, context):
             if wager > 0:
                 wp["gold"] = wp.get("gold",0) + wager * 2
             wp["wins"] = wp.get("wins",0) + 1
+            for _d, _e, _g in track_objective(wp, "arena_win"):
+                wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
             exp_gain = 50 + wp["level"] * 5
             add_exp(wp, exp_gain)
             save_player(wp); save_player(lp)
@@ -9262,9 +9608,22 @@ GUIDE_PAGES = [
         "\n"
         "*Gear*\n"
         "You have four slots: Weapon, Armor, Shield, Accessory. Gear drops from /pool, quests, dungeons, raids, and bosses. Items show class tags like [Warrior] or [Mage]  -  any class can equip anything, but matching gear deals bonus damage.\n"
-        "/equip [item]  -  Equip from your inventory (shows stat comparison)\n"
+        "/equip [item]  -  Equip from your inventory\n"
         "/enhance [item]  -  Upgrade with Slate Fragments (+ATK or +DEF, up to +10)\n"
         "/enchant [item]  -  Add enchants using Custom Tip Scrolls (max 3 per item)\n"
+        "\n"
+        "*Reinforce & Ascend*\n"
+        "Sacrifice a duplicate weapon or armor to permanently raise its base stats.\n"
+        "/reinforce [item]  -  Consumes 1 duplicate, adds +1 ATK/DEF (max 20)\n"
+        "/reinforce ascend [item]  -  At 20 reinforces, ascend to next ★ tier (+5 flat bonus, resets to 0)\n"
+        "Max progression: ★★★ with 20 reinforces = +35 total bonus on top of base stats.\n"
+        "\n"
+        "*Item Sets*\n"
+        "Equip matching legendary pieces to unlock set bonuses shown in /stats Gear page.\n"
+        "Example: The Rack Splitter + Diamond Felt Armor = *Breaker's Legacy* (+12 STR, +8 DEF)\n"
+        "\n"
+        "*Daily Objectives*\n"
+        "/objectives  -  View your 3 daily objectives. Complete them for bonus EXP and gold. Resets at midnight.\n"
         "\n"
         "*Economy*\n"
         "/sell [item]  -  Sell for 50% value (warns on rare+ items)\n"
@@ -9273,7 +9632,7 @@ GUIDE_PAGES = [
         "/shop  -  Daily rotating shop\n"
         "\n"
         "*Halls (Guilds)*\n"
-        "Halls are groups that level up together and share EXP bonuses. Use /guildjoin to browse and join one. Halls level up as members donate gold via /guilddonate, unlocking stronger perks for everyone.\n"
+        "Halls level up as members donate gold via /guilddonate, unlocking stronger EXP bonuses.\n"
         "\n"
         "🎱 *Good luck at the table.*"
     ),
@@ -9319,6 +9678,9 @@ GUIDE_PAGES = [
         "/equip [item]  -  Equip from inventory\n"
         "/enhance [item]  -  Upgrade gear with Slate Fragments\n"
         "/enchant [item]  -  Add enchants via Custom Tip Scrolls\n"
+        "/reinforce [item]  -  Sacrifice duplicate to raise stats\n"
+        "/reinforce ascend [item]  -  Ascend to next ★ tier at 20 reinforces\n"
+        "/objectives  -  View daily objectives\n"
         "/sell [item]  -  Sell item for 50% value\n"
         "/sell [rarity]  -  Bulk sell by rarity\n"
         "/use [item]  -  Use a consumable\n"
@@ -9725,6 +10087,8 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p["gold"] = p.get("gold", 0) + gold_gain
         p["last_pool"] = datetime.now().isoformat()
         lmsgs, leveled = add_exp(p, exp_gain)
+        for _d, _e, _g in track_objective(p, "pool_run"):
+            p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
         save_player(p)
         if leveled and p["level"] % 10 == 0:
             asyncio.create_task(announce(context.bot, chat_id,
@@ -10455,6 +10819,8 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 active_soloraids.pop(uid, None)
                 exp_r = tier["exp_reward"]; gold_r = tier["gold_reward"]
                 p["gold"] = p.get("gold", 0) + gold_r; p["quests_done"] = p.get("quests_done", 0) + 1
+                for _d, _e, _g in track_objective(p, "solo_win"):
+                    p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
                 loot = roll_loot_table(tier.get("loot_table", []), p)
                 if loot:
                     add_item(p, loot)
@@ -10533,6 +10899,8 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
             active_soloraids.pop(uid, None)
             exp_r = tier["exp_reward"]; gold_r = tier["gold_reward"]
             p["gold"] = p.get("gold", 0) + gold_r; p["quests_done"] = p.get("quests_done", 0) + 1
+            for _d, _e, _g in track_objective(p, "solo_win"):
+                p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
             loot = roll_loot_table(tier.get("loot_table", []), p)
             loot_line = ""
             if loot:
@@ -11226,9 +11594,11 @@ def main():
     app.add_handler(CommandHandler("trade",     trade_cmd))
     app.add_handler(CommandHandler("accept",    accept_trade_cmd))
     app.add_handler(CommandHandler("decline",   decline_trade_cmd))
-    app.add_handler(CommandHandler("enhance",   enhance_cmd))
-    app.add_handler(CommandHandler("enchant",   enchant_cmd))
-    app.add_handler(CommandHandler("gear",      gear_cmd))
+    app.add_handler(CommandHandler("enhance",    enhance_cmd))
+    app.add_handler(CommandHandler("enchant",    enchant_cmd))
+    app.add_handler(CommandHandler("reinforce",  reinforce_cmd))
+    app.add_handler(CommandHandler("objectives", objectives_cmd))
+    app.add_handler(CommandHandler("gear",       gear_cmd))
 
     # Combat & Dungeons
     app.add_handler(CommandHandler("duel",       duel_cmd))
