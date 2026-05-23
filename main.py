@@ -3702,6 +3702,24 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if t_boss:
         await send_group(update, f"⚔️ *{d['username']}* is in a boss fight  -  can't be targeted!", delay=9); return
 
+    # Block attack if target has been offline for 30+ minutes
+    target_last_seen = d.get("last_seen")
+    if target_last_seen:
+        try:
+            away_secs = (datetime.now() - datetime.fromisoformat(target_last_seen)).total_seconds()
+            if away_secs > 1800:
+                await send_group(update, f"💤 *{d['username']}* stepped away from the table  -  can't attack offline players.", delay=9)
+                try:
+                    await context.bot.send_message(
+                        chat_id=du.id,
+                        text=f"🎱 *{a['username']}* tried to attack you while you were away!\nHead back to the table before someone else takes their shot.",
+                        parse_mode="Markdown")
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+
     w    = get_weather()
     chat = update.effective_chat.id
     try: await update.message.delete()
