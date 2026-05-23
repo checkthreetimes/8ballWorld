@@ -8832,17 +8832,17 @@ POOL_SHOTS = [
     {"id":"two_way_shot","weight":15,"rarity":"uncommon",
      "text":"Two-way shot. If you make it, great. If you miss, you left them nothing. "
             "You make it.",
-     "exp":130,"gold":42,"loot":[("Slate Fragment",0.18),("Custom Tip Scroll",0.08)]},
+     "exp":130,"gold":42,"loot":[("Slate Fragment",0.18),("The Custom Tip Scroll",0.08)]},
 
     {"id":"jump_shot","weight":14,"rarity":"uncommon",
      "text":"Jump shot over the cluster. Clean contact. The blocker never had a chance.",
-     "exp":140,"gold":45,"loot":[("Slate Fragment",0.20),("Custom Tip Scroll",0.10),
+     "exp":140,"gold":45,"loot":[("Slate Fragment",0.20),("The Custom Tip Scroll",0.10),
                                    ("Worn Tip Wrap",0.06)]},
 
     {"id":"nine_ball_rotation","weight":13,"rarity":"uncommon",
      "text":"Nine ball rotation  -  lowest ball first, every time, "
             "three balls pocketed in sequence. The rack is learning to fear you.",
-     "exp":150,"gold":50,"loot":[("Slate Fragment",0.22),("Custom Tip Scroll",0.12),
+     "exp":150,"gold":50,"loot":[("Slate Fragment",0.22),("The Custom Tip Scroll",0.12),
                                    ("Road Player's Coin",0.05)]},
 
     # ── Additional Rare ──────────────────────────────────────────────────
@@ -8850,20 +8850,20 @@ POOL_SHOTS = [
      "text":"Massé shot  -  cue nearly vertical, extreme spin, "
             "the ball curves around the blocker like it changed its mind. "
             "The felt remembers this shot.",
-     "exp":260,"gold":110,"loot":[("Slate Fragment",0.40),("Custom Tip Scroll",0.22),
+     "exp":260,"gold":110,"loot":[("Slate Fragment",0.40),("The Custom Tip Scroll",0.22),
                                     ("Re-Rack",0.06),("Action Coin",0.05)]},
 
     {"id":"ghost_ball_method","weight":5,"rarity":"rare",
      "text":"Ghost ball method on a thin cut  -  you aim at where the cue ball "
             "needs to be, not where the object ball is. It drops clean.",
-     "exp":290,"gold":125,"loot":[("Slate Fragment",0.45),("Custom Tip Scroll",0.25),
+     "exp":290,"gold":125,"loot":[("Slate Fragment",0.45),("The Custom Tip Scroll",0.25),
                                     ("Re-Rack",0.08),("Ghost Ball Loop",0.04)]},
 
     {"id":"three_cushion_carom","weight":4,"rarity":"rare",
      "text":"Three cushion carom. Three rails before the second object ball. "
             "Technically you weren't even trying to pocket anything. "
             "Somehow something drops.",
-     "exp":320,"gold":135,"loot":[("Slate Fragment",0.50),("Custom Tip Scroll",0.28),
+     "exp":320,"gold":135,"loot":[("Slate Fragment",0.50),("The Custom Tip Scroll",0.28),
                                     ("Re-Rack",0.10),("Diamond Sight Medallion",0.04)]},
 
     # ── Additional Epic ──────────────────────────────────────────────────
@@ -8871,7 +8871,7 @@ POOL_SHOTS = [
      "text":"Golden break. Nine ball drops on the break. "
             "You called it. Nobody believed you. "
             "The table is already empty. The game is already won.",
-     "exp":700,"gold":280,"loot":[("Slate Fragment",0.70),("Custom Tip Scroll",0.45),
+     "exp":700,"gold":280,"loot":[("Slate Fragment",0.70),("The Custom Tip Scroll",0.45),
                                     ("Re-Rack",0.20),("Deathwhisper Amulet",0.06),
                                     ("Dragon Soul Pendant",0.04)]},
 
@@ -8880,7 +8880,7 @@ POOL_SHOTS = [
             "Every ball dropped in the called pocket. "
             "Not one fluke, not one assumption. "
             "Pure declared intention, executed perfectly.",
-     "exp":750,"gold":300,"loot":[("Slate Fragment",0.72),("Custom Tip Scroll",0.48),
+     "exp":750,"gold":300,"loot":[("Slate Fragment",0.72),("The Custom Tip Scroll",0.48),
                                     ("Re-Rack",0.22),("Eye of the Storm",0.05),
                                     ("Aegis Talisman",0.04)]},
 ]
