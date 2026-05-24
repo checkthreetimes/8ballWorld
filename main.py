@@ -2456,58 +2456,66 @@ async def _notify_attack(bot, victim, attacker_name, dmg):
         pass
 
 async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
-    """Check for active bounty on target; award attacker. Railrunner self-collect gets +25% bonus."""
+    """Claim ALL active bounties on target (stacked from multiple players)."""
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; bc = conn.cursor()
     bc.execute("SELECT * FROM bounties WHERE target_id=? AND claimed_by IS NULL AND expires_at > ?",
                (target["user_id"], datetime.now().isoformat()))
-    bounty = bc.fetchone()
-    if not bounty:
+    bounties = bc.fetchall()
+    if not bounties:
         conn.close(); return 0
-    bc.execute("UPDATE bounties SET claimed_by=? WHERE bounty_id=?",
-               (attacker["user_id"], bounty["bounty_id"]))
+
+    RAILRUNNER_CLASSES = {"bounty_hunter", "sharpshooter", "sniper", "deadeye"}
+    is_railrunner = attacker.get("class_id") in RAILRUNNER_CLASSES
+    total_reward = 0
+    bonus_msgs = []
+
+    for bounty in bounties:
+        bc.execute("UPDATE bounties SET claimed_by=? WHERE bounty_id=?",
+                   (attacker["user_id"], bounty["bounty_id"]))
+        reward     = bounty["reward"]
+        self_placed = (bounty["placer_id"] == attacker["user_id"])
+        if self_placed and is_railrunner:
+            payout = reward + round(reward * 0.25)
+            total_reward += payout
+            bonus_msgs.append(f"🎯 Your own contract: *+{payout}g* (+25% self-collect!)")
+        else:
+            total_reward += reward
+            if not self_placed:
+                placer_p = get_player(bounty["placer_id"])
+                if placer_p:
+                    refund = round(reward * 0.25)
+                    placer_p["gold"] = placer_p.get("gold", 0) + refund
+                    save_player(placer_p)
+                    try:
+                        await bot.send_message(
+                            chat_id=placer_p["user_id"],
+                            text=f"💰 Your *{reward}g* bounty on *{target['username']}* was claimed!\n"
+                                 f"You received *{refund}g* back.",
+                            parse_mode="Markdown")
+                    except Exception: pass
+
     conn.commit(); conn.close()
-
-    reward      = bounty["reward"]
-    self_placed = (bounty["placer_id"] == attacker["user_id"])
-    is_railrunner = (attacker.get("class_id") == "bounty_hunter")
-
-    if self_placed and is_railrunner:
-        # Railrunner collects their own contract: full reward + 25% bonus
-        total = reward + round(reward * 0.25)
-        attacker["gold"] = attacker.get("gold",0) + total
-        bonus_msg = f"🎯 *Railrunner bonus!* You collected your own contract: *+{total}g* (+25% self-collect!)"
-    else:
-        attacker["gold"] = attacker.get("gold",0) + reward
-        bonus_msg = None
-        if not self_placed:
-            placer_p = get_player(bounty["placer_id"])
-            if placer_p:
-                placer_p["gold"] = placer_p.get("gold",0) + round(reward * 0.25)
-                save_player(placer_p)
-                try:
-                    await bot.send_message(
-                        chat_id=placer_p["user_id"],
-                        text=f"💰 Your bounty on *{target['username']}* was claimed by *{attacker['username']}*!\n"
-                             f"You received *{round(reward*0.25)}g* back.",
-                        parse_mode="Markdown")
-                except Exception: pass
+    attacker["gold"] = attacker.get("gold", 0) + total_reward
     save_player(attacker)
+
+    bounty_count = len(bounties)
+    stack_note = f" _(×{bounty_count} bounties stacked!)_" if bounty_count > 1 else ""
     try:
         if chat_id:
-            payout = reward + round(reward*0.25) if (self_placed and is_railrunner) else reward
             await bot.send_message(
                 chat_id=chat_id,
                 text=f"💰 *BOUNTY CLAIMED!* *{attacker['username']}* defeated *{target['username']}*!\n"
-                     f"+{payout}g collected! 🎯" + (f"\n{bonus_msg}" if bonus_msg else ""),
+                     f"*+{total_reward}g* collected!{stack_note} 🎯"
+                     + ("\n" + "\n".join(bonus_msgs) if bonus_msgs else ""),
                 parse_mode="Markdown")
     except Exception: pass
     try:
         await bot.send_message(
             chat_id=target["user_id"],
-            text=f"🎯 The *{reward}g bounty* on your head was collected by *{attacker['username']}*!",
+            text=f"🎯 The bounty on your head was collected by *{attacker['username']}*! Total: *{total_reward}g*",
             parse_mode="Markdown")
     except Exception: pass
-    return reward
+    return total_reward
 
 def in_active_raid(user_id, chat_id=None):
     """Returns (raid_dict, kind) where kind is 'solo', 'group', or None."""
@@ -7532,19 +7540,77 @@ async def guildkick_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     g = get_guild(p["guild_id"])
     if not g or g["leader_id"] != user.id:
         await send_group(update, "Only the hall leader can kick members.", delay=9); return
-    target = update.message.reply_to_message
-    if not target:
-        await send_group(update, "Reply to the player you want to kick.", delay=9); return
-    tp = get_player(target.from_user.id)
-    if not tp or tp.get("guild_id") != p.get("guild_id"):
-        await send_group(update, "That player isn't in your hall.", delay=9); return
-    if target.from_user.id == user.id:
-        await send_group(update, "You can't kick yourself! Use /guilddisband to close the hall.", delay=9); return
+
+    # If replying to a message, kick that player directly
+    if update.message.reply_to_message:
+        tp = get_player(update.message.reply_to_message.from_user.id)
+        if not tp or tp.get("guild_id") != p.get("guild_id"):
+            await send_group(update, "That player isn't in your hall.", delay=9); return
+        if update.message.reply_to_message.from_user.id == user.id:
+            await send_group(update, "You can't kick yourself! Use /guilddisband to close the hall.", delay=9); return
+        members = sjl(g["members"], [])
+        if update.message.reply_to_message.from_user.id in members:
+            members.remove(update.message.reply_to_message.from_user.id)
+        g["members"] = json.dumps(members); save_guild(g)
+        tp["guild_id"] = None; save_player(tp)
+        await send_group(update, f"🚫 *{tp['username']}* has been kicked from *{g['name']}*.", delay=9)
+        return
+
+    # No reply — show member picker buttons
     members = sjl(g["members"], [])
-    if target.from_user.id in members: members.remove(target.from_user.id)
+    kickable = [mid for mid in members if mid != user.id]
+    if not kickable:
+        await send_group(update, "No members to kick.", delay=9); return
+
+    buttons = []
+    for mid in kickable:
+        mp = get_player(mid)
+        if mp:
+            buttons.append([InlineKeyboardButton(
+                f"🚫 Kick: {mp['username']} (Lv {mp['level']})",
+                callback_data=f"gkick_{user.id}_{mid}")])
+
+    if not buttons:
+        await send_group(update, "No kickable members found.", delay=9); return
+
+    markup = InlineKeyboardMarkup(buttons)
+    await send_group(update,
+        f"🚫 *{g['name']} — Kick a Member*\n\nSelect who to remove from the hall:",
+        delay=30, reply_markup=markup)
+
+
+async def guildkick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle member kick button."""
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_", 2)
+    try:
+        uid = int(parts[1]); target_uid = int(parts[2])
+    except (IndexError, ValueError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("Only the Hall leader can kick members!", show_alert=True); return
+
+    p = get_player(uid)
+    if not p:
+        await query.edit_message_text("Player not found."); return
+    g = get_guild(p.get("guild_id")) if p.get("guild_id") else None
+    if not g or g.get("leader_id") != uid:
+        await query.edit_message_text("Only the Hall leader can kick members."); return
+
+    tp = get_player(target_uid)
+    if not tp or str(tp.get("guild_id")) != str(g["guild_id"]):
+        await query.edit_message_text("That player is no longer in your hall."); return
+    if target_uid == uid:
+        await query.edit_message_text("You can't kick yourself!"); return
+
+    members = sjl(g["members"], [])
+    if target_uid in members: members.remove(target_uid)
     g["members"] = json.dumps(members); save_guild(g)
     tp["guild_id"] = None; save_player(tp)
-    await send_group(update, f"🚫 *{tp['username']}* has been kicked from *{g['name']}*.", delay=9)
+    await query.edit_message_text(
+        f"🚫 *{tp['username']}* has been kicked from *{g['name']}*.",
+        parse_mode="Markdown")
 
 
 async def guildleave_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7645,15 +7711,10 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     args = context.args or []
 
-    # View current war
+    # View current war or show guild picker
     if not args:
         war = get_active_war(g["guild_id"])
-        if not war:
-            await send_group(update,
-                f"⚔️ *{g['name']}* has no active guild war.\n\n"
-                f"_To declare war: /guildwar [Hall Name]_\n"
-                f"_Leaders only. Kills against war targets count double for objectives._", delay=15)
-        else:
+        if war:
             conn_gw2 = sqlite3.connect(DB_PATH); conn_gw2.row_factory = sqlite3.Row; c2 = conn_gw2.cursor()
             c2.execute("SELECT name FROM guilds WHERE guild_id=?",
                        (war["guild2_id"] if war["guild1_id"]==g["guild_id"] else war["guild1_id"],))
@@ -7667,8 +7728,39 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Our kills: *{our_kills}*  |  Their kills: *{their_kills}*\n"
                 f"Ends in: {exp_str}\n\n"
                 f"_Attack enemy Hall members to score. Each kill: double EXP objective credit._", delay=20)
+            return
+
+        # No active war — show guild picker (leader only)
+        if g.get("leader_id") != user.id:
+            await send_group(update,
+                f"⚔️ *{g['name']}* has no active guild war.\n\n"
+                f"_Only the Hall leader can declare war._", delay=12)
+            return
+
+        conn_gl = sqlite3.connect(DB_PATH); conn_gl.row_factory = sqlite3.Row; c_gl = conn_gl.cursor()
+        c_gl.execute("SELECT guild_id, name, level FROM guilds WHERE guild_id != ? ORDER BY level DESC LIMIT 15",
+                     (g["guild_id"],))
+        all_guilds = [dict(r) for r in c_gl.fetchall()]
+        conn_gl.close()
+
+        if not all_guilds:
+            await send_group(update, "⚔️ No other Halls to declare war on yet!", delay=9); return
+
+        buttons = []
+        for eg in all_guilds:
+            buttons.append([InlineKeyboardButton(
+                f"⚔️ Declare war on: {eg['name']} (Lv {eg['level']})",
+                callback_data=f"gwdeclare_{user.id}_{eg['guild_id']}")])
+
+        markup = InlineKeyboardMarkup(buttons)
+        await send_group(update,
+            f"⚔️ *{g['name']} — Declare Guild War*\n\n"
+            f"Choose a Hall to challenge. War lasts 24 hours.\n"
+            f"_Most kills wins. Each PvP kill counts double for objectives._",
+            delay=60, reply_markup=markup)
         return
 
+    # Args provided — legacy typed path (still works)
     if g.get("leader_id") != user.id:
         await send_group(update, "Only the Hall leader can declare war!", delay=9); return
 
@@ -7678,12 +7770,11 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     enemy_g = c3.fetchone()
     conn_gw3.close()
     if not enemy_g:
-        await send_group(update, f"Hall *{target_name}* not found. Check /guildlist.", delay=12); return
+        await send_group(update, f"Hall *{target_name}* not found. Use /guildwar to pick from a list.", delay=12); return
     enemy_g = dict(enemy_g)
     if enemy_g["guild_id"] == g["guild_id"]:
         await send_group(update, "You can't declare war on yourself!", delay=9); return
 
-    # Check no existing war
     existing = get_active_war(g["guild_id"], enemy_g["guild_id"])
     if existing:
         await send_group(update, f"There's already an active war between {g['name']} and {enemy_g['name']}!", delay=12); return
@@ -7700,6 +7791,55 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Duration: 24 hours\n"
         f"Every kill against the enemy Hall scores a point.\n"
         f"May the best Hall win! 🔥", delay=30)
+
+
+async def guildwar_declare_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle guild war target selection button."""
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_", 2)
+    try:
+        uid = int(parts[1]); enemy_gid = int(parts[2])
+    except (IndexError, ValueError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("Only the Hall leader who opened this can pick!", show_alert=True); return
+
+    p = get_player(uid)
+    if not p:
+        await query.edit_message_text("Player not found."); return
+    g = get_guild(p.get("guild_id")) if p.get("guild_id") else None
+    if not g or g.get("leader_id") != uid:
+        await query.edit_message_text("Only the Hall leader can declare war."); return
+
+    conn_e = sqlite3.connect(DB_PATH); conn_e.row_factory = sqlite3.Row; c_e = conn_e.cursor()
+    c_e.execute("SELECT * FROM guilds WHERE guild_id=?", (enemy_gid,))
+    enemy_row = c_e.fetchone(); conn_e.close()
+    if not enemy_row:
+        await query.edit_message_text("That Hall no longer exists."); return
+    enemy_g = dict(enemy_row)
+
+    if enemy_g["guild_id"] == g["guild_id"]:
+        await query.edit_message_text("You can't declare war on yourself!"); return
+
+    existing = get_active_war(g["guild_id"], enemy_g["guild_id"])
+    if existing:
+        await query.edit_message_text(
+            f"There's already an active war between {g['name']} and {enemy_g['name']}!"); return
+
+    expires = (datetime.now() + timedelta(hours=24)).isoformat()
+    conn_w = sqlite3.connect(DB_PATH); c_w = conn_w.cursor()
+    c_w.execute("""INSERT INTO guild_wars (guild1_id, guild2_id, declared_by, declared_at, expires_at, kills1, kills2, active)
+                   VALUES (?,?,?,?,?,0,0,1)""",
+                (str(g["guild_id"]), str(enemy_g["guild_id"]),
+                 query.from_user.first_name, datetime.now().isoformat(), expires))
+    conn_w.commit(); conn_w.close()
+    await query.edit_message_text(
+        f"⚔️ *WAR DECLARED!*\n\n"
+        f"*{g['name']}* has declared war on *{enemy_g['name']}*!\n"
+        f"Duration: 24 hours — most kills wins!\n"
+        f"May the best Hall win! 🔥",
+        parse_mode="Markdown")
 
 async def gbank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -9013,11 +9153,35 @@ async def trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
+
+    # ── Reply-to flow → show inventory items as buttons ───────────────────────
+    if update.message.reply_to_message and not context.args:
+        tu = update.message.reply_to_message.from_user
+        if tu.id == user.id:
+            await send_group(update, "❌ Can't trade with yourself.", delay=9); return
+        inv = sjl(p.get("inventory"), [])
+        tradeable_pools = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES) | set(CONSUMABLES)
+        trade_items = [(k, inv.count(k)) for k in dict.fromkeys(inv) if k in tradeable_pools]
+        if not trade_items:
+            await send_group(update, "📦 Nothing tradeable in your inventory.", delay=9); return
+        buttons = []
+        for item, count in trade_items[:12]:
+            label = f"📦 {item} {'x'+str(count) if count>1 else ''}"
+            buttons.append([InlineKeyboardButton(label,
+                callback_data=f"trdi_{user.id}_{tu.id}_{item}")])
+        markup = InlineKeyboardMarkup(buttons)
+        await send_group(update,
+            f"📦 *Trade with {tu.first_name}*\n\nSelect an item to offer:",
+            delay=60, reply_markup=markup)
+        return
+
+    # ── Legacy typed path ─────────────────────────────────────────────────────
     if len(context.args) < 3:
         await send_group(update,
-            "Usage: `/trade @username [item name] [price]`\n\nExample: `/trade @bob Iron Rosary 200`",
+            "📦 *Trade*\n\n"
+            "Reply to a player's message with `/trade` to pick items via buttons.\n\n"
+            "Or type: `/trade @username [item name] [price]`",
             delay=15); return
-    # Parse: first arg is @username, last arg is price, middle is item
     target_str = context.args[0].lstrip("@")
     try:
         price = int(context.args[-1])
@@ -9030,7 +9194,6 @@ async def trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, f"You don't have *{item_typed}* in your inventory!", delay=9); return
     if price < 0:
         await send_group(update, "Price must be 0 or more.", delay=9); return
-    # Store pending trade
     pending_trades[user.id] = {
         "seller_id": user.id, "seller_name": user.first_name,
         "item": item, "price": price,
@@ -9044,12 +9207,124 @@ async def trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"To: @{target_str}\n\n"
         f"_{target_str} can type /accept to complete the trade._", delay=30)
 
+
+async def trade_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Seller picked an item — show price buttons."""
+    query = update.callback_query
+    parts = query.data.split("_", 3)  # trdi_{seller}_{buyer}_{item}
+    try:
+        seller_uid = int(parts[1]); buyer_uid = int(parts[2]); item = parts[3]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != seller_uid:
+        await query.answer("This isn't your trade!", show_alert=True); return
+    await query.answer()
+    p = get_player(seller_uid)
+    if not p:
+        await query.edit_message_text("Player not found."); return
+    inv = sjl(p.get("inventory"), [])
+    if item not in inv:
+        await query.edit_message_text(f"❌ You no longer have *{item}*.", parse_mode="Markdown"); return
+
+    prices = [0, 100, 500, 1000, 2500, 5000]
+    buttons = []
+    row = []
+    for pr in prices:
+        label = "🎁 Free" if pr == 0 else f"💰 {pr:,}g"
+        row.append(InlineKeyboardButton(label,
+            callback_data=f"trdp_{seller_uid}_{buyer_uid}_{pr}_{item}"))
+        if len(row) == 3:
+            buttons.append(row); row = []
+    if row: buttons.append(row)
+    buttons.append([InlineKeyboardButton("◀ Back", callback_data=f"trdback_{seller_uid}_{buyer_uid}")])
+    markup = InlineKeyboardMarkup(buttons)
+    await query.edit_message_text(
+        f"📦 *Trade: {item}*\n\nChoose a price to offer to the buyer:",
+        parse_mode="Markdown", reply_markup=markup)
+
+
+async def trade_price_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Seller picked a price — post the trade offer."""
+    query = update.callback_query
+    parts = query.data.split("_", 4)  # trdp_{seller}_{buyer}_{price}_{item}
+    try:
+        seller_uid = int(parts[1]); buyer_uid = int(parts[2])
+        price = int(parts[3]); item = parts[4]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != seller_uid:
+        await query.answer("This isn't your trade!", show_alert=True); return
+    await query.answer()
+    p = get_player(seller_uid)
+    if not p:
+        await query.edit_message_text("Player not found."); return
+    inv = sjl(p.get("inventory"), [])
+    if item not in inv:
+        await query.edit_message_text(f"❌ You no longer have *{item}*.", parse_mode="Markdown"); return
+
+    # Look up buyer's username for the target check
+    buyer_shadow = get_shadow(buyer_uid)
+    buyer_player = get_player(buyer_uid)
+    buyer_name   = (buyer_player or buyer_shadow or {}).get("username", str(buyer_uid))
+
+    pending_trades[seller_uid] = {
+        "seller_id": seller_uid, "seller_name": p.get("username", "Seller"),
+        "item": item, "price": price,
+        "target_id": buyer_uid,
+        "target_username": buyer_name.lower(),
+        "created_at": datetime.now().isoformat(),
+        "expires": (datetime.now() + timedelta(minutes=30)).isoformat(),
+    }
+    price_str = "FREE" if price == 0 else f"{price:,}g"
+    await query.edit_message_text(
+        f"📦 *Trade Offer Posted!*\n\n"
+        f"Item: *{item}*\nPrice: *{price_str}*\nFor: {buyer_name}\n\n"
+        f"_{buyer_name} can type /accept to complete the trade. Expires in 30 min._",
+        parse_mode="Markdown")
+    try:
+        await context.bot.send_message(
+            chat_id=buyer_uid,
+            text=f"📦 *{p.get('username','Someone')}* wants to trade!\n"
+                 f"Item: *{item}* — Price: *{price_str}*\n"
+                 f"Type /accept to claim it (30 min).",
+            parse_mode="Markdown")
+    except Exception: pass
+
+
+async def trade_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Go back to item selection."""
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try:
+        seller_uid = int(parts[1]); buyer_uid = int(parts[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != seller_uid:
+        await query.answer("This isn't your trade!", show_alert=True); return
+    await query.answer()
+    p = get_player(seller_uid)
+    if not p:
+        await query.edit_message_text("Player not found."); return
+    inv = sjl(p.get("inventory"), [])
+    tradeable_pools = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES) | set(CONSUMABLES)
+    trade_items = [(k, inv.count(k)) for k in dict.fromkeys(inv) if k in tradeable_pools]
+    buttons = []
+    for item, count in trade_items[:12]:
+        label = f"📦 {item} {'x'+str(count) if count>1 else ''}"
+        buttons.append([InlineKeyboardButton(label,
+            callback_data=f"trdi_{seller_uid}_{buyer_uid}_{item}")])
+    markup = InlineKeyboardMarkup(buttons)
+    await query.edit_message_text(
+        "📦 Select an item to offer:",
+        parse_mode="Markdown", reply_markup=markup)
+
 async def accept_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     # Find a trade targeted at this user
     trade = None; seller_id = None
     for sid, t in pending_trades.items():
-        if t["target_username"] == user.first_name.lower() or \
+        if t.get("target_id") == user.id or \
+           t["target_username"] == user.first_name.lower() or \
            t["target_username"] == str(user.username or "").lower():
             trade = t; seller_id = sid; break
     if not trade:
@@ -9511,111 +9786,139 @@ async def skill_tree_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await _send_skill_tree(query, uid, page, edit=True)
 
 # ── BOUNTY ────────────────────────────────────────────────────────────────────
+_RAILRUNNER_CLASSES = {"bounty_hunter", "sharpshooter", "sniper", "deadeye"}
+
+def _bounty_class_perks(p):
+    """Return (is_railrunner, is_thief, no_fee, amounts, max_contracts)."""
+    cid  = p.get("class_id", "")
+    line = CLASS_TREE.get(cid, {}).get("line", "")
+    is_railrunner = cid in _RAILRUNNER_CLASSES
+    is_thief      = line == "thief"
+    no_fee        = is_railrunner or is_thief
+    if is_railrunner:
+        amounts       = [750, 2500, 5000, 10000]
+        max_contracts = 3
+    else:
+        amounts       = [100, 500, 1000, 5000]
+        max_contracts = 99  # unlimited — stacking allowed
+    return is_railrunner, is_thief, no_fee, amounts, max_contracts
+
 async def bounty_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
 
-    if not context.args:
+    is_railrunner, is_thief, no_fee, amounts, _ = _bounty_class_perks(p)
+
+    # ── Reply-to flow → show amount buttons ─────────────────────────────────
+    if update.message.reply_to_message:
+        tu = update.message.reply_to_message.from_user
+        if tu.id == user.id:
+            await send_group(update, "❌ Can't place a bounty on yourself.", delay=9); return
+        target = get_player(tu.id)
+        if not target:
+            await send_group(update, "❌ That player hasn't ascended yet.", delay=9); return
+
+        fee_note = " *(FREE — no gold cost)*" if no_fee else f"\n💰 Your gold: *{p.get('gold',0):,}g*"
+        rl_note  = "\n🎯 *Railrunner:* premium amounts + no fee!" if is_railrunner else (
+                   "\n🗡️ *Thief perk:* bounties cost you nothing!" if is_thief else "")
+
+        buttons = []
+        row = []
+        for amt in amounts:
+            can_afford = no_fee or p.get("gold", 0) >= amt
+            label = f"{'✅' if can_afford else '🔴'} {amt:,}g"
+            row.append(InlineKeyboardButton(label,
+                callback_data=f"bountyamt_{user.id}_{tu.id}_{amt}"))
+            if len(row) == 2:
+                buttons.append(row); row = []
+        if row: buttons.append(row)
+        markup = InlineKeyboardMarkup(buttons)
         await send_group(update,
-            "💰 *Bounty Board*\n\n"
-            "Place a gold bounty on any player. Whoever defeats them first collects.\n"
-            "You receive 25% back when it's claimed.\n\n"
-            "Usage: `/bounty @username [amount]`\n"
-            "Minimum: 100g | Maximum: 5000g | Expires: 24 hours\n\n"
-            "View active bounties: `/bounties`", delay=20)
+            f"🎯 *Place Bounty on {target['username']}*{rl_note}\n{fee_note}\n\n"
+            f"_First player to defeat them collects the full reward. Bounties from multiple players stack!_",
+            delay=45, reply_markup=markup)
         return
 
-    # Find target from reply or @mention
-    target_user = None
-    if update.message.reply_to_message:
-        target_user = update.message.reply_to_message.from_user
-        amount_args = context.args
-    else:
-        # First arg should be @mention or username, rest is amount
-        raw = context.args[0].lstrip("@")
-        amount_args = context.args[1:]
-        # Try to find by username in DB
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT user_id, username FROM players WHERE username=? COLLATE NOCASE", (raw,)).fetchone()
-        conn.close()
-        if row:
-            class _FakeUser:
-                id = row["user_id"]
-                first_name = row["username"]
-            target_user = _FakeUser()
-        else:
-            await send_group(update, f"❌ Player *{raw}* not found.", delay=10); return
+    # ── No reply → show help ─────────────────────────────────────────────────
+    rl_tip = "\n🎯 *Railrunner advantage:* premium amounts (up to 10,000g), no fee, 3 contracts." if is_railrunner else (
+             "\n🗡️ *Thief perk:* no bounty fee — place bounties for free!" if is_thief else "")
+    await send_group(update,
+        f"💰 *Bounty Board*\n\n"
+        f"Reply to a player's message with `/bounty` to place a bounty.\n"
+        f"Whoever defeats them claims the gold. Bounties from multiple players *stack*!\n"
+        f"You get 25% back when yours is claimed.{rl_tip}\n\n"
+        f"View active bounties: `/bounties`", delay=20)
 
-    if target_user.id == user.id:
-        await send_group(update, "❌ You can't place a bounty on yourself.", delay=9); return
 
-    target = get_player(target_user.id)
-    if not target:
-        await send_group(update, "❌ That player hasn't ascended yet.", delay=9); return
-
-    if not amount_args:
-        await send_group(update, "❌ Specify an amount. Example: `/bounty @username 500`", delay=10); return
-
+async def bounty_amount_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle bounty amount button selection."""
+    query = update.callback_query
+    parts = query.data.split("_", 3)  # bountyamt_{placer}_{target}_{amount}
     try:
-        amount = int(amount_args[0])
-    except ValueError:
-        await send_group(update, "❌ Amount must be a number.", delay=9); return
+        placer_uid = int(parts[1]); target_uid = int(parts[2]); amount = int(parts[3])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != placer_uid:
+        await query.answer("This isn't your bounty!", show_alert=True); return
 
-    if amount < 100:
-        await send_group(update, "❌ Minimum bounty is *100g*.", delay=9); return
-    if amount > 5000:
-        await send_group(update, "❌ Maximum bounty is *5000g*.", delay=9); return
-    if p.get("gold",0) < amount:
-        await send_group(update, f"❌ Not enough gold. You have *{p.get('gold',0)}g*.", delay=9); return
+    await query.answer()
+    p = get_player(placer_uid); target = get_player(target_uid)
+    if not p or not target:
+        await query.edit_message_text("Player not found."); return
 
-    # Railrunners can hold 2 active contracts, everyone else 1 per target
-    is_railrunner = (p.get("class_id") == "bounty_hunter")
+    _, _, no_fee, _, max_contracts = _bounty_class_perks(p)
+
+    if not no_fee and p.get("gold", 0) < amount:
+        await query.edit_message_text(
+            f"❌ Not enough gold! Need *{amount}g*, have *{p.get('gold',0)}g*.",
+            parse_mode="Markdown"); return
+
     bconn = sqlite3.connect(DB_PATH); bconn.row_factory = sqlite3.Row; bc = bconn.cursor()
+    now_iso = datetime.now().isoformat()
+
+    # One bounty per placer per target
     existing = bc.execute(
-        "SELECT bounty_id, reward FROM bounties WHERE target_id=? AND placer_id=? AND claimed_by IS NULL AND expires_at > ?",
-        (target["user_id"], p["user_id"], datetime.now().isoformat())).fetchone()
+        "SELECT reward FROM bounties WHERE target_id=? AND placer_id=? AND claimed_by IS NULL AND expires_at > ?",
+        (target_uid, placer_uid, now_iso)).fetchone()
     if existing:
         bconn.close()
-        await send_group(update,
-            f"❌ You already have an active *{existing['reward']}g* bounty on *{target['username']}*.", delay=10)
-        return
+        await query.edit_message_text(
+            f"❌ You already have a *{existing['reward']}g* bounty on *{target['username']}*.",
+            parse_mode="Markdown"); return
+
+    # Railrunner contract cap
     total_active = bc.execute(
         "SELECT COUNT(*) FROM bounties WHERE placer_id=? AND claimed_by IS NULL AND expires_at > ?",
-        (p["user_id"], datetime.now().isoformat())).fetchone()[0]
-    if not is_railrunner:
-        if total_active >= 1:
-            bconn.close()
-            await send_group(update,
-                "❌ You can only have *1 active bounty* at a time.\n"
-                "_Railrunners (Archer Path B) can hold 2 contracts._", delay=12)
-            return
-    else:
-        if total_active >= 2:
-            bconn.close()
-            await send_group(update, "⚠️ Railrunners can hold max 2 active contracts.", delay=9)
-            return
+        (placer_uid, now_iso)).fetchone()[0]
+    if total_active >= max_contracts:
+        bconn.close()
+        await query.edit_message_text(
+            f"⚠️ You've hit your active contract limit ({max_contracts}).",
+            parse_mode="Markdown"); return
 
     expires = (datetime.now() + timedelta(hours=24)).isoformat()
     bc.execute("INSERT INTO bounties (placer_id,target_id,reward,expires_at) VALUES (?,?,?,?)",
-               (p["user_id"], target["user_id"], amount, expires))
+               (placer_uid, target_uid, amount, expires))
     bconn.commit(); bconn.close()
 
-    p["gold"] = p.get("gold",0) - amount
-    save_player(p)
+    if not no_fee:
+        p["gold"] = p.get("gold", 0) - amount
+        save_player(p)
+        cost_line = f"_(−{amount}g from your wallet)_"
+    else:
+        cost_line = "_(No cost — class perk!)_"
 
-    await send_group(update,
+    await query.edit_message_text(
         f"🎯 *BOUNTY PLACED!*\n\n"
         f"Target: *{target['username']}*\n"
-        f"Reward: *{amount}g*\n"
-        f"Placed by: *{p['username']}*\n"
-        f"Expires: 24 hours\n\n"
-        f"_First to defeat them claims the gold!_", delay=30)
-
+        f"Reward: *{amount:,}g* — expires in 24 hours\n{cost_line}\n\n"
+        f"_First to defeat them collects it. Others can stack more bounties on top!_",
+        parse_mode="Markdown")
     try:
         await context.bot.send_message(
-            chat_id=target["user_id"],
-            text=f"🎯 *{p['username']}* placed a *{amount}g bounty* on your head!\n"
+            chat_id=target_uid,
+            text=f"🎯 *{p['username']}* placed a *{amount:,}g bounty* on your head!\n"
                  "Watch your back — anyone who defeats you claims it.",
             parse_mode="Markdown")
     except Exception: pass
@@ -10027,15 +10330,38 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         await send_group(update,
             "Reply to a player's message to challenge them!\n"
-            "`/duel`  -  free duel\n"
-            "`/duel 100`  -  duel with 100g wager", delay=9); return
+            "`/duel`  -  pick wager via buttons\n"
+            "`/duel 500`  -  duel with 500g wager", delay=9); return
     du = update.message.reply_to_message.from_user
     if du.id == user.id:
         await send_group(update, "Can't duel yourself!", delay=9); return
     tp = get_player(du.id)
     if not tp:
         await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
-    if is_defeated(tp): await send_group(update, f"{tp['username']} is currently defeated — can't duel them.", delay=9); return
+    if is_defeated(tp):
+        await send_group(update, f"{tp['username']} is currently defeated — can't duel them.", delay=9); return
+    # Show wager buttons when no amount typed
+    if not context.args:
+        cp_self = calc_combat_power(p)
+        cp_them = calc_combat_power(tp)
+        wagers = [0, 100, 500, 1000, 5000]
+        buttons = []
+        row = []
+        for w in wagers:
+            can_afford = p.get("gold", 0) >= w
+            label = "⚔️ Free Duel" if w == 0 else f"{'✅' if can_afford else '🔴'} {w:,}g wager"
+            row.append(InlineKeyboardButton(label,
+                callback_data=f"duelwager_{user.id}_{du.id}_{w}"))
+            if len(row) == 2 or w == 0:
+                buttons.append(row); row = []
+        if row: buttons.append(row)
+        markup = InlineKeyboardMarkup(buttons)
+        await send_group(update,
+            f"⚔️ *Duel Challenge — {p['username']} vs {tp['username']}*\n\n"
+            f"Your CP: *{cp_self:,}*  |  Their CP: *{cp_them:,}*\n\n"
+            f"Pick a wager amount:",
+            delay=60, reply_markup=markup)
+        return
     wager = 0
     if context.args:
         try: wager = max(0, int(context.args[0]))
@@ -10059,6 +10385,48 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔢 {user.first_name}'s CP: *{cp_self:,}*\n\n"
         f"_{du.first_name}: tap Accept/Decline or type `/duel accept`. Expires in 5 minutes._",
         permanent=False, delay=60, reply_markup=duel_markup)
+
+async def duel_wager_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle duel wager selection button."""
+    query = update.callback_query
+    parts = query.data.split("_", 3)  # duelwager_{challenger}_{target}_{wager}
+    try:
+        challenger_uid = int(parts[1]); target_uid = int(parts[2]); wager = int(parts[3])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != challenger_uid:
+        await query.answer("This isn't your duel!", show_alert=True); return
+    await query.answer()
+
+    p  = get_player(challenger_uid)
+    tp = get_player(target_uid)
+    if not p or not tp:
+        await query.edit_message_text("Player not found."); return
+    if is_defeated(tp):
+        await query.edit_message_text(f"{tp['username']} is now defeated — can't duel them."); return
+    if wager > 0 and p.get("gold", 0) < wager:
+        await query.edit_message_text(
+            f"❌ Not enough gold! Need *{wager:,}g*, have *{p.get('gold',0):,}g*.",
+            parse_mode="Markdown"); return
+
+    chat_id = query.message.chat_id
+    pending_duels[challenger_uid] = {
+        "target_id": target_uid, "wager": wager,
+        "chat_id": chat_id,
+        "expires": (datetime.now() + timedelta(minutes=5)).isoformat()
+    }
+    cp_self = calc_combat_power(p)
+    wager_str = f" for *{wager:,}g*" if wager > 0 else " (no wager)"
+    duel_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Accept", callback_data=f"duel_acc_{challenger_uid}_{target_uid}"),
+        InlineKeyboardButton("❌ Decline", callback_data=f"duel_dec_{challenger_uid}_{target_uid}"),
+    ]])
+    await query.edit_message_text(
+        f"⚔️ *{p['username']}* challenges *{tp['username']}* to a duel{wager_str}!\n\n"
+        f"🔢 {p['username']}'s CP: *{cp_self:,}*\n\n"
+        f"_{tp['username']}: tap Accept/Decline or type `/duel accept`. Expires in 5 minutes._",
+        parse_mode="Markdown", reply_markup=duel_markup)
+
 
 async def duel_response_callback(update, context):
     """Handle duel Accept/Decline button presses."""
@@ -11689,8 +12057,8 @@ GUIDE_PAGES = [
         "Kill 5+ players in a single day and you become 🔴 WANTED — visible on /who and /war. High-risk, high-reward.\n"
         "\n"
         "*Duels and Arena*\n"
-        "/duel @user [wager]  -  Instant fight decided by Combat Power\n"
-        "/arena @user [wager]  -  Turn-based fight using skills\n"
+        "/duel  -  Reply to a player to challenge them. Pick a wager via buttons (0 = free). Decided by Combat Power.\n"
+        "/arena  -  Reply to a player for turn-based skill combat.\n"
         "\n"
         "*Boss Fights*\n"
         "Use /boss to start a group boss encounter (button menu). /attack and /skill redirect to the boss automatically while it's active.\n"
@@ -11738,7 +12106,7 @@ GUIDE_PAGES = [
         "/forge — View recipes and craft items from Slate Fragments and Dragon Scales.\n"
         "\n"
         "*Trading*\n"
-        "/trade @user [item] [price]  -  Offer an item to a player. They type /accept to complete it.\n"
+        "/trade  -  Reply to a player to open the trade menu. Pick an item from buttons, then pick a price (or gift for free). They type /accept to complete it.\n"
         "\n"
         "*Economy*\n"
         "/inventory — Browse your bag by category. Tap 💰 Sell buttons to sell items directly.\n"
@@ -11776,8 +12144,8 @@ GUIDE_PAGES = [
         "*Combat*\n"
         "/attack  -  Attack reply target or active boss\n"
         "/skill  -  Use your class skill in battle\n"
-        "/duel @user [wager]  -  Quick PvP duel\n"
-        "/arena @user [wager]  -  Turn-based fight\n"
+        "/duel  -  Reply to challenge. Wager buttons pop up.\n"
+        "/arena  -  Reply for turn-based skill combat\n"
         "/heal  -  Heal yourself (or reply to heal ally). Chalkers heal free + can self-revive.\n"
         "/boss  -  Start a group boss (button menu)\n"
         "/raid  -  Create or join a raid party\n"
@@ -11811,9 +12179,9 @@ GUIDE_PAGES = [
         "/changelog  -  Recent bot updates\n"
         "\n"
         "*Bounties*\n"
-        "/bounty @user [amount]  -  Place a gold bounty on a player (100-5000g)\n"
+        "/bounty  -  Reply to a player. Amount buttons pop up (100–5000g). Multiple players can stack bounties!\n"
         "/bounties  -  View the active bounty board\n"
-        "_Railrunner's Execution Order places a free 500g bounty via skill_\n"
+        "_Thief classes: no fee. Railrunner: premium amounts (up to 10,000g), no fee, 3 contracts._\n"
         "\n"
         "*Halls (Guilds)*\n"
         "/guildjoin  -  Browse + join a hall\n"
@@ -13947,7 +14315,14 @@ def main():
     app.add_handler(CallbackQueryHandler(inventory_callback,    pattern="^inv_s_"))
     app.add_handler(CallbackQueryHandler(guide_callback,        pattern="^guide_p_"))
     app.add_handler(CallbackQueryHandler(stats_callback,        pattern="^stats_p_"))
-    app.add_handler(CallbackQueryHandler(guildjoin_callback,    pattern="^guildjoin_"))
+    app.add_handler(CallbackQueryHandler(guildjoin_callback,       pattern="^guildjoin_"))
+    app.add_handler(CallbackQueryHandler(guildwar_declare_callback, pattern="^gwdeclare_"))
+    app.add_handler(CallbackQueryHandler(guildkick_callback,        pattern="^gkick_"))
+    app.add_handler(CallbackQueryHandler(bounty_amount_callback,    pattern="^bountyamt_"))
+    app.add_handler(CallbackQueryHandler(trade_item_callback,       pattern="^trdi_"))
+    app.add_handler(CallbackQueryHandler(trade_price_callback,      pattern="^trdp_"))
+    app.add_handler(CallbackQueryHandler(trade_back_callback,       pattern="^trdback_"))
+    app.add_handler(CallbackQueryHandler(duel_wager_callback,       pattern="^duelwager_"))
     app.add_handler(CallbackQueryHandler(soloraid_act_callback, pattern="^sr_act_"))
     app.add_handler(CallbackQueryHandler(boss_act_callback,     pattern="^boss_act_"))
     app.add_handler(CallbackQueryHandler(prestige_callback,     pattern="^prestige_"))
