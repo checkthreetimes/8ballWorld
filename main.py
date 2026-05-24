@@ -9126,9 +9126,8 @@ async def who_cmd(update, context):
             kills_today = 0; ks = 0
         wanted_tag  = " 🔴 WANTED" if kills_today >= 5 else ""
         streak_tag  = f" 🔥×{ks}" if ks >= 3 else ""
-        inv_tag     = " 🛡️" if is_inv else ""
         bounty_tag  = " 💰" if row["user_id"] in bounty_ids else ""
-        lines.append(f"{hp_icon} *{row['username']}* - Lv {row['level']} {cls}{streak_tag}{wanted_tag}{inv_tag}{bounty_tag}")
+        lines.append(f"{hp_icon} *{row['username']}* - Lv {row['level']} {cls}{streak_tag}{wanted_tag}{bounty_tag}")
 
     await send_group(update, "\n".join(lines), delay=20)
 
