@@ -761,7 +761,7 @@ CLASS_TREE = {
             {"tier":2,"unlock":10,"name":"Marked for Death",
              "passive":"Targets you defeat drop +25% more gold. You earn their unclaimed daily EXP on kill.",
              "active":"Execution Order","type":"bounty",
-             "desc":"Place a bounty on any player. First to defeat them gets 500 gold. You get 250 gold regardless.",
+             "desc":"Place a 2,000g bounty on any player. Marks them (+20% dmg taken 30 min). Placer gets 25% back if someone else claims. You get +25% if you collect it yourself.",
              "passive_key":"marked_for_death"},
             {"tier":2,"unlock":10,"name":"Tracker",
              "passive":"Can see target cooldowns via /stats mention.",
@@ -1858,6 +1858,7 @@ def is_burning(p):  return _ts_active(p, "burn_until")
 def has_ward(p):    return _ts_active(p, "ward_until")
 def is_exposed(p):  return _ts_active(p, "exposed_until")
 def is_branded(p):  return _ts_active(p, "branded_until")
+def is_marked(p):   return _ts_active(p, "marked_until")
 
 def check_cooldown(ts, secs):
     if not ts: return True
@@ -1905,6 +1906,7 @@ def get_active_statuses(p):
     if has_ward(p):       statuses.append("✨ Safety Play (next hit -40%)")
     if is_exposed(p):     statuses.append("🗡️ Open Table (+15% dmg taken)")
     if is_branded(p):     statuses.append("🔥 Chalk Marked (next attack -30%)")
+    if is_marked(p):      statuses.append("🎯 Marked for Death (+20% dmg taken)")
     if is_bleeding(p):        statuses.append(f"🩸 Draw Bleed ({p.get('bleed_damage',10)} dmg/30s)")
     if is_hexed(p):           statuses.append("💀 Hooked (-25% damage)")
     if is_blessed(p):         statuses.append("✨ In Stroke (+10% all stats)")
@@ -2399,7 +2401,11 @@ def calc_defense(defender, dmg):
     # Exposed debuff  -  target takes +15% more damage
     if _ts_active(defender, "exposed_until"):
         final = round(final * 1.15)
- 
+
+    # Marked (Execution Order)  -  target takes +20% more damage
+    if _ts_active(defender, "marked_until"):
+        final = round(final * 1.20)
+
     # Branded  -  attacker's next strike deals 30% less (checked on attacker)
     if _ts_active(defender, "branded_until"):
         final = round(final * 0.70)
@@ -3195,6 +3201,7 @@ def init_db():
         ("players", "ward_until",        "TEXT DEFAULT NULL"),
         ("players", "exposed_until",     "TEXT DEFAULT NULL"),
         ("players", "branded_until",     "TEXT DEFAULT NULL"),
+        ("players", "marked_until",      "TEXT DEFAULT NULL"),
     ]
     for table, col, definition in migrations:
         try:
@@ -7796,50 +7803,56 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def guildwar_declare_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle guild war target selection button."""
     query = update.callback_query
-    await query.answer()
     parts = query.data.split("_", 2)
     try:
         uid = int(parts[1]); enemy_gid = int(parts[2])
     except (IndexError, ValueError):
-        return
+        await query.answer(); return
     if query.from_user.id != uid:
         await query.answer("Only the Hall leader who opened this can pick!", show_alert=True); return
 
-    p = get_player(uid)
-    if not p:
-        await query.edit_message_text("Player not found."); return
-    g = get_guild(p.get("guild_id")) if p.get("guild_id") else None
-    if not g or g.get("leader_id") != uid:
-        await query.edit_message_text("Only the Hall leader can declare war."); return
+    try:
+        p = get_player(uid)
+        if not p:
+            await query.answer("Player not found.", show_alert=True); return
+        g = get_guild(p.get("guild_id")) if p.get("guild_id") else None
+        if not g or g.get("leader_id") != uid:
+            await query.answer("Only the Hall leader can declare war.", show_alert=True); return
 
-    conn_e = sqlite3.connect(DB_PATH); conn_e.row_factory = sqlite3.Row; c_e = conn_e.cursor()
-    c_e.execute("SELECT * FROM guilds WHERE guild_id=?", (enemy_gid,))
-    enemy_row = c_e.fetchone(); conn_e.close()
-    if not enemy_row:
-        await query.edit_message_text("That Hall no longer exists."); return
-    enemy_g = dict(enemy_row)
+        conn_e = sqlite3.connect(DB_PATH); conn_e.row_factory = sqlite3.Row; c_e = conn_e.cursor()
+        c_e.execute("SELECT * FROM guilds WHERE guild_id=?", (enemy_gid,))
+        enemy_row = c_e.fetchone(); conn_e.close()
+        if not enemy_row:
+            await query.answer("That Hall no longer exists.", show_alert=True); return
+        enemy_g = dict(enemy_row)
 
-    if enemy_g["guild_id"] == g["guild_id"]:
-        await query.edit_message_text("You can't declare war on yourself!"); return
+        g_gid   = str(g["guild_id"])
+        e_gid   = str(enemy_g["guild_id"])
+        if g_gid == e_gid:
+            await query.answer("You can't declare war on yourself!", show_alert=True); return
 
-    existing = get_active_war(g["guild_id"], enemy_g["guild_id"])
-    if existing:
+        existing = get_active_war(g_gid, e_gid)
+        if existing:
+            await query.answer(
+                f"There's already an active war between {g['name']} and {enemy_g['name']}!",
+                show_alert=True); return
+
+        expires = (datetime.now() + timedelta(hours=24)).isoformat()
+        conn_w = sqlite3.connect(DB_PATH); c_w = conn_w.cursor()
+        c_w.execute("""INSERT INTO guild_wars (guild1_id, guild2_id, declared_by, declared_at, expires_at, kills1, kills2, active)
+                       VALUES (?,?,?,?,?,0,0,1)""",
+                    (g_gid, e_gid, query.from_user.first_name, datetime.now().isoformat(), expires))
+        conn_w.commit(); conn_w.close()
+        await query.answer()
         await query.edit_message_text(
-            f"There's already an active war between {g['name']} and {enemy_g['name']}!"); return
-
-    expires = (datetime.now() + timedelta(hours=24)).isoformat()
-    conn_w = sqlite3.connect(DB_PATH); c_w = conn_w.cursor()
-    c_w.execute("""INSERT INTO guild_wars (guild1_id, guild2_id, declared_by, declared_at, expires_at, kills1, kills2, active)
-                   VALUES (?,?,?,?,?,0,0,1)""",
-                (str(g["guild_id"]), str(enemy_g["guild_id"]),
-                 query.from_user.first_name, datetime.now().isoformat(), expires))
-    conn_w.commit(); conn_w.close()
-    await query.edit_message_text(
-        f"⚔️ *WAR DECLARED!*\n\n"
-        f"*{g['name']}* has declared war on *{enemy_g['name']}*!\n"
-        f"Duration: 24 hours — most kills wins!\n"
-        f"May the best Hall win! 🔥",
-        parse_mode="Markdown")
+            f"⚔️ *WAR DECLARED!*\n\n"
+            f"*{g['name']}* has declared war on *{enemy_g['name']}*!\n"
+            f"Duration: 24 hours — most kills wins!\n"
+            f"May the best Hall win! 🔥",
+            parse_mode="Markdown")
+    except Exception as e:
+        try: await query.answer("Something went wrong. Try again!", show_alert=True)
+        except Exception: pass
 
 async def gbank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -8759,7 +8772,7 @@ async def _execute_skill(update, context, p, sk):
         set_status(d, "frozen_until", 60)
         lines.append(f"🧊 *Absolute Zero!* {d['username']} frozen for 60 seconds!")
     elif stype == "bounty":
-        # Railrunner: Execution Order — place a FREE 750g bounty, check 2-contract limit
+        # Railrunner: Execution Order — 2000g bounty + Marked debuff (+20% dmg taken 30 min)
         dmg = round(base * 0.6)
         expires = (datetime.now() + timedelta(hours=48)).isoformat()
         placed = False
@@ -8772,17 +8785,19 @@ async def _execute_skill(update, context, p, sk):
                 bc2.execute("DELETE FROM bounties WHERE target_id=? AND placer_id=? AND claimed_by IS NULL",
                             (d["user_id"], p["user_id"]))
                 bc2.execute("INSERT INTO bounties (placer_id,target_id,reward,expires_at) VALUES (?,?,?,?)",
-                            (p["user_id"], d["user_id"], 750, expires))
+                            (p["user_id"], d["user_id"], 2000, expires))
                 bconn.commit(); placed = True
             bconn.close()
         except Exception: pass
         if placed:
-            lines.append(f"🎯 *Execution Order!* A *750g bounty* placed on *{d['username']}*!\n"
+            set_status(d, "marked_until", 1800)  # 30 min +20% dmg taken
+            lines.append(f"🎯 *Execution Order!* A *2,000g bounty* placed on *{d['username']}*!\n"
+                         f"🎯 *Marked for Death!* {d['username']} takes +20% damage for 30 minutes!\n"
                          f"Expires in 48h. First to defeat them collects.")
             asyncio.create_task(context.bot.send_message(
                 chat_id=d["user_id"],
-                text=f"🎯 *{p['username']}* (Railrunner) placed a *750g bounty* on you!\n"
-                     "Watch your back — anyone who defeats you claims it.",
+                text=f"🎯 *{p['username']}* (Railrunner) placed a *2,000g bounty* on you and marked you!\n"
+                     "You take +20% damage for 30 minutes. Watch your back — anyone who defeats you claims it.",
                 parse_mode="Markdown"))
         else:
             lines.append(f"🎯 *Execution Order!* You already have 2 active contracts  -  collect or wait.")
@@ -8897,12 +8912,24 @@ async def who_cmd(update, context):
                  ORDER BY s.last_seen DESC LIMIT 20""",
               (cutoff,))
     rows = c.fetchall()
+
+    now_iso = datetime.now().isoformat()
+    # Batch-fetch which players have active bounties
+    if rows:
+        uid_list = [row["user_id"] for row in rows]
+        placeholders = ",".join("?" * len(uid_list))
+        c.execute(
+            f"SELECT DISTINCT target_id FROM bounties WHERE target_id IN ({placeholders})"
+            f" AND claimed_by IS NULL AND expires_at > ?",
+            uid_list + [now_iso])
+        bounty_ids = {r[0] for r in c.fetchall()}
+    else:
+        bounty_ids = set()
     conn.close()
 
     if not rows:
         await send_group(update, "No players active in the last 24 hours.", delay=9); return
 
-    now_iso = datetime.now().isoformat()
     lines = ["👥 *Active Players (last 24h)*\n"]
     for row in rows:
         cls = CLASS_TREE.get(row["class_id"] or "", {}).get("name", "No Class")
@@ -8930,10 +8957,11 @@ async def who_cmd(update, context):
             ks          = safe_int(row["kill_streak"])
         except (IndexError, KeyError):
             kills_today = 0; ks = 0
-        wanted_tag = " 🔴 WANTED" if kills_today >= 5 else ""
-        streak_tag = f" 🔥×{ks}" if ks >= 3 else ""
-        inv_tag    = " 🛡️" if is_inv else ""
-        lines.append(f"{hp_icon} *{row['username']}* - Lv {row['level']} {cls}{streak_tag}{wanted_tag}{inv_tag}")
+        wanted_tag  = " 🔴 WANTED" if kills_today >= 5 else ""
+        streak_tag  = f" 🔥×{ks}" if ks >= 3 else ""
+        inv_tag     = " 🛡️" if is_inv else ""
+        bounty_tag  = " 💰" if row["user_id"] in bounty_ids else ""
+        lines.append(f"{hp_icon} *{row['username']}* - Lv {row['level']} {cls}{streak_tag}{wanted_tag}{inv_tag}{bounty_tag}")
 
     await send_group(update, "\n".join(lines), delay=20)
 
@@ -9795,12 +9823,17 @@ def _bounty_class_perks(p):
     is_railrunner = cid in _RAILRUNNER_CLASSES
     is_thief      = line == "thief"
     no_fee        = is_railrunner or is_thief
-    if is_railrunner:
+    if is_thief:
+        # Thieves are the underground bounty operators — premium amounts, no fee, 3 contracts
         amounts       = [750, 2500, 5000, 10000]
+        max_contracts = 3
+    elif is_railrunner:
+        # Railrunners have the bounty skill — no fee, but standard amounts
+        amounts       = [100, 500, 1000, 5000]
         max_contracts = 3
     else:
         amounts       = [100, 500, 1000, 5000]
-        max_contracts = 99  # unlimited — stacking allowed
+        max_contracts = 99  # unlimited stacking from different players
     return is_railrunner, is_thief, no_fee, amounts, max_contracts
 
 async def bounty_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -12181,7 +12214,7 @@ GUIDE_PAGES = [
         "*Bounties*\n"
         "/bounty  -  Reply to a player. Amount buttons pop up (100–5000g). Multiple players can stack bounties!\n"
         "/bounties  -  View the active bounty board\n"
-        "_Thief classes: no fee. Railrunner: premium amounts (up to 10,000g), no fee, 3 contracts._\n"
+        "_Thief classes: no fee + premium amounts (up to 10,000g), max 3 contracts. Railrunner: no fee + Execution Order (2,000g bounty + Marked debuff via skill)._\n"
         "\n"
         "*Halls (Guilds)*\n"
         "/guildjoin  -  Browse + join a hall\n"
@@ -12192,7 +12225,7 @@ GUIDE_PAGES = [
         "/guildkick @user  -  Kick member (leader)\n"
         "/guildleave  -  Leave your hall\n"
         "/guilddisband confirm  -  Disband your hall\n"
-        "/guildwar [Hall Name]  -  Declare war (leader, 24hr)\n"
+        "/guildwar  -  Declare war via guild picker (leader, 24hr)\n"
         "/gbank deposit/withdraw  -  Hall bank"
     ),
     # Page 7 - Guilds & Advanced
@@ -12209,15 +12242,18 @@ GUIDE_PAGES = [
         "/gbank — View the Hall treasury. Members can deposit gold. Leaders can withdraw for upgrades or emergencies.\n"
         "\n"
         "*Guild Wars*\n"
-        "/guildwar — View your Hall's active war status.\n"
-        "/guildwar [Hall Name] — Declare a 24-hour war (leader only).\n"
-        "Kills against enemy Hall members score war points (double EXP objective credit). The winning Hall earns bragging rights on /war.\n"
+        "/guildwar — Hall leaders tap a guild from the list to declare a 24-hour war.\n"
+        "During a war, killing any member of the enemy Hall scores a kill point for your side.\n"
+        "Each war kill also counts as double EXP toward your daily objectives.\n"
+        "The Hall with the most kills when the 24 hours expire wins — the result is posted in /war.\n"
+        "You can check the live score any time with /guildwar.\n"
         "\n"
         "*Bounties*\n"
-        "/bounty @user [amount]  -  Place a gold bounty (100–5000g)\n"
-        "/bounties  -  View the active bounty board\n"
-        "Killing a player with an active bounty automatically claims the reward.\n"
-        "_Railrunner's Execution Order places a free 500g bounty via skill._\n"
+        "/bounty  -  Reply to any player's message. Amount buttons appear (100–5000g). Multiple players can stack bounties on the same target.\n"
+        "/bounties  -  View the live bounty board\n"
+        "Defeating a player who has active bounties automatically claims all stacked rewards.\n"
+        "If someone else collects your bounty, you get 25% of it back as a finder's fee.\n"
+        "_Railrunner's Execution Order: places a 2,000g bounty via skill + marks the target (+20% dmg taken 30 min)._\n"
         "\n"
         "*Kill Streaks & Wanted System*\n"
         "Every kill without dying extends your streak (visible in /who). 5+ kills in one day marks you as 🔴 WANTED — higher risk but all eyes on you.\n"
