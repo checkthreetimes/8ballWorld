@@ -23,8 +23,11 @@ DB_PATH  = os.environ.get("DB_PATH", "/data/8ball.db")
 ADMIN_ID = 15941534
 
 # ── CHANGELOG ─────────────────────────────────────────────────────────────────
-CURRENT_VERSION = "v1.19"
+CURRENT_VERSION = "v1.21"
 CHANGELOG = [
+    {"version": "v1.21", "date": "2026-05-24", "changes": [
+        "Killstreaks, revenge bonus, wanted system, /claim streak, /forge crafting, /war board, /history, guild wars, guild bank",
+    ]},
     {"version": "v1.0",  "date": "2025-01-01", "changes": [
         "Initial release — shadow profile, /pool, /daily, /quest, /train, /explore",
     ]},
@@ -1281,6 +1284,15 @@ CONSUMABLES = {
     "The Custom Tip Scroll":   {"desc":"Used to enchant gear. Future system.","sell":150},
 }
 
+# ── CRAFTING RECIPES ──────────────────────────────────────────────────────────
+RECIPES = {
+    "Iron Compound":  {"mats": {"Slate Fragment": 4},                "result": "Graphite Break Cue"},
+    "Scale Plating":  {"mats": {"Slate Fragment": 3},                "result": "Slate Guard"},
+    "Charm Craft":    {"mats": {"Slate Fragment": 4},                "result": "Iron Chalk Ring"},
+    "Enchant Bundle": {"mats": {"Slate Fragment": 6},                "result": "The Custom Tip Scroll"},
+    "Scale Blade":    {"mats": {"Slate Fragment": 7},                "result": "Precision Rack"},
+}
+
 SHOP_POOL = [
     {"item":"Chalk Vial","price":150,"desc":"Restores 50 HP."},
     {"item":"Premium Chalk Draft","price":400,"desc":"Restores 100 HP."},
@@ -2387,7 +2399,7 @@ def calc_defense(defender, dmg):
  
     return final
 
-def apply_pvp_death(p, killer_name="the enemy", cause="PvP"):
+def apply_pvp_death(p, killer_name="the enemy", cause="PvP", killer_id=None):
     """Apply full PvP-style death: 6hr defeat, 10% EXP loss, losses++"""
     exp_loss = round(p.get("exp", 0) * 0.10)
     p["exp"]             = max(0, p.get("exp", 0) - exp_loss)
@@ -2395,6 +2407,10 @@ def apply_pvp_death(p, killer_name="the enemy", cause="PvP"):
     p["losses"]          = p.get("losses", 0) + 1
     p["defeated_until"]  = (datetime.now() + timedelta(hours=6)).isoformat()
     p["last_defeated_by"] = f"{killer_name} ({cause})"
+    p["kill_streak"]     = 0  # reset streak on death
+    if killer_id:
+        p["revenge_target"]  = killer_id
+        p["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
     return exp_loss
 
 def _defeated_msg(p):
@@ -2414,6 +2430,19 @@ async def _notify_defeat(bot, p, cause_str):
         await bot.send_message(
             chat_id=p["user_id"],
             text=f"💀 You were defeated by *{cause_str}*!\n⏳ Back in: *{countdown}*\n_Use /heal or ask a Chalker to get back sooner._",
+            parse_mode="Markdown")
+    except Exception:
+        pass
+
+async def _notify_attack(bot, victim, attacker_name, dmg):
+    """DM the victim when attacked but not defeated."""
+    try:
+        hp_pct = round(victim["hp"] / max(1, victim.get("max_hp", victim["hp"])) * 100)
+        await bot.send_message(
+            chat_id=victim["user_id"],
+            text=f"⚠️ *{attacker_name}* attacked you for *{dmg} damage!*\n"
+                 f"❤️ HP: *{victim['hp']}/{victim.get('max_hp', victim['hp'])}* ({hp_pct}%)\n"
+                 f"_Respond in the group chat!_",
             parse_mode="Markdown")
     except Exception:
         pass
@@ -3219,6 +3248,45 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    migrations_v20 = [
+        ("players", "kill_streak",      "INTEGER DEFAULT 0"),
+        ("players", "max_kill_streak",  "INTEGER DEFAULT 0"),
+        ("players", "revenge_target",   "INTEGER DEFAULT NULL"),
+        ("players", "revenge_expires",  "TEXT DEFAULT NULL"),
+        ("players", "kills_today",      "INTEGER DEFAULT 0"),
+        ("players", "kills_today_date", "TEXT DEFAULT NULL"),
+        ("players", "last_claim",       "TEXT DEFAULT NULL"),
+        ("players", "claim_streak",     "INTEGER DEFAULT 0"),
+        ("players", "pvp_history",      "TEXT DEFAULT '[]'"),
+    ]
+    for table, col, definition in migrations_v20:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+    # Guild wars table
+    conn.execute("""CREATE TABLE IF NOT EXISTS guild_wars (
+        war_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild1_id TEXT NOT NULL,
+        guild2_id TEXT NOT NULL,
+        declared_by TEXT NOT NULL,
+        declared_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        kills1 INTEGER DEFAULT 0,
+        kills2 INTEGER DEFAULT 0,
+        active INTEGER DEFAULT 1
+    )""")
+    conn.commit()
+
+    # Ensure guilds table has bank_gold column
+    try:
+        conn.execute("ALTER TABLE guilds ADD COLUMN bank_gold INTEGER DEFAULT 0")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
     conn.close()
 
     # Clear stale explore locks on startup
@@ -3415,6 +3483,8 @@ def save_player(p):
         "last_dungeon","last_pool","last_defeated_by",
         "item_reinforce_data","daily_objectives","daily_obj_date",
         "total_reinforces","total_ascensions","total_obj_completed",
+        "kill_streak","max_kill_streak","revenge_target","revenge_expires",
+        "kills_today","kills_today_date","last_claim","claim_streak","pvp_history",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -3442,6 +3512,22 @@ def get_guild_by_name(name):
     c = conn.cursor()
     c.execute("SELECT * FROM guilds WHERE LOWER(name)=LOWER(?)", (name,))
     row = c.fetchone(); conn.close()
+    return dict(row) if row else None
+
+def get_active_war(gid1, gid2=None):
+    """Return active war involving gid1 (optionally against gid2)."""
+    conn_gw = sqlite3.connect(DB_PATH); conn_gw.row_factory = sqlite3.Row
+    c_gw = conn_gw.cursor()
+    if gid2:
+        c_gw.execute("""SELECT * FROM guild_wars WHERE active=1 AND expires_at > ?
+                        AND ((guild1_id=? AND guild2_id=?) OR (guild1_id=? AND guild2_id=?))""",
+                     (datetime.now().isoformat(), gid1, gid2, gid2, gid1))
+    else:
+        c_gw.execute("""SELECT * FROM guild_wars WHERE active=1 AND expires_at > ?
+                        AND (guild1_id=? OR guild2_id=?)""",
+                     (datetime.now().isoformat(), gid1, gid1))
+    row = c_gw.fetchone()
+    conn_gw.close()
     return dict(row) if row else None
 
 def save_guild(g):
@@ -4102,11 +4188,26 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             d["hp"] = 0
             d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
             d["last_defeated_by"] = f"{a['username']} (Killshot)"
+            d["kill_streak"] = 0
+            d["revenge_target"] = au.id
+            d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
             asyncio.create_task(_notify_defeat(update.get_bot(), d, a['username'] + " (Killshot)"))
             exp_loss = round(d.get("exp",0) * 0.10)
             d["exp"]  = max(0, d.get("exp",0) - exp_loss)
             d["losses"] = d.get("losses",0) + 1
             a["wins"]   = a.get("wins",0) + 1
+            # Killstreak for attacker
+            a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
+            if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
+                a["max_kill_streak"] = a["kill_streak"]
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            if a.get("kills_today_date") != today_str:
+                a["kills_today"] = 0; a["kills_today_date"] = today_str
+            a["kills_today"] = safe_int(a.get("kills_today")) + 1
+            hist_ks = sjl(d.get("pvp_history"), [])
+            hist_ks.insert(0, {"attacker": a["username"], "dmg": "KO",
+                               "ts": datetime.now().strftime("%m/%d %H:%M")})
+            d["pvp_history"] = json.dumps(hist_ks[:5])
             for _desc, _exp, _gold in track_objective(a, "pvp_win"):
                 a["gold"] = a.get("gold",0) + _gold; add_exp(a, _exp)
             exp_gain = 60 + a["level"] * 8
@@ -4237,6 +4338,16 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 a["steady_aim_target"] = d["user_id"]
                 a["steady_aim_stacks"] = 1
 
+    # Revenge bonus: +15% damage if target is your revenge target
+    revenge_bonus_note = ""
+    if safe_int(a.get("revenge_target")) == du.id:
+        rev_exp = a.get("revenge_expires")
+        if rev_exp and datetime.now() < datetime.fromisoformat(rev_exp):
+            dmg = round(dmg * 1.15)
+            revenge_bonus_note = " 🔥 *Revenge!* +15% dmg"
+            a["revenge_target"] = None
+            a["revenge_expires"] = None
+
     # Distracted check: attacker has +30% chance to miss
     if is_distracted(a):
         if random.random() < 0.30:
@@ -4315,7 +4426,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     proc_fired, proc_msg, proc_extra = calc_proc_effect(a, d, dmg_after_def)
 
-    action = f"⚔️ *{a['username']}* → *{d['username']}* for *{dmg_after_def} dmg*{crit_note}{reflect_note}"
+    action = f"⚔️ *{a['username']}* → *{d['username']}* for *{dmg_after_def} dmg*{crit_note}{revenge_bonus_note}{reflect_note}"
     if extra_notes: action += "\n" + "\n".join(extra_notes)
     if healed:      action += f" | 🩸 +{healed} HP"
     if proc_fired:  action += f"\n{proc_msg}"
@@ -4326,10 +4437,27 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         d["hp"] = 0
         d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
         d["last_defeated_by"] = f"{a['username']} (PvP)"
+        d["kill_streak"] = 0
+        d["revenge_target"] = au.id
+        d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
         exp_loss = round(d.get("exp",0) * 0.10)
         d["exp"]  = max(0, d.get("exp",0) - exp_loss)
         d["losses"] = d.get("losses",0) + 1
         a["wins"]   = a.get("wins",0) + 1
+        # Killstreak
+        a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
+        if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
+            a["max_kill_streak"] = a["kill_streak"]
+        # Wanted level — track kills today
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        if a.get("kills_today_date") != today_str:
+            a["kills_today"] = 0; a["kills_today_date"] = today_str
+        a["kills_today"] = safe_int(a.get("kills_today")) + 1
+        # PvP history for victim
+        hist = sjl(d.get("pvp_history"), [])
+        hist.insert(0, {"attacker": a["username"], "dmg": "KO",
+                        "ts": datetime.now().strftime("%m/%d %H:%M")})
+        d["pvp_history"] = json.dumps(hist[:5])
         for _desc, _exp, _gold in track_objective(a, "pvp_win"):
             a["gold"] = a.get("gold",0) + _gold; add_exp(a, _exp)
         asyncio.create_task(_notify_defeat(update.get_bot(), d, a['username'] + " (PvP)"))
@@ -4356,6 +4484,20 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Bounty check
         asyncio.create_task(check_and_claim_bounty(update.get_bot(), a, d, chat))
 
+        # Guild war kill credit
+        a_guild = get_guild(a.get("guild_id")) if a.get("guild_id") else None
+        d_guild = get_guild(d.get("guild_id")) if d.get("guild_id") else None
+        if a_guild and d_guild and a_guild["guild_id"] != d_guild["guild_id"]:
+            war_gw = get_active_war(a_guild["guild_id"], d_guild["guild_id"])
+            if war_gw:
+                conn_kr = sqlite3.connect(DB_PATH); c_kr = conn_kr.cursor()
+                if war_gw["guild1_id"] == a_guild["guild_id"]:
+                    c_kr.execute("UPDATE guild_wars SET kills1=kills1+1 WHERE war_id=?", (war_gw["war_id"],))
+                else:
+                    c_kr.execute("UPDATE guild_wars SET kills2=kills2+1 WHERE war_id=?", (war_gw["war_id"],))
+                conn_kr.commit(); conn_kr.close()
+                action += f"\n⚔️ *Guild War kill!* Score updated for {a_guild['name']}."
+
         # Deadeye kill bonus
         if cls_a and cls_a.get("passive_key") == "dead_or_alive":
             a["deadeye_kill_bonus"] = safe_int(a.get("deadeye_kill_bonus")) + 2
@@ -4371,6 +4513,13 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Final HP: 0/{d.get('max_hp', calc_max_hp(d))} - "
             f"Lost {exp_loss:,} EXP - Defeated 6hrs", permanent=False))
 
+    # PvP history for non-lethal hits
+    if d["hp"] > 0:
+        hist_nl = sjl(d.get("pvp_history"), [])
+        hist_nl.insert(0, {"attacker": a["username"], "dmg": dmg_after_def,
+                           "ts": datetime.now().strftime("%m/%d %H:%M")})
+        d["pvp_history"] = json.dumps(hist_nl[:5])
+
     check_titles(a); check_titles(d)
     save_player(a); save_player(d)
 
@@ -4379,6 +4528,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filled = round(hp_pct * 10)
         bar = "█" * filled + "░" * (10 - filled)
         action += f"\n❤️ {d['username']}: *{d['hp']}/{d['max_hp']}* [{bar}]"
+        asyncio.create_task(_notify_attack(update.get_bot(), d, a["username"], dmg_after_def))
 
     statuses = get_active_statuses(d)
     if statuses:
@@ -5327,16 +5477,19 @@ def _build_class_progression_pages(p):
         for sk in cls_data.get("skills", []):
             status = "✅" if sk["name"] in unlocked else "🔒"
             lines.append(f"{status} *{sk['name']}*")
-            lines.append(f"   ☀️ {sk.get('passive','—')}")
-            lines.append(f"   ⚡ {sk['desc']}")
+            if sk.get("passive"):
+                lines.append(f"   🛡️ _Passive:_ {sk['passive']}")
+            active_name = sk.get("active", sk["name"])
+            lines.append(f"   ⚡ _Active ({active_name}):_ {sk['desc']}")
         return lines
 
     # Page 0: base class
     pages = []
+    arch_label = LINE_ARCHETYPE.get(line, line.capitalize())
     base_lines = [
-        f"{emoji} *{base_cls['name']}* — Tier 1 (Base)",
+        f"{emoji} *{base_cls['name']}* ({arch_label}) — Tier 1 (Base)",
         f"_{base_cls.get('desc','')}_\n",
-        "*Skills:*",
+        "*Skills & Passives:*",
     ]
     base_lines += _skill_lines(base_cls)
     if not path:
@@ -5360,12 +5513,12 @@ def _build_class_progression_pages(p):
         pc   = CLASS_TREE.get(cid, {})
         is_current = (cur_class == cid)
         is_locked  = p["level"] < req
-        header = f"{emoji} *{pc.get('name', cid)}* — Path {path}, Tier {tier}"
+        header = f"{emoji} *{pc.get('name', cid)}* ({arch_label}) — Path {path}, Tier {tier}"
         if is_current:
             header += "  _(Current)_"
         elif is_locked:
             header += f"  🔒 _(Requires Lv {req})_"
-        lines = [header, f"_{pc.get('desc','')}_\n", "*Skills unlocked:*"]
+        lines = [header, f"_{pc.get('desc','')}_\n", "*Skills & Passives:*"]
         lines += _skill_lines(pc)
         lines += ["", f"_Prestige at Level {req} to advance to this class._"]
         pages.append("\n".join(lines))
@@ -6142,10 +6295,10 @@ def _build_inv_sections(p):
     has_equipped = any(p.get(k) for k in ["equipped_weapon","equipped_armor","equipped_shield","equipped_accessory"])
     if has_equipped:
         present.append("Equipped")
-    if any(k in WEAPONS for k in inv):     present.append("Weapons")
-    if any(k in ARMORS for k in inv):      present.append("Armors")
-    if any(k in SHIELDS for k in inv):     present.append("Shields")
-    if any(k in ACCESSORIES for k in inv): present.append("Accessories")
+    if any(k in WEAPONS for k in inv) or p.get("equipped_weapon"):         present.append("Weapons")
+    if any(k in ARMORS for k in inv) or p.get("equipped_armor"):           present.append("Armors")
+    if any(k in SHIELDS for k in inv) or p.get("equipped_shield"):         present.append("Shields")
+    if any(k in ACCESSORIES for k in inv) or p.get("equipped_accessory"): present.append("Accessories")
     if any(k in CONSUMABLES for k in inv): present.append("Consumables")
     if any(k not in {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**CONSUMABLES} for k in inv):
         present.append("Materials")
@@ -6237,7 +6390,7 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False):
         else:
             lines.append(f"_No {section.lower()} in bag._")
 
-    lines.append(f"\n_/equip [item] | /enhance [item] | /enchant [item] | /sell [item] | /use [item]_")
+    lines.append(f"\n_/equip | /enhance | /enchant | /reinforce | /use_")
 
     # Navigation buttons — named like /stats
     idx = sections.index(section)
@@ -6250,6 +6403,37 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False):
         btn_row.append(InlineKeyboardButton(f"{nxt} ▶", callback_data=f"inv_s_{nxt}"))
     markup = InlineKeyboardMarkup([btn_row]) if btn_row else None
 
+    # Add per-item sell buttons for bag sections
+    sell_buttons = []
+    BULK_SELL_PROTECTED = {
+        "Dragon Scale", "Slate Fragment", "Enchanting Scroll",
+        "The Custom Tip Scroll", "Revival Charm", "The Re-Rack",
+        "Holy Relic", "The Golden Triangle",
+    }
+    RARITY_SELL_VALUES = {"common": 20, "uncommon": 60, "rare": 200, "epic": 600, "legendary": 2000}
+    if section not in ("Equipped", "Materials", "Consumables"):
+        pool_map_sell = {
+            "Weapons": WEAPONS, "Armors": ARMORS,
+            "Shields": SHIELDS, "Accessories": ACCESSORIES,
+        }
+        equipped_set = {p.get("equipped_weapon"), p.get("equipped_armor"),
+                        p.get("equipped_shield"), p.get("equipped_accessory")}
+        pool_sell = pool_map_sell.get(section, {})
+        sellable = [
+            k for k in inv if k in pool_sell and k not in BULK_SELL_PROTECTED and k not in equipped_set
+        ]
+        for it in sorted(set(sellable))[:8]:
+            price = RARITY_SELL_VALUES.get(pool_sell[it].get("rarity","common"), 20)
+            uid_p = p["user_id"]
+            sell_buttons.append([InlineKeyboardButton(
+                f"💰 Sell {it} ({price}g)",
+                callback_data=f"sll_{uid_p}_{it}")])
+    if sell_buttons:
+        if markup:
+            combined = sell_buttons + list(markup.inline_keyboard)
+        else:
+            combined = sell_buttons
+        markup = InlineKeyboardMarkup(combined)
     text = "\n".join(lines)[:4096]
     if edit:
         await target.edit_message_text(text=text, parse_mode="Markdown", reply_markup=markup)
@@ -6291,21 +6475,42 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if not context.args:
+        uid = user.id
+        inv = sjl(p.get("inventory"), [])
+        equip_buttons = []
+        for slot_emoji, slot_label, pool in [
+            ("⚔️", "Weapon",    WEAPONS),
+            ("🛡️", "Armor",     ARMORS),
+            ("🔰", "Shield",    SHIELDS),
+            ("💍", "Accessory", ACCESSORIES),
+        ]:
+            slot_items = sorted(set(k for k in inv if k in pool))
+            for it in slot_items:
+                d_it = pool[it]
+                rarity = RARITY_EMOJI.get(d_it.get("rarity",""), "⚪")
+                enh = get_enhancement(p, it)
+                enh_str = f" +{enh}" if enh else ""
+                stat_val = d_it.get("atk") or d_it.get("def", 0)
+                stat_key = "ATK" if "atk" in d_it else "DEF"
+                equip_buttons.append([InlineKeyboardButton(
+                    f"{slot_emoji} [{slot_label}] {rarity}{it}{enh_str} (+{stat_val} {stat_key})",
+                    callback_data=f"eqp_{uid}_{it}")])
+
         weap = p.get("equipped_weapon") or "None"
         armr = p.get("equipped_armor")  or "None"
         shld = p.get("equipped_shield") or "None"
         acc_e = p.get("equipped_accessory") or "None"
 
         def _gear_summary_line(slot, name, pool):
-            if name == "None": return f"{slot}: None"
+            if name == "None": return f"{slot}: _None_"
             enh = get_enhancement(p, name)
             encs_g = get_enchant(p, name)
             enh_str = f" *+{enh}*" if enh else ""
             enc_str = f" ✨×{len(encs_g)}" if encs_g else ""
-            d = pool.get(name, {})
-            stat_val = d.get("atk") or d.get("def", 0)
-            stat_label = "ATK" if "atk" in d else "DEF"
-            rarity = RARITY_EMOJI.get(d.get("rarity",""), "")
+            d_s = pool.get(name, {})
+            stat_val = d_s.get("atk") or d_s.get("def", 0)
+            stat_label = "ATK" if "atk" in d_s else "DEF"
+            rarity = RARITY_EMOJI.get(d_s.get("rarity",""), "")
             return f"{slot}: {rarity} *{name}*{enh_str}{enc_str} (+{stat_val} {stat_label})"
 
         lines = [f"🎽 *{p['username']}'s Gear:*\n",
@@ -6319,9 +6524,15 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             enc_str = f" ✨×{len(encs_acc2)}" if encs_acc2 else ""
             lines.append(f"💍 Accessory: {rarity} *{acc_e}*{enc_str}  -  _{acc_data.get('desc','')}_")
         else:
-            lines.append("💍 Accessory: None")
-        lines.append(f"\n`/equip [item name]` to equip from inventory.")
-        await send_group(update, "\n".join(lines), delay=20); return
+            lines.append("💍 Accessory: _None_")
+
+        if equip_buttons:
+            lines.append("\n_Select an item to equip:_")
+            markup = InlineKeyboardMarkup(equip_buttons)
+        else:
+            lines.append("\n_No equippable items in bag. Visit /shop!_")
+            markup = None
+        await send_group(update, "\n".join(lines), delay=60, reply_markup=markup); return
     item_name = " ".join(context.args)
     inv = sjl(p.get("inventory"), [])
     if item_name not in inv:
@@ -6408,6 +6619,74 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update,
             f"*{item_name}* is not equippable. Use /use for consumables.", delay=9)
 
+async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle equip button: eqp_{uid}_{item_name}"""
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try:
+        uid       = int(parts[1])
+        item_name = parts[2]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your equip menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    inv = sjl(p.get("inventory"), [])
+    if item_name not in inv:
+        await query.answer(f"{item_name} not in your inventory!", show_alert=True); return
+    if item_name in WEAPONS:
+        ok, reason = can_equip_weapon(p, item_name)
+        if not ok:
+            await query.answer(reason, show_alert=True); return
+        old = p.get("equipped_weapon")
+        p["equipped_weapon"] = item_name; inv.remove(item_name)
+        if old: inv.append(old)
+        p["inventory"] = json.dumps(inv); save_player(p)
+        new_atk = get_weapon_atk(p)
+        await query.edit_message_text(
+            f"⚔️ *Equipped {item_name}!*\n"
+            f"Weapon ATK is now *{new_atk}*" + (f"\n_Unequipped {old}_" if old else ""),
+            parse_mode="Markdown")
+    elif item_name in ARMORS:
+        ok, reason = can_equip_armor(p, item_name)
+        if not ok:
+            await query.answer(reason, show_alert=True); return
+        old = p.get("equipped_armor")
+        p["equipped_armor"] = item_name; inv.remove(item_name)
+        if old: inv.append(old)
+        p["inventory"] = json.dumps(inv); save_player(p)
+        new_def = get_armor_def(p)
+        await query.edit_message_text(
+            f"🛡️ *Equipped {item_name}!*\n"
+            f"Armor DEF is now *{new_def}*" + (f"\n_Unequipped {old}_" if old else ""),
+            parse_mode="Markdown")
+    elif item_name in SHIELDS:
+        cls_line = get_class_line(p); path = p.get("class_path")
+        if cls_line != "warrior" or path != "A":
+            await query.answer("Only Warrior Path A can use shields!", show_alert=True); return
+        old = p.get("equipped_shield")
+        p["equipped_shield"] = item_name; inv.remove(item_name)
+        if old: inv.append(old)
+        p["inventory"] = json.dumps(inv); save_player(p)
+        new_def = get_armor_def(p)
+        await query.edit_message_text(
+            f"🔰 *Equipped {item_name}!*\n"
+            f"Shield DEF is now *{new_def}*" + (f"\n_Unequipped {old}_" if old else ""),
+            parse_mode="Markdown")
+    elif item_name in ACCESSORIES:
+        old = p.get("equipped_accessory")
+        p["equipped_accessory"] = item_name; inv.remove(item_name)
+        if old: inv.append(old)
+        p["inventory"] = json.dumps(inv); save_player(p)
+        acc = ACCESSORIES[item_name]
+        await query.edit_message_text(
+            f"💍 *Equipped {item_name}!*\n_{acc['desc']}_" + (f"\n_Unequipped {old}_" if old else ""),
+            parse_mode="Markdown")
+    else:
+        await query.answer(f"{item_name} is not equippable!", show_alert=True)
+
 async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
@@ -6483,6 +6762,40 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += "_(No direct effect  -  used as crafting material or quest item)_"
     save_player(p)
     await send_group(update, msg, delay=15)
+
+async def sell_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle sell button from inventory: sll_{uid}_{item_name}"""
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try:
+        uid       = int(parts[1])
+        item_name = parts[2]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your inventory!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    inv = sjl(p.get("inventory"), [])
+    if item_name not in inv:
+        await query.answer(f"{item_name} not in inventory!", show_alert=True); return
+    RARITY_SELL_VALUES = {"common": 20, "uncommon": 60, "rare": 200, "epic": 600, "legendary": 2000}
+    price = 0
+    for pool_c in [WEAPONS, ARMORS, SHIELDS, ACCESSORIES]:
+        if item_name in pool_c:
+            price = RARITY_SELL_VALUES.get(pool_c[item_name].get("rarity","common"), 20)
+            break
+    if price == 0:
+        await query.answer(f"{item_name} cannot be sold for gold.", show_alert=True); return
+    await query.answer(f"Sold {item_name} for {price}g!")
+    inv.remove(item_name)
+    p["inventory"] = json.dumps(inv)
+    p["gold"] = p.get("gold", 0) + price
+    save_player(p)
+    await query.edit_message_text(
+        f"💰 *Sold {item_name}* for *{price}g*!\nBalance: *{p['gold']}g*",
+        parse_mode="Markdown")
 
 async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -7171,6 +7484,132 @@ async def guilddisband_callback(update, context):
         await query.edit_message_text(f"🏚️ *{guild_name}* has been disbanded.", parse_mode="Markdown")
     except Exception:
         pass
+
+async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    g = get_guild(p.get("guild_id")) if p.get("guild_id") else None
+    if not g:
+        await send_group(update, "You're not in a Hall. Use /guildjoin first!", delay=9); return
+
+    args = context.args or []
+
+    # View current war
+    if not args:
+        war = get_active_war(g["guild_id"])
+        if not war:
+            await send_group(update,
+                f"⚔️ *{g['name']}* has no active guild war.\n\n"
+                f"_To declare war: /guildwar [Hall Name]_\n"
+                f"_Leaders only. Kills against war targets count double for objectives._", delay=15)
+        else:
+            conn_gw2 = sqlite3.connect(DB_PATH); conn_gw2.row_factory = sqlite3.Row; c2 = conn_gw2.cursor()
+            c2.execute("SELECT name FROM guilds WHERE guild_id=?",
+                       (war["guild2_id"] if war["guild1_id"]==g["guild_id"] else war["guild1_id"],))
+            enemy_row = c2.fetchone(); conn_gw2.close()
+            enemy_name = enemy_row["name"] if enemy_row else "Unknown"
+            our_kills   = war["kills1"] if war["guild1_id"]==g["guild_id"] else war["kills2"]
+            their_kills = war["kills2"] if war["guild1_id"]==g["guild_id"] else war["kills1"]
+            exp_str = time_until(war["expires_at"]) or "ending soon"
+            await send_group(update,
+                f"⚔️ *Guild War: {g['name']} vs {enemy_name}*\n\n"
+                f"Our kills: *{our_kills}*  |  Their kills: *{their_kills}*\n"
+                f"Ends in: {exp_str}\n\n"
+                f"_Attack enemy Hall members to score. Each kill: double EXP objective credit._", delay=20)
+        return
+
+    if g.get("leader_id") != user.id:
+        await send_group(update, "Only the Hall leader can declare war!", delay=9); return
+
+    target_name = " ".join(args)
+    conn_gw3 = sqlite3.connect(DB_PATH); conn_gw3.row_factory = sqlite3.Row; c3 = conn_gw3.cursor()
+    c3.execute("SELECT * FROM guilds WHERE LOWER(name)=LOWER(?)", (target_name,))
+    enemy_g = c3.fetchone()
+    conn_gw3.close()
+    if not enemy_g:
+        await send_group(update, f"Hall *{target_name}* not found. Check /guildlist.", delay=12); return
+    enemy_g = dict(enemy_g)
+    if enemy_g["guild_id"] == g["guild_id"]:
+        await send_group(update, "You can't declare war on yourself!", delay=9); return
+
+    # Check no existing war
+    existing = get_active_war(g["guild_id"], enemy_g["guild_id"])
+    if existing:
+        await send_group(update, f"There's already an active war between {g['name']} and {enemy_g['name']}!", delay=12); return
+
+    expires = (datetime.now() + timedelta(hours=24)).isoformat()
+    conn_gw4 = sqlite3.connect(DB_PATH); c4 = conn_gw4.cursor()
+    c4.execute("""INSERT INTO guild_wars (guild1_id, guild2_id, declared_by, declared_at, expires_at, kills1, kills2, active)
+                  VALUES (?,?,?,?,?,0,0,1)""",
+               (g["guild_id"], enemy_g["guild_id"], user.first_name, datetime.now().isoformat(), expires))
+    conn_gw4.commit(); conn_gw4.close()
+    await send_group(update,
+        f"⚔️ *WAR DECLARED!*\n\n"
+        f"*{g['name']}* has declared war on *{enemy_g['name']}*!\n"
+        f"Duration: 24 hours\n"
+        f"Every kill against the enemy Hall scores a point.\n"
+        f"May the best Hall win! 🔥", delay=30)
+
+async def gbank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    g = get_guild(p.get("guild_id")) if p.get("guild_id") else None
+    if not g:
+        await send_group(update, "You're not in a Hall!", delay=9); return
+
+    args = context.args or []
+
+    if not args:
+        bank = safe_int(g.get("bank_gold"))
+        await send_group(update,
+            f"🏦 *{g['name']} Hall Bank*\n\n"
+            f"Balance: *{bank:,}g*\n\n"
+            f"_/gbank deposit [amount] — add gold_\n"
+            f"_/gbank withdraw [amount] — leader only_", delay=15); return
+
+    sub = args[0].lower()
+    if sub == "deposit":
+        if len(args) < 2:
+            await send_group(update, "Usage: /gbank deposit [amount]", delay=9); return
+        try:
+            amt = int(args[1])
+        except Exception:
+            await send_group(update, "Invalid amount.", delay=9); return
+        if amt <= 0:
+            await send_group(update, "Amount must be positive!", delay=9); return
+        if p.get("gold", 0) < amt:
+            await send_group(update, f"You only have {p.get('gold',0)}g!", delay=9); return
+        p["gold"] -= amt; save_player(p)
+        conn_gb = sqlite3.connect(DB_PATH); c_gb = conn_gb.cursor()
+        c_gb.execute("UPDATE guilds SET bank_gold=bank_gold+? WHERE guild_id=?", (amt, g["guild_id"]))
+        conn_gb.commit(); conn_gb.close()
+        await send_group(update,
+            f"🏦 Deposited *{amt}g* into *{g['name']}* Bank!\n"
+            f"Your balance: {p['gold']}g", delay=15)
+
+    elif sub == "withdraw":
+        if g.get("leader_id") != user.id:
+            await send_group(update, "Only the Hall leader can withdraw!", delay=9); return
+        if len(args) < 2:
+            await send_group(update, "Usage: /gbank withdraw [amount]", delay=9); return
+        try:
+            amt = int(args[1])
+        except Exception:
+            await send_group(update, "Invalid amount.", delay=9); return
+        bank = safe_int(g.get("bank_gold"))
+        if amt > bank:
+            await send_group(update, f"Bank only has {bank}g!", delay=9); return
+        p["gold"] = p.get("gold", 0) + amt; save_player(p)
+        conn_gb2 = sqlite3.connect(DB_PATH); c_gb2 = conn_gb2.cursor()
+        c_gb2.execute("UPDATE guilds SET bank_gold=bank_gold-? WHERE guild_id=?", (amt, g["guild_id"]))
+        conn_gb2.commit(); conn_gb2.close()
+        await send_group(update,
+            f"🏦 Withdrew *{amt}g* from *{g['name']}* Bank!\n"
+            f"Your balance: {p['gold']}g", delay=15)
+    else:
+        await send_group(update, "Usage: /gbank deposit [amt] | /gbank withdraw [amt]", delay=9)
 
 # ── SKILL ─────────────────────────────────────────────────────────────────────
 async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -8052,7 +8491,7 @@ async def who_cmd(update, context):
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
     cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
     c.execute("""SELECT s.user_id, s.username, s.level, s.last_seen,
-                        p.class_id, p.hp, p.max_hp
+                        p.class_id, p.hp, p.max_hp, p.kill_streak, p.kills_today
                  FROM shadow_profiles s
                  LEFT JOIN players p ON p.user_id = s.user_id
                  WHERE s.last_seen > ?
@@ -8069,10 +8508,191 @@ async def who_cmd(update, context):
         cls = CLASS_TREE.get(row["class_id"] or "", {}).get("name", "No Class")
         hp  = safe_int(row["hp"]); mhp = safe_int(row["max_hp"])
         hp_pct = int((hp / max(1, mhp)) * 100) if mhp else 100
-        hp_icon = "❤️" if hp_pct > 50 else ("🟡" if hp_pct > 25 else "🔴")
-        lines.append(f"{hp_icon} *{row['username']}* - Lv {row['level']} {cls}")
+        hp_icon = "💀" if hp == 0 else ("❤️" if hp_pct > 50 else ("🟡" if hp_pct > 25 else "🔴"))
+        wanted_tag = " 🔴 WANTED" if safe_int(row.get("kills_today", 0)) >= 5 else ""
+        ks = safe_int(row.get("kill_streak", 0))
+        streak_tag = f" 🔥×{ks}" if ks >= 3 else ""
+        lines.append(f"{hp_icon} *{row['username']}* - Lv {row['level']} {cls}{streak_tag}{wanted_tag}")
 
     await send_group(update, "\n".join(lines), delay=20)
+
+async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    hist = sjl(p.get("pvp_history"), [])
+    if not hist:
+        await send_group(update, "📜 *PvP History*\n\nNo recent PvP activity.", delay=12); return
+    lines = ["📜 *Your Last 5 PvP Hits*\n"]
+    for entry in hist:
+        dmg_str = "KO" if entry.get("dmg") == "KO" else f"{entry.get('dmg', '?')} dmg"
+        lines.append(f"⚔️ *{entry.get('attacker','?')}* — {dmg_str}  _{entry.get('ts','')}_")
+    await send_group(update, "\n".join(lines), delay=20)
+
+async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lines = ["🔥 *8Ball World — War Board*\n"]
+
+    # Active bounties
+    conn_w = sqlite3.connect(DB_PATH); conn_w.row_factory = sqlite3.Row; cw = conn_w.cursor()
+    cw.execute("""SELECT b.reward, p.username as target_name, p2.username as placer_name
+                  FROM bounties b
+                  LEFT JOIN players p  ON b.target_id  = p.user_id
+                  LEFT JOIN players p2 ON b.placer_id  = p2.user_id
+                  WHERE b.claimed_by IS NULL AND b.expires_at > ?
+                  ORDER BY b.reward DESC LIMIT 5""", (datetime.now().isoformat(),))
+    brows = cw.fetchall()
+    if brows:
+        lines.append("🎯 *Active Bounties:*")
+        for b in brows:
+            lines.append(f"  💰 *{b['target_name'] or 'Unknown'}* — {b['reward']}g (by {b['placer_name'] or 'Unknown'})")
+    else:
+        lines.append("🎯 *Active Bounties:* None")
+
+    # Active guild wars
+    cw.execute("""SELECT gw.guild1_id, gw.guild2_id, gw.expires_at, gw.kills1, gw.kills2,
+                         g1.name as name1, g2.name as name2
+                  FROM guild_wars gw
+                  LEFT JOIN guilds g1 ON g1.guild_id = gw.guild1_id
+                  LEFT JOIN guilds g2 ON g2.guild_id = gw.guild2_id
+                  WHERE gw.active=1 AND gw.expires_at > ?""", (datetime.now().isoformat(),))
+    wars = cw.fetchall()
+    lines.append("")
+    if wars:
+        lines.append("⚔️ *Active Guild Wars:*")
+        for wrow in wars:
+            lines.append(f"  🏰 *{wrow['name1']}* vs *{wrow['name2']}*  ({wrow['kills1']} – {wrow['kills2']})")
+    else:
+        lines.append("⚔️ *Guild Wars:* None active")
+
+    # Top killers today
+    cw.execute("""SELECT username, kills_today, kill_streak FROM players
+                  WHERE kills_today_date=? AND kills_today>0
+                  ORDER BY kills_today DESC LIMIT 5""",
+               (datetime.now().strftime("%Y-%m-%d"),))
+    killers = cw.fetchall()
+    conn_w.close()
+    lines.append("")
+    if killers:
+        lines.append("💀 *Today's Top Killers:*")
+        for k in killers:
+            wanted = " 🔴 WANTED" if safe_int(k["kills_today"]) >= 5 else ""
+            lines.append(f"  ⚔️ *{k['username']}* — {k['kills_today']} kills today, {k['kill_streak']} streak{wanted}")
+    else:
+        lines.append("💀 *Today's Top Killers:* —")
+
+    await send_group(update, "\n".join(lines), delay=30)
+
+async def claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+
+    # If there's an active cache event, handle it first
+    chat_id = update.effective_chat.id
+    event = active_events.get(chat_id)
+    if event and event.get("key") == "cache":
+        active_events.pop(chat_id, None)
+        loot = roll_loot_table(event.get("loot_table", []))
+        gold = random.randint(50, 200)
+        if p:
+            if loot: add_item(p, loot)
+            p["gold"] = p.get("gold", 0) + gold; save_player(p)
+        await send_group(update,
+            f"💰 *{user.first_name}* claims the abandoned cache!\n"
+            f"💰 +{gold} gold" + (f" | 🎒 *{loot}*!" if loot else ""), delay=15)
+        return
+
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    last = p.get("last_claim")
+
+    if last == today:
+        await send_group(update, "✅ Already claimed today! Come back tomorrow.", delay=12); return
+
+    streak = safe_int(p.get("claim_streak"))
+    if last == yesterday:
+        streak += 1
+    else:
+        streak = 1  # reset streak if missed a day
+
+    # Rewards scale with streak
+    gold_reward  = 50 + min(streak * 10, 200)
+    slate_count  = 1 if streak >= 3 else 0
+    scale_count  = 1 if streak >= 7 else 0
+    bonus_scroll = streak >= 14
+
+    inv = sjl(p.get("inventory"), [])
+    if slate_count:
+        inv.extend(["Slate Fragment"] * slate_count)
+    if scale_count:
+        inv.extend(["Slate Fragment"] * scale_count)
+    if bonus_scroll:
+        inv.append("The Custom Tip Scroll")
+    p["inventory"] = json.dumps(inv)
+    p["gold"] = p.get("gold", 0) + gold_reward
+    p["last_claim"] = today
+    p["claim_streak"] = streak
+    save_player(p)
+
+    streak_emojis = "🔥" * min(streak, 7)
+    lines = [
+        f"🎁 *Daily Claim — Day {streak}!* {streak_emojis}\n",
+        f"💰 +{gold_reward} gold",
+    ]
+    if slate_count:
+        lines.append(f"🪨 +{slate_count} Slate Fragment (Day 3+ streak)")
+    if scale_count:
+        lines.append(f"🪨 +{scale_count} Slate Fragment (Day 7+ streak)")
+    if bonus_scroll:
+        lines.append(f"📜 +1 Custom Tip Scroll (Day 14+ streak)")
+    lines.append(f"\n_Streak: {streak} day{'s' if streak != 1 else ''} — claim again tomorrow to keep it going!_")
+    await send_group(update, "\n".join(lines), delay=25)
+
+async def forge_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    inv = sjl(p.get("inventory"), [])
+    inv_ctr = Counter(inv)
+
+    if not context.args:
+        lines = ["⚗️ *The Forge — Crafting*\n"]
+        for recipe_name, recipe in RECIPES.items():
+            mats_str = ", ".join(f"{v}x {k}" for k, v in recipe["mats"].items())
+            can_craft = all(inv_ctr.get(k, 0) >= v for k, v in recipe["mats"].items())
+            status = "✅" if can_craft else "🔒"
+            lines.append(f"{status} *{recipe_name}* → *{recipe['result']}*")
+            lines.append(f"   Requires: {mats_str}")
+        lines.append("\n_Use /forge [recipe name] to craft_")
+        await send_group(update, "\n".join(lines), delay=30); return
+
+    recipe_name = " ".join(context.args)
+    # Case-insensitive match
+    matched = next((k for k in RECIPES if k.lower() == recipe_name.lower()), None)
+    if not matched:
+        await send_group(update, f"❌ Unknown recipe *{recipe_name}*. Use /forge to see available recipes.", delay=12); return
+
+    recipe = RECIPES[matched]
+    for mat, qty in recipe["mats"].items():
+        if inv_ctr.get(mat, 0) < qty:
+            await send_group(update,
+                f"❌ Need {qty}x *{mat}* (have {inv_ctr.get(mat, 0)}).", delay=12); return
+
+    # Consume materials
+    for mat, qty in recipe["mats"].items():
+        for _ in range(qty):
+            inv.remove(mat)
+
+    result_item = recipe["result"]
+    inv.append(result_item)
+    p["inventory"] = json.dumps(inv)
+    p["crafts_done"] = safe_int(p.get("crafts_done")) + 1
+    check_titles(p); save_player(p)
+    await send_group(update,
+        f"⚗️ *Crafted!*\n\n*{matched}* → 🎉 *{result_item}*\n"
+        f"Added to your inventory!", delay=20)
 
 async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -8288,13 +8908,12 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def enhance_slot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle slot button from /enhance menu."""
     query = update.callback_query
-    await query.answer()
-    parts = query.data.split("_")  # enhance_{uid}_{slot}
+    parts = query.data.split("_", 2)  # enhance_{uid}_{slot}
     try:
         uid  = int(parts[1])
         slot = parts[2]
     except (IndexError, ValueError):
-        return
+        await query.answer(); return
     if query.from_user.id != uid:
         await query.answer("Not your enhance menu!", show_alert=True); return
     p = get_player(uid)
@@ -8302,7 +8921,7 @@ async def enhance_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Use /ascend first!", show_alert=True); return
     slot_map = {"weapon": ("equipped_weapon", "ATK"), "armor": ("equipped_armor", "DEF"), "shield": ("equipped_shield", "DEF")}
     if slot not in slot_map:
-        return
+        await query.answer(); return
     slot_key, stat_label = slot_map[slot]
     item_name = p.get(slot_key)
     if not item_name:
@@ -8315,6 +8934,7 @@ async def enhance_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
     inv = sjl(p.get("inventory"), [])
     if inv.count("Slate Fragment") < cost:
         await query.answer(f"Need {cost} Slate Fragment(s), have {inv.count('Slate Fragment')}.", show_alert=True); return
+    await query.answer()
     for _ in range(cost):
         inv.remove("Slate Fragment")
     p["inventory"] = json.dumps(inv)
@@ -8412,13 +9032,12 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def enchant_slot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle slot button from /enchant menu."""
     query = update.callback_query
-    await query.answer()
-    parts = query.data.split("_")  # enchant_{uid}_{slot}
+    parts = query.data.split("_", 2)  # enchant_{uid}_{slot}
     try:
         uid  = int(parts[1])
         slot = parts[2]
     except (IndexError, ValueError):
-        return
+        await query.answer(); return
     if query.from_user.id != uid:
         await query.answer("Not your enchant menu!", show_alert=True); return
     p = get_player(uid)
@@ -8431,17 +9050,18 @@ async def enchant_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
         "accessory": ("equipped_accessory", "accessory"),
     }
     if slot not in slot_map:
-        return
+        await query.answer(); return
     slot_key, effect_pool_key = slot_map[slot]
     item_name = p.get(slot_key)
     if not item_name:
         await query.answer(f"No {slot} equipped!", show_alert=True); return
     inv = sjl(p.get("inventory"), [])
     if "The Custom Tip Scroll" not in inv:
-        await query.answer("Need a Custom Tip Scroll to enchant!", show_alert=True); return
+        await query.answer("You need a Custom Tip Scroll to enchant!", show_alert=True); return
     encs = get_enchant(p, item_name)
     if len(encs) >= 3:
         await query.answer(f"{item_name} already has 3 enchants (max)!", show_alert=True); return
+    await query.answer()
     inv.remove("The Custom Tip Scroll")
     p["inventory"] = json.dumps(inv)
     pool = ENCHANT_EFFECTS.get(effect_pool_key, [])
@@ -8817,14 +9437,41 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # /reinforce [item name]
     if not args:
-        await send_group(update,
-            "⚒️ *Reinforce*\n\n"
-            "Sacrifice a duplicate item to raise its base stats.\n"
-            "• Each reinforce: *+1 ATK or DEF*\n"
-            "• Max 20 reinforces, then use `/reinforce ascend`\n"
-            "• Each ★ ascension adds *+5 flat bonus*\n\n"
-            "Usage: `/reinforce [item name]`\n"
-            "Usage: `/reinforce ascend [item name]`", delay=20)
+        uid = user.id
+        inv = sjl(p.get("inventory"), [])
+        inv_ctr = Counter(inv)
+        rd = get_reinforce_data(p)
+        rf_buttons = []
+        asc_buttons = []
+
+        for item, count in inv_ctr.items():
+            if item not in WEAPONS and item not in ARMORS and item not in SHIELDS:
+                continue
+            entry = rd.get(item, {"r": 0, "s": 0})
+            pool = WEAPONS if item in WEAPONS else (ARMORS if item in ARMORS else SHIELDS)
+            rarity = RARITY_EMOJI.get(pool[item].get("rarity",""), "⚪")
+            stars = star_str(entry["s"]) if entry["s"] else ""
+            if entry["r"] >= 20:
+                if entry["s"] < 3:
+                    asc_buttons.append([InlineKeyboardButton(
+                        f"⭐ Ascend {rarity}{item} {stars} → {star_str(entry['s']+1)}",
+                        callback_data=f"rfasc_{uid}_{item}")])
+            elif count >= 2:
+                rf_buttons.append([InlineKeyboardButton(
+                    f"⚒️ Reinforce {rarity}{item} {stars} [{entry['r']}/20] (x{count})",
+                    callback_data=f"rf_{uid}_{item}")])
+
+        all_buttons = rf_buttons + asc_buttons
+        if not all_buttons:
+            await send_group(update,
+                "⚒️ *Reinforce*\n\n"
+                "Need *2 copies* of the same weapon, armor, or shield.\n"
+                "• Each reinforce: *+1 ATK or DEF*\n"
+                "• 20 reinforces → Ascend for *+5 per ★*\n"
+                "_Collect duplicate drops from raids and bosses!_", delay=20)
+            return
+        markup = InlineKeyboardMarkup(all_buttons)
+        await send_group(update, "⚒️ *Reinforce — Choose an item:*", delay=60, reply_markup=markup)
         return
 
     item_name = " ".join(args).strip()
@@ -8882,6 +9529,83 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if title_line:
         msg += f"\n\n{title_line}"
     await send_group(update, msg, delay=20)
+
+async def reinforce_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle reinforce button: rf_{uid}_{item_name}"""
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try:
+        uid       = int(parts[1])
+        item_name = parts[2]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your reinforce menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    inv = sjl(p.get("inventory"), [])
+    if inv.count(item_name) < 2:
+        await query.answer(f"Need 2 copies of {item_name}!", show_alert=True); return
+    if item_name not in WEAPONS and item_name not in ARMORS and item_name not in SHIELDS:
+        await query.answer("That item cannot be reinforced!", show_alert=True); return
+    rd = get_reinforce_data(p)
+    entry = rd.get(item_name, {"r": 0, "s": 0})
+    if entry["r"] >= 20:
+        await query.answer(f"{item_name} is maxed at 20 reinforces! Use Ascend.", show_alert=True); return
+    await query.answer()
+    inv.remove(item_name)
+    p["inventory"] = json.dumps(inv)
+    entry["r"] += 1
+    rd[item_name] = entry
+    set_reinforce_data(p, rd)
+    p["total_reinforces"] = safe_int(p.get("total_reinforces")) + 1
+    check_titles(p); save_player(p)
+    bonus_total = entry["r"] + entry["s"] * 5
+    slot_type = "ATK" if item_name in WEAPONS else "DEF"
+    msg = (
+        f"⚒️ *Reinforced!*\n\n"
+        f"*{item_name}* {star_str(entry['s']) if entry['s'] else ''}\n"
+        f"Reinforces: *{entry['r']}/20*\n"
+        f"Total {slot_type} bonus: *+{bonus_total}*\n"
+        f"1 copy consumed from inventory."
+    )
+    if entry["r"] == 20:
+        msg += f"\n\n⭐ *Max reinforces!* Tap /reinforce again to Ascend!"
+    await query.edit_message_text(msg, parse_mode="Markdown")
+
+async def reinforce_asc_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle ascend button: rfasc_{uid}_{item_name}"""
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try:
+        uid       = int(parts[1])
+        item_name = parts[2]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your reinforce menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    rd = get_reinforce_data(p)
+    entry = rd.get(item_name, {"r": 0, "s": 0})
+    if entry["r"] < 20:
+        await query.answer(f"Need 20 reinforces first! Currently {entry['r']}/20.", show_alert=True); return
+    if entry["s"] >= 3:
+        await query.answer(f"{item_name} is already at max ★★★ ascension!", show_alert=True); return
+    await query.answer()
+    entry["s"] += 1; entry["r"] = 0
+    rd[item_name] = entry
+    set_reinforce_data(p, rd)
+    p["total_ascensions"] = safe_int(p.get("total_ascensions")) + 1
+    check_titles(p); save_player(p)
+    await query.edit_message_text(
+        f"🌟 *ASCENSION!*\n\n"
+        f"*{item_name}* → {star_str(entry['s'])}\n"
+        f"+5 permanent ATK/DEF bonus per star!\n"
+        f"Reinforces reset to 0/20 — keep grinding!",
+        parse_mode="Markdown")
 
 # ── OBJECTIVES ────────────────────────────────────────────────────────────────
 async def objectives_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -10582,7 +11306,7 @@ async def rankwins_cmd(update, context):
 GUIDE_PAGES = [
     # Page 1 - Getting Started
     (
-        "🎱 *8Ball World  -  Getting Started* (1/6)\n"
+        "🎱 *8Ball World  -  Getting Started* (1/7)\n"
         "\n"
         "Welcome to 8Ball World  -  a pool hall RPG built inside Telegram.\n"
         "\n"
@@ -10601,7 +11325,7 @@ GUIDE_PAGES = [
     ),
     # Page 2 - Character Building
     (
-        "🎱 *8Ball World  -  Building Your Character* (2/6)\n"
+        "🎱 *8Ball World  -  Building Your Character* (2/7)\n"
         "\n"
         "Use /class at Level 5 to pick your starting class. Browse with arrows to see each class's full Path A and Path B skill trees before committing.\n"
         "\n"
@@ -10635,7 +11359,7 @@ GUIDE_PAGES = [
     ),
     # Page 3 - Daily Activities
     (
-        "🎱 *8Ball World  -  Daily Activities* (3/6)\n"
+        "🎱 *8Ball World  -  Daily Activities* (3/7)\n"
         "\n"
         "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
         "\n"
@@ -10653,62 +11377,60 @@ GUIDE_PAGES = [
     ),
     # Page 4 - Combat & Raids
     (
-        "🎱 *8Ball World  -  Combat & Raids* (4/6)\n"
+        "🎱 *8Ball World  -  Combat & Raids* (4/7)\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
-        "Reply to any player's message and use /attack to fight them. Winners steal gold and EXP. Losers are defeated for 6 hours and lose 10% EXP. You cannot attack players who are currently in a raid or boss fight.\n"
+        "Reply to any player's message and use /attack to fight them. Winners steal gold and EXP. Losers are defeated for 6 hours and lose 10% EXP.\n"
+        "\n"
+        "*Killstreaks*\n"
+        "Every consecutive kill without dying extends your streak (shown in /who with 🔥). Streaks reset on death.\n"
+        "\n"
+        "*Revenge*\n"
+        "When you're killed, you gain a 24-hour revenge window. Attacking your killer deals +15% bonus damage (one-time).\n"
+        "\n"
+        "*Wanted*\n"
+        "Kill 5+ players in a single day and you become 🔴 WANTED — visible on /who and /war. High-risk, high-reward.\n"
         "\n"
         "*Duels and Arena*\n"
         "/duel @user [wager]  -  Instant fight decided by Combat Power\n"
         "/arena @user [wager]  -  Turn-based fight using skills\n"
         "\n"
         "*Boss Fights*\n"
-        "Use /boss to start a group boss encounter. While in a boss fight, /attack hits the boss automatically. Your /skill also redirects to the boss.\n"
+        "Use /boss to start a group boss. /attack and /skill redirect to the boss automatically.\n"
         "\n"
         "*Raids*\n"
-        "/raid  -  Create a party (up to 4 players). Others type /raid to join. Use /raidstart when ready.\n"
-        "Turn-based: each player has 25 seconds to /attack before it auto-advances. After all players act, the enemy hits back. Death in a raid counts as a full PvP death.\n"
-        "\n"
-        "*Solo Raids*\n"
-        "/soloraid  -  Start a private raid scaled to your level. Use /attack or /solostrike to fight."
+        "/raid  -  Create a party (up to 4 players). Turn-based: 25 seconds per player action.\n"
+        "/soloraid  -  Private raid scaled to your level."
     ),
-    # Page 5 - Gear, Economy & Halls
+    # Page 5 - Gear & Economy
     (
-        "🎱 *8Ball World  -  Gear, Economy & Halls* (5/6)\n"
+        "🎱 *8Ball World  -  Gear & Economy* (5/7)\n"
         "\n"
-        "*Gear*\n"
-        "You have four slots: Weapon, Armor, Shield, Accessory. Gear drops from /pool, quests, dungeons, raids, and bosses. Items show class tags like [Warrior] or [Mage]  -  any class can equip anything, but matching gear deals bonus damage.\n"
-        "/equip [item]  -  Equip from your inventory\n"
-        "/enhance [item]  -  Upgrade with Slate Fragments (+ATK or +DEF, up to +10)\n"
-        "/enchant [item]  -  Add enchants using Custom Tip Scrolls (max 3 per item)\n"
+        "*Gear Slots*\n"
+        "Weapon, Armor, Shield, Accessory. Use /equip to browse and tap to equip.\n"
+        "/enhance  -  Upgrade with Slate Fragments (+1 to +10)\n"
+        "/enchant  -  Add random enchants via Custom Tip Scrolls (max 3)\n"
+        "/reinforce  -  Sacrifice duplicate gear for +1 ATK/DEF (max 20, then Ascend for ★)\n"
         "\n"
-        "*Reinforce & Ascend*\n"
-        "Sacrifice a duplicate weapon or armor to permanently raise its base stats.\n"
-        "/reinforce [item]  -  Consumes 1 duplicate, adds +1 ATK/DEF (max 20)\n"
-        "/reinforce ascend [item]  -  At 20 reinforces, ascend to next ★ tier (+5 flat bonus, resets to 0)\n"
-        "Max progression: ★★★ with 20 reinforces = +35 total bonus on top of base stats.\n"
+        "*Daily Claim*\n"
+        "/claim — Collect your daily reward. Streak bonuses unlock Slate Fragments (Day 3), Dragon Scales (Day 7), and Custom Tip Scrolls (Day 14). Miss a day and your streak resets.\n"
         "\n"
-        "*Item Sets*\n"
-        "Equip matching legendary pieces to unlock set bonuses shown in /stats Gear page.\n"
-        "Example: The Rack Splitter + Diamond Felt Armor = *Breaker's Legacy* (+12 STR, +8 DEF)\n"
+        "*Crafting*\n"
+        "/forge — View recipes and craft items from materials like Slate Fragments.\n"
         "\n"
-        "*Daily Objectives*\n"
-        "/objectives  -  View your 3 daily objectives. Complete them for bonus EXP and gold. Resets at midnight.\n"
+        "*Trading*\n"
+        "/trade @user [item] [price]  -  Offer an item for sale to a specific player. They type /accept to complete the trade.\n"
         "\n"
         "*Economy*\n"
-        "/sell [item]  -  Sell for 50% value (warns on rare+ items)\n"
-        "/sell [rarity]  -  Bulk sell all items of that rarity\n"
-        "/trade @user [item] [price]  -  Trade with another player\n"
+        "/sell from /inventory — Tap sell buttons next to items in your inventory.\n"
         "/shop  -  Daily rotating shop\n"
         "\n"
-        "*Halls (Guilds)*\n"
-        "Halls level up as members donate gold via /guilddonate, unlocking stronger EXP bonuses.\n"
-        "\n"
-        "🎱 *Good luck at the table.*"
+        "*Set Bonuses*\n"
+        "Equip matching legendary pieces to unlock set bonuses shown in /stats Gear page."
     ),
     # Page 6 - Command Reference
     (
-        "🎱 *8Ball World  -  Command Reference* (6/6)\n"
+        "🎱 *8Ball World  -  Command Reference* (6/7)\n"
         "\n"
         "*Character*\n"
         "/ascend  -  Create your RPG character (DM only)\n"
@@ -10753,6 +11475,8 @@ GUIDE_PAGES = [
         "/objectives  -  View daily objectives\n"
         "/sell [item]  -  Sell item for 50% value\n"
         "/sell [rarity]  -  Bulk sell by rarity\n"
+        "/forge  -  Craft items from materials\n"
+        "/claim  -  Daily claim with streak bonuses\n"
         "/use [item]  -  Use a consumable\n"
         "/trade @user [item] [price]  -  Trade with a player\n"
         "/shop  -  Daily rotating shop\n"
@@ -10761,7 +11485,9 @@ GUIDE_PAGES = [
         "/rank  -  Leaderboard\n"
         "/rankme  -  Your rank\n"
         "/rankwins  -  Wins leaderboard\n"
-        "/who @user  -  Quick player lookup\n"
+        "/who  -  Active players with HP/status\n"
+        "/history  -  Your last 5 PvP hits\n"
+        "/war  -  Active bounties, guild wars, top killers\n"
         "/world  -  Current world info\n"
         "/changelog  -  Recent bot updates\n"
         "\n"
@@ -10778,11 +11504,42 @@ GUIDE_PAGES = [
         "/guilddonate [amt]  -  Donate gold to hall\n"
         "/guildkick @user  -  Kick member (leader)\n"
         "/guildleave  -  Leave your hall\n"
-        "/guilddisband confirm  -  Disband your hall"
+        "/guilddisband confirm  -  Disband your hall\n"
+        "/guildwar [Hall Name]  -  Declare war (leader, 24hr)\n"
+        "/gbank deposit/withdraw  -  Hall bank"
     ),
+    # Page 7 - Guilds & Advanced
+    (
+        "🎱 *8Ball World  -  Guilds & Advanced Systems* (7/7)\n"
+        "\n"
+        "*Halls (Guilds)*\n"
+        "Halls level up as members donate gold via /guilddonate, unlocking EXP bonuses, shop discounts, and more.\n"
+        "/guildjoin  -  Browse and join a Hall\n"
+        "/guildcreate [name]  -  Create a Hall (100g)\n"
+        "/guildinfo  -  View your Hall details and perks\n"
+        "\n"
+        "*Hall Bank*\n"
+        "/gbank — View the Hall treasury. Members can deposit gold. Leaders can withdraw for upgrades or emergencies.\n"
+        "\n"
+        "*Guild Wars*\n"
+        "/guildwar — View your Hall's active war status.\n"
+        "/guildwar [Hall Name] — Declare a 24-hour war (leader only).\n"
+        "Kills against enemy Hall members score war points (double EXP objective credit). The winning Hall earns bragging rights on /war.\n"
+        "\n"
+        "*Bounties*\n"
+        "/bounty @user [amount]  -  Place a gold bounty (100–5000g)\n"
+        "/bounties  -  View the active bounty board\n"
+        "Killing a player with an active bounty automatically claims the reward.\n"
+        "_Railrunner's Execution Order places a free 500g bounty via skill._\n"
+        "\n"
+        "*Kill Streaks & Wanted System*\n"
+        "Every kill without dying extends your streak (visible in /who). 5+ kills in one day marks you as 🔴 WANTED — higher risk but all eyes on you.\n"
+        "\n"
+        "🎱 *Good luck at the table.*"
+    )
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands", "Guilds & Advanced"]
 
 async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
     total = len(GUIDE_PAGES)
@@ -12692,6 +13449,9 @@ def main():
     app.add_handler(CommandHandler("ascend",       ascend_cmd))
     app.add_handler(CommandHandler("cooldowns",    cooldowns_cmd))
     app.add_handler(CommandHandler("who",          who_cmd))
+    app.add_handler(CommandHandler("history",      history_cmd))
+    app.add_handler(CommandHandler("war",          war_cmd))
+    app.add_handler(CommandHandler("forge",        forge_cmd))
 
     # Class & progression
     app.add_handler(CommandHandler("class",     class_cmd))
@@ -12758,12 +13518,14 @@ def main():
     app.add_handler(CommandHandler("guildkick",      guildkick_cmd))
     app.add_handler(CommandHandler("guildleave",     guildleave_cmd))
     app.add_handler(CommandHandler("guilddisband",   guilddisband_cmd))
+    app.add_handler(CommandHandler("guildwar",       guildwar_cmd))
+    app.add_handler(CommandHandler("gbank",          gbank_cmd))
 
     # Events
     app.add_handler(CommandHandler("greet",     greet_event))
     app.add_handler(CommandHandler("fight",     fight_event))
     app.add_handler(CommandHandler("shoot",     shoot_event))
-    app.add_handler(CommandHandler("claim",     claim_event))
+    app.add_handler(CommandHandler("claim",     claim_cmd))
     app.add_handler(CommandHandler("pray",      pray_event))
 
     # Admin
@@ -12797,6 +13559,10 @@ def main():
     app.add_handler(CallbackQueryHandler(skill_tree_callback,    pattern="^sktree_"))
     app.add_handler(CallbackQueryHandler(skill_pick_callback,   pattern="^skillpick_"))
     app.add_handler(CallbackQueryHandler(skillpage_callback,    pattern="^skillpage_"))
+    app.add_handler(CallbackQueryHandler(equip_item_callback,   pattern="^eqp_"))
+    app.add_handler(CallbackQueryHandler(reinforce_item_callback, pattern="^rf_"))
+    app.add_handler(CallbackQueryHandler(reinforce_asc_callback,  pattern="^rfasc_"))
+    app.add_handler(CallbackQueryHandler(sell_item_callback,    pattern="^sll_"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
