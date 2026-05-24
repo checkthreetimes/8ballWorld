@@ -8508,9 +8508,13 @@ async def who_cmd(update, context):
         cls = CLASS_TREE.get(row["class_id"] or "", {}).get("name", "No Class")
         hp  = safe_int(row["hp"]); mhp = safe_int(row["max_hp"])
         hp_pct = int((hp / max(1, mhp)) * 100) if mhp else 100
-        hp_icon = "💀" if hp == 0 else ("❤️" if hp_pct > 50 else ("🟡" if hp_pct > 25 else "🔴"))
-        wanted_tag = " 🔴 WANTED" if safe_int(row.get("kills_today", 0)) >= 5 else ""
-        ks = safe_int(row.get("kill_streak", 0))
+        hp_icon = "💀" if (hp == 0 and mhp > 0) else ("❤️" if hp_pct > 50 else ("🟡" if hp_pct > 25 else "🔴"))
+        try:
+            kills_today = safe_int(row["kills_today"])
+            ks          = safe_int(row["kill_streak"])
+        except (IndexError, KeyError):
+            kills_today = 0; ks = 0
+        wanted_tag = " 🔴 WANTED" if kills_today >= 5 else ""
         streak_tag = f" 🔥×{ks}" if ks >= 3 else ""
         lines.append(f"{hp_icon} *{row['username']}* - Lv {row['level']} {cls}{streak_tag}{wanted_tag}")
 
