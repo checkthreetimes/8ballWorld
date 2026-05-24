@@ -180,6 +180,14 @@ def safe_int(v, d=0):
     try: return int(v or d)
     except: return d
 
+def resolve_item_ci(typed, collection):
+    """Return the canonical item name from collection that matches typed (case-insensitive), or None."""
+    typed_l = typed.strip().lower()
+    for item in collection:
+        if item.lower() == typed_l:
+            return item
+    return None
+
 # ── WORLD & WEATHER ───────────────────────────────────────────────────────────
 WORLD_NAME = "The World of 8Ball"
 
@@ -6552,10 +6560,11 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append("\n_No equippable items in bag. Visit /shop!_")
             markup = None
         await send_group(update, "\n".join(lines), delay=60, reply_markup=markup); return
-    item_name = " ".join(context.args)
+    item_typed = " ".join(context.args)
     inv = sjl(p.get("inventory"), [])
-    if item_name not in inv:
-        await send_group(update, f"You don't have *{item_name}* in your inventory!", delay=9); return
+    item_name = resolve_item_ci(item_typed, inv)
+    if not item_name:
+        await send_group(update, f"You don't have *{item_typed}* in your inventory!", delay=9); return
 
     # Safety check  -  unknown items are never silently deleted
     all_known = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES)
@@ -6832,10 +6841,11 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         markup = InlineKeyboardMarkup(buttons)
         await send_group(update, "🧪 *Use Item — Select a consumable:*", delay=30, reply_markup=markup)
         return
-    item = " ".join(context.args)
+    item_typed = " ".join(context.args)
     inv  = sjl(p.get("inventory"), [])
-    if item not in inv:
-        await send_group(update, f"You don't have *{item}*!", delay=9); return
+    item = resolve_item_ci(item_typed, inv)
+    if not item:
+        await send_group(update, f"You don't have *{item_typed}*!", delay=9); return
 
     # Safety check  -  never silently delete unknown items
     all_known_consumables = set(CONSUMABLES)
@@ -7039,10 +7049,11 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     confirmed = len(args_list) > 1 and args_list[-1].lower() == "confirm"
     if confirmed:
         args_list = args_list[:-1]
-    item_name = " ".join(args_list)
+    item_typed = " ".join(args_list)
     inv  = sjl(p.get("inventory"), [])
-    if item_name not in inv:
-        await send_group(update, f"You don't have *{item_name}*!", delay=9); return
+    item_name = resolve_item_ci(item_typed, inv)
+    if not item_name:
+        await send_group(update, f"You don't have *{item_typed}*!", delay=9); return
 
     # Check if item is equipped
     equipped_slots = {p.get("equipped_weapon"), p.get("equipped_armor"),
@@ -8248,18 +8259,68 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         tp = get_player(target_uid)
         if not tp:
             await send_result("Target player not found!"); return
-        if is_defeated(tp):
-            await send_result(f"{tp['username']} is already defeated!"); return
-        if is_invincible(tp):
-            await send_result(f"🛡️ {tp['username']} is still recovering — invincible."); return
+        stype = sk.get("type", "damage")
+        _support_types = {"self_heal", "self_heal_buff", "group_heal", "dmg_reduction_buff",
+                          "revive_heal", "regen", "full_revive", "heal_shield", "mass_cleanse"}
+        # Healing/support skills bypass invincibility and defeated checks
+        if stype not in _support_types:
+            if is_defeated(tp):
+                await send_result(f"{tp['username']} is already defeated!"); return
+            if is_invincible(tp):
+                await send_result(f"🛡️ {tp['username']} is still recovering — invincible."); return
         if is_silenced(p):
             await send_result("🤐 You are silenced — can't use skills!"); return
         base = calc_attack_damage(p, w)
-        stype = sk.get("type", "damage")
         out = [f"⚡ *{p['username']}* uses *{sk['name']}* on *{tp['username']}*!"]
-        if stype in ("self_heal", "self_heal_buff", "group_heal", "dmg_reduction_buff"):
-            await send_result("Use support skills with /skill (no target).")
+        if stype in ("self_heal", "self_heal_buff", "group_heal", "mass_cleanse"):
+            await send_result("Use self/group skills with /skill (no target).")
             return
+        # ── Healing skills on target ──
+        if stype == "revive_heal":
+            cls_p = get_player_class(p)
+            wis = get_stat(p, "WIS")
+            mult = 1.25 if cls_p and cls_p.get("passive_key") == "mending_aura" else 1.0
+            heal = round(wis * 5 * mult)
+            was_defeated = is_defeated(tp)
+            if was_defeated:
+                if tp.get("revival_blocked_until") and _ts_active(tp, "revival_blocked_until"):
+                    await send_result(f"☠️ {tp['username']} is condemned — cannot be revived!"); return
+                tp["defeated_until"] = None
+                tp["hp"] = min(calc_max_hp(tp), heal)
+                tp["invincible_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
+                out.append(f"✨ *Holy Light!* *{tp['username']}* revived with *{heal} HP*!\n"
+                           f"🛡️ 1 hour invincibility granted.")
+            else:
+                tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
+                out.append(f"💚 Healed *{tp['username']}* for *{heal} HP*! ({tp['hp']}/{tp['max_hp']})")
+            save_player(p); save_player(tp)
+            await send_result("\n".join(out)); return
+        if stype == "regen":
+            wis = get_stat(p, "WIS")
+            heal = wis * 5
+            tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
+            out.append(f"💚 *Renew!* +{heal} HP to *{tp['username']}*! ({tp['hp']}/{tp['max_hp']})")
+            save_player(p); save_player(tp)
+            await send_result("\n".join(out)); return
+        if stype == "full_revive":
+            inv = sjl(p.get("inventory"), [])
+            if "The Golden Triangle" not in inv:
+                await send_result("✨ Miracle requires a The Golden Triangle — you don't have one."); return
+            if tp.get("revival_blocked_until") and _ts_active(tp, "revival_blocked_until"):
+                await send_result(f"☠️ {tp['username']} is condemned — cannot be revived!"); return
+            inv.remove("The Golden Triangle")
+            p["inventory"] = json.dumps(inv)
+            tp["hp"] = calc_max_hp(tp)
+            tp["defeated_until"] = None
+            tp["invincible_until"] = (datetime.now() + timedelta(hours=2)).isoformat()
+            out.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored! 🛡️ 2 hours invincibility.")
+            save_player(p); save_player(tp)
+            await send_result("\n".join(out)); return
+        if stype == "dmg_reduction_buff":
+            set_status(tp, "blessed_until", 3600)
+            out.append(f"✨ *Blessing!* {tp['username']} takes 15% less damage for 1 hour.")
+            save_player(p); save_player(tp)
+            await send_result("\n".join(out)); return
         dmg = round(base * sk.get("mult", 1.0))
         if stype == "multihit":
             hits = sk.get("hits", 2)
@@ -8359,6 +8420,85 @@ async def _execute_skill(update, context, p, sk):
         save_player(tp); save_player(p)
         lines.append(f"✨ *Blessing* granted to *{tp['username']}*!\n"
                      f"15% damage reduction for 1 hour.")
+        await send_group(update, "\n".join(lines), delay=15); return
+
+    elif stype == "revive_heal":
+        if not update.message.reply_to_message:
+            await send_group(update, "Reply to your target with /skill!", delay=9); return
+        tu = update.message.reply_to_message.from_user
+        tp = get_player(tu.id)
+        if not tp:
+            await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
+        cls_p = get_player_class(p)
+        wis = get_stat(p, "WIS")
+        mult = 1.25 if cls_p and cls_p.get("passive_key") == "mending_aura" else 1.0
+        # Accessory bonus
+        acc = p.get("equipped_accessory")
+        if acc and ACCESSORIES.get(acc, {}).get("effect", {}).get("revive_heal_bonus"):
+            mult += ACCESSORIES[acc]["effect"]["revive_heal_bonus"]
+        heal = round(wis * 5 * mult)
+        was_defeated = is_defeated(tp)
+        if was_defeated:
+            if tp.get("revival_blocked_until") and _ts_active(tp, "revival_blocked_until"):
+                await send_group(update, f"☠️ *{tp['username']}* is condemned — cannot be revived!", delay=9); return
+            tp["defeated_until"] = None
+            tp["hp"] = min(calc_max_hp(tp), heal)
+            tp["invincible_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
+            save_player(tp); save_player(p)
+            lines.append(f"✨ *Holy Light!* *{tp['username']}* is revived with *{heal} HP*!\n"
+                         f"🛡️ 1 hour invincibility granted  -  _(Still Recovering)_")
+        else:
+            tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
+            save_player(tp); save_player(p)
+            lines.append(f"💚 *Holy Light!* Healed *{tp['username']}* for *{heal} HP*!\n"
+                         f"❤️ {tp['username']}: {tp['hp']}/{tp['max_hp']} HP")
+        await send_group(update, "\n".join(lines), delay=15); return
+
+    elif stype == "regen":
+        if not update.message.reply_to_message:
+            await send_group(update, "Reply to your target with /skill!", delay=9); return
+        tu = update.message.reply_to_message.from_user
+        tp = get_player(tu.id)
+        if not tp:
+            await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
+        wis = get_stat(p, "WIS")
+        # Apply an upfront heal equal to 5 ticks of WIS HP
+        heal = wis * 5
+        tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
+        save_player(tp); save_player(p)
+        lines.append(f"💚 *Renew!* Applied regeneration to *{tp['username']}*!\n"
+                     f"❤️ +{heal} HP restored ({tp['hp']}/{tp['max_hp']})")
+        await send_group(update, "\n".join(lines), delay=15); return
+
+    elif stype == "full_revive":
+        if not update.message.reply_to_message:
+            await send_group(update, "Reply to your target with /skill!", delay=9); return
+        tu = update.message.reply_to_message.from_user
+        tp = get_player(tu.id)
+        if not tp:
+            await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
+        inv = sjl(p.get("inventory"), [])
+        if "The Golden Triangle" not in inv:
+            await send_group(update, "✨ *Miracle* requires a *The Golden Triangle* — you don't have one.", delay=9); return
+        if tp.get("revival_blocked_until") and _ts_active(tp, "revival_blocked_until"):
+            await send_group(update, f"☠️ *{tp['username']}* is condemned — cannot be revived!", delay=9); return
+        inv.remove("The Golden Triangle")
+        p["inventory"] = json.dumps(inv)
+        tp["hp"] = calc_max_hp(tp)
+        tp["defeated_until"] = None
+        tp["invincible_until"] = (datetime.now() + timedelta(hours=2)).isoformat()
+        save_player(tp); save_player(p)
+        lines.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored!\n"
+                     f"❤️ Full HP restored! 🛡️ 2 hours invincibility granted.\n"
+                     f"_(Used: The Golden Triangle)_")
+        await send_group(update, "\n".join(lines), delay=20); return
+
+    elif stype == "self_heal_buff":
+        wis = get_stat(p, "WIS")
+        p["hp"] = min(calc_max_hp(p), p["hp"] + 15)
+        lines.append(f"✨ *Holy Fervor!* Restored 15 HP! ({p['hp']}/{p['max_hp']})\n"
+                     f"⚡ WIS boosted — heals more effective for 2 minutes.")
+        save_player(p)
         await send_group(update, "\n".join(lines), delay=15); return
 
     # ── Offensive skills ──────────────────────────────────────────────────────
@@ -8609,7 +8749,8 @@ async def who_cmd(update, context):
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
     cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
     c.execute("""SELECT s.user_id, s.username, s.level, s.last_seen,
-                        p.class_id, p.hp, p.max_hp, p.kill_streak, p.kills_today
+                        p.class_id, p.hp, p.max_hp, p.kill_streak, p.kills_today,
+                        p.invincible_until, p.defeated_until
                  FROM shadow_profiles s
                  LEFT JOIN players p ON p.user_id = s.user_id
                  WHERE s.last_seen > ?
@@ -8621,12 +8762,29 @@ async def who_cmd(update, context):
     if not rows:
         await send_group(update, "No players active in the last 24 hours.", delay=9); return
 
+    now_iso = datetime.now().isoformat()
     lines = ["👥 *Active Players (last 24h)*\n"]
     for row in rows:
         cls = CLASS_TREE.get(row["class_id"] or "", {}).get("name", "No Class")
         hp  = safe_int(row["hp"]); mhp = safe_int(row["max_hp"])
         hp_pct = int((hp / max(1, mhp)) * 100) if mhp else 100
-        hp_icon = "💀" if (hp == 0 and mhp > 0) else ("❤️" if hp_pct > 50 else ("🟡" if hp_pct > 25 else "🔴"))
+        try:
+            inv_until = row["invincible_until"]
+            def_until = row["defeated_until"]
+        except (IndexError, KeyError):
+            inv_until = None; def_until = None
+        is_inv  = bool(inv_until and inv_until > now_iso)
+        is_def  = bool(def_until and def_until > now_iso)
+        if is_inv:
+            hp_icon = "🛡️"
+        elif is_def or (hp == 0 and mhp > 0):
+            hp_icon = "💀"
+        elif hp_pct > 50:
+            hp_icon = "❤️"
+        elif hp_pct > 25:
+            hp_icon = "🟡"
+        else:
+            hp_icon = "🔴"
         try:
             kills_today = safe_int(row["kills_today"])
             ks          = safe_int(row["kill_streak"])
@@ -8634,7 +8792,8 @@ async def who_cmd(update, context):
             kills_today = 0; ks = 0
         wanted_tag = " 🔴 WANTED" if kills_today >= 5 else ""
         streak_tag = f" 🔥×{ks}" if ks >= 3 else ""
-        lines.append(f"{hp_icon} *{row['username']}* - Lv {row['level']} {cls}{streak_tag}{wanted_tag}")
+        inv_tag    = " 🛡️" if is_inv else ""
+        lines.append(f"{hp_icon} *{row['username']}* - Lv {row['level']} {cls}{streak_tag}{wanted_tag}{inv_tag}")
 
     await send_group(update, "\n".join(lines), delay=20)
 
@@ -8843,9 +9002,10 @@ async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 buttons.append([InlineKeyboardButton(f"🏅 Equip: {t}", callback_data=f"settitle_{uid}_{t}")])
         markup = InlineKeyboardMarkup(buttons) if buttons else None
         await send_group(update, "\n".join(lines), permanent=True, reply_markup=markup); return
-    chosen = " ".join(context.args)
-    if chosen not in titles:
-        await send_group(update, f"You haven't earned *{chosen}* yet!", delay=9); return
+    chosen_typed = " ".join(context.args)
+    chosen = resolve_item_ci(chosen_typed, titles)
+    if not chosen:
+        await send_group(update, f"You haven't earned *{chosen_typed}* yet!", delay=9); return
     p["active_title"] = chosen; save_player(p)
     await send_group(update, f"🏅 Title set to *{chosen}*!", delay=9)
 
@@ -8861,12 +9021,13 @@ async def trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_str = context.args[0].lstrip("@")
     try:
         price = int(context.args[-1])
-        item  = " ".join(context.args[1:-1])
+        item_typed = " ".join(context.args[1:-1])
     except:
         await send_group(update, "Invalid format. Usage: `/trade @username [item] [price]`", delay=9); return
     inv = sjl(p.get("inventory"),[])
-    if item not in inv:
-        await send_group(update, f"You don't have *{item}* in your inventory!", delay=9); return
+    item = resolve_item_ci(item_typed, inv)
+    if not item:
+        await send_group(update, f"You don't have *{item_typed}* in your inventory!", delay=9); return
     if price < 0:
         await send_group(update, "Price must be 0 or more.", delay=9); return
     # Store pending trade
@@ -9524,8 +9685,8 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # /reinforce ascend [item name]
     if args and args[0].lower() == "ascend":
-        item_name = " ".join(args[1:]).strip()
-        if not item_name:
+        item_typed = " ".join(args[1:]).strip()
+        if not item_typed:
             await send_group(update,
                 "Usage: `/reinforce ascend [item name]`\n"
                 "Ascend an item that has reached 20 reinforces.", delay=15)
@@ -9533,8 +9694,9 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         inv = json.loads(p.get("inventory") or "[]")
         equipped_slots = [p.get("equipped_weapon"), p.get("equipped_armor"),
                           p.get("equipped_shield"), p.get("equipped_accessory")]
-        if item_name not in inv and item_name not in equipped_slots:
-            await send_group(update, f"❌ *{item_name}* not found in your inventory or equipped slots.", delay=10)
+        item_name = resolve_item_ci(item_typed, inv) or resolve_item_ci(item_typed, [s for s in equipped_slots if s])
+        if not item_name:
+            await send_group(update, f"❌ *{item_typed}* not found in your inventory or equipped slots.", delay=10)
             return
         rd = get_reinforce_data(p)
         entry = rd.get(item_name, {"r": 0, "s": 0})
@@ -9603,8 +9765,9 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "⚒️ *Reinforce — Choose an item:*", delay=60, reply_markup=markup)
         return
 
-    item_name = " ".join(args).strip()
+    item_typed = " ".join(args).strip()
     inv = json.loads(p.get("inventory") or "[]")
+    item_name = resolve_item_ci(item_typed, list(WEAPONS) + list(ARMORS) + list(SHIELDS)) or item_typed
     count = inv.count(item_name)
 
     # Check if it's a valid reinforceable item
