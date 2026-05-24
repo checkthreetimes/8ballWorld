@@ -2245,7 +2245,7 @@ def calc_proc_effect(attacker, defender, dmg):
     elif line == "mage" and path == "B":
         chance = get_proc_chance(0.12, attacker)
         if random.random() < chance:
-            steal = round(dmg * 0.15)
+            steal = round(dmg * 0.50)
             attacker["hp"] = min(calc_max_hp(attacker), attacker["hp"] + steal)
             return True, f"🌑 *Soul Drain!* Stole {steal} HP from the wound!", 0
  
@@ -4631,15 +4631,34 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if tu.id != hu.id:
         save_player(t)
 
+    is_self = (tu.id == hu.id)
     if is_priest_healer:
-        who = f"🙏 *{h['username']}* ({get_player_class(h)['name']}) heals"
+        cls_name_h = get_player_class(h)["name"] if get_player_class(h) else "Chalker"
+        if is_self and was_defeated:
+            msg = (
+                f"🙏 *{h['username']}* ({cls_name_h}) channels divine energy and *revives themselves*!\n"
+                f"❤️ HP restored: *{heal_amount}* → {t['hp']}/{t['max_hp']}\n"
+                f"✨ *1 hour invincibility* granted  -  _(Still Recovering)_"
+            )
+        elif is_self:
+            msg = (
+                f"🙏 *{h['username']}* ({cls_name_h}) heals themselves for *{heal_amount} HP*!\n"
+                f"❤️ HP: {t['hp']}/{t['max_hp']}"
+            )
+        else:
+            msg = (
+                f"🙏 *{h['username']}* ({cls_name_h}) heals *{t['username']}* for *{heal_amount} HP*!\n"
+                f"❤️ {t['username']}: {t['hp']}/{t['max_hp']} HP"
+            )
+            if was_defeated:
+                msg += f"\n✨ *{t['username']}* is revived! *1 hour invincibility* granted  -  _(Still Recovering)_"
     else:
-        who = f"💊 *{h['username']}* uses *{potion}* to heal"
-
-    msg = (f"{who} *{t['username']}* for *{heal_amount} HP*!\n"
-           f"❤️ {t['username']}: {t['hp']}/{t['max_hp']} HP")
-    if was_defeated:
-        msg += f"\n✨ *{t['username']}* is revived! *1 hour invincibility* granted  -  _(Still Recovering)_"
+        msg = (
+            f"💊 *{h['username']}* uses *{potion}* to heal *{t['username']}* for *{heal_amount} HP*!\n"
+            f"❤️ {t['username']}: {t['hp']}/{t['max_hp']} HP"
+        )
+        if was_defeated:
+            msg += f"\n✨ *{t['username']}* is revived! *1 hour invincibility* granted  -  _(Still Recovering)_"
     if new_t:
         msg += f"\n🏅 *{h['username']}* earned: *{new_t[0]}*!"
     if leveled and h["level"] % 10 == 0:
@@ -11483,10 +11502,12 @@ GUIDE_PAGES = [
         "At Lv 10, use /prestige to choose Path A or B. Your class evolves automatically at Lv 30, 60, and 100.\n"
         "\n"
         "*Stats* (spend with /allocate):\n"
-        "STR — Physical dmg | INT — Magic dmg | AGI — Dodge/speed\n"
-        "DEX — Crit/accuracy | WIS — Heals/EXP | LUK — Loot/gold\n"
+        "STR — Physical damage | INT — Magic spell damage | AGI — Dodge chance\n"
+        "DEX — Crit chance & accuracy | WIS — Healing power | LUK — Loot & gold drops\n"
         "\n"
-        "Use /skill to browse your full skill tree including locked tiers."
+        "📿 *Priest note:* Chalkers can /heal for free (no potions needed) and can revive themselves — just use /heal with no reply. WIS scales your heal power directly.\n"
+        "\n"
+        "Use /skill to browse your full skill tree including locked tiers. Use /class to preview what's coming next as you level."
     ),
     # Page 3 - Daily Activities
     (
@@ -11495,16 +11516,19 @@ GUIDE_PAGES = [
         "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
         "\n"
         "*Activities and their cooldowns:*\n"
+        "/claim  -  Daily streak reward. Gold + bonus materials every day. Streak builds over consecutive days (24 hours)\n"
         "/daily  -  Gold + EXP reward  (24 hours)\n"
         "/train  -  EXP gain with class bonus  (30 min)\n"
         "/quest  -  EXP + gold + possible loot  (1 hour)\n"
         "/explore  -  Best loot drops, big EXP  (1hr, 2x per day)\n"
         "/pool  -  Pool shot for EXP, gold, and items  (8 seconds)\n"
-        "/dungeon  -  Solo boss run  (once per day)\n"
-        "/dungeonhard  -  Harder dungeon, better rewards\n"
-        "/dungeonlegendary  -  Hardest version, best loot\n"
+        "/dungeon  -  Hall Run solo boss encounter  (once per day)\n"
+        "/dungeonhard  -  Harder hall run, better rewards (Lv 15+)\n"
+        "/dungeonlegendary  -  Hardest hall run, best loot (Lv 40+)\n"
         "\n"
-        "💡 /pool is your main source of rare weapons and accessories. The rarer the shot (epic, legendary), the better the potential drop. Keep shooting."
+        "💡 /pool is your main source of rare weapons and accessories. The rarer the shot (epic, legendary), the better the potential drop. Keep shooting.\n"
+        "\n"
+        "💡 /hustle runs all ready cooldowns at once — daily, train, quest, pool, claim, and explore. Use it every time you're in the group."
     ),
     # Page 4 - Combat & Raids
     (
@@ -11527,34 +11551,56 @@ GUIDE_PAGES = [
         "/arena @user [wager]  -  Turn-based fight using skills\n"
         "\n"
         "*Boss Fights*\n"
-        "Use /boss to start a group boss. /attack and /skill redirect to the boss automatically.\n"
+        "Use /boss to start a group boss encounter (button menu). /attack and /skill redirect to the boss automatically while it's active.\n"
         "\n"
         "*Raids*\n"
-        "/raid  -  Create a party (up to 4 players). Turn-based: 25 seconds per player action.\n"
-        "/soloraid  -  Private raid scaled to your level."
+        "/raid  -  Create a party (up to 4 players). Others type /raid to join. Use /raidstart when ready.\n"
+        "Turn-based: each player has 25 seconds to /attack or /skill before it auto-advances.\n"
+        "/soloraid  -  Private raid scaled to your level. Great for solo farming.\n"
+        "\n"
+        "*Defeat & Revival*\n"
+        "When your HP hits 0 you are defeated for 6 hours and lose 10% EXP. Options to recover:\n"
+        "• Wait it out (6 hours)\n"
+        "• Use *The Re-Rack* from your inventory (/use)\n"
+        "• Ask a Chalker (Priest) to /heal you  -  they revive for free\n"
+        "• 📿 Chalkers can also /heal themselves with no reply to self-revive"
     ),
     # Page 5 - Gear & Economy
     (
         "🎱 *8Ball World  -  Gear & Economy* (5/7)\n"
         "\n"
         "*Gear Slots*\n"
-        "Weapon, Armor, Shield, Accessory. Use /equip to browse and tap to equip.\n"
-        "/enhance  -  Upgrade with Slate Fragments (+1 to +10)\n"
-        "/enchant  -  Add random enchants via Custom Tip Scrolls (max 3)\n"
-        "/reinforce  -  Sacrifice duplicate gear for +1 ATK/DEF (max 20, then Ascend for ★)\n"
+        "Weapon, Armor, Shield, Accessory. Use /equip to browse your bag and tap to equip. Use /unequip to remove gear.\n"
+        "/enhance  -  Upgrade gear with Slate Fragments. Tap the slot button. +1 to +10 max. Fails are possible at high levels.\n"
+        "/enchant  -  Add random enchants via Custom Tip Scrolls (up to 3 per item). Tap slot to enchant.\n"
+        "/reinforce  -  Sacrifice a duplicate weapon or armor to permanently raise its base stats (+1 ATK/DEF per reinforce, max 20). Tap to select.\n"
+        "/reinforce ascend  -  After 20 reinforces, Ascend the item to ★ tier (+5 flat bonus, resets to 0/20). Up to ★★★.\n"
+        "\n"
+        "*Consumable Items*\n"
+        "Use /use to open your consumables and tap to use an item.\n"
+        "• Chalk Vial — +50 HP\n"
+        "• Premium Chalk Draft — +100 HP\n"
+        "• Champion's Chalk Flask — +200 HP\n"
+        "• The Re-Rack — Full self-revive from defeat (1 hour invincibility after)\n"
+        "• Slate Fragment — Used for /enhance\n"
+        "• Dragon Scale — Crafting material for /forge\n"
+        "• The Custom Tip Scroll — Used for /enchant\n"
+        "\n"
+        "*Titles*\n"
+        "/title — View your earned titles and tap to equip one. Titles show on your /stats and some grant stat bonuses.\n"
         "\n"
         "*Daily Claim*\n"
-        "/claim — Collect your daily reward. Streak bonuses unlock Slate Fragments (Day 3), Dragon Scales (Day 7), and Custom Tip Scrolls (Day 14). Miss a day and your streak resets.\n"
+        "/claim — Daily reward with streak bonuses: Slate Fragments (Day 3+), Dragon Scales (Day 7+), Custom Tip Scrolls (Day 14+).\n"
         "\n"
         "*Crafting*\n"
-        "/forge — View recipes and craft items from materials like Slate Fragments.\n"
+        "/forge — View recipes and craft items from Slate Fragments and Dragon Scales.\n"
         "\n"
         "*Trading*\n"
-        "/trade @user [item] [price]  -  Offer an item for sale to a specific player. They type /accept to complete the trade.\n"
+        "/trade @user [item] [price]  -  Offer an item to a player. They type /accept to complete it.\n"
         "\n"
         "*Economy*\n"
-        "/sell from /inventory — Tap sell buttons next to items in your inventory.\n"
-        "/shop  -  Daily rotating shop\n"
+        "/inventory — Browse your bag by category. Tap 💰 Sell buttons to sell items directly.\n"
+        "/shop  -  Daily rotating shop (Hall members get a discount at guild level 7+)\n"
         "\n"
         "*Set Bonuses*\n"
         "Equip matching legendary pieces to unlock set bonuses shown in /stats Gear page."
@@ -11587,28 +11633,28 @@ GUIDE_PAGES = [
         "\n"
         "*Combat*\n"
         "/attack  -  Attack reply target or active boss\n"
-        "/skill  -  Use your class skill\n"
+        "/skill  -  Use your class skill in battle\n"
         "/duel @user [wager]  -  Quick PvP duel\n"
         "/arena @user [wager]  -  Turn-based fight\n"
-        "/heal  -  Heal yourself\n"
-        "/boss  -  Start a group boss\n"
+        "/heal  -  Heal yourself (or reply to heal ally). Chalkers heal free + can self-revive.\n"
+        "/boss  -  Start a group boss (button menu)\n"
         "/raid  -  Create or join a raid party\n"
         "/raidstart  -  Start the raid\n"
         "/raidparty  -  View current party\n"
         "/soloraid  -  Private raid scaled to you\n"
         "\n"
         "*Gear & Economy*\n"
-        "/equip [item]  -  Equip from inventory\n"
-        "/enhance [item]  -  Upgrade gear with Slate Fragments\n"
-        "/enchant [item]  -  Add enchants via Custom Tip Scrolls\n"
-        "/reinforce [item]  -  Sacrifice duplicate to raise stats\n"
-        "/reinforce ascend [item]  -  Ascend to next ★ tier at 20 reinforces\n"
+        "/equip  -  Browse bag and tap to equip\n"
+        "/unequip  -  Tap a slot to unequip gear back to bag\n"
+        "/enhance  -  Upgrade gear with Slate Fragments (button menu)\n"
+        "/enchant  -  Add enchants via Custom Tip Scrolls (button menu)\n"
+        "/reinforce  -  Tap to sacrifice duplicate gear for +1 ATK/DEF\n"
+        "/use  -  Use a consumable (button menu)\n"
+        "/title  -  View and equip your earned titles\n"
         "/objectives  -  View daily objectives\n"
-        "/sell [item]  -  Sell item for 50% value\n"
-        "/sell [rarity]  -  Bulk sell by rarity\n"
+        "/sell [rarity]  -  Bulk sell by rarity (common/uncommon/rare/epic/legendary)\n"
         "/forge  -  Craft items from materials\n"
-        "/claim  -  Daily claim with streak bonuses\n"
-        "/use [item]  -  Use a consumable\n"
+        "/claim  -  Daily streak reward (gold + materials)\n"
         "/trade @user [item] [price]  -  Trade with a player\n"
         "/shop  -  Daily rotating shop\n"
         "\n"
@@ -12109,7 +12155,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── HUSTLE ────────────────────────────────────────────────────────────────────
 async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Run all ready activities (daily, train, quest, pool) in one shot."""
+    """Run all ready activities (daily, train, quest, pool, claim, explore) in one shot."""
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
@@ -12213,6 +12259,97 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if bonus_item: entry += f"\n  🎱 Table drop: *{bonus_item}*!"
         ran.append(entry)
         if lmsgs: ran.extend(f"  {m}" for m in lmsgs)
+
+    # ── Claim ─────────────────────────────────────────────────────────────────
+    today_str     = now.strftime("%Y-%m-%d")
+    yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    last_claim    = p.get("last_claim")
+    if last_claim == today_str:
+        skipped.append("🎁 Claim  -  already claimed today")
+    else:
+        streak = safe_int(p.get("claim_streak"))
+        streak = streak + 1 if last_claim == yesterday_str else 1
+        gold_reward  = 50 + min(streak * 10, 200)
+        slate_count  = 1 if streak >= 3 else 0
+        scale_count  = 1 if streak >= 7 else 0
+        bonus_scroll = streak >= 14
+        inv = sjl(p.get("inventory"), [])
+        if slate_count: inv.extend(["Slate Fragment"] * slate_count)
+        if scale_count: inv.extend(["Slate Fragment"] * scale_count)
+        if bonus_scroll: inv.append("The Custom Tip Scroll")
+        p["inventory"] = json.dumps(inv)
+        p["gold"] = p.get("gold", 0) + gold_reward
+        p["last_claim"] = today_str
+        p["claim_streak"] = streak
+        streak_emojis = "🔥" * min(streak, 7)
+        claim_entry = f"🎁 *Claim Day {streak}* {streak_emojis}: +{gold_reward}g"
+        if slate_count or scale_count:
+            claim_entry += f", +{slate_count + scale_count} Slate Fragment"
+        if bonus_scroll:
+            claim_entry += ", +1 Custom Tip Scroll"
+        ran.append(claim_entry)
+
+    # ── Explore ────────────────────────────────────────────────────────────────
+    if p.get("explore_date") == today_str and safe_int(p.get("explore_count_today")) >= 2:
+        skipped.append("🗺️ Explore  -  2/2 used today")
+    elif user.id in explore_timers and not explore_timers[user.id].done():
+        skipped.append("🗺️ Explore  -  expedition in progress")
+    else:
+        if p["level"] <= 5:     _elig = [z for z in EXPLORE_ZONES if z["tier"]=="Easy"]
+        elif p["level"] <= 15:  _elig = [z for z in EXPLORE_ZONES if z["tier"] in ["Easy","Medium"]]
+        elif p["level"] <= 30:  _elig = [z for z in EXPLORE_ZONES if z["tier"] in ["Easy","Medium","Hard"]]
+        elif p["level"] <= 60:  _elig = [z for z in EXPLORE_ZONES if z["tier"] != "Legendary"]
+        else:                   _elig = EXPLORE_ZONES
+        _zone = random.choice(_elig)
+        if p.get("explore_date") != today_str:
+            p["explore_count_today"] = 0
+            p["explore_date"] = today_str
+        p["explore_count_today"] = safe_int(p.get("explore_count_today")) + 1
+        p["last_explore"] = now.isoformat()
+        _remaining = 2 - safe_int(p.get("explore_count_today"))
+        ran.append(f"🗺️ *Explore:* Expedition to *{_zone['name']}* started — results in 1 hour! ({_remaining} left today)")
+        chat_id   = update.effective_chat.id
+        _bot      = update.get_bot()
+        _uid      = user.id
+        _uname    = p.get("username", user.first_name)
+        _zone_ref = _zone
+
+        async def _hustle_explore():
+            await asyncio.sleep(3600)
+            pp = get_player(_uid)
+            if not pp: return
+            w2 = get_weather()
+            success = random.random() < 0.70
+            if success:
+                exp  = round(_zone_ref["exp"] * w2.get("exp_mod", 1.0))
+                gold = _zone_ref["gold"]
+                pp["gold"] = pp.get("gold", 0) + gold
+                item_found = roll_loot_table(_zone_ref.get("loot_table", []))
+                if item_found: add_item(pp, item_found)
+                lmsgs, leveled = add_exp(pp, exp)
+                save_player(pp)
+                rarity = ""
+                if item_found:
+                    for _pool in [WEAPONS, ARMORS, ACCESSORIES, CONSUMABLES]:
+                        if item_found in _pool:
+                            rarity = RARITY_EMOJI.get(_pool[item_found].get("rarity", ""), "")
+                            break
+                msg = (f"🗺️ *{pp['username']}* returns from *{_zone_ref['name']}*!\n\n"
+                       f"✅ Expedition successful!\n"
+                       f"✨ +{exp} EXP | 💰 +{gold} Gold")
+                if item_found: msg += f"\n🎒 Found: {rarity} *{item_found}*!"
+                if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
+            else:
+                save_player(pp)
+                msg = (f"🗺️ *{pp['username']}* returns from *{_zone_ref['name']}*!\n\n"
+                       f"❌ The expedition failed — nothing to show for it.")
+            try:
+                await _bot.send_message(chat_id, msg, parse_mode="Markdown")
+            except Exception:
+                pass
+
+        _task = asyncio.create_task(_hustle_explore())
+        explore_timers[_uid] = _task
 
     if not ran:
         cd_list = "\n".join(f"  {s}" for s in skipped)
