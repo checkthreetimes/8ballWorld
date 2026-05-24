@@ -3887,7 +3887,7 @@ async def gear_cmd(update, context):
             all_encs = get_all_enchants(p, weap_name)
             if len(all_encs) > 1:
                 for e in all_encs:
-                    lines.append(f"  ✨ {e['id'].capitalize()}  -  {e['desc']}")
+                    lines.append(f"✨ {e['id'].capitalize()}  -  {e['desc']}")
             else:
                 lines.append(f"Enchant: ✨ *{enc[0]['id'].capitalize() if isinstance(enc, list) else enc['id'].capitalize()}*  -  _{enc[0]['desc'] if isinstance(enc, list) else enc['desc']}_")
     else:
@@ -7581,9 +7581,9 @@ async def guildinfo_members_callback(update: Update, context: ContextTypes.DEFAU
     lines = [f"👥 *{g['name']} — Members ({len(member_ids)})*\n"]
     for r in member_rows:
         cls = CLASS_TREE.get(r["class_id"] or "", {}).get("name", "No Class")
-        lines.append(f"  • *{r['username']}* — Lv {r['level']} {cls}")
+        lines.append(f"• *{r['username']}* — Lv {r['level']} {cls}")
     if not member_rows:
-        lines.append("  (no registered members)")
+        lines.append("(no registered members)")
 
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔙 Back to Hall", callback_data=f"ginfo_{gid}")],
@@ -9165,7 +9165,7 @@ async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if brows:
         lines.append("🎯 *Active Bounties:*")
         for b in brows:
-            lines.append(f"  💰 *{b['target_name'] or 'Unknown'}* — {b['reward']}g (by {b['placer_name'] or 'Unknown'})")
+            lines.append(f"💰 *{b['target_name'] or 'Unknown'}* — {b['reward']}g (by {b['placer_name'] or 'Unknown'})")
     else:
         lines.append("🎯 *Active Bounties:* None")
 
@@ -9182,7 +9182,7 @@ async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("⚔️ *Active Guild Wars:*")
         for wrow in wars:
             time_left = time_until(wrow["expires_at"]) or "ending soon"
-            lines.append(f"  🏰 *{wrow['name1']}* vs *{wrow['name2']}*  ({wrow['kills1']} – {wrow['kills2']}) — {time_left} left")
+            lines.append(f"🏰 *{wrow['name1']}* vs *{wrow['name2']}*  ({wrow['kills1']} – {wrow['kills2']}) — {time_left} left")
     else:
         lines.append("⚔️ *Guild Wars:* None active")
 
@@ -9193,7 +9193,7 @@ async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("")
         lines.append("🏆 *Hall War Records:*")
         for h in hall_champs:
-            lines.append(f"  🏰 *{h['name']}* — {h['war_wins']} war win{'s' if h['war_wins'] != 1 else ''}")
+            lines.append(f"🏰 *{h['name']}* — {h['war_wins']} war win{'s' if h['war_wins'] != 1 else ''}")
 
     # Top killers today
     cw.execute("""SELECT username, kills_today, kill_streak FROM players
@@ -9207,7 +9207,7 @@ async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("💀 *Today's Top Killers:*")
         for k in killers:
             wanted = " 🔴 WANTED" if safe_int(k["kills_today"]) >= 5 else ""
-            lines.append(f"  ⚔️ *{k['username']}* — {k['kills_today']} kills today, {k['kill_streak']} streak{wanted}")
+            lines.append(f"⚔️ *{k['username']}* — {k['kills_today']} kills today, {k['kill_streak']} streak{wanted}")
     else:
         lines.append("💀 *Today's Top Killers:* —")
 
