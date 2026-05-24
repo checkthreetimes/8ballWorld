@@ -3281,6 +3281,7 @@ def init_db():
         ("players", "last_claim",       "TEXT DEFAULT NULL"),
         ("players", "claim_streak",     "INTEGER DEFAULT 0"),
         ("players", "pvp_history",      "TEXT DEFAULT '[]'"),
+        ("guilds",  "war_wins",         "INTEGER DEFAULT 0"),
     ]
     for table, col, definition in migrations_v20:
         try:
@@ -7483,21 +7484,44 @@ async def guildinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-    if not p.get("guild_id"):
-        await send_group(update, "You're not in a hall! Use /guildjoin.", delay=9); return
-    g = get_guild(p["guild_id"])
-    if not g:
-        await send_group(update, "Hall not found.", delay=9); return
-    members = sjl(g["members"],[]); leader = get_player(g["leader_id"])
-    glvl = safe_int(g.get("level"),1); perk = GUILD_PERKS.get(glvl,{})
-    nxt = guild_exp_for_level(glvl) if glvl < 10 else "MAX"
+
+    # /guildinfo [Hall Name] — look up any guild
+    if context.args:
+        target_name = " ".join(context.args)
+        g = get_guild_by_name(target_name)
+        if not g:
+            await send_group(update, f"Hall *{target_name}* not found.", delay=9); return
+    else:
+        if not p.get("guild_id"):
+            await send_group(update, "You're not in a hall! Use /guildjoin or /guildinfo [Hall Name].", delay=9); return
+        g = get_guild(p["guild_id"])
+        if not g:
+            await send_group(update, "Hall not found.", delay=9); return
+
+    member_ids = sjl(g.get("members", "[]"), [])
+    leader = get_player(g["leader_id"])
+    glvl = safe_int(g.get("level"), 1); perk = GUILD_PERKS.get(glvl, {})
+    nxt  = guild_exp_for_level(glvl) if glvl < 10 else "MAX"
+    wins = safe_int(g.get("war_wins", 0))
+
+    # Fetch member usernames
+    member_names = []
+    if member_ids:
+        conn_gi = sqlite3.connect(DB_PATH); conn_gi.row_factory = sqlite3.Row; c_gi = conn_gi.cursor()
+        placeholders = ",".join("?" * len(member_ids))
+        c_gi.execute(f"SELECT username, level FROM players WHERE user_id IN ({placeholders})", member_ids)
+        member_names = [f"{r['username']} (Lv {r['level']})" for r in c_gi.fetchall()]
+        conn_gi.close()
+
+    members_str = "\n".join(f"  • {m}" for m in member_names) if member_names else "  (none)"
     await send_group(update,
         f"🏰 *{g['name']}*\n"
         f"👑 Leader: {leader['username'] if leader else '?'}\n"
-        f"👥 Members: {len(members)}\n"
         f"⭐ Level: {glvl}/10  |  EXP: {safe_int(g.get('exp'))}/{nxt}\n"
+        f"🏆 War Wins: {wins}\n"
         f"💰 Bank: {safe_int(g.get('bank'))}g\n"
-        f"🎁 Perks: _{perk.get('desc','None')}_",
+        f"🎁 Perks: _{perk.get('desc', 'None')}_\n\n"
+        f"👥 *Members ({len(member_ids)}):*\n{members_str}",
         permanent=True)
 
 
@@ -7708,6 +7732,40 @@ async def guilddisband_callback(update, context):
     except Exception:
         pass
 
+async def resolve_expired_wars(bot=None, chat_id=None):
+    """Resolve all expired guild wars: award EXP, mark inactive, return result strings."""
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    c.execute("SELECT * FROM guild_wars WHERE active=1 AND expires_at <= ?",
+              (datetime.now().isoformat(),))
+    expired = [dict(r) for r in c.fetchall()]
+    results = []
+    for war in expired:
+        c.execute("UPDATE guild_wars SET active=0 WHERE war_id=?", (war["war_id"],))
+        g1 = get_guild(war["guild1_id"]); g2 = get_guild(war["guild2_id"])
+        if not g1 or not g2:
+            continue
+        k1, k2 = war["kills1"], war["kills2"]
+        if k1 == k2:
+            lvl_msgs1 = add_guild_exp(g1, 500); save_guild(g1)
+            lvl_msgs2 = add_guild_exp(g2, 500); save_guild(g2)
+            results.append(
+                f"⚔️ *Guild War Result: TIE!*\n"
+                f"*{g1['name']}* vs *{g2['name']}* — {k1}–{k2}\n"
+                f"Both halls earn +500 EXP.")
+        else:
+            winner, loser = (g1, g2) if k1 > k2 else (g2, g1)
+            wk = max(k1, k2); lk = min(k1, k2)
+            lvl_msgs = add_guild_exp(winner, 2000); save_guild(winner)
+            c.execute("UPDATE guilds SET war_wins=war_wins+1 WHERE guild_id=?", (winner["guild_id"],))
+            lv_note = (" ".join(lvl_msgs) + " ") if lvl_msgs else ""
+            results.append(
+                f"⚔️ *Guild War Over!*\n"
+                f"🏆 *{winner['name']}* defeats *{loser['name']}* — {wk}–{lk}!\n"
+                f"+2,000 Hall EXP awarded to {winner['name']}! {lv_note}")
+    conn.commit(); conn.close()
+    return results
+
+
 async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
@@ -7716,25 +7774,44 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not g:
         await send_group(update, "You're not in a Hall. Use /guildjoin first!", delay=9); return
 
+    # Resolve any wars that just expired
+    resolved = await resolve_expired_wars()
+    if resolved:
+        for r in resolved:
+            await send_group(update, r, delay=30)
+
     args = context.args or []
 
     # View current war or show guild picker
     if not args:
         war = get_active_war(g["guild_id"])
         if war:
+            my_gid = str(g["guild_id"])
+            enemy_gid = war["guild2_id"] if str(war["guild1_id"]) == my_gid else war["guild1_id"]
             conn_gw2 = sqlite3.connect(DB_PATH); conn_gw2.row_factory = sqlite3.Row; c2 = conn_gw2.cursor()
-            c2.execute("SELECT name FROM guilds WHERE guild_id=?",
-                       (war["guild2_id"] if war["guild1_id"]==g["guild_id"] else war["guild1_id"],))
+            c2.execute("SELECT name, members FROM guilds WHERE guild_id=?", (enemy_gid,))
             enemy_row = c2.fetchone(); conn_gw2.close()
-            enemy_name = enemy_row["name"] if enemy_row else "Unknown"
-            our_kills   = war["kills1"] if war["guild1_id"]==g["guild_id"] else war["kills2"]
-            their_kills = war["kills2"] if war["guild1_id"]==g["guild_id"] else war["kills1"]
-            exp_str = time_until(war["expires_at"]) or "ending soon"
+            enemy_name    = enemy_row["name"] if enemy_row else "Unknown"
+            our_kills     = war["kills1"] if str(war["guild1_id"]) == my_gid else war["kills2"]
+            their_kills   = war["kills2"] if str(war["guild1_id"]) == my_gid else war["kills1"]
+            exp_str       = time_until(war["expires_at"]) or "ending soon"
+            # Fetch enemy member names
+            enemy_member_ids = sjl(enemy_row["members"] if enemy_row else "[]", [])
+            enemy_names = []
+            if enemy_member_ids:
+                conn_em = sqlite3.connect(DB_PATH); conn_em.row_factory = sqlite3.Row; c_em = conn_em.cursor()
+                placeholders = ",".join("?" * len(enemy_member_ids))
+                c_em.execute(f"SELECT username FROM players WHERE user_id IN ({placeholders})", enemy_member_ids)
+                enemy_names = [r["username"] for r in c_em.fetchall()]
+                conn_em.close()
+            targets_line = ("🎯 *Targets:* " + ", ".join(enemy_names)) if enemy_names else ""
             await send_group(update,
                 f"⚔️ *Guild War: {g['name']} vs {enemy_name}*\n\n"
                 f"Our kills: *{our_kills}*  |  Their kills: *{their_kills}*\n"
-                f"Ends in: {exp_str}\n\n"
-                f"_Attack enemy Hall members to score. Each kill: double EXP objective credit._", delay=20)
+                f"Ends in: *{exp_str}* — most kills wins!\n\n"
+                f"{targets_line}\n\n"
+                f"_Attack any enemy member to score. Each war kill counts double for daily objectives._",
+                delay=25)
             return
 
         # No active war — show guild picker (leader only)
@@ -8979,6 +9056,11 @@ async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update, "\n".join(lines), delay=20)
 
 async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Resolve any expired wars first
+    resolved = await resolve_expired_wars()
+    for r in resolved:
+        await send_group(update, r, delay=30)
+
     lines = ["🔥 *8Ball World — War Board*\n"]
 
     # Active bounties
@@ -9009,9 +9091,19 @@ async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if wars:
         lines.append("⚔️ *Active Guild Wars:*")
         for wrow in wars:
-            lines.append(f"  🏰 *{wrow['name1']}* vs *{wrow['name2']}*  ({wrow['kills1']} – {wrow['kills2']})")
+            time_left = time_until(wrow["expires_at"]) or "ending soon"
+            lines.append(f"  🏰 *{wrow['name1']}* vs *{wrow['name2']}*  ({wrow['kills1']} – {wrow['kills2']}) — {time_left} left")
     else:
         lines.append("⚔️ *Guild Wars:* None active")
+
+    # Hall win records
+    cw.execute("SELECT name, war_wins FROM guilds WHERE war_wins > 0 ORDER BY war_wins DESC LIMIT 5")
+    hall_champs = cw.fetchall()
+    if hall_champs:
+        lines.append("")
+        lines.append("🏆 *Hall War Records:*")
+        for h in hall_champs:
+            lines.append(f"  🏰 *{h['name']}* — {h['war_wins']} war win{'s' if h['war_wins'] != 1 else ''}")
 
     # Top killers today
     cw.execute("""SELECT username, kills_today, kill_streak FROM players
@@ -12219,7 +12311,7 @@ GUIDE_PAGES = [
         "*Halls (Guilds)*\n"
         "/guildjoin  -  Browse + join a hall\n"
         "/guildcreate [name]  -  Create a hall (100g)\n"
-        "/guildinfo  -  Your hall details\n"
+        "/guildinfo [Hall Name]  -  Your hall details (or look up any hall)\n"
         "/guildlist  -  All active halls\n"
         "/guilddonate [amt]  -  Donate gold to hall\n"
         "/guildkick @user  -  Kick member (leader)\n"
@@ -12243,10 +12335,11 @@ GUIDE_PAGES = [
         "\n"
         "*Guild Wars*\n"
         "/guildwar — Hall leaders tap a guild from the list to declare a 24-hour war.\n"
-        "During a war, killing any member of the enemy Hall scores a kill point for your side.\n"
+        "During a war, /guildwar shows the live score AND lists the enemy Hall members by name so you know who to hunt.\n"
+        "Each kill against an enemy member scores a point. Most points after 24 hours wins.\n"
         "Each war kill also counts as double EXP toward your daily objectives.\n"
-        "The Hall with the most kills when the 24 hours expire wins — the result is posted in /war.\n"
-        "You can check the live score any time with /guildwar.\n"
+        "When the war ends, the winning Hall earns +2,000 Hall EXP (ties get +500 each) and a Win is recorded on /war.\n"
+        "/guildinfo [Hall Name] — Look up any Hall's members, level, and war record.\n"
         "\n"
         "*Bounties*\n"
         "/bounty  -  Reply to any player's message. Amount buttons appear (100–5000g). Multiple players can stack bounties on the same target.\n"
