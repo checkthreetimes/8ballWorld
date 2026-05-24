@@ -4491,7 +4491,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             war_gw = get_active_war(a_guild["guild_id"], d_guild["guild_id"])
             if war_gw:
                 conn_kr = sqlite3.connect(DB_PATH); c_kr = conn_kr.cursor()
-                if war_gw["guild1_id"] == a_guild["guild_id"]:
+                if str(war_gw["guild1_id"]) == str(a_guild["guild_id"]):
                     c_kr.execute("UPDATE guild_wars SET kills1=kills1+1 WHERE war_id=?", (war_gw["war_id"],))
                 else:
                     c_kr.execute("UPDATE guild_wars SET kills2=kills2+1 WHERE war_id=?", (war_gw["war_id"],))
@@ -6619,6 +6619,113 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update,
             f"*{item_name}* is not equippable. Use /use for consumables.", delay=9)
 
+async def unequip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    uid = user.id
+    slots = [("⚔️ Weapon", "equipped_weapon"), ("🛡️ Armor", "equipped_armor"),
+             ("🔰 Shield", "equipped_shield"), ("💍 Accessory", "equipped_accessory")]
+    buttons = []
+    for label, key in slots:
+        name = p.get(key)
+        if name:
+            buttons.append([InlineKeyboardButton(f"{label}: {name}", callback_data=f"uneqp_{uid}_{key}")])
+    if not buttons:
+        await send_group(update, "🎽 Nothing equipped!", delay=9); return
+    markup = InlineKeyboardMarkup(buttons)
+    await send_group(update, "🎽 *Unequip — Select a slot:*", delay=30, reply_markup=markup)
+
+async def unequip_slot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle unequip button: uneqp_{uid}_{slot_key}"""
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try:
+        uid      = int(parts[1])
+        slot_key = parts[2]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your gear!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    name = p.get(slot_key)
+    if not name:
+        await query.answer("Nothing in that slot!", show_alert=True); return
+    await query.answer()
+    inv = sjl(p.get("inventory"), [])
+    inv.append(name)
+    p[slot_key] = None
+    p["inventory"] = json.dumps(inv)
+    save_player(p)
+    slot_label = slot_key.replace("equipped_", "").capitalize()
+    await query.edit_message_text(
+        f"✅ *{name}* unequipped from {slot_label} slot and moved to inventory.",
+        parse_mode="Markdown")
+
+async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /use button: useitem_{uid}_{item_name}"""
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try:
+        uid       = int(parts[1])
+        item_name = parts[2]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your inventory!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    inv = sjl(p.get("inventory"), [])
+    if item_name not in inv:
+        await query.answer(f"{item_name} not in your bag!", show_alert=True); return
+    inv.remove(item_name); p["inventory"] = json.dumps(inv)
+    msg = f"✅ Used *{item_name}*. "
+    if item_name in ("Chalk Vial", "Premium Chalk Draft", "Champion's Chalk Flask"):
+        if is_defeated(p):
+            inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
+            await query.answer("You're defeated — vials won't help!", show_alert=True); return
+        hp_gain = {"Chalk Vial": 50, "Premium Chalk Draft": 100, "Champion's Chalk Flask": 200}.get(item_name, 50)
+        p["hp"] = min(calc_max_hp(p), p["hp"] + hp_gain)
+        msg += f"❤️ +{hp_gain} HP ({p['hp']}/{calc_max_hp(p)})"
+    elif item_name == "The Re-Rack":
+        if not is_defeated(p):
+            inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
+            await query.answer("You're not defeated — save it for when you need it!", show_alert=True); return
+        if is_revival_blocked(p):
+            inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
+            await query.answer("You've been condemned — can't be revived!", show_alert=True); return
+        p["defeated_until"] = None; p["hp"] = p["max_hp"] // 2
+        set_status(p, "invincible_until", 3600)
+        msg += f"💚 Revived at {p['hp']} HP! 1 hour invincibility granted."
+    else:
+        msg += "_(No direct effect)_"
+    save_player(p)
+    await query.answer()
+    await query.edit_message_text(msg, parse_mode="Markdown")
+
+async def settitle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle title equip button: settitle_{uid}_{title_name}"""
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try:
+        uid   = int(parts[1])
+        title = parts[2]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your titles!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if title not in safe_titles(p):
+        await query.answer("You haven't earned that title!", show_alert=True); return
+    await query.answer(f"Title set to: {title}!")
+    p["active_title"] = title; save_player(p)
+    await query.edit_message_text(f"🏅 Title set to *{title}*!", parse_mode="Markdown")
+
 async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle equip button: eqp_{uid}_{item_name}"""
     query = update.callback_query
@@ -6692,7 +6799,20 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if not context.args:
-        await send_group(update, "Usage: `/use [item name]`", delay=9); return
+        inv = sjl(p.get("inventory"), [])
+        consumables_in_bag = [(k, inv.count(k)) for k in dict.fromkeys(inv) if k in CONSUMABLES]
+        if not consumables_in_bag:
+            await send_group(update, "🧪 *Use Item*\n\nNo consumables in your bag.", delay=12); return
+        uid = user.id
+        buttons = []
+        for item, count in consumables_in_bag:
+            d_c = CONSUMABLES[item]
+            buttons.append([InlineKeyboardButton(
+                f"🧪 {item} x{count}  —  {d_c.get('desc','')[:40]}",
+                callback_data=f"useitem_{uid}_{item}")])
+        markup = InlineKeyboardMarkup(buttons)
+        await send_group(update, "🧪 *Use Item — Select a consumable:*", delay=30, reply_markup=markup)
+        return
     item = " ".join(context.args)
     inv  = sjl(p.get("inventory"), [])
     if item not in inv:
@@ -6911,7 +7031,7 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if item_name in equipped_slots and not confirmed:
         await send_group(update,
             f"⚠️ *{item_name}* is currently equipped!\n"
-            f"Use `/unequip` first, or `/sell {item_name} confirm` to sell anyway.", delay=12); return
+            f"Use /equip to swap it out first, or `/sell {item_name} confirm` to sell anyway.", delay=12); return
 
     # Warn on rare+
     item_rarity = ""
@@ -8704,7 +8824,11 @@ async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
     titles = safe_titles(p)
     if not context.args:
+        if not titles:
+            await send_group(update, "🏅 No titles earned yet. Complete achievements to earn them!", delay=12); return
+        uid = user.id
         lines = [f"🏅 *Your Titles:*\n"]
+        buttons = []
         for t in titles:
             bonus = TITLE_BONUSES.get(t, {})
             if bonus:
@@ -8715,10 +8839,12 @@ async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 bonus_str = f" _({', '.join(bonus_parts)})_"
             else:
                 bonus_str = ""
-            active_marker = " ◀️" if t == p["active_title"] else ""
-            lines.append(f"• {t}{bonus_str}{active_marker}")
-        lines.append(f"\n`/title [name]` to equip")
-        await send_group(update, "\n".join(lines), permanent=True); return
+            active_marker = " ◀️" if t == p.get("active_title") else ""
+            lines.append(f"• *{t}*{bonus_str}{active_marker}")
+            if t != p.get("active_title"):
+                buttons.append([InlineKeyboardButton(f"🏅 Equip: {t}", callback_data=f"settitle_{uid}_{t}")])
+        markup = InlineKeyboardMarkup(buttons) if buttons else None
+        await send_group(update, "\n".join(lines), permanent=True, reply_markup=markup); return
     chosen = " ".join(context.args)
     if chosen not in titles:
         await send_group(update, f"You haven't earned *{chosen}* yet!", delay=9); return
@@ -9214,14 +9340,15 @@ async def _send_skill_tree(target, uid, page, edit=False):
         await target.reply_text(text, parse_mode="Markdown", reply_markup=markup)
 
 async def skill_tree_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query; await query.answer()
-    parts = query.data.split("_")          # sktree_{uid}_{page}
+    query = update.callback_query
+    parts = query.data.split("_", 3)       # sktree_{uid}_{page}
     try:
         uid  = int(parts[1]); page = int(parts[2])
     except (IndexError, ValueError):
-        return
+        await query.answer(); return
     if query.from_user.id != uid:
         await query.answer("This isn't your skill tree!", show_alert=True); return
+    await query.answer()
     await _send_skill_tree(query, uid, page, edit=True)
 
 # ── BOUNTY ────────────────────────────────────────────────────────────────────
@@ -13478,6 +13605,7 @@ def main():
     app.add_handler(CommandHandler("shop",      shop_cmd))
     app.add_handler(CommandHandler("inventory", inventory_cmd))
     app.add_handler(CommandHandler("equip",     equip_cmd))
+    app.add_handler(CommandHandler("unequip",   unequip_cmd))
     app.add_handler(CommandHandler("use",       use_item_cmd))
     app.add_handler(CommandHandler("sell",      sell_cmd))
     app.add_handler(CommandHandler("trade",     trade_cmd))
@@ -13564,6 +13692,9 @@ def main():
     app.add_handler(CallbackQueryHandler(skill_pick_callback,   pattern="^skillpick_"))
     app.add_handler(CallbackQueryHandler(skillpage_callback,    pattern="^skillpage_"))
     app.add_handler(CallbackQueryHandler(equip_item_callback,   pattern="^eqp_"))
+    app.add_handler(CallbackQueryHandler(unequip_slot_callback, pattern="^uneqp_"))
+    app.add_handler(CallbackQueryHandler(use_item_callback,     pattern="^useitem_"))
+    app.add_handler(CallbackQueryHandler(settitle_callback,     pattern="^settitle_"))
     app.add_handler(CallbackQueryHandler(reinforce_item_callback, pattern="^rf_"))
     app.add_handler(CallbackQueryHandler(reinforce_asc_callback,  pattern="^rfasc_"))
     app.add_handler(CallbackQueryHandler(sell_item_callback,    pattern="^sll_"))
