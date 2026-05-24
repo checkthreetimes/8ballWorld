@@ -8001,29 +8001,6 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "\n".join(lines), delay=30)
         return
 
-    # Open-world PVP check  -  offensive skills are arena-only
-    if replying and update.message.reply_to_message:
-        du = update.message.reply_to_message.from_user
-        if du.id != user.id:
-            sk_check = sk
-            if sk_check is None:
-                if context.args:
-                    arg = " ".join(context.args)
-                    if arg.isdigit():
-                        idx = int(arg) - 1
-                        if 0 <= idx < len(all_skills): sk_check = all_skills[idx]
-                    if not sk_check:
-                        sk_check = next((s for s in all_skills if s["name"].lower() == arg.lower()), None)
-                else:
-                    sk_check = all_skills[0] if len(all_skills) == 1 else None
-            if sk_check and sk_check.get("type") not in OPEN_WORLD_ALLOWED_SKILL_TYPES:
-                await send_group(update,
-                    "⚔️ Offensive skills are *arena-only*.\n"
-                    "In open PVP, just use /attack  -  your class procs fire automatically!\n"
-                    "Challenge someone to `/arena` for turn-based combat.",
-                    delay=15)
-                return
-
     if not replying:
         lines = [f"🔮 *Your Skills* ({get_player_class(p)['name']}):\n"]
         for i, s in enumerate(all_skills, 1):
@@ -8273,6 +8250,8 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await send_result("Target player not found!"); return
         if is_defeated(tp):
             await send_result(f"{tp['username']} is already defeated!"); return
+        if is_invincible(tp):
+            await send_result(f"🛡️ {tp['username']} is still recovering — invincible."); return
         if is_silenced(p):
             await send_result("🤐 You are silenced — can't use skills!"); return
         base = calc_attack_damage(p, w)
