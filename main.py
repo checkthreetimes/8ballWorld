@@ -7480,49 +7480,139 @@ async def guildjoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update, "\n".join(lines), reply_markup=markup, delay=20)
 
 
-async def guildinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user; p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-
-    # /guildinfo [Hall Name] — look up any guild
-    if context.args:
-        target_name = " ".join(context.args)
-        g = get_guild_by_name(target_name)
-        if not g:
-            await send_group(update, f"Hall *{target_name}* not found.", delay=9); return
-    else:
-        if not p.get("guild_id"):
-            await send_group(update, "You're not in a hall! Use /guildjoin or /guildinfo [Hall Name].", delay=9); return
-        g = get_guild(p["guild_id"])
-        if not g:
-            await send_group(update, "Hall not found.", delay=9); return
-
+def _build_guildinfo_overview(g):
+    """Return (text, markup) for a guild overview card."""
     member_ids = sjl(g.get("members", "[]"), [])
-    leader = get_player(g["leader_id"])
-    glvl = safe_int(g.get("level"), 1); perk = GUILD_PERKS.get(glvl, {})
-    nxt  = guild_exp_for_level(glvl) if glvl < 10 else "MAX"
-    wins = safe_int(g.get("war_wins", 0))
-
-    # Fetch member usernames
-    member_names = []
-    if member_ids:
-        conn_gi = sqlite3.connect(DB_PATH); conn_gi.row_factory = sqlite3.Row; c_gi = conn_gi.cursor()
-        placeholders = ",".join("?" * len(member_ids))
-        c_gi.execute(f"SELECT username, level FROM players WHERE user_id IN ({placeholders})", member_ids)
-        member_names = [f"{r['username']} (Lv {r['level']})" for r in c_gi.fetchall()]
-        conn_gi.close()
-
-    members_str = "\n".join(f"  • {m}" for m in member_names) if member_names else "  (none)"
-    await send_group(update,
+    leader     = get_player(g["leader_id"])
+    glvl       = safe_int(g.get("level"), 1)
+    perk       = GUILD_PERKS.get(glvl, {})
+    nxt        = guild_exp_for_level(glvl) if glvl < 10 else "MAX"
+    wins       = safe_int(g.get("war_wins", 0))
+    gid        = g["guild_id"]
+    text = (
         f"🏰 *{g['name']}*\n"
         f"👑 Leader: {leader['username'] if leader else '?'}\n"
         f"⭐ Level: {glvl}/10  |  EXP: {safe_int(g.get('exp'))}/{nxt}\n"
         f"🏆 War Wins: {wins}\n"
         f"💰 Bank: {safe_int(g.get('bank'))}g\n"
-        f"🎁 Perks: _{perk.get('desc', 'None')}_\n\n"
-        f"👥 *Members ({len(member_ids)}):*\n{members_str}",
-        permanent=True)
+        f"🎁 Perks: _{perk.get('desc', 'None')}_"
+    )
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"👥 Members ({len(member_ids)})", callback_data=f"ginfoM_{gid}")],
+        [InlineKeyboardButton("🔙 All Halls", callback_data="ginfoList")],
+    ])
+    return text, markup
+
+
+async def guildinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    # /guildinfo [Hall Name] — direct typed lookup
+    if context.args:
+        target_name = " ".join(context.args)
+        g = get_guild_by_name(target_name)
+        if not g:
+            await send_group(update, f"Hall *{target_name}* not found.", delay=9); return
+        text, markup = _build_guildinfo_overview(g)
+        await send_group(update, text, reply_markup=markup, delay=25)
+        return
+
+    # No args — show all halls as a button list
+    conn_gi = sqlite3.connect(DB_PATH); conn_gi.row_factory = sqlite3.Row; c_gi = conn_gi.cursor()
+    c_gi.execute("SELECT guild_id, name, level, members, war_wins FROM guilds ORDER BY level DESC, war_wins DESC LIMIT 15")
+    rows = [dict(r) for r in c_gi.fetchall()]; conn_gi.close()
+
+    if not rows:
+        await send_group(update, "No halls exist yet. Use /guildcreate to found one!", delay=9); return
+
+    my_gid = str(p.get("guild_id", ""))
+    lines  = ["🏰 *Halls  —  tap to inspect:*\n"]
+    buttons = []
+    medals  = ["🥇", "🥈", "🥉"] + ["🏰"] * 12
+    for i, row in enumerate(rows):
+        mcount = len(sjl(row["members"], []))
+        star   = " ⭐" if str(row["guild_id"]) == my_gid else ""
+        lines.append(f"{medals[i]} *{row['name']}*  Lv {safe_int(row['level'], 1)} | {mcount} members | {safe_int(row['war_wins'])}W{star}")
+        buttons.append([InlineKeyboardButton(
+            f"🏰 {row['name']}", callback_data=f"ginfo_{row['guild_id']}")])
+
+    await send_group(update, "\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons), delay=30)
+
+
+async def guildinfo_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show guild overview card when a hall is selected."""
+    query = update.callback_query
+    try:
+        gid = int(query.data.split("_", 1)[1])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    g = get_guild(gid)
+    if not g:
+        await query.answer("Hall no longer exists.", show_alert=True); return
+    text, markup = _build_guildinfo_overview(g)
+    await query.answer()
+    await query.edit_message_text(text, reply_markup=markup, parse_mode="Markdown")
+
+
+async def guildinfo_members_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show member list for a guild."""
+    query = update.callback_query
+    try:
+        gid = int(query.data.split("_", 1)[1])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    g = get_guild(gid)
+    if not g:
+        await query.answer("Hall no longer exists.", show_alert=True); return
+
+    member_ids = sjl(g.get("members", "[]"), [])
+    member_rows = []
+    if member_ids:
+        conn_m = sqlite3.connect(DB_PATH); conn_m.row_factory = sqlite3.Row; c_m = conn_m.cursor()
+        placeholders = ",".join("?" * len(member_ids))
+        c_m.execute(
+            f"SELECT username, level, class_id FROM players WHERE user_id IN ({placeholders})"
+            f" ORDER BY level DESC", member_ids)
+        member_rows = [dict(r) for r in c_m.fetchall()]
+        conn_m.close()
+
+    lines = [f"👥 *{g['name']} — Members ({len(member_ids)})*\n"]
+    for r in member_rows:
+        cls = CLASS_TREE.get(r["class_id"] or "", {}).get("name", "No Class")
+        lines.append(f"  • *{r['username']}* — Lv {r['level']} {cls}")
+    if not member_rows:
+        lines.append("  (no registered members)")
+
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Back to Hall", callback_data=f"ginfo_{gid}")],
+    ])
+    await query.answer()
+    await query.edit_message_text("\n".join(lines), reply_markup=markup, parse_mode="Markdown")
+
+
+async def guildinfo_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Return to the full hall list."""
+    query = update.callback_query
+    conn_gl = sqlite3.connect(DB_PATH); conn_gl.row_factory = sqlite3.Row; c_gl = conn_gl.cursor()
+    c_gl.execute("SELECT guild_id, name, level, members, war_wins FROM guilds ORDER BY level DESC, war_wins DESC LIMIT 15")
+    rows = [dict(r) for r in c_gl.fetchall()]; conn_gl.close()
+
+    p = get_player(query.from_user.id)
+    my_gid = str(p.get("guild_id", "")) if p else ""
+    lines   = ["🏰 *Halls  —  tap to inspect:*\n"]
+    buttons = []
+    medals  = ["🥇", "🥈", "🥉"] + ["🏰"] * 12
+    for i, row in enumerate(rows):
+        mcount = len(sjl(row["members"], []))
+        star   = " ⭐" if str(row["guild_id"]) == my_gid else ""
+        lines.append(f"{medals[i]} *{row['name']}*  Lv {safe_int(row['level'], 1)} | {mcount} members | {safe_int(row['war_wins'])}W{star}")
+        buttons.append([InlineKeyboardButton(
+            f"🏰 {row['name']}", callback_data=f"ginfo_{row['guild_id']}")])
+
+    await query.answer()
+    await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
 
 
 async def guildlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -14447,6 +14537,9 @@ def main():
     app.add_handler(CallbackQueryHandler(guildjoin_callback,       pattern="^guildjoin_"))
     app.add_handler(CallbackQueryHandler(guildwar_declare_callback, pattern="^gwdeclare_"))
     app.add_handler(CallbackQueryHandler(guildkick_callback,        pattern="^gkick_"))
+    app.add_handler(CallbackQueryHandler(guildinfo_view_callback,   pattern="^ginfo_"))
+    app.add_handler(CallbackQueryHandler(guildinfo_members_callback,pattern="^ginfoM_"))
+    app.add_handler(CallbackQueryHandler(guildinfo_list_callback,   pattern="^ginfoList$"))
     app.add_handler(CallbackQueryHandler(bounty_amount_callback,    pattern="^bountyamt_"))
     app.add_handler(CallbackQueryHandler(trade_item_callback,       pattern="^trdi_"))
     app.add_handler(CallbackQueryHandler(trade_price_callback,      pattern="^trdp_"))
