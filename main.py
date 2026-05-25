@@ -6648,6 +6648,20 @@ def _build_stats_pages(p, viewing_name=None):
     if p.get("married_to_id") and p.get("married_to_name"):
         married_str = f"\n💍 Married to *{p['married_to_name']}*"
 
+    pet_str = ""
+    _active_pet = get_active_pet_record(p["user_id"])
+    if _active_pet:
+        _sp = PET_SPECIES.get(_active_pet.get("species"), {})
+        _pname = _pet_display_name(_active_pet)
+        _plvl  = _active_pet.get("level", 1)
+        _phun  = _active_pet.get("hunger", 100)
+        _pmood = _active_pet.get("mood", 100)
+        _pemoji = _sp.get("emoji", "🐾")
+        _hun_icon  = "🍗" if _phun >= 60 else ("😐" if _phun >= 30 else "😫")
+        _mood_icon = "😊" if _pmood >= 60 else ("😐" if _pmood >= 30 else "😢")
+        pet_str = (f"{_pemoji} *{_pname}* (Lv {_plvl} {_sp.get('name','Pet')})  "
+                   f"{_hun_icon} {_phun} | {_mood_icon} {_pmood}")
+
     page1_lines = [
         f"🎱 *{name}*{defeated_str}{recovering}",
         f"🏅 {p['active_title']}",
@@ -6657,6 +6671,8 @@ def _build_stats_pages(p, viewing_name=None):
     ]
     if married_str:
         page1_lines.append(married_str)
+    if pet_str:
+        page1_lines.append(pet_str)
     page1_lines += [
         "",
         f"❤️ HP: {p['hp']}/{real_max}",
