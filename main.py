@@ -11278,7 +11278,7 @@ async def _execute_skill(update, context, p, sk):
                          f"Expires in 48h. First to defeat them collects.")
             asyncio.create_task(context.bot.send_message(
                 chat_id=d["user_id"],
-                text=f"🎯 *{p['username']}* (Railrunner) placed a *2,000g bounty* on you and marked you!\n"
+                text=f"🎯 *{p['username']}* (Bounty Hunter) placed a *2,000g bounty* on you and marked you!\n"
                      "You take +20% damage for 30 minutes. Watch your back — anyone who defeats you claims it.",
                 parse_mode="Markdown"))
         else:
@@ -12502,7 +12502,7 @@ async def bounty_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update, "❌ That player hasn't ascended yet.", delay=9); return
 
         fee_note = " *(FREE — no gold cost)*" if no_fee else f"\n💰 Your gold: *{p.get('gold',0):,}g*"
-        rl_note  = "\n🎯 *Railrunner:* premium amounts + no fee!" if is_railrunner else (
+        rl_note  = "\n🎯 *Bounty Hunter:* premium amounts + no fee!" if is_railrunner else (
                    "\n🗡️ *Thief perk:* bounties cost you nothing!" if is_thief else "")
 
         buttons = []
@@ -12523,7 +12523,7 @@ async def bounty_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ── No reply → show help ─────────────────────────────────────────────────
-    rl_tip = "\n🎯 *Railrunner advantage:* premium amounts (up to 10,000g), no fee, 3 contracts." if is_railrunner else (
+    rl_tip = "\n🎯 *Bounty Hunter advantage:* premium amounts (up to 10,000g), no fee, 3 contracts." if is_railrunner else (
              "\n🗡️ *Thief perk:* no bounty fee — place bounties for free!" if is_thief else "")
     await send_group(update,
         f"💰 *Bounty Board*\n\n"
@@ -12638,7 +12638,7 @@ async def bounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         placer_name = row["placer_name"] or "Unknown"
         star = "⭐ " if row["placer_id"] in railrunner_ids else ""
         lines.append(f"{i}. {star}🎯 *{target_name}* — *{row['reward']}g*\n   _Posted by {placer_name}_")
-    lines.append("\n⭐ = Railrunner contract (professional bounty hunter)")
+    lines.append("\n⭐ = Bounty Hunter contract")
 
     await send_group(update, "\n".join(lines), delay=30)
 
@@ -15055,7 +15055,7 @@ GUIDE_PAGES = [
         "*Bounties*\n"
         "/bounty  -  Reply to a player. Amount buttons pop up (100–5000g). Multiple players can stack bounties!\n"
         "/bounties  -  View the active bounty board\n"
-        "_Thief classes: no fee + premium amounts (up to 10,000g), max 3 contracts. Railrunner: no fee + Execution Order (2,000g bounty + Marked debuff via skill)._\n"
+        "_Thief classes: no fee + premium amounts (up to 10,000g), max 3 contracts. Bounty Hunter: no fee + Execution Order (2,000g bounty + Marked debuff via skill)._\n"
         "\n"
         "*Guilds*\n"
         "/guildjoin  -  Browse + join a guild\n"
@@ -15099,7 +15099,7 @@ GUIDE_PAGES = [
         "/bounties  -  View the live bounty board\n"
         "Defeating a player who has active bounties automatically claims all stacked rewards.\n"
         "If someone else collects your bounty, you get 25% of it back as a finder's fee.\n"
-        "_Railrunner's Execution Order: places a 2,000g bounty via skill + marks the target (+20% dmg taken 30 min)._\n"
+        "_Bounty Hunter's Execution Order: places a 2,000g bounty via skill + marks the target (+20% dmg taken 30 min)._\n"
         "\n"
         "*Kill Streaks & Wanted System*\n"
         "Every kill without dying extends your streak (visible in /who). 5+ kills in one day marks you as 🔴 WANTED — higher risk but all eyes on you.\n"
