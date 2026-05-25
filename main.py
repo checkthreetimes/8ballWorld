@@ -4784,10 +4784,11 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
-    # ── Marriage columns ──────────────────────────────────────────────────────
+    # ── Marriage + new status columns ────────────────────────────────────────
     for _mc in [("married_to_id","INTEGER DEFAULT NULL"),
                 ("married_to_name","TEXT DEFAULT NULL"),
-                ("married_at","TEXT DEFAULT NULL")]:
+                ("married_at","TEXT DEFAULT NULL"),
+                ("def_reflect_until","TEXT DEFAULT NULL")]:
         try:
             conn.execute(f"ALTER TABLE players ADD COLUMN {_mc[0]} {_mc[1]}")
             conn.commit()
@@ -5291,6 +5292,8 @@ def save_player(p):
         "total_reinforces","total_ascensions","total_obj_completed",
         "kill_streak","max_kill_streak","revenge_target","revenge_expires",
         "kills_today","kills_today_date","last_claim","claim_streak","pvp_history",
+        "married_to_id","married_to_name","married_at",
+        "def_reflect_until",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
