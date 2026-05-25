@@ -5686,13 +5686,13 @@ async def check_idle_reward(user, s, p, bot, chat_id):
         if leveled and p["level"] % 10 == 0:
             await announce(bot, chat_id,
                 f"🎉 *{p['username']}* reached *Level {p['level']}*! 🎱",
-                permanent=True)
+                delay=60)
     else:
         lmsgs, leveled = add_shadow_exp(s, exp_reward)
         if leveled and s["level"] % 10 == 0:
             asyncio.create_task(announce(bot, chat_id,
                 f"📈 *{s['username']}* reached *Level {s['level']}*!",
-                permanent=True))
+                delay=60))
 
     await announce(bot, chat_id, msg, delay=8)
 
@@ -6091,7 +6091,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}."
             if leveled and a["level"] % 10 == 0:
                 asyncio.create_task(announce(update.get_bot(), chat,
-                    f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", permanent=True))
+                    f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=60))
         check_titles(a); check_titles(d)
         save_player(a); save_player(d)
         if d["hp"] > 0:
@@ -6107,7 +6107,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             msg = await update.get_bot().send_message(
                 chat_id=chat, text=action[:4096], parse_mode="Markdown")
-            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 30))
+            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 20))
         except Exception: pass
         return
 
@@ -6132,7 +6132,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             msg = await update.get_bot().send_message(
                 chat_id=chat, text=miss_text, parse_mode="Markdown")
-            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 15))
+            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 10))
         except Exception: pass
         return
 
@@ -6246,7 +6246,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 msg = await update.get_bot().send_message(
                     chat_id=chat, text=dist_text, parse_mode="Markdown")
-                asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 15))
+                asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 10))
             except Exception: pass
             return
 
@@ -6383,7 +6383,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 12 hours!"
             asyncio.create_task(announce(update.get_bot(), chat,
                 f"🏹 *{a['username']}* took down *{d['username']}* with *Last Shot*! "
-                f"12-hour defeat. Triple rewards earned.", permanent=True))
+                f"12-hour defeat. Triple rewards earned.", delay=60))
             a["gold"] = a.get("gold",0) + 150  # triple gold simplified
 
         exp_gain = 60 + a["level"] * 8
@@ -6421,12 +6421,12 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if leveled and a["level"] % 10 == 0:
             asyncio.create_task(announce(update.get_bot(), chat,
-                f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", permanent=True))
+                f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=60))
 
         asyncio.create_task(announce(update.get_bot(), chat,
             f"💀 *{d['username']}* was defeated by *{a['username']}*!\n"
             f"Final HP: 0/{d.get('max_hp', calc_max_hp(d))} - "
-            f"Lost {exp_loss:,} EXP - Defeated 6hrs", permanent=False))
+            f"Lost {exp_loss:,} EXP - Defeated 6hrs", delay=30))
 
     # PvP history for non-lethal hits
     if d["hp"] > 0:
@@ -6458,7 +6458,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         msg = await update.get_bot().send_message(
             chat_id=chat, text=action[:4096], parse_mode="Markdown")
-        asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 30))
+        asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 20))
     except Exception: pass
 
 # ── HEAL ──────────────────────────────────────────────────────────────────────
@@ -6578,7 +6578,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"\n🏅 *{h['username']}* earned: *{new_t[0]}*!"
     if leveled and h["level"] % 10 == 0:
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
-            f"🎉 *{h['username']}* reached *Level {h['level']}*! 💊", permanent=True))
+            f"🎉 *{h['username']}* reached *Level {h['level']}*! 💊", delay=60))
     await send_group(update, msg, delay=30)
 
 # ── STATS ─────────────────────────────────────────────────────────────────────
@@ -7334,7 +7334,7 @@ async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🗺️ /explore  -  send yourself on an expedition", delay=30)
     asyncio.create_task(announce(context.bot, update.effective_chat.id,
         f"⚔️ *{user.first_name}* has ASCENDED! "
-        f"Level {slvl} → RPG! 🎱", permanent=True))
+        f"Level {slvl} → RPG! 🎱", delay=120))
 
 # ── CLASS BROWSER ─────────────────────────────────────────────────────────────
 _CLASS_EMOJIS = {
@@ -7852,7 +7852,7 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         award_title(p, "Gone Pro"); save_player(p)
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
             f"🌟 *{p['username']}* has PRESTIGED! A new journey begins! 🌟",
-            permanent=True))
+            delay=120))
         await send_group(update,
             f"🌟 *PRESTIGE {p['prestige_count']}!*\n\n"
             f"All previous skills become permanent passives.\n"
@@ -7967,7 +7967,7 @@ async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if leveled and p["level"] % 10 == 0:
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
             f"🎉 *{p['username']}* reached *Level {p['level']}* from daily! 🎁",
-            permanent=True))
+            delay=60))
     await send_group(update, msg, delay=30)
 
 # ── TRAIN ─────────────────────────────────────────────────────────────────────
@@ -8014,7 +8014,7 @@ async def train_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if leveled and p["level"] % 10 == 0:
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
             f"🎉 *{p['username']}* reached *Level {p['level']}* from training! 🏋️",
-            permanent=True))
+            delay=60))
     await send_group(update, msg, delay=30)
 
 # ── QUEST ─────────────────────────────────────────────────────────────────────
@@ -8063,7 +8063,7 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if leveled and p["level"] % 10 == 0:
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
             f"🎉 *{p['username']}* reached *Level {p['level']}* from a quest! 🗺️",
-            permanent=True))
+            delay=60))
     await send_group(update, msg, delay=45)
 
 # ── EXPLORE ───────────────────────────────────────────────────────────────────
@@ -8160,7 +8160,7 @@ async def explore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if leveled and pp["level"] % 10 == 0:
                 asyncio.create_task(announce(bot, chat_id,
                     f"🎉 *{pp['username']}* reached *Level {pp['level']}* from exploring! 🗺️",
-                    permanent=True))
+                    delay=60))
         else:
             cons = random.randint(5,20)
             pp["gold"] = pp.get("gold",0) + cons; save_player(pp)
@@ -8287,8 +8287,8 @@ async def _handle_drake_strike(update: Update, context: ContextTypes.DEFAULT_TYP
                          + (f" | 🎒 {loot}" if loot else ""))
             if leveled and fp["level"] % 10 == 0:
                 asyncio.create_task(announce(context.bot, chat_id,
-                    f"🎉 *{fp['username']}* reached *Level {fp['level']}*! 🐉", permanent=True))
-        await announce(context.bot, chat_id, "\n".join(lines), permanent=True)
+                    f"🎉 *{fp['username']}* reached *Level {fp['level']}*! 🐉", delay=60))
+        await announce(context.bot, chat_id, "\n".join(lines), delay=90)
     else:
         await announce(context.bot, chat_id,
             f"🐉 *{user.first_name}* hits the Drake for *{dmg}*! ❤️ HP: {drake['hp']}/500")
@@ -9474,7 +9474,7 @@ async def strike_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if leveled and pp["level"] % 10 == 0:
                 asyncio.create_task(announce(update.get_bot(), chat_id,
                     f"🎉 *{pp['username']}* reached *Level {pp['level']}* defeating "
-                    f"{data['name']}! 🏆", permanent=True))
+                    f"{data['name']}! 🏆", delay=60))
 
     save_player(p)
     await send_group(update, "\n".join(lines), delay=30)
@@ -9963,35 +9963,47 @@ async def guilddisband_callback(update, context):
 
 async def resolve_expired_wars(bot=None, chat_id=None):
     """Resolve all expired guild wars: award EXP, mark inactive, return result strings."""
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
-    c.execute("SELECT * FROM guild_wars WHERE active=1 AND expires_at <= ?",
-              (datetime.now().isoformat(),))
-    expired = [dict(r) for r in c.fetchall()]
+    try:
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM guild_wars WHERE active=1 AND expires_at <= ?",
+                  (datetime.now().isoformat(),))
+        expired = [dict(r) for r in c.fetchall()]
+        conn.close()
+    except Exception:
+        return []
     results = []
     for war in expired:
-        c.execute("UPDATE guild_wars SET active=0 WHERE war_id=?", (war["war_id"],))
-        g1 = get_guild(war["guild1_id"]); g2 = get_guild(war["guild2_id"])
-        if not g1 or not g2:
+        try:
+            # Mark war inactive in its own connection so save_guild doesn't deadlock
+            _wconn = sqlite3.connect(DB_PATH); _wconn.execute(
+                "UPDATE guild_wars SET active=0 WHERE war_id=?", (war["war_id"],))
+            _wconn.commit(); _wconn.close()
+
+            g1 = get_guild(war["guild1_id"]); g2 = get_guild(war["guild2_id"])
+            if not g1 or not g2:
+                continue
+            k1, k2 = war["kills1"], war["kills2"]
+            if k1 == k2:
+                add_guild_exp(g1, 500); save_guild(g1)
+                add_guild_exp(g2, 500); save_guild(g2)
+                results.append(
+                    f"⚔️ *Guild War Result: TIE!*\n"
+                    f"*{g1['name']}* vs *{g2['name']}* — {k1}–{k2}\n"
+                    f"Both halls earn +500 EXP.")
+            else:
+                winner, loser = (g1, g2) if k1 > k2 else (g2, g1)
+                wk = max(k1, k2); lk = min(k1, k2)
+                add_guild_exp(winner, 2000); save_guild(winner)
+                _gwconn = sqlite3.connect(DB_PATH); _gwconn.execute(
+                    "UPDATE guilds SET war_wins=war_wins+1 WHERE guild_id=?", (winner["guild_id"],))
+                _gwconn.commit(); _gwconn.close()
+                lv_note = ""
+                results.append(
+                    f"⚔️ *Guild War Over!*\n"
+                    f"🏆 *{winner['name']}* defeats *{loser['name']}* — {wk}–{lk}!\n"
+                    f"+2,000 Hall EXP awarded to {winner['name']}! {lv_note}")
+        except Exception:
             continue
-        k1, k2 = war["kills1"], war["kills2"]
-        if k1 == k2:
-            lvl_msgs1 = add_guild_exp(g1, 500); save_guild(g1)
-            lvl_msgs2 = add_guild_exp(g2, 500); save_guild(g2)
-            results.append(
-                f"⚔️ *Guild War Result: TIE!*\n"
-                f"*{g1['name']}* vs *{g2['name']}* — {k1}–{k2}\n"
-                f"Both halls earn +500 EXP.")
-        else:
-            winner, loser = (g1, g2) if k1 > k2 else (g2, g1)
-            wk = max(k1, k2); lk = min(k1, k2)
-            lvl_msgs = add_guild_exp(winner, 2000); save_guild(winner)
-            c.execute("UPDATE guilds SET war_wins=war_wins+1 WHERE guild_id=?", (winner["guild_id"],))
-            lv_note = (" ".join(lvl_msgs) + " ") if lvl_msgs else ""
-            results.append(
-                f"⚔️ *Guild War Over!*\n"
-                f"🏆 *{winner['name']}* defeats *{loser['name']}* — {wk}–{lk}!\n"
-                f"+2,000 Hall EXP awarded to {winner['name']}! {lv_note}")
-    conn.commit(); conn.close()
     return results
 
 
@@ -10512,7 +10524,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if leveled and pp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{pp['username']}* reached *Level {pp['level']}*! 🏆",
-                        permanent=True))
+                        delay=60))
 
         save_player(p)
         await send_group(update, "\n".join(lines), delay=30)
@@ -11397,7 +11409,7 @@ async def _execute_skill(update, context, p, sk):
         if leveled and p["level"] % 10 == 0:
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🎉 *{p['username']}* reached *Level {p['level']}* via {sk['name']}! ⚡",
-                permanent=True))
+                delay=60))
 
     for _d, _e, _g in track_objective(p, "skill_use"):
         p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
@@ -11532,69 +11544,76 @@ async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Resolve any expired wars first
-    resolved = await resolve_expired_wars()
-    for r in resolved:
-        await send_group(update, r, delay=30)
+    try:
+        resolved = await resolve_expired_wars()
+        for r in resolved:
+            await send_group(update, r, delay=30)
+    except Exception:
+        pass
 
     lines = ["🔥 *8Ball World — War Board*\n"]
 
-    # Active bounties
-    conn_w = sqlite3.connect(DB_PATH); conn_w.row_factory = sqlite3.Row; cw = conn_w.cursor()
-    cw.execute("""SELECT b.reward, p.username as target_name, p2.username as placer_name
-                  FROM bounties b
-                  LEFT JOIN players p  ON b.target_id  = p.user_id
-                  LEFT JOIN players p2 ON b.placer_id  = p2.user_id
-                  WHERE b.claimed_by IS NULL AND b.expires_at > ?
-                  ORDER BY b.reward DESC LIMIT 5""", (datetime.now().isoformat(),))
-    brows = cw.fetchall()
-    if brows:
-        lines.append("🎯 *Active Bounties:*")
-        for b in brows:
-            lines.append(f"💰 *{b['target_name'] or 'Unknown'}* — {b['reward']}g (by {b['placer_name'] or 'Unknown'})")
-    else:
-        lines.append("🎯 *Active Bounties:* None")
+    try:
+        conn_w = sqlite3.connect(DB_PATH); conn_w.row_factory = sqlite3.Row; cw = conn_w.cursor()
 
-    # Active guild wars
-    cw.execute("""SELECT gw.guild1_id, gw.guild2_id, gw.expires_at, gw.kills1, gw.kills2,
-                         g1.name as name1, g2.name as name2
-                  FROM guild_wars gw
-                  LEFT JOIN guilds g1 ON g1.guild_id = gw.guild1_id
-                  LEFT JOIN guilds g2 ON g2.guild_id = gw.guild2_id
-                  WHERE gw.active=1 AND gw.expires_at > ?""", (datetime.now().isoformat(),))
-    wars = cw.fetchall()
-    lines.append("")
-    if wars:
-        lines.append("⚔️ *Active Guild Wars:*")
-        for wrow in wars:
-            time_left = time_until(wrow["expires_at"]) or "ending soon"
-            lines.append(f"🏰 *{wrow['name1']}* vs *{wrow['name2']}*  ({wrow['kills1']} – {wrow['kills2']}) — {time_left} left")
-    else:
-        lines.append("⚔️ *Guild Wars:* None active")
+        # Active bounties
+        cw.execute("""SELECT b.reward, p.username as target_name, p2.username as placer_name
+                      FROM bounties b
+                      LEFT JOIN players p  ON b.target_id  = p.user_id
+                      LEFT JOIN players p2 ON b.placer_id  = p2.user_id
+                      WHERE b.claimed_by IS NULL AND b.expires_at > ?
+                      ORDER BY b.reward DESC LIMIT 5""", (datetime.now().isoformat(),))
+        brows = cw.fetchall()
+        if brows:
+            lines.append("🎯 *Active Bounties:*")
+            for b in brows:
+                lines.append(f"💰 *{b['target_name'] or 'Unknown'}* — {b['reward']}g (by {b['placer_name'] or 'Unknown'})")
+        else:
+            lines.append("🎯 *Active Bounties:* None")
 
-    # Hall win records
-    cw.execute("SELECT name, war_wins FROM guilds WHERE war_wins > 0 ORDER BY war_wins DESC LIMIT 5")
-    hall_champs = cw.fetchall()
-    if hall_champs:
+        # Active guild wars
+        cw.execute("""SELECT gw.guild1_id, gw.guild2_id, gw.expires_at, gw.kills1, gw.kills2,
+                             g1.name as name1, g2.name as name2
+                      FROM guild_wars gw
+                      LEFT JOIN guilds g1 ON g1.guild_id = gw.guild1_id
+                      LEFT JOIN guilds g2 ON g2.guild_id = gw.guild2_id
+                      WHERE gw.active=1 AND gw.expires_at > ?""", (datetime.now().isoformat(),))
+        wars = cw.fetchall()
         lines.append("")
-        lines.append("🏆 *Hall War Records:*")
-        for h in hall_champs:
-            lines.append(f"🏰 *{h['name']}* — {h['war_wins']} war win{'s' if h['war_wins'] != 1 else ''}")
+        if wars:
+            lines.append("⚔️ *Active Guild Wars:*")
+            for wrow in wars:
+                time_left = time_until(wrow["expires_at"]) or "ending soon"
+                lines.append(f"🏰 *{wrow['name1']}* vs *{wrow['name2']}*  ({wrow['kills1']} – {wrow['kills2']}) — {time_left} left")
+        else:
+            lines.append("⚔️ *Guild Wars:* None active")
 
-    # Top killers today
-    cw.execute("""SELECT username, kills_today, kill_streak FROM players
-                  WHERE kills_today_date=? AND kills_today>0
-                  ORDER BY kills_today DESC LIMIT 5""",
-               (datetime.now().strftime("%Y-%m-%d"),))
-    killers = cw.fetchall()
-    conn_w.close()
-    lines.append("")
-    if killers:
-        lines.append("💀 *Today's Top Killers:*")
-        for k in killers:
-            wanted = " 🔴 WANTED" if safe_int(k["kills_today"]) >= 5 else ""
-            lines.append(f"⚔️ *{k['username']}* — {k['kills_today']} kills today, {k['kill_streak']} streak{wanted}")
-    else:
-        lines.append("💀 *Today's Top Killers:* —")
+        # Hall win records
+        cw.execute("SELECT name, war_wins FROM guilds WHERE war_wins > 0 ORDER BY war_wins DESC LIMIT 5")
+        hall_champs = cw.fetchall()
+        if hall_champs:
+            lines.append("")
+            lines.append("🏆 *Hall War Records:*")
+            for h in hall_champs:
+                lines.append(f"🏰 *{h['name']}* — {h['war_wins']} war win{'s' if h['war_wins'] != 1 else ''}")
+
+        # Top killers today
+        cw.execute("""SELECT username, kills_today, kill_streak FROM players
+                      WHERE kills_today_date=? AND kills_today>0
+                      ORDER BY kills_today DESC LIMIT 5""",
+                   (datetime.now().strftime("%Y-%m-%d"),))
+        killers = cw.fetchall()
+        conn_w.close()
+        lines.append("")
+        if killers:
+            lines.append("💀 *Today's Top Killers:*")
+            for k in killers:
+                wanted = " 🔴 WANTED" if safe_int(k["kills_today"]) >= 5 else ""
+                lines.append(f"⚔️ *{k['username']}* — {k['kills_today']} kills today, {k['kill_streak']} streak{wanted}")
+        else:
+            lines.append("💀 *Today's Top Killers:* —")
+    except Exception as _war_err:
+        lines.append(f"\n⚠️ _War board partially unavailable_")
 
     await send_group(update, "\n".join(lines), delay=30)
 
@@ -14761,7 +14780,7 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if leveled and fp["level"] % 10 == 0:
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🎉 *{fp['username']}* reached *Level {fp['level']}* "
-                f"from the depths of *{theme['name']}*! 🏰", permanent=True))
+                f"from the depths of *{theme['name']}*! 🏰", delay=60))
 
     task = asyncio.create_task(run_dungeon())
     active_dungeons[user.id] = task
@@ -15936,7 +15955,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if leveled and p["level"] % 10 == 0:
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🎉 *{p['username']}* reached *Level {p['level']}*! 🎱",
-                permanent=True))
+                delay=60))
     else:
         s["last_pool"] = datetime.now().isoformat()
         lmsgs, leveled = add_shadow_exp(s, exp_gain)
@@ -16452,7 +16471,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 asyncio.create_task(_notify_defeat(context.bot, p, "Bleed damage (you bled out)"))
                 asyncio.create_task(announce(context.bot, chat_id,
                     f"🩸 *{p['username']}* bled out and is defeated for 6 hours!",
-                    permanent=True))
+                    delay=30))
             save_player(p)
 
     # Cannot earn EXP while defeated
@@ -16538,7 +16557,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tier = get_tier(s["level"])
             asyncio.create_task(announce(context.bot, chat_id,
                 f"{tier['emoji']} *{s['username']}* reached *Level {s['level']}*!{hint}",
-                permanent=True))
+                delay=60))
     else:
         save_shadow(s)
 
@@ -16559,7 +16578,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if any(x in msg for x in ["choose a class","Choose your path","LEVEL 100"]):
                         ann.append(msg)
                 asyncio.create_task(announce(context.bot, chat_id,
-                    "\n".join(ann), permanent=True))
+                    "\n".join(ann), delay=60))
         else:
             save_player(p)
 
@@ -16593,7 +16612,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if leveled and fp["level"] % 10 == 0:
                         asyncio.create_task(announce(context.bot, chat_id,
                             f"🎉 *{fp['username']}* reached *Level {fp['level']}* from the Drake! 🐉",
-                            permanent=True))
+                            delay=60))
             try:
                 await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
             except Exception:
@@ -16657,7 +16676,7 @@ async def fight_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if leveled and fp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{fp['username']}* reached *Level {fp['level']}* from battle! ⚔️",
-                        permanent=True))
+                        delay=60))
             elif fs:
                 lmsgs, leveled = add_shadow_exp(fs, 250); save_shadow(fs)
     await send_group(update, "\n".join(lines), delay=15)
@@ -16686,7 +16705,7 @@ async def shoot_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if leveled and fp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{fp['username']}* reached *Level {fp['level']}* from the ghost! 👻",
-                        permanent=True))
+                        delay=60))
             elif fs:
                 lmsgs, leveled = add_shadow_exp(fs, 300); save_shadow(fs)
     await send_group(update, "\n".join(lines), delay=15)
@@ -17376,7 +17395,7 @@ async def dungeon_diff_callback(update: Update, context: ContextTypes.DEFAULT_TY
         if leveled and fp["level"] % 10 == 0:
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🎉 *{fp['username']}* reached *Level {fp['level']}* "
-                f"from the depths of *{theme['name']}*! 🏰", permanent=True))
+                f"from the depths of *{theme['name']}*! 🏰", delay=60))
 
     task = asyncio.create_task(run_dungeon())
     active_dungeons[uid] = task
