@@ -6165,20 +6165,35 @@ async def explore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id in explore_timers and not explore_timers[user.id].done():
         await send_group(update, "🗺️ You're already on an expedition! Results coming soon.", delay=9); return
 
-    # Pick zone
+    # Pick zone — show buttons if no args
+    if not context.args:
+        if p["level"] <= 5:     unlocked_tiers = {"Easy"}
+        elif p["level"] <= 15:  unlocked_tiers = {"Easy","Medium"}
+        elif p["level"] <= 30:  unlocked_tiers = {"Easy","Medium","Hard"}
+        elif p["level"] <= 60:  unlocked_tiers = {"Easy","Medium","Hard","Elite"}
+        else:                   unlocked_tiers = {"Easy","Medium","Hard","Elite","Legendary"}
+        remaining = 2 - safe_int(p.get("explore_count_today") if p.get("explore_date") == datetime.now().strftime("%Y-%m-%d") else 0)
+        tier_emoji = {"Easy":"🟢","Medium":"🟡","Hard":"🟠","Elite":"🔴","Legendary":"💀"}
+        buttons = []
+        for z in EXPLORE_ZONES:
+            locked = z["tier"] not in unlocked_tiers
+            label = f"{'🔒' if locked else tier_emoji.get(z['tier'],'🗺️')} {z['name']} ({z['tier']})"
+            if not locked:
+                buttons.append([InlineKeyboardButton(label, callback_data=f"explore_{user.id}_{z['name']}")])
+            else:
+                buttons.append([InlineKeyboardButton(label, callback_data=f"explore_locked")])
+        await send_group(update,
+            f"🗺️ *Expedition — Choose a Zone*\n\n"
+            f"_{remaining} expedition{'s' if remaining!=1 else ''} remaining today. Results in 1 hour._",
+            reply_markup=InlineKeyboardMarkup(buttons), delay=30)
+        return
+
     if context.args:
         zn = " ".join(context.args).lower()
         zone = next((z for z in EXPLORE_ZONES if zn in z["name"].lower()), None)
         if not zone:
             zlist = "\n".join(f"• {z['name']} ({z['tier']})" for z in EXPLORE_ZONES)
             await send_group(update, f"Unknown zone. Available:\n{zlist}", delay=15); return
-    else:
-        if p["level"] <= 5:     elig = [z for z in EXPLORE_ZONES if z["tier"]=="Easy"]
-        elif p["level"] <= 15:  elig = [z for z in EXPLORE_ZONES if z["tier"] in ["Easy","Medium"]]
-        elif p["level"] <= 30:  elig = [z for z in EXPLORE_ZONES if z["tier"] in ["Easy","Medium","Hard"]]
-        elif p["level"] <= 60:  elig = [z for z in EXPLORE_ZONES if z["tier"] != "Legendary"]
-        else:                   elig = EXPLORE_ZONES
-        zone = random.choice(elig)
 
     # Update explore count
     if p.get("explore_date") != today:
@@ -6240,6 +6255,76 @@ async def explore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     task = asyncio.create_task(deliver_result())
     explore_timers[user.id] = task
+
+
+async def explore_zone_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle zone selection button for /explore."""
+    query = update.callback_query
+    if query.data == "explore_locked":
+        await query.answer("Zone locked — level up to unlock!", show_alert=True); return
+    parts = query.data.split("_", 2)
+    try: uid = int(parts[1]); zone_name = parts[2]
+    except (IndexError, ValueError): await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your expedition menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p: await query.answer("Player not found.", show_alert=True); return
+    if is_defeated(p): await query.answer("Can't explore while defeated!", show_alert=True); return
+    today = datetime.now().strftime("%Y-%m-%d")
+    if p.get("explore_date") == today and safe_int(p.get("explore_count_today")) >= 2:
+        await query.answer("You've explored twice today. Come back tomorrow!", show_alert=True); return
+    if uid in explore_timers and not explore_timers[uid].done():
+        await query.answer("You're already on an expedition!", show_alert=True); return
+    zone = next((z for z in EXPLORE_ZONES if z["name"] == zone_name), None)
+    if not zone: await query.answer("Zone not found.", show_alert=True); return
+    if p.get("explore_date") != today:
+        p["explore_count_today"] = 0; p["explore_date"] = today
+    p["explore_count_today"] = safe_int(p.get("explore_count_today")) + 1
+    p["last_explore"] = datetime.now().isoformat()
+    save_player(p)
+    remaining = 2 - safe_int(p.get("explore_count_today"))
+    await query.answer(f"Expedition started! Returns in 1 hour.")
+    await query.edit_message_text(
+        f"🗺️ *Expedition Started!*\n\n"
+        f"📍 Destination: *{zone['name']}* ({zone['tier']})\n"
+        f"⏱️ Returns in *1 hour*.\n"
+        f"🎒 Results posted in the group when you return.\n\n"
+        f"_{remaining} expedition{'s' if remaining!=1 else ''} remaining today._",
+        parse_mode="Markdown")
+    chat_id = query.message.chat_id
+    bot = context.bot
+
+    async def deliver_result():
+        await asyncio.sleep(3600)
+        p2 = get_player(uid)
+        if not p2: return
+        success = random.random() < 0.75
+        loot_item = None
+        if success:
+            for item_name_r, chance in zone["loot_table"]:
+                if random.random() < chance:
+                    loot_item = item_name_r; break
+        gold_r = round(zone["gold"] * random.uniform(0.7, 1.3)) if success else 0
+        exp_r  = round(zone["exp"]  * random.uniform(0.7, 1.3)) if success else round(zone["exp"] * 0.1)
+        if success:
+            msg = (f"🗺️ *{p2['username']}* returns from *{zone['name']}*.\n\n"
+                   f"💰 +{gold_r} gold | ✨ +{exp_r} EXP"
+                   + (f"\n🎒 Found: *{loot_item}*!" if loot_item else ""))
+            p2["gold"] = p2.get("gold", 0) + gold_r
+            if loot_item: add_item(p2, loot_item)
+            add_exp(p2, exp_r); save_player(p2)
+        else:
+            cons = round(zone["gold"] * 0.1)
+            p2["gold"] = p2.get("gold", 0) + cons
+            msg = (f"🗺️ *{p2['username']}* returns from *{zone['name']}*.\n\n"
+                   f"❌ {zone['fail_msg']}\n"
+                   f"💰 Salvaged {cons} gold on the way back.")
+            save_player(p2)
+        await announce(bot, chat_id, msg, permanent=True)
+
+    task = asyncio.create_task(deliver_result())
+    explore_timers[uid] = task
+
 
 # ── GUILD ─────────────────────────────────────────────────────────────────────
 async def purge_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6975,7 +7060,21 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if not context.args:
-        await send_group(update, "Usage: `/sell [item name]` or `/sell all [rarity]`", delay=9); return
+        uid = user.id
+        inv = sjl(p.get("inventory"), [])
+        if not inv:
+            await send_group(update, "Your inventory is empty.", delay=9); return
+        buttons = [
+            [InlineKeyboardButton("Sell All Common",    callback_data=f"sellr_{uid}_common"),
+             InlineKeyboardButton("Sell All Uncommon",  callback_data=f"sellr_{uid}_uncommon")],
+            [InlineKeyboardButton("Sell All Rare",      callback_data=f"sellr_{uid}_rare"),
+             InlineKeyboardButton("Sell All Epic",      callback_data=f"sellr_{uid}_epic")],
+            [InlineKeyboardButton("💰 Sell Everything (non-key)", callback_data=f"sellr_{uid}_all")],
+        ]
+        await send_group(update,
+            "💰 *Sell Items*\n\nPick a rarity to bulk-sell. Key materials and equipped gear are always protected.",
+            reply_markup=InlineKeyboardMarkup(buttons), delay=30)
+        return
 
     BULK_SELL_PROTECTED = {
         "Dragon Scale", "Slate Fragment",
@@ -7116,6 +7215,57 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_player(p)
     await send_group(update,
         f"💰 Sold *{item_name}* for *{price} gold*!\nTotal: {p['gold']}g", delay=15)
+
+
+async def sell_rarity_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle bulk-sell by rarity button."""
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try: uid = int(parts[1]); rarity_filter = parts[2]
+    except (IndexError, ValueError): await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your sell menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p: await query.answer("Player not found.", show_alert=True); return
+
+    BULK_SELL_PROTECTED = {
+        "Dragon Scale","Slate Fragment","Enchanting Scroll","The Custom Tip Scroll",
+        "Revival Charm","The Re-Rack","Holy Relic","The Golden Triangle",
+    }
+    rarity_prices = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
+    inv = sjl(p.get("inventory"), [])
+    equipped = {p.get("equipped_weapon"), p.get("equipped_armor"),
+                p.get("equipped_shield"), p.get("equipped_accessory")}
+    sold_items = []; total_gold = 0; remaining_inv = []
+    for item_s in inv:
+        if item_s in BULK_SELL_PROTECTED or item_s in equipped:
+            remaining_inv.append(item_s); continue
+        item_rarity = None; item_price = 0
+        for pool_s in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS]:
+            if item_s in pool_s:
+                item_rarity = pool_s[item_s].get("rarity","common")
+                item_price = rarity_prices.get(item_rarity, 20); break
+        if item_price == 0:
+            if item_s in CONSUMABLES:
+                item_rarity = "consumable"
+                item_price = CONSUMABLES[item_s].get("sell", 10)
+        should_sell = (rarity_filter == "all") or (item_rarity == rarity_filter)
+        if should_sell and item_price > 0:
+            sold_items.append(item_s); total_gold += item_price
+        else:
+            remaining_inv.append(item_s)
+    if not sold_items:
+        await query.answer(f"Nothing to sell of that rarity.", show_alert=True); return
+    p["inventory"] = json.dumps(remaining_inv)
+    p["gold"] = p.get("gold", 0) + total_gold
+    save_player(p)
+    label = rarity_filter.capitalize() if rarity_filter != "all" else "Everything"
+    await query.answer(f"Sold {len(sold_items)} items for {total_gold}g!")
+    await query.edit_message_text(
+        f"💰 *Sold {len(sold_items)} {label} item{'s' if len(sold_items)!=1 else ''}*\n"
+        f"+*{total_gold:,}g* | Balance: *{p['gold']:,}g*",
+        parse_mode="Markdown")
+
 
 # ── BOSS ──────────────────────────────────────────────────────────────────────
 async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7641,23 +7791,71 @@ async def guilddonate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-    if not context.args:
-        await send_group(update, "Usage: /guilddonate [amount]", delay=9); return
     if not p.get("guild_id"):
         await send_group(update, "You're not in a hall!", delay=9); return
-    try: amount = int(context.args[0])
-    except:
-        await send_group(update, "Usage: /guilddonate [amount]", delay=9); return
-    if amount <= 0 or p.get("gold",0) < amount:
-        await send_group(update, f"Not enough gold! Have {p.get('gold',0)}g.", delay=9); return
     g = get_guild(p["guild_id"])
     if not g:
         await send_group(update, "Hall not found.", delay=9); return
+
+    # Typed amount still works
+    if context.args:
+        try: amount = int(context.args[0])
+        except: await send_group(update, "Usage: /guilddonate [amount]", delay=9); return
+        if amount <= 0 or p.get("gold", 0) < amount:
+            await send_group(update, f"Not enough gold! Have {p.get('gold',0)}g.", delay=9); return
+        p["gold"] -= amount; g["bank"] = safe_int(g.get("bank")) + amount
+        gmsgs = add_guild_exp(g, amount//10); save_guild(g); save_player(p)
+        msg = f"💰 *{user.first_name}* donated {amount}g to *{g['name']}*! Bank: {safe_int(g.get('bank'))}g"
+        if gmsgs: msg += "\n" + "\n".join(gmsgs)
+        await send_group(update, msg, delay=15)
+        return
+
+    # Button menu
+    gold = safe_int(p.get("gold", 0))
+    uid = user.id
+    amounts = [50, 100, 250, 500, 1000, 2500]
+    buttons = []
+    row = []
+    for amt in amounts:
+        if gold >= amt:
+            row.append(InlineKeyboardButton(f"{amt}g", callback_data=f"gdonate_{uid}_{amt}"))
+        if len(row) == 3:
+            buttons.append(row); row = []
+    if row: buttons.append(row)
+    if not buttons:
+        await send_group(update, f"Not enough gold to donate! You have {gold}g.", delay=9); return
+    markup = InlineKeyboardMarkup(buttons)
+    glvl = safe_int(g.get("level"), 1)
+    nxt = guild_exp_for_level(glvl) if glvl < 10 else "MAX"
+    await send_group(update,
+        f"🏰 *{g['name']}* — Hall Bank: {safe_int(g.get('bank'))}g\n"
+        f"⭐ Level {glvl} | EXP: {safe_int(g.get('exp'))}/{nxt}\n"
+        f"Your gold: *{gold}g*\n\nHow much to donate?",
+        reply_markup=markup, delay=30)
+
+
+async def guilddonate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try: uid = int(parts[1]); amount = int(parts[2])
+    except (IndexError, ValueError): await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your donation menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p: await query.answer("Player not found.", show_alert=True); return
+    if not p.get("guild_id"): await query.answer("You're not in a hall!", show_alert=True); return
+    if p.get("gold", 0) < amount:
+        await query.answer(f"Not enough gold! Have {p.get('gold',0)}g.", show_alert=True); return
+    g = get_guild(p["guild_id"])
+    if not g: await query.answer("Hall not found.", show_alert=True); return
     p["gold"] -= amount; g["bank"] = safe_int(g.get("bank")) + amount
     gmsgs = add_guild_exp(g, amount//10); save_guild(g); save_player(p)
-    msg = f"💰 *{user.first_name}* donated {amount}g to *{g['name']}*! Bank: {g['bank']}g"
-    if gmsgs: msg += "\n" + "\n".join(gmsgs)
-    await send_group(update, msg, delay=15)
+    lv_note = (" ".join(gmsgs) + " ") if gmsgs else ""
+    await query.answer(f"Donated {amount}g!")
+    await query.edit_message_text(
+        f"💰 *{query.from_user.first_name}* donated *{amount}g* to *{g['name']}*!\n"
+        f"Hall Bank: *{safe_int(g.get('bank'))}g* {lv_note}",
+        parse_mode="Markdown")
 
 
 async def guildkick_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -9301,42 +9499,87 @@ async def forge_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     inv = sjl(p.get("inventory"), [])
     inv_ctr = Counter(inv)
 
-    if not context.args:
-        lines = ["⚗️ *The Forge — Crafting*\n"]
-        for recipe_name, recipe in RECIPES.items():
-            mats_str = ", ".join(f"{v}x {k}" for k, v in recipe["mats"].items())
-            can_craft = all(inv_ctr.get(k, 0) >= v for k, v in recipe["mats"].items())
-            status = "✅" if can_craft else "🔒"
-            lines.append(f"{status} *{recipe_name}* → *{recipe['result']}*")
-            lines.append(f"   Requires: {mats_str}")
-        lines.append("\n_Use /forge [recipe name] to craft_")
-        await send_group(update, "\n".join(lines), delay=30); return
+    # Typed craft path still works
+    if context.args:
+        recipe_name = " ".join(context.args)
+        matched = next((k for k in RECIPES if k.lower() == recipe_name.lower()), None)
+        if not matched:
+            await send_group(update, f"❌ Unknown recipe *{recipe_name}*. Use /forge to see available recipes.", delay=12); return
+        recipe = RECIPES[matched]
+        for mat, qty in recipe["mats"].items():
+            if inv_ctr.get(mat, 0) < qty:
+                await send_group(update,
+                    f"❌ Need {qty}x *{mat}* (have {inv_ctr.get(mat, 0)}).", delay=12); return
+        for mat, qty in recipe["mats"].items():
+            for _ in range(qty): inv.remove(mat)
+        result_item = recipe["result"]
+        inv.append(result_item)
+        p["inventory"] = json.dumps(inv)
+        p["crafts_done"] = safe_int(p.get("crafts_done")) + 1
+        check_titles(p); save_player(p)
+        await send_group(update,
+            f"⚗️ *Crafted!*\n\n*{matched}* → 🎉 *{result_item}*\n"
+            f"Added to your inventory!", delay=20)
+        return
 
-    recipe_name = " ".join(context.args)
-    # Case-insensitive match
-    matched = next((k for k in RECIPES if k.lower() == recipe_name.lower()), None)
-    if not matched:
-        await send_group(update, f"❌ Unknown recipe *{recipe_name}*. Use /forge to see available recipes.", delay=12); return
+    # Button menu
+    lines = ["⚗️ *The Forge — Crafting*\n"]
+    buttons = []
+    uid = user.id
+    for recipe_name, recipe in RECIPES.items():
+        mats_str = ", ".join(f"{v}x {k}" for k, v in recipe["mats"].items())
+        can_craft = all(inv_ctr.get(k, 0) >= v for k, v in recipe["mats"].items())
+        status = "✅" if can_craft else "🔒"
+        lines.append(f"{status} *{recipe_name}* → *{recipe['result']}*")
+        lines.append(f"   Requires: {mats_str}")
+        if can_craft:
+            buttons.append([InlineKeyboardButton(
+                f"⚗️ Craft: {recipe_name}", callback_data=f"forge_{uid}_{recipe_name}")])
+    if not buttons:
+        lines.append("\n_No recipes available — collect materials to craft._")
+    markup = InlineKeyboardMarkup(buttons) if buttons else None
+    await send_group(update, "\n".join(lines), reply_markup=markup, delay=30)
 
+
+async def forge_craft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try: uid = int(parts[1]); recipe_name = parts[2]
+    except (IndexError, ValueError): await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your forge!", show_alert=True); return
+    p = get_player(uid)
+    if not p: await query.answer("Player not found.", show_alert=True); return
+    inv = sjl(p.get("inventory"), [])
+    inv_ctr = Counter(inv)
+    matched = next((k for k in RECIPES if k == recipe_name), None)
+    if not matched: await query.answer("Recipe not found.", show_alert=True); return
     recipe = RECIPES[matched]
     for mat, qty in recipe["mats"].items():
         if inv_ctr.get(mat, 0) < qty:
-            await send_group(update,
-                f"❌ Need {qty}x *{mat}* (have {inv_ctr.get(mat, 0)}).", delay=12); return
-
-    # Consume materials
+            await query.answer(f"Need {qty}x {mat} (have {inv_ctr.get(mat,0)}).", show_alert=True); return
     for mat, qty in recipe["mats"].items():
-        for _ in range(qty):
-            inv.remove(mat)
-
+        for _ in range(qty): inv.remove(mat)
     result_item = recipe["result"]
     inv.append(result_item)
-    p["inventory"] = json.dumps(inv)
-    p["crafts_done"] = safe_int(p.get("crafts_done")) + 1
+    p["inventory"] = json.dumps(inv); p["crafts_done"] = safe_int(p.get("crafts_done")) + 1
     check_titles(p); save_player(p)
-    await send_group(update,
-        f"⚗️ *Crafted!*\n\n*{matched}* → 🎉 *{result_item}*\n"
-        f"Added to your inventory!", delay=20)
+    # Rebuild menu with updated materials
+    inv_ctr2 = Counter(inv)
+    lines = ["⚗️ *The Forge — Crafting*\n", f"✅ Crafted *{matched}* → 🎉 *{result_item}*!\n"]
+    buttons = []
+    for rn, rec in RECIPES.items():
+        mats_str = ", ".join(f"{v}x {k}" for k, v in rec["mats"].items())
+        can_craft = all(inv_ctr2.get(k, 0) >= v for k, v in rec["mats"].items())
+        status = "✅" if can_craft else "🔒"
+        lines.append(f"{status} *{rn}* → *{rec['result']}*")
+        lines.append(f"   Requires: {mats_str}")
+        if can_craft:
+            buttons.append([InlineKeyboardButton(f"⚗️ Craft: {rn}", callback_data=f"forge_{uid}_{rn}")])
+    await query.answer(f"Crafted {result_item}!")
+    await query.edit_message_text("\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
+        parse_mode="Markdown")
 
 async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -14593,6 +14836,10 @@ def main():
     app.add_handler(CallbackQueryHandler(reinforce_item_callback, pattern="^rf_"))
     app.add_handler(CallbackQueryHandler(reinforce_asc_callback,  pattern="^rfasc_"))
     app.add_handler(CallbackQueryHandler(sell_item_callback,    pattern="^sll_"))
+    app.add_handler(CallbackQueryHandler(sell_rarity_callback,  pattern="^sellr_"))
+    app.add_handler(CallbackQueryHandler(forge_craft_callback,  pattern="^forge_"))
+    app.add_handler(CallbackQueryHandler(explore_zone_callback, pattern="^explore_"))
+    app.add_handler(CallbackQueryHandler(guilddonate_callback,  pattern="^gdonate_"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
