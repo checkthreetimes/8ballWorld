@@ -115,6 +115,7 @@ pending_guild_reqs = {}   # guild_id -> [requests]
 explore_timers     = {}   # user_id -> asyncio task
 active_dungeons    = {}   # user_id -> asyncio task
 _wipe_confirm      = {}   # admin_id -> timestamp
+pending_marriages  = {}   # proposer_id -> {target_id, chat_id, expires}
 
 # ── SEND HELPERS ──────────────────────────────────────────────────────────────
 async def _auto_delete(bot, chat_id, msg_id, delay):
@@ -954,6 +955,582 @@ CLASS_TREE = {
              "passive_key":"wrath_of_the_righteous"},
         ]
     },
+    # ── BOTANIST ─────────────────────────────────────────────────────────────
+    "botanist": {
+        "name":"Botanist","primary_stat":"WIS","line":"botanist",
+        "weapon_types":["wand","staff"],
+        "armor_type":"mage_armor",
+        "desc":"Wielder of nature's power — healing blooms and deadly thorns in equal measure.",
+        "stat_bonus":{"WIS":2},
+        "skills":[
+            {"tier":1,"unlock":5,"name":"Natural Growth",
+             "passive":"Regen 5 HP every 5 minutes. 12% chance each attack plants a poison seed on target (15 dmg/30s for 2 min).",
+             "active":"Healing Bloom","type":"revive_heal",
+             "desc":"Bloom restores WIS x4 HP to self or target. Works on defeated allies — revives them.",
+             "passive_key":"natural_growth"},
+            {"tier":1,"unlock":5,"name":"Thorn Skin",
+             "passive":"Attackers take WIS x0.5 damage when hitting you.",
+             "active":"Thorn Lash","type":"bleed_crit",
+             "desc":"WIS x2 nature strike + apply bleed (15 dmg/30s for 5 min).",
+             "passive_key":"thorn_skin"},
+        ]
+    },
+    # Path A — Support/Healing
+    "florist": {
+        "name":"Florist","primary_stat":"WIS","line":"botanist","path":"A",
+        "weapon_types":["wand"],
+        "armor_type":"mage_armor",
+        "desc":"Spreads warmth and healing wherever she walks. Her garden never withers.",
+        "stat_bonus":{"WIS":3},
+        "skills":[
+            {"tier":2,"unlock":10,"name":"Garden Aura",
+             "passive":"Guild members in chat regen 5 HP every 30 minutes while you are active.",
+             "active":"Petal Veil","type":"dodge_buff",
+             "desc":"Surround self or target with swirling petals: +25% dodge for 60 seconds.",
+             "passive_key":"garden_aura"},
+            {"tier":2,"unlock":10,"name":"Blossoming",
+             "passive":"All healing you perform is 20% more effective.",
+             "active":"Bloom Mend","type":"self_heal",
+             "desc":"Restore WIS x3 HP instantly. Remove one active bleed or poison from target.",
+             "passive_key":"blossoming"},
+        ]
+    },
+    "bloom_witch": {
+        "name":"Bloom Witch","primary_stat":"WIS","line":"botanist","path":"A",
+        "weapon_types":["wand"],
+        "armor_type":"mage_armor",
+        "desc":"Where she dances, flowers bloom — and enemies wither.",
+        "stat_bonus":{"WIS":4},
+        "skills":[
+            {"tier":3,"unlock":30,"name":"Wildflower Shield",
+             "passive":"12% chance to dodge any incoming hit. On dodge: instantly regain 10 HP.",
+             "active":"Spore Cloud","type":"aoe_recent_attackers",
+             "desc":"Release a toxic cloud: apply poison (20 dmg/30s for 3 min) to target and all recent attackers.",
+             "passive_key":"wildflower_shield"},
+        ]
+    },
+    "petal_sage": {
+        "name":"Petal Sage","primary_stat":"WIS","line":"botanist","path":"A",
+        "weapon_types":["wand"],
+        "armor_type":"mage_armor",
+        "desc":"Ancient wisdom encoded in petals. Her words heal, her silence warns.",
+        "stat_bonus":{"WIS":5,"INT":1},
+        "skills":[
+            {"tier":4,"unlock":60,"name":"Verdant Renewal",
+             "passive":"Each heal you cast has 20% chance to heal double. Guild members healed by you take 10% less damage for 1 hour.",
+             "active":"Garden of Eden","type":"group_heal",
+             "desc":"Restore WIS x3 HP to all guild members in chat. Grant regen 10 HP/30s for 2 hours.",
+             "passive_key":"verdant_renewal"},
+        ]
+    },
+    "wildflower_empress": {
+        "name":"Wildflower Empress","primary_stat":"WIS","line":"botanist","path":"A",
+        "weapon_types":["wand"],
+        "armor_type":"mage_armor",
+        "desc":"Nature herself bows. Every petal is a decree.",
+        "stat_bonus":{"WIS":6,"INT":2},
+        "skills":[
+            {"tier":5,"unlock":100,"name":"Eternal Bloom",
+             "passive":"Cannot be poisoned or diseased. All heals 50% stronger. Allies you've healed gain +5% all stats while in chat.",
+             "active":"Blossom Nova","type":"aoe_heal_dmg",
+             "desc":"Pulse of pure life: heal all allies for WIS x5 HP. Enemies currently poisoned take WIS x8 burst damage.",
+             "passive_key":"eternal_bloom"},
+        ]
+    },
+    # Path B — Poison/Offense
+    "thornweaver": {
+        "name":"Thornweaver","primary_stat":"WIS","line":"botanist","path":"B",
+        "weapon_types":["staff"],
+        "armor_type":"mage_armor",
+        "desc":"She weaves thorns into every strike. Every bloom hides a barb.",
+        "stat_bonus":{"WIS":3,"INT":1},
+        "skills":[
+            {"tier":2,"unlock":10,"name":"Thorn Aura",
+             "passive":"Attackers take WIS x1 damage when hitting you.",
+             "active":"Briar Whip","type":"bleed_crit",
+             "desc":"WIS x2.5 nature strike + apply bleed (15 dmg/30s for 5 min). Cannot be blocked.",
+             "passive_key":"thorn_aura"},
+            {"tier":2,"unlock":10,"name":"Nettleskin",
+             "passive":"10% chance each incoming hit poisons the attacker (15 dmg/30s for 2 min).",
+             "active":"Nettle Storm","type":"debuff",
+             "desc":"Fling stinging nettles: reduce target ATK and DEF by 8 for 2 minutes.",
+             "passive_key":"nettleskin"},
+        ]
+    },
+    "briar_knight": {
+        "name":"Briar Knight","primary_stat":"WIS","line":"botanist","path":"B",
+        "weapon_types":["staff"],
+        "armor_type":"mage_armor",
+        "desc":"Armed with thorns sharper than any blade.",
+        "stat_bonus":{"WIS":4,"INT":1},
+        "skills":[
+            {"tier":3,"unlock":30,"name":"Venomous Growth",
+             "passive":"Your poison effects deal 35% more damage. Poisoned targets take +10% damage from all sources.",
+             "active":"Toxic Bloom","type":"aoe_poison_strong",
+             "desc":"Plant a toxic seed on target: WIS x1 poison damage every 30s for 10 minutes. Spreads to one nearby player.",
+             "passive_key":"venomous_growth"},
+        ]
+    },
+    "verdant_warden": {
+        "name":"Verdant Warden","primary_stat":"WIS","line":"botanist","path":"B",
+        "weapon_types":["staff"],
+        "armor_type":"mage_armor",
+        "desc":"Guardian of the wild. She endures all and poisons all who dare.",
+        "stat_bonus":{"WIS":5,"INT":2},
+        "skills":[
+            {"tier":4,"unlock":60,"name":"Ancient Bark",
+             "passive":"15% chance to completely absorb incoming damage. Poisoned enemies who hit you take double thorn damage.",
+             "active":"Thorn Fortress","type":"def_reflect",
+             "desc":"For 2 minutes: reduce all incoming damage by 40% and reflect half back as nature damage.",
+             "passive_key":"ancient_bark"},
+        ]
+    },
+    "natures_chosen": {
+        "name":"Nature's Chosen","primary_stat":"WIS","line":"botanist","path":"B",
+        "weapon_types":["staff"],
+        "armor_type":"mage_armor",
+        "desc":"Nature's wrath made flesh. Neither blade nor spell can hold her.",
+        "stat_bonus":{"WIS":6,"INT":3},
+        "skills":[
+            {"tier":5,"unlock":100,"name":"Primal Fury",
+             "passive":"All poison effects you apply stack up to 3x. Your attacks deal bonus WIS% nature damage. You cannot be silenced.",
+             "active":"Wrath of the Wild","type":"nature_nuke",
+             "desc":"WIS x7 nature damage. Apply max-stack poison. Target loses all healing for 30 minutes.",
+             "passive_key":"primal_fury"},
+        ]
+    },
+    # ── ENCHANTRESS ──────────────────────────────────────────────────────────
+    "enchantress": {
+        "name":"Enchantress","primary_stat":"INT","line":"enchantress",
+        "weapon_types":["wand","staff"],
+        "armor_type":"mage_armor",
+        "desc":"Her charm is a weapon. Her hex is a sentence. Both are inescapable.",
+        "stat_bonus":{"INT":2},
+        "skills":[
+            {"tier":1,"unlock":5,"name":"Allure",
+             "passive":"15% chance to fascinate any attacker — they deal 40% less damage for 60 seconds.",
+             "active":"Bewitch","type":"debuff",
+             "desc":"Reduce target ATK by 30% for 3 minutes. They cannot be buffed during this time.",
+             "passive_key":"allure"},
+            {"tier":1,"unlock":5,"name":"Beguile",
+             "passive":"8% chance to reflect any skill back at its caster for 50% damage.",
+             "active":"Hex Bolt","type":"spell",
+             "desc":"INT x1.5 arcane damage + 20% chance to stun target for 30 seconds.",
+             "passive_key":"beguile"},
+        ]
+    },
+    # Path A — Curse/Hex
+    "hex_dancer": {
+        "name":"Hex Dancer","primary_stat":"INT","line":"enchantress","path":"A",
+        "weapon_types":["wand"],
+        "armor_type":"mage_armor",
+        "desc":"Her curses move like a dance — fluid, graceful, and absolutely lethal.",
+        "stat_bonus":{"INT":3},
+        "skills":[
+            {"tier":2,"unlock":10,"name":"Hexmark",
+             "passive":"Targets you debuff take +12% damage from all sources for the debuff's duration.",
+             "active":"Mark of Hex","type":"debuff",
+             "desc":"INT x2 damage + brand target: all damage they take is increased 12% for 3 minutes.",
+             "passive_key":"hexmark"},
+            {"tier":2,"unlock":10,"name":"Curse Touch",
+             "passive":"8% chance each hit applies Weakness (target deals 10% less dmg for 2 min).",
+             "active":"Weaken","type":"debuff",
+             "desc":"Reduce target ATK by 20% and DEF by 10 for 2 minutes.",
+             "passive_key":"curse_touch"},
+        ]
+    },
+    "cursebinder": {
+        "name":"Cursebinder","primary_stat":"INT","line":"enchantress","path":"A",
+        "weapon_types":["wand"],
+        "armor_type":"mage_armor",
+        "desc":"Binds fate with curses. Every step is a trap. Every word is a hex.",
+        "stat_bonus":{"INT":4},
+        "skills":[
+            {"tier":3,"unlock":30,"name":"Stacking Curses",
+             "passive":"You can apply up to 3 different debuffs simultaneously. Each new curse deals INT x0.5 burst damage.",
+             "active":"Doom Curse","type":"drain_debuff",
+             "desc":"Drain 25% of target current HP. Simultaneously apply: Weak + Hex + Exposed.",
+             "passive_key":"stacking_curses"},
+        ]
+    },
+    "vexmistress": {
+        "name":"Vexmistress","primary_stat":"INT","line":"enchantress","path":"A",
+        "weapon_types":["wand"],
+        "armor_type":"mage_armor",
+        "desc":"Her victims vex themselves. She merely watches and smiles.",
+        "stat_bonus":{"INT":5,"AGI":1},
+        "skills":[
+            {"tier":4,"unlock":60,"name":"Misery Aura",
+             "passive":"All debuffed enemies within your presence take 10 additional damage per hit from any source.",
+             "active":"Vex Chain","type":"curse_chain",
+             "desc":"Curse bounces to up to 3 targets: each takes INT x1.5 damage and -25% ATK/DEF for 5 minutes.",
+             "passive_key":"misery_aura"},
+        ]
+    },
+    "dread_empress": {
+        "name":"Dread Empress","primary_stat":"INT","line":"enchantress","path":"A",
+        "weapon_types":["wand"],
+        "armor_type":"mage_armor",
+        "desc":"Empress of ruin. Her name alone weakens the spirit.",
+        "stat_bonus":{"INT":6,"AGI":2},
+        "skills":[
+            {"tier":5,"unlock":100,"name":"Empress's Dread",
+             "passive":"Your presence causes fear: all enemies have -15% ATK. On kill, your debuffs transfer to a random other target.",
+             "active":"Dread Proclamation","type":"mass_debuff",
+             "desc":"Apply max-stack curses to ALL players who attacked you in the last hour. Cannot be cleansed for 1 hour.",
+             "passive_key":"empress_dread"},
+        ]
+    },
+    # Path B — Charm/Party Buff
+    "charmsong": {
+        "name":"Charmsong","primary_stat":"INT","line":"enchantress","path":"B",
+        "weapon_types":["staff"],
+        "armor_type":"mage_armor",
+        "desc":"Her song lifts hearts and stills swords. An army follows her tune.",
+        "stat_bonus":{"INT":2,"WIS":1},
+        "skills":[
+            {"tier":2,"unlock":10,"name":"Harmonize",
+             "passive":"Guild members in chat gain +4% ATK while you are active.",
+             "active":"Siren's Song","type":"stun",
+             "desc":"Target is entranced and cannot attack for 40 seconds. If already stunned, effect doubles.",
+             "passive_key":"harmonize"},
+            {"tier":2,"unlock":10,"name":"Melody",
+             "passive":"Your heals and buffs grant target +2 INT for 5 minutes (stacks up to 3×).",
+             "active":"Hymn of Battle","type":"self_heal_buff",
+             "desc":"Grant self or target: +10 ATK and +8 DEF for 3 minutes.",
+             "passive_key":"melody"},
+        ]
+    },
+    "songweaver": {
+        "name":"Songweaver","primary_stat":"INT","line":"enchantress","path":"B",
+        "weapon_types":["staff"],
+        "armor_type":"mage_armor",
+        "desc":"Weaves spells into melodies. The battlefield becomes her stage.",
+        "stat_bonus":{"INT":3,"WIS":2},
+        "skills":[
+            {"tier":3,"unlock":30,"name":"Battle Hymn",
+             "passive":"Once per fight, the first guild member to drop below 30% HP gains +20% ATK for 3 minutes.",
+             "active":"War Song","type":"party_atk_buff",
+             "desc":"Grant all guild members in chat +25% ATK for 5 minutes. Stacks with other buffs.",
+             "passive_key":"battle_hymn"},
+        ]
+    },
+    "lorewarden": {
+        "name":"Lorewarden","primary_stat":"INT","line":"enchantress","path":"B",
+        "weapon_types":["staff"],
+        "armor_type":"mage_armor",
+        "desc":"Keeper of ancient songs. Her lore reshapes the tide of battle.",
+        "stat_bonus":{"INT":4,"WIS":2},
+        "skills":[
+            {"tier":4,"unlock":60,"name":"Lorekeeping",
+             "passive":"Guild members in chat gain +5% EXP from all sources while you are active.",
+             "active":"Ancient Aria","type":"party_full_buff",
+             "desc":"Grant all guild members: +15% ATK/DEF/dodge for 10 minutes. Remove 1 debuff from each.",
+             "passive_key":"lorekeeping"},
+        ]
+    },
+    "grand_muse": {
+        "name":"Grand Muse","primary_stat":"INT","line":"enchantress","path":"B",
+        "weapon_types":["staff"],
+        "armor_type":"mage_armor",
+        "desc":"The muse of muses. Her magnum opus turns warriors into legends.",
+        "stat_bonus":{"INT":5,"WIS":3},
+        "skills":[
+            {"tier":5,"unlock":100,"name":"Muse's Grace",
+             "passive":"All guild members in chat have their skill cooldowns reduced 10%. Your buff/heal spells cost no cooldown.",
+             "active":"Magnum Opus","type":"ultimate_buff",
+             "desc":"Grant all guild members: full HP restore, +20% all stats for 30 minutes, immunity to debuffs for 10 minutes.",
+             "passive_key":"muses_grace"},
+        ]
+    },
+    # ── VALKYRIE ─────────────────────────────────────────────────────────────
+    "valkyrie": {
+        "name":"Valkyrie","primary_stat":"STR","line":"valkyrie",
+        "weapon_types":["sword_1h","sword_2h"],
+        "armor_type":"warrior_armor",
+        "desc":"Chosen by fate to stand between life and death. She does not fall.",
+        "stat_bonus":{"STR":2,"WIS":1},
+        "skills":[
+            {"tier":1,"unlock":5,"name":"Einherjar's Will",
+             "passive":"When below 30% HP, gain +40% ATK. Once per hour: survive a fatal blow at 1 HP.",
+             "active":"War Cry","type":"self_atk_buff",
+             "desc":"Unleash a battle cry: gain +30% ATK and +15% DEF for 2 minutes.",
+             "passive_key":"einherjar_will"},
+            {"tier":1,"unlock":5,"name":"Shield Maiden",
+             "passive":"Reduce incoming damage by 5 when above 50% HP.",
+             "active":"Aegis Wall","type":"def_buff",
+             "desc":"Brace for impact: block the next 3 incoming attacks completely (lasts 90 seconds).",
+             "passive_key":"shield_maiden"},
+        ]
+    },
+    # Path A — Defense/Protect
+    "shieldmaiden": {
+        "name":"Shieldmaiden","primary_stat":"STR","line":"valkyrie","path":"A",
+        "weapon_types":["sword_1h"],
+        "armor_type":"warrior_armor",
+        "desc":"Her shield is her creed. Those behind it need fear nothing.",
+        "stat_bonus":{"STR":2,"DEF":3},
+        "skills":[
+            {"tier":2,"unlock":10,"name":"Stalwart",
+             "passive":"15% chance to block any incoming hit completely.",
+             "active":"Shield Slam","type":"stun_def_dmg",
+             "desc":"(STR + DEF) combined damage. 40% chance to stun for 30 seconds.",
+             "passive_key":"stalwart"},
+            {"tier":2,"unlock":10,"name":"Defender's Oath",
+             "passive":"When a guild member in chat is defeated, gain +10% ATK for 10 minutes (up to 3 stacks).",
+             "active":"Oath Surge","type":"self_heal_buff",
+             "desc":"Honor the fallen: gain +15 DEF and restore 20% max HP for 2 minutes.",
+             "passive_key":"defenders_oath"},
+        ]
+    },
+    "runeguard": {
+        "name":"Runeguard","primary_stat":"STR","line":"valkyrie","path":"A",
+        "weapon_types":["sword_1h"],
+        "armor_type":"warrior_armor",
+        "desc":"Her armor carved with runes older than kingdoms. Each one a promise.",
+        "stat_bonus":{"STR":3,"DEF":4},
+        "skills":[
+            {"tier":3,"unlock":30,"name":"Runic Ward",
+             "passive":"Runes absorb the first 20 damage of every incoming hit.",
+             "active":"Rune Barrier","type":"party_def_buff",
+             "desc":"Grant all guild members in chat 20% damage reduction for 5 minutes.",
+             "passive_key":"runic_ward"},
+        ]
+    },
+    "vanguard": {
+        "name":"Vanguard","primary_stat":"STR","line":"valkyrie","path":"A",
+        "weapon_types":["sword_1h"],
+        "armor_type":"warrior_armor",
+        "desc":"First into the fight. Last to leave. The wall others hide behind.",
+        "stat_bonus":{"STR":4,"DEF":5},
+        "skills":[
+            {"tier":4,"unlock":60,"name":"Iron Bulwark",
+             "passive":"Take 20% less damage from all sources. Guild members you have recently defended gain +5% DEF.",
+             "active":"Vanguard's Presence","type":"intercept_aoe",
+             "desc":"For 2 minutes: intercept up to 3 attacks aimed at guild members. Each intercepted hit: attacker takes DEF x2 back.",
+             "passive_key":"iron_bulwark"},
+        ]
+    },
+    "iron_valkyrie": {
+        "name":"Iron Valkyrie","primary_stat":"STR","line":"valkyrie","path":"A",
+        "weapon_types":["sword_1h"],
+        "armor_type":"warrior_armor",
+        "desc":"Legend forged in iron and oath. She has never known defeat.",
+        "stat_bonus":{"STR":5,"DEF":6,"WIS":2},
+        "skills":[
+            {"tier":5,"unlock":100,"name":"Immortal Aegis",
+             "passive":"Cannot be defeated by a single hit. Resurrect once per fight at 50% HP. All guild members gain +5% DEF while you are in chat.",
+             "active":"Bifrost Descent","type":"holy_warrior_nuke",
+             "desc":"STR x4 + DEF x4 combined holy strike. Stun target 60s. All guild members heal 30% max HP.",
+             "passive_key":"immortal_aegis"},
+        ]
+    },
+    # Path B — Storm/Lightning Offense
+    "stormbringer": {
+        "name":"Stormbringer","primary_stat":"STR","line":"valkyrie","path":"B",
+        "weapon_types":["sword_2h"],
+        "armor_type":"warrior_armor",
+        "desc":"She rides the storm and wears lightning like a crown.",
+        "stat_bonus":{"STR":3,"AGI":2},
+        "skills":[
+            {"tier":2,"unlock":10,"name":"Thunder Step",
+             "passive":"After dodging, next attack deals +40% lightning bonus damage.",
+             "active":"Chain Lightning","type":"bounce_spell",
+             "desc":"STR x2 lightning strike — bounces to up to 3 nearby active players dealing 50% each.",
+             "passive_key":"thunder_step"},
+            {"tier":2,"unlock":10,"name":"Storm Instinct",
+             "passive":"Crits have 25% chance to proc a free second hit at 50% damage.",
+             "active":"Thunderclap","type":"stun",
+             "desc":"Unleash a thunderclap: target stunned for 30 seconds, cannot attack or use skills.",
+             "passive_key":"storm_instinct"},
+        ]
+    },
+    "thunder_sister": {
+        "name":"Thunder Sister","primary_stat":"STR","line":"valkyrie","path":"B",
+        "weapon_types":["sword_2h"],
+        "armor_type":"warrior_armor",
+        "desc":"Where she strikes, the sky answers.",
+        "stat_bonus":{"STR":4,"AGI":2},
+        "skills":[
+            {"tier":3,"unlock":30,"name":"Thunderstrike",
+             "passive":"Crits create a shockwave — target stunned for 15 seconds.",
+             "active":"Lightning Lance","type":"pierce_dmg",
+             "desc":"STR x3.5 lightning damage. On crit: stun target 30s. Cannot be blocked or dodged.",
+             "passive_key":"thunderstrike"},
+        ]
+    },
+    "storm_sovereign": {
+        "name":"Storm Sovereign","primary_stat":"STR","line":"valkyrie","path":"B",
+        "weapon_types":["sword_2h"],
+        "armor_type":"warrior_armor",
+        "desc":"Sovereign of all storms. The sky is her domain.",
+        "stat_bonus":{"STR":5,"AGI":3},
+        "skills":[
+            {"tier":4,"unlock":60,"name":"Storm's Eye",
+             "passive":"Every 5th attack is guaranteed crit. Storm count shown in /stats.",
+             "active":"Tempest Fury","type":"aoe_recent_attackers",
+             "desc":"STR x4 to primary + STR x2 split across all recent attackers. All hit players slowed for 30 seconds.",
+             "passive_key":"storms_eye"},
+        ]
+    },
+    "divine_tempest": {
+        "name":"Divine Tempest","primary_stat":"STR","line":"valkyrie","path":"B",
+        "weapon_types":["sword_2h"],
+        "armor_type":"warrior_armor",
+        "desc":"The divine storm given form. Nothing standing before her stays standing.",
+        "stat_bonus":{"STR":6,"AGI":4},
+        "skills":[
+            {"tier":5,"unlock":100,"name":"Celestial Wrath",
+             "passive":"+25% crit damage. Crits apply lingering lightning (+10 dmg/min for 3 min). On kill: lightning arcs to all recent attackers.",
+             "active":"Valhalla's Thunder","type":"godlike_lightning",
+             "desc":"STR x8 lightning strike. On kill: gain +50 temp HP, and deal STR x2 AOE lightning to all recent attackers.",
+             "passive_key":"celestial_wrath"},
+        ]
+    },
+    # ── PHANTOM DANCER ───────────────────────────────────────────────────────
+    "phantom_dancer": {
+        "name":"Phantom Dancer","primary_stat":"AGI","line":"phantom_dancer",
+        "weapon_types":["dagger","throwing_star"],
+        "armor_type":"thief_armor",
+        "desc":"She moves like smoke — impossible to hit, impossible to predict, impossible to stop.",
+        "stat_bonus":{"AGI":2},
+        "skills":[
+            {"tier":1,"unlock":5,"name":"Waltz",
+             "passive":"After dodging, next attack deals +60% bonus damage. All crits restore 5 HP.",
+             "active":"Dancer's Step","type":"dodge_buff",
+             "desc":"Gain +35% dodge for 45 seconds. If any attack misses during this window, immediately counter for AGI x1.5 damage.",
+             "passive_key":"waltz"},
+            {"tier":1,"unlock":5,"name":"Rhythm",
+             "passive":"Each consecutive hit on same target adds +8% damage (up to 4 stacks, resets on miss).",
+             "active":"Spinning Blade","type":"multihit",
+             "desc":"Two rapid strikes: AGI x0.8 each, independent crits.",
+             "passive_key":"rhythm","hits":2,"mults":[0.8, 0.8]},
+        ]
+    },
+    # Path A — Offense/Combo
+    "battle_dancer": {
+        "name":"Battle Dancer","primary_stat":"AGI","line":"phantom_dancer","path":"A",
+        "weapon_types":["dagger"],
+        "armor_type":"thief_armor",
+        "desc":"Every fight is a performance. Every kill is a bow.",
+        "stat_bonus":{"AGI":3},
+        "skills":[
+            {"tier":2,"unlock":10,"name":"Flourish",
+             "passive":"On crit, immediately hit again for 40% damage.",
+             "active":"Pirouette","type":"multihit_crit",
+             "desc":"Spin attack: 3 hits at AGI x0.7 each. Third hit is guaranteed crit.",
+             "passive_key":"flourish","hits":3,"mults":[0.7, 0.7, 0.7]},
+            {"tier":2,"unlock":10,"name":"Adrenaline",
+             "passive":"First attack each fight is always a guaranteed crit.",
+             "active":"Rush","type":"guaranteed_hit",
+             "desc":"Guaranteed hit, ignores dodge: AGI x1.8 damage.",
+             "passive_key":"adrenaline","mult":1.8},
+        ]
+    },
+    "blade_spinner": {
+        "name":"Blade Spinner","primary_stat":"AGI","line":"phantom_dancer","path":"A",
+        "weapon_types":["dagger"],
+        "armor_type":"thief_armor",
+        "desc":"She spins blades where others expect steps. The rhythm is death.",
+        "stat_bonus":{"AGI":4},
+        "skills":[
+            {"tier":3,"unlock":30,"name":"Whirlwind",
+             "passive":"Every 3rd attack hits all players who attacked you in the last 30 minutes (30% damage each).",
+             "active":"Blade Storm","type":"aoe_bleed_multihit",
+             "desc":"4 rapid slashes at AGI x0.6 each. Each hit applies bleed (10 dmg/30s for 5 min, stacks to 4).",
+             "passive_key":"whirlwind","hits":4,"mult":0.6},
+        ]
+    },
+    "crimson_whirl": {
+        "name":"Crimson Whirl","primary_stat":"AGI","line":"phantom_dancer","path":"A",
+        "weapon_types":["dagger"],
+        "armor_type":"thief_armor",
+        "desc":"Red as the last dance. Her footprints are made of crimson.",
+        "stat_bonus":{"AGI":5,"STR":2},
+        "skills":[
+            {"tier":4,"unlock":60,"name":"Death Whirl",
+             "passive":"While below 40% HP, all attacks have +30% crit chance. Low-HP crit kills restore 20% HP.",
+             "active":"Thousand Cuts","type":"execute_multihit",
+             "desc":"8 hits at AGI x0.5 each. Final hit: if target below 30% HP, deal 3x damage.",
+             "passive_key":"death_whirl","hits":8,"mult":0.5},
+        ]
+    },
+    "danse_macabre": {
+        "name":"Danse Macabre","primary_stat":"AGI","line":"phantom_dancer","path":"A",
+        "weapon_types":["dagger"],
+        "armor_type":"thief_armor",
+        "desc":"The final performance. Every kill is an encore.",
+        "stat_bonus":{"AGI":6,"STR":3},
+        "skills":[
+            {"tier":5,"unlock":100,"name":"Final Performance",
+             "passive":"On kill: reset all cooldowns and gain +50% crit chance for 60 seconds. Stacks to 3 kills.",
+             "active":"Macabre Finale","type":"execute_nuke",
+             "desc":"AGI x10 damage: 60% primary + 40% secondary strike. On kill: AOE AGI x3 to all recent attackers. Cannot be blocked or dodged.",
+             "passive_key":"final_performance"},
+        ]
+    },
+    # Path B — Evasion/Ghost
+    "veil_dancer": {
+        "name":"Veil Dancer","primary_stat":"AGI","line":"phantom_dancer","path":"B",
+        "weapon_types":["throwing_star"],
+        "armor_type":"thief_armor",
+        "desc":"She dances behind the veil between worlds. Blades pass through her like mist.",
+        "stat_bonus":{"AGI":3},
+        "skills":[
+            {"tier":2,"unlock":10,"name":"Ethereal Step",
+             "passive":"20% dodge chance. On each successful dodge: regain 8 HP.",
+             "active":"Phase Step","type":"vanish_dmg",
+             "desc":"Phase out for 30 seconds (unhittable), then reappear dealing AGI x3 burst.",
+             "passive_key":"ethereal_step"},
+            {"tier":2,"unlock":10,"name":"Mirror Image",
+             "passive":"8% chance an attack hits a phantom duplicate instead, dealing zero damage.",
+             "active":"Mirage","type":"dodge_buff",
+             "desc":"Create decoys: +30% dodge and 12% phantom-block chance for 60 seconds.",
+             "passive_key":"mirror_image"},
+        ]
+    },
+    "mistwalker": {
+        "name":"Mistwalker","primary_stat":"AGI","line":"phantom_dancer","path":"B",
+        "weapon_types":["throwing_star"],
+        "armor_type":"thief_armor",
+        "desc":"She walks where mist walks. She is the silence between strikes.",
+        "stat_bonus":{"AGI":4,"INT":1},
+        "skills":[
+            {"tier":3,"unlock":30,"name":"Fog of War",
+             "passive":"Enemies who miss you have their ATK reduced by 12% for 1 minute.",
+             "active":"Mist Form","type":"vanish",
+             "desc":"Become untargetable for 45 seconds. During Mist Form: regen 5 HP per 10 seconds.",
+             "passive_key":"fog_of_war"},
+        ]
+    },
+    "phantom_prima": {
+        "name":"Phantom Prima","primary_stat":"AGI","line":"phantom_dancer","path":"B",
+        "weapon_types":["throwing_star"],
+        "armor_type":"thief_armor",
+        "desc":"Prima donna of the phantom stage. Her art cannot be touched.",
+        "stat_bonus":{"AGI":5,"INT":2},
+        "skills":[
+            {"tier":4,"unlock":60,"name":"Phantom's Grace",
+             "passive":"Dodge chance cannot be reduced below 20% by any effect. Every dodge now also reduces attacker ATK by 5 for 30 seconds.",
+             "active":"Spirit Step","type":"pierce_dodge",
+             "desc":"Instantly negate any hit (even if stunned) and counter for AGI x4 damage.",
+             "passive_key":"phantoms_grace"},
+        ]
+    },
+    "ethereal_sovereign": {
+        "name":"Ethereal Sovereign","primary_stat":"AGI","line":"phantom_dancer","path":"B",
+        "weapon_types":["throwing_star"],
+        "armor_type":"thief_armor",
+        "desc":"Beyond sight, beyond reach, beyond defeat.",
+        "stat_bonus":{"AGI":6,"INT":3},
+        "skills":[
+            {"tier":5,"unlock":100,"name":"Sovereign's Veil",
+             "passive":"30% dodge chance. Every dodge heals 15 HP and grants 3-second immunity. You cannot be stunned or rooted.",
+             "active":"Ethereal Storm","type":"phantom_aoe",
+             "desc":"Phase through all damage for 30 seconds while auto-striking all recent attackers for AGI x2. End: release AGI x6 nova on all targets.",
+             "passive_key":"sovereign_veil"},
+        ]
+    },
 }
 
 # Class progression paths
@@ -968,16 +1545,29 @@ CLASS_PATHS = {
                 "B": ["bounty_hunter","sharpshooter","sniper","deadeye"]},
     "priest":  {"A": ["cleric","bishop","high_priest","saint"],
                 "B": ["acolyte","exorcist","inquisitor","zealot"]},
+    "botanist":       {"A": ["florist","bloom_witch","petal_sage","wildflower_empress"],
+                       "B": ["thornweaver","briar_knight","verdant_warden","natures_chosen"]},
+    "enchantress":    {"A": ["hex_dancer","cursebinder","vexmistress","dread_empress"],
+                       "B": ["charmsong","songweaver","lorewarden","grand_muse"]},
+    "valkyrie":       {"A": ["shieldmaiden","runeguard","vanguard","iron_valkyrie"],
+                       "B": ["stormbringer","thunder_sister","storm_sovereign","divine_tempest"]},
+    "phantom_dancer": {"A": ["battle_dancer","blade_spinner","crimson_whirl","danse_macabre"],
+                       "B": ["veil_dancer","mistwalker","phantom_prima","ethereal_sovereign"]},
 }
-BASE_CLASSES = ["warrior","mage","thief","archer","priest"]
+BASE_CLASSES = ["warrior","mage","thief","archer","priest",
+                "botanist","enchantress","valkyrie","phantom_dancer"]
 
 # Maps line key → display label showing class name + archetype for players
 LINE_ARCHETYPE = {
-    "warrior": "Warrior",
-    "mage":    "Mage",
-    "thief":   "Thief",
-    "archer":  "Archer",
-    "priest":  "Priest",
+    "warrior":        "Warrior",
+    "mage":           "Mage",
+    "thief":          "Thief",
+    "archer":         "Archer",
+    "priest":         "Priest",
+    "botanist":       "Botanist",
+    "enchantress":    "Enchantress",
+    "valkyrie":       "Valkyrie",
+    "phantom_dancer": "Phantom Dancer",
 }
 
 # Priest classes that can revive for free
@@ -1026,6 +1616,8 @@ TITLES = {
     "Objective Master":      {"type":"objectives_done","threshold":25},
     # Item Sets
     "Full Set":              {"type":"special","threshold":0},
+    # Marriage
+    "Beloved":               {"type":"special","threshold":0},
 }
 
 TITLE_BONUSES = {
@@ -1067,6 +1659,7 @@ TITLE_BONUSES = {
     "Objective Rookie":     {"LUK": 6, "all_stats": 3},
     "Objective Master":     {"all_stats": 10, "LUK": 8},
     "Full Set":             {"all_stats": 5},
+    "Beloved":              {"WIS": 5, "LUK": 5},
 }
 
 # ── ITEM SETS ─────────────────────────────────────────────────────────────────
@@ -2703,15 +3296,24 @@ def get_accessory_bonus(p, stat):
 
     return 0
 
+# Maps new class lines → existing gear category so they can use shared weapon/armor pools
+_GEAR_LINE_MAP = {
+    "botanist":       "mage",
+    "enchantress":    "mage",
+    "valkyrie":       "warrior",
+    "phantom_dancer": "thief",
+}
+
 def can_equip_weapon(p, weapon_name):
     w = WEAPONS.get(weapon_name)
     if not w: return False, "Unknown weapon."
     cls_id = p.get("class_id")
     if not cls_id: return False, "Choose a class first."
     cls_data = CLASS_TREE.get(cls_id, {})
-    line = cls_data.get("line")
+    raw_line   = cls_data.get("line", "")
+    gear_line  = _GEAR_LINE_MAP.get(raw_line, raw_line)
     weapon_class = w.get("class")
-    if weapon_class != line:
+    if weapon_class != gear_line:
         return False, f"Only {weapon_class.capitalize()} classes can use this."
     weapon_type = w.get("type")
     allowed = cls_data.get("weapon_types", [])
@@ -2725,10 +3327,11 @@ def can_equip_weapon(p, weapon_name):
 def can_equip_armor(p, armor_name):
     a = ARMORS.get(armor_name)
     if not a: return False, "Unknown armor."
-    cls = get_player_class_id(p)
-    cls_data = CLASS_TREE.get(cls, {})
-    armor_type = cls_data.get("armor_type")
-    if a.get("class") and a["class"] != cls_data.get("line"):
+    cls_id   = get_player_class_id(p)
+    cls_data = CLASS_TREE.get(cls_id, {})
+    raw_line  = cls_data.get("line", "")
+    gear_line = _GEAR_LINE_MAP.get(raw_line, raw_line)
+    if a.get("class") and a["class"] != gear_line:
         return False, f"Only {a['class'].capitalize()} classes can wear this."
     return True, ""
 
@@ -2946,6 +3549,55 @@ def calc_attack_damage(attacker, weather=None):
         if pk == "dead_or_alive":
             extra = safe_int(attacker.get("deadeye_kill_bonus"))
             raw += extra
+        # ── New class passives ─────────────────────────────────────────────
+        # Botanist
+        if pk == "natural_growth":  raw += get_stat(attacker, "WIS") * 0.15
+        if pk == "thorn_aura":      raw += get_stat(attacker, "WIS") * 0.20
+        if pk == "venomous_growth": buff_mod += 0.15
+        if pk == "primal_fury":
+            raw += get_stat(attacker, "WIS") * 0.25; buff_mod += 0.10
+        if pk == "blossoming":      buff_mod += 0.05
+        if pk == "eternal_bloom":   buff_mod += 0.10
+        # Enchantress
+        if pk == "hexmark":         buff_mod += 0.12
+        if pk == "stacking_curses": buff_mod += 0.15
+        if pk == "misery_aura":     raw += 10
+        if pk == "empress_dread":   buff_mod += 0.20
+        if pk == "harmonize":
+            buff_mod += min(0.12, safe_int(attacker.get("harmony_stacks", 0)) * 0.04)
+        if pk == "battle_hymn":     buff_mod += 0.05
+        if pk == "muses_grace":     buff_mod += 0.20
+        if pk == "lorekeeping":     buff_mod += 0.05
+        # Valkyrie
+        if pk == "einherjar_will":
+            raw += get_stat(attacker, "STR") * 0.10
+            _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
+            if _hp_pct < 0.30: buff_mod += 0.40
+        if pk == "thunder_step":
+            if attacker.get("thunder_dodge_ready"):
+                buff_mod += 0.40; attacker["thunder_dodge_ready"] = 0
+        if pk == "storms_eye":      buff_mod += 0.05
+        if pk == "celestial_wrath": buff_mod += 0.25
+        if pk == "defenders_oath":
+            buff_mod += min(0.30, safe_int(attacker.get("oath_stacks", 0)) * 0.10)
+        if pk == "iron_bulwark":    buff_mod += 0.05
+        # Phantom Dancer
+        if pk == "waltz":
+            if attacker.get("waltz_dodge_ready"):
+                buff_mod += 0.60; attacker["waltz_dodge_ready"] = 0
+        if pk == "rhythm":
+            buff_mod += min(0.20, safe_int(attacker.get("rhythm_stacks", 0)) * 0.04)
+        if pk == "flourish":
+            buff_mod += min(0.15, safe_int(attacker.get("flourish_stacks", 0)) * 0.05)
+        if pk == "adrenaline":
+            _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
+            if _hp_pct < 0.30: buff_mod += 0.30
+        if pk == "death_whirl":
+            _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
+            if _hp_pct < 0.40: buff_mod += 0.30
+        if pk == "final_performance":
+            _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
+            if _hp_pct < 0.25: buff_mod += 0.50
 
     # Accessory low HP bonus
     if get_accessory_bonus(attacker, "low_hp_dmg_bonus"):
@@ -2975,6 +3627,29 @@ def calc_defense(defender, dmg):
             if hp_pct < 0.50:      def_reduction += 0.15
         if pk == "natures_bond":   def_reduction += 0.10
         if pk == "guardian_stance": def_reduction += 0.05
+        # New class passives
+        if pk == "thorn_skin":     def_reduction += 0.10
+        if pk == "eternal_bloom":  def_reduction += 0.15
+        if pk == "lorekeeping":    def_reduction += 0.15
+        if pk == "fog_of_war":     def_reduction += 0.10
+        if pk == "iron_bulwark":   def_reduction += 0.20
+        if pk == "einherjar_will": def_reduction += 0.05
+        if pk == "shield_maiden":
+            if defender["hp"] > defender.get("max_hp", defender["hp"]) * 0.50:
+                def_reduction += 0.05
+        if pk == "defenders_oath":
+            if defender["hp"] < defender.get("max_hp", defender["hp"]) * 0.50:
+                def_reduction += 0.10
+        if pk == "immortal_aegis": def_reduction += 0.05
+        if pk == "stalwart":
+            if random.random() < 0.15: return 0
+        if pk == "ancient_bark":
+            if random.random() < 0.15: return 0
+        if pk == "empress_dread":  def_reduction += 0.10
+
+    # def_reflect active status — extra damage reduction
+    if _ts_active(defender, "def_reflect_until"):
+        def_reduction += 0.40
 
     # Accessory block chance (handled separately, this is just flat reduction)
     if get_accessory_bonus(defender, "block_chance"):
@@ -2999,7 +3674,12 @@ def calc_defense(defender, dmg):
     if _ts_active(defender, "branded_until"):
         final = round(final * 0.70)
         defender["branded_until"] = None  # consumed on hit
- 
+
+    # Runic Ward — absorbs first 20 damage of every hit
+    cls_def = get_player_class(defender)
+    if cls_def and cls_def.get("passive_key") == "runic_ward":
+        final = max(0, final - 20)
+
     return final
 
 def apply_pvp_death(p, killer_name="the enemy", cause="PvP", killer_id=None):
@@ -3261,6 +3941,141 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         dmg   = int_v * 6
         set_enemy_status(raid_state, "frozen_until", 60)
         lines.append(f"❄️ *Frozen!* {enemy['name']} is frozen  -  skips next counter-attack!")
+    # ── New class skill types ──────────────────────────────────────────────────
+    elif stype == "aoe_heal_dmg":
+        wis = get_stat(p, "WIS")
+        heal = round(wis * 3)
+        p["hp"] = min(calc_max_hp(p), p["hp"] + heal)
+        lines.append(f"🌸 *Blossom Nova!* Healed self *+{heal} HP*!")
+        if raid_state.get("enemy_statuses", {}).get("poisoned_until") or raid_state.get("enemy_statuses", {}).get("poison_damage"):
+            dmg = wis * 6
+            lines.append("☠️ Poisoned target takes WIS×6 burst nature damage!")
+        else:
+            dmg = wis * 3
+    elif stype == "aoe_poison_strong":
+        wis = get_stat(p, "WIS")
+        dmg = round(wis * 1.5)
+        set_enemy_status(raid_state, "poisoned_until", 600)
+        if "enemy_statuses" not in raid_state:
+            raid_state["enemy_statuses"] = {}
+        raid_state["enemy_statuses"]["poison_damage"] = max(wis, 10)
+        raid_state["enemy_statuses"]["poison_last_tick"] = datetime.now().isoformat()
+        lines.append(f"☠️ *Toxic Bloom!* WIS-scaling poison applied for 10 minutes!")
+    elif stype == "def_reflect":
+        set_status(p, "def_reflect_until", 120)
+        lines.append("🌿 *Thorn Fortress!* 40% damage reduction + reflect active for 2 minutes!")
+        return lines, 0
+    elif stype == "nature_nuke":
+        wis = get_stat(p, "WIS")
+        dmg = wis * 7
+        set_enemy_status(raid_state, "poisoned_until", 300)
+        if "enemy_statuses" not in raid_state:
+            raid_state["enemy_statuses"] = {}
+        raid_state["enemy_statuses"]["poison_damage"] = max(wis * 2, 20)
+        raid_state["enemy_statuses"]["poison_last_tick"] = datetime.now().isoformat()
+        set_enemy_status(raid_state, "weakened_until", 1800)
+        lines.append(f"🌿 *Wrath of the Wild!* WIS×7 = {dmg} nature damage! Poisoned + weakened!")
+    elif stype == "drain_debuff":
+        steal = round(raid_state["enemy_hp"] * 0.25)
+        p["hp"] = min(calc_max_hp(p), p["hp"] + steal)
+        dmg = steal
+        set_enemy_status(raid_state, "hexed_until", 180)
+        set_enemy_status(raid_state, "weakened_until", 180)
+        lines.append(f"💀 *Doom Curse!* Drained *{steal} HP*! Hex + Weak applied for 3 minutes!")
+    elif stype == "curse_chain":
+        int_v = get_stat(p, "INT")
+        dmg = round(int_v * 1.5)
+        set_enemy_status(raid_state, "hexed_until", 300)
+        set_enemy_status(raid_state, "weakened_until", 300)
+        lines.append(f"💜 *Vex Chain!* {enemy['name']} cursed: -25% ATK/DEF for 5 minutes!")
+    elif stype == "mass_debuff":
+        int_v = get_stat(p, "INT")
+        dmg = round(int_v * 2.5)
+        set_enemy_status(raid_state, "hexed_until", 3600)
+        set_enemy_status(raid_state, "weakened_until", 3600)
+        set_enemy_status(raid_state, "stunned_until", 60)
+        lines.append(f"💜 *Dread Proclamation!* Max curses! Stunned + hexed + weakened for 1 hour!")
+    elif stype == "party_atk_buff":
+        set_status(p, "blessed_until", 300)
+        lines.append("🎵 *War Song!* ATK +25% for 5 minutes!")
+        return lines, 0
+    elif stype == "party_full_buff":
+        set_status(p, "blessed_until", 600)
+        for field in ["hexed_until", "weakened_until"]:
+            p[field] = None
+        lines.append("🎶 *Ancient Aria!* Full stats buffed 10 minutes! Debuffs cleared.")
+        return lines, 0
+    elif stype == "ultimate_buff":
+        p["hp"] = calc_max_hp(p)
+        set_status(p, "blessed_until", 1800)
+        lines.append("✨ *Magnum Opus!* Full HP restored! +20% all stats for 30 minutes!")
+        return lines, 0
+    elif stype == "self_atk_buff":
+        set_status(p, "blessed_until", 120)
+        lines.append("⚔️ *War Cry!* +30% ATK and +15% DEF for 2 minutes!")
+        return lines, 0
+    elif stype == "stun_def_dmg":
+        str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
+        dmg = round((str_v + def_v) * sk.get("mult", 1.0))
+        if random.random() < 0.40:
+            set_enemy_status(raid_state, "stunned_until", 30)
+            lines.append(f"🛡️ *Shield Slam!* {dmg} damage! {enemy['name']} *Stunned* 30s!")
+        else:
+            lines.append(f"🛡️ *Shield Slam!* (STR+DEF) = {dmg} damage!")
+    elif stype == "party_def_buff":
+        set_status(p, "blessed_until", 300)
+        lines.append("🛡️ *Rune Barrier!* DEF +20% for 5 minutes!")
+        return lines, 0
+    elif stype == "intercept_aoe":
+        def_v = get_stat(p, "DEF")
+        dmg = round(def_v * 2)
+        set_status(p, "def_reflect_until", 120)
+        lines.append(f"🛡️ *Vanguard's Presence!* DEF×2 = {dmg} damage! Intercept mode active 2 min!")
+    elif stype == "holy_warrior_nuke":
+        str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
+        dmg = round(str_v * 4 + def_v * 4)
+        set_enemy_status(raid_state, "stunned_until", 60)
+        lines.append(f"⚡ *Bifrost Descent!* STR×4+DEF×4 = {dmg} holy damage! {enemy['name']} stunned 60s!")
+    elif stype == "godlike_lightning":
+        str_v = get_stat(p, "STR")
+        dmg = round(str_v * 8)
+        set_enemy_status(raid_state, "hexed_until", 180)
+        set_enemy_status(raid_state, "weakened_until", 180)
+        lines.append(f"⚡ *Valhalla's Thunder!* STR×8 = {dmg} divine lightning!")
+    elif stype == "aoe_bleed_multihit":
+        hits = sk.get("hits", 4)
+        dmg = sum(round(base * sk.get("mult", 0.6)) for _ in range(hits))
+        set_enemy_status(raid_state, "bleed_until", 300)
+        if "enemy_statuses" not in raid_state:
+            raid_state["enemy_statuses"] = {}
+        raid_state["enemy_statuses"]["bleed_damage"] = 15
+        raid_state["enemy_statuses"]["bleed_last_tick"] = datetime.now().isoformat()
+        lines.append(f"🌀 *Blade Storm!* {hits}-hit combo ({dmg} total)! *Bleeding* 15/30s!")
+    elif stype == "execute_multihit":
+        hits = sk.get("hits", 8)
+        hp_pct = raid_state["enemy_hp"] / max(1, raid_state["enemy_max_hp"])
+        mult = 1.0 if hp_pct <= 0.50 else sk.get("mult", 0.5)
+        if hp_pct <= 0.50:
+            lines.append(f"💀 *Execute!* Enemy below 50% HP — full power!")
+        dmg = sum(round(base * mult) for _ in range(hits))
+        lines.append(f"🌀 *Thousand Cuts!* {hits} hits = *{dmg} total damage!*")
+    elif stype == "vanish_dmg":
+        agi = get_stat(p, "AGI")
+        dmg = round(agi * 4)
+        set_status(p, "vanish_until", 30)
+        lines.append(f"👻 *Phase Step!* Vanished + burst: AGI×4 = {dmg}!")
+    elif stype == "phantom_aoe":
+        agi = get_stat(p, "AGI")
+        dmg = round(agi * 2.5)
+        lines.append(f"🌀 *Ethereal Storm!* Phantom wave: AGI×2.5 = {dmg} phantom damage!")
+    elif stype == "bounce_spell":
+        str_v = get_stat(p, "STR")
+        dmg = round(str_v * 2)
+        lines.append(f"⚡ *Chain Lightning!* STR×2 = {dmg} lightning damage!")
+    elif stype in ("guaranteed_hit", "execute_nuke"):
+        stat_key = sk.get("stat", get_primary_stat(p))
+        dmg = round(get_stat(p, stat_key) * sk.get("mult", 2.0))
+        lines.append(f"💥 *{sk['name']}!* {dmg} damage!")
     else:
         dmg = round(base * sk.get("mult", 1.0))
 
@@ -3588,6 +4403,22 @@ def check_miss(attacker, defender):
         if pk == "ghost_form":    dodge += 0.20
         if pk == "void_rift":     dodge += 0.25
         if pk == "quick_hands":   dodge += get_stat(defender, "AGI") * 0.005
+        # New class passives
+        if pk == "waltz":         dodge += 0.15
+        if pk == "wildflower_shield": dodge += 0.12
+        if pk == "shield_maiden": dodge += 0.20
+        if pk == "ethereal_step": dodge += 0.20
+        if pk == "mirror_image":  dodge += 0.10
+        if pk == "phantoms_grace":
+            dodge = max(0.20, dodge)  # floor at 20%
+            dodge += min(0.20, safe_int(defender.get("phantoms_grace_stacks", 0)) * 0.02)
+        if pk == "sovereign_veil":
+            dodge += 0.30
+            if defender.get("sovereign_veil_active"):
+                defender["sovereign_veil_active"] = 0; return True
+        if pk == "fog_of_war":    dodge += 0.05
+        if pk == "rhythm":        dodge += 0.05
+        if pk == "storm_instinct": dodge += 0.05
 
     # Pet passive dodge bonus (defender)
     def_pet = get_active_pet_record(defender.get("user_id"))
@@ -3623,6 +4454,26 @@ def check_crit(attacker):
     base_crit += get_enchant_bonus(attacker, "crit_bonus")
     if cls and cls.get("passive_key") == "quick_hands":
         base_crit += 0.15
+    # New class passives
+    if cls:
+        _pk = cls.get("passive_key", "")
+        if _pk == "thunder_step":    base_crit += 0.10
+        if _pk == "storms_eye":      base_crit += 0.20
+        if _pk == "celestial_wrath": base_crit += 0.15
+        if _pk == "waltz":           base_crit += 0.05
+        if _pk == "rhythm":
+            base_crit += min(0.15, safe_int(attacker.get("rhythm_stacks", 0)) * 0.03)
+        if _pk == "flourish":
+            base_crit += min(0.10, safe_int(attacker.get("flourish_stacks", 0)) * 0.03)
+        if _pk == "adrenaline":
+            _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
+            if _hp_pct < 0.30: base_crit += 0.20
+        if _pk == "death_whirl":
+            _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
+            if _hp_pct < 0.40: base_crit += 0.30
+        if _pk == "final_performance":
+            _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
+            if _hp_pct < 0.25: base_crit += 0.40
     atk_pet = get_active_pet_record(attacker.get("user_id"))
     if atk_pet:
         base_crit += get_pet_passives(atk_pet.get("level", 1)).get("crit_bonus", 0)
@@ -3633,6 +4484,8 @@ def apply_crit(attacker, dmg):
     mult = 2.0
     if cls and cls.get("passive_key") == "headshot":
         mult = 3.0
+    elif cls and cls.get("passive_key") == "celestial_wrath":
+        mult = 2.5
     return round(dmg * mult)
 
 def apply_lifesteal(attacker, dmg):
@@ -3643,6 +4496,15 @@ def apply_lifesteal(attacker, dmg):
         healed = round(dmg * 0.20)
     if pk == "bloodlust":
         healed = 5
+    # New class passives
+    if pk == "verdant_renewal":  healed += round(dmg * 0.15)
+    if pk == "eternal_bloom":    healed += round(dmg * 0.10)
+    if pk == "natural_growth":   healed += 5
+    if pk == "flourish":         healed += safe_int(attacker.get("flourish_stacks", 0)) * 3
+    if pk == "waltz":            healed += 5  # crits restore 5 HP
+    if pk == "adrenaline":
+        _hp_pct = attacker["hp"] / max(1, calc_max_hp(attacker))
+        if _hp_pct < 0.30: healed += 10
     if get_accessory_bonus(attacker, "lifesteal_flat"):
         healed += get_accessory_bonus(attacker, "lifesteal_flat")
     enc_heal = get_enchant_bonus(attacker, "lifesteal_flat")
@@ -3663,6 +4525,17 @@ def apply_reflect(defender, attacker, dmg):
     reflect = 0
     if pk == "judgement":
         reflect = round(get_stat(defender, "WIS") * 0.10)
+    # New class passives
+    if pk == "thorn_skin":   reflect += round(get_stat(defender, "WIS") * 0.5)
+    if pk == "thorn_aura":   reflect += round(get_stat(defender, "WIS") * 1.0)
+    if pk == "nettleskin":
+        if random.random() < 0.10: reflect += 15
+    if pk == "ancient_bark": reflect += round(dmg * 0.10)
+    if pk == "beguile":
+        if random.random() < 0.08: reflect += round(dmg * 0.50)
+    # def_reflect status — reflect half of incoming damage
+    if _ts_active(defender, "def_reflect_until"):
+        reflect += round(dmg * 0.50)
     if get_accessory_bonus(defender, "reflect_pct"):
         reflect += round(dmg * get_accessory_bonus(defender, "reflect_pct"))
     if reflect:
@@ -3910,6 +4783,16 @@ def init_db():
         conn.commit()
     except sqlite3.OperationalError:
         pass
+
+    # ── Marriage columns ──────────────────────────────────────────────────────
+    for _mc in [("married_to_id","INTEGER DEFAULT NULL"),
+                ("married_to_name","TEXT DEFAULT NULL"),
+                ("married_at","TEXT DEFAULT NULL")]:
+        try:
+            conn.execute(f"ALTER TABLE players ADD COLUMN {_mc[0]} {_mc[1]}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     conn.close()
 
@@ -4353,6 +5236,15 @@ _ITEM_RENAME = {
     "The Break Shield":    "Knight's Bulwark",
     "Black Ball Barrier":  "Holy Pavise",
     "The Diamond Aegis":   "Celestial Bulwark",
+    # Loot-table pool-themed items → RPG names
+    "Rack Cloth Vest":     "Rustic Cloth Vest",
+    "Reinforced Chalk Coat": "Reinforced Hide Coat",
+    "Ferrule Dart":        "Bloodsteel Shuriken",
+    "Toughened Rail Coat": "Toughened Leather Coat",
+    "Iron Rail Guard":     "Iron Wall Shield",
+    "The Chalk Wall":      "The Stone Wall",
+    "The Diamond Rack":    "The Crystal Barrier",
+    "Legendary Cue Coat":  "Legendary Runecoat",
 }
 
 def save_player(p):
@@ -4580,6 +5472,9 @@ def add_exp(p, amount, weather=None):
         if g:
             bonus = GUILD_PERKS.get(safe_int(g.get("level"),1),{}).get("exp_bonus",0)
             amount = round(amount * (1 + bonus))
+    # Marriage bonus: +3% EXP
+    if p.get("married_to_id"):
+        amount = round(amount * 1.03)
     msgs = []; leveled_up = False
     p["exp"]      += max(0, amount)
     p["total_exp"] = safe_int(p.get("total_exp")) + max(0, amount)
@@ -5746,12 +6641,20 @@ def _build_stats_pages(p, viewing_name=None):
         else None
     )
 
+    married_str = ""
+    if p.get("married_to_id") and p.get("married_to_name"):
+        married_str = f"\n💍 Married to *{p['married_to_name']}*"
+
     page1_lines = [
         f"🎱 *{name}*{defeated_str}{recovering}",
         f"🏅 {p['active_title']}",
         f"{tier['name']}  -  Level {p['level']}",
         f"🏰 {guild_str}",
         f"🌍 {w['name']}",
+    ]
+    if married_str:
+        page1_lines.append(married_str)
+    page1_lines += [
         "",
         f"❤️ HP: {p['hp']}/{real_max}",
         f"✨ {exp_cur:,}/{exp_need:,} EXP ({exp_pct}%)",
@@ -6408,7 +7311,10 @@ async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Level {slvl} → RPG! 🎱", permanent=True))
 
 # ── CLASS BROWSER ─────────────────────────────────────────────────────────────
-_CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
+_CLASS_EMOJIS = {
+    "warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿",
+    "botanist":"🌸","enchantress":"💜","valkyrie":"⚡","phantom_dancer":"🌀",
+}
 _TIER_REQ     = {2:10, 3:30, 4:60, 5:100}
 
 def _build_class_page(cid):
@@ -9439,7 +10345,9 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = [f"⚡ *{user.first_name}* uses *{sk['name']}* on *{boss_dict['data']['name']}*!"]
 
         if stype in ("self_heal", "group_heal", "mass_cleanse",
-                     "dmg_reduction_buff", "self_heal_buff", "revive_heal"):
+                     "dmg_reduction_buff", "self_heal_buff", "revive_heal",
+                     "self_atk_buff", "def_reflect", "party_atk_buff",
+                     "party_def_buff", "party_full_buff", "ultimate_buff"):
             if stype == "self_heal":
                 heal = round(get_stat(p, "WIS") * sk.get("mult", 3.0))
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
@@ -9448,6 +10356,24 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 heal = round(p["max_hp"] * 0.30)
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
                 lines.append(f"💚 *Rally!* +{heal} HP restored.")
+            elif stype == "self_atk_buff":
+                set_status(p, "blessed_until", 120)
+                lines.append("⚔️ *War Cry!* +30% ATK for 2 minutes!")
+            elif stype == "def_reflect":
+                set_status(p, "def_reflect_until", 120)
+                lines.append("🌿 *Thorn Fortress!* 40% dmg reduction + reflect active 2 min!")
+            elif stype in ("party_atk_buff", "party_def_buff"):
+                set_status(p, "blessed_until", 300)
+                label = "War Song" if stype == "party_atk_buff" else "Rune Barrier"
+                lines.append(f"🎵 *{label}!* Party buffed +25% stats for 5 minutes!")
+            elif stype == "party_full_buff":
+                set_status(p, "blessed_until", 600)
+                for _f in ["hexed_until", "weakened_until"]: p[_f] = None
+                lines.append("🎶 *Ancient Aria!* Full buffs 10 minutes! Debuffs cleared.")
+            elif stype == "ultimate_buff":
+                p["hp"] = calc_max_hp(p)
+                set_status(p, "blessed_until", 1800)
+                lines.append("✨ *Magnum Opus!* Full HP restored! +20% all stats 30 min!")
             dmg = 0
         else:
             mult = sk.get("mult", 1.0) or 1.0
@@ -9461,16 +10387,43 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     total += h
                 dmg = total
                 lines.append(f"⚡ {hits}-hit combo! [{' + '.join(hit_log)}] = {dmg}")
-            elif stype in ("freeze_nuke", "execute_nuke", "holy_nuke", "fear_kill"):
+            elif stype in ("freeze_nuke", "execute_nuke", "holy_nuke", "fear_kill",
+                           "nature_nuke", "holy_warrior_nuke", "godlike_lightning"):
                 stat_key = sk.get("stat", get_primary_stat(p))
                 dmg = round(get_stat(p, stat_key) * sk.get("mult", 3.0))
                 lines.append(f"💥 *{sk['name']}!* {dmg} damage!")
-            elif stype in ("drain", "drain_kill", "hp_drain"):
-                drain_pct = sk.get("drain_pct", 0.30)
+                if stype == "nature_nuke":
+                    lines.append("🌿 Boss poisoned + weakened!")
+                elif stype == "godlike_lightning":
+                    lines.append("⚡ Divine lightning — boss hexed!")
+            elif stype in ("drain", "drain_kill", "hp_drain", "drain_debuff"):
+                drain_pct = sk.get("drain_pct", 0.25)
                 dmg = round(boss_dict["hp"] * drain_pct)
                 heal = round(dmg * sk.get("heal_pct", 0.50))
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
                 lines.append(f"🩸 *{sk['name']}!* Drained {dmg} HP! Healed {heal}.")
+                if stype == "drain_debuff": lines.append("💀 Boss hexed + weakened!")
+            elif stype in ("stun_def_dmg", "intercept_aoe"):
+                str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
+                dmg = round((str_v + def_v) * sk.get("mult", 1.0))
+                if stype == "intercept_aoe":
+                    set_status(p, "def_reflect_until", 120)
+                    lines.append(f"🛡️ *{sk['name']}!* DEF-based {dmg} damage + intercept active!")
+                else:
+                    lines.append(f"🛡️ *{sk['name']}!* {dmg} damage!")
+            elif stype in ("curse_chain", "mass_debuff"):
+                int_v = get_stat(p, "INT")
+                dmg = round(int_v * sk.get("mult", 2.0))
+                lines.append(f"💜 *{sk['name']}!* {dmg} damage + max curses!")
+            elif stype == "aoe_heal_dmg":
+                wis = get_stat(p, "WIS")
+                heal = round(wis * 3); p["hp"] = min(p["max_hp"], p["hp"] + heal)
+                dmg = round(wis * 5)
+                lines.append(f"🌸 *{sk['name']}!* Healed +{heal} HP + {dmg} to boss!")
+            elif stype in ("aoe_poison_strong",):
+                wis = get_stat(p, "WIS")
+                dmg = round(wis * 2)
+                lines.append(f"☠️ *{sk['name']}!* {dmg} + boss poisoned for 10 min!")
             else:
                 dmg = round(calc_attack_damage(p, w) * mult)
             if stype not in ("multihit", "multi_hit") and hits == 1 and check_crit(p):
@@ -10038,6 +10991,90 @@ async def _execute_skill(update, context, p, sk):
         save_player(p)
         await send_group(update, "\n".join(lines), delay=15); return
 
+    elif stype == "self_atk_buff":
+        set_status(p, "blessed_until", 120)
+        lines.append(f"⚔️ *War Cry!* {p['username']} gains *+30% ATK and +15% DEF* for 2 minutes!")
+        save_player(p)
+        await send_group(update, "\n".join(lines), delay=15); return
+
+    elif stype == "def_reflect":
+        set_status(p, "def_reflect_until", 120)
+        lines.append(f"🌿 *Thorn Fortress!* {p['username']}: 40% dmg reduction + reflect active 2 min!")
+        save_player(p)
+        await send_group(update, "\n".join(lines), delay=15); return
+
+    elif stype == "party_atk_buff":
+        gid = p.get("guild_id")
+        buffed = []
+        if gid and str(gid) != "None":
+            g = get_guild(gid)
+            if g:
+                for mid in sjl(g.get("members"), []):
+                    mp = get_player(mid)
+                    if mp:
+                        set_status(mp, "blessed_until", 300)
+                        save_player(mp); buffed.append(mp["username"])
+        if not buffed:
+            set_status(p, "blessed_until", 300); buffed = [p["username"]]; save_player(p)
+        lines.append(f"🎵 *War Song!* +25% ATK for 5 minutes!\n💪 Buffed: {', '.join(buffed)}")
+        await send_group(update, "\n".join(lines), delay=20); return
+
+    elif stype == "party_def_buff":
+        gid = p.get("guild_id")
+        buffed = []
+        if gid and str(gid) != "None":
+            g = get_guild(gid)
+            if g:
+                for mid in sjl(g.get("members"), []):
+                    mp = get_player(mid)
+                    if mp:
+                        set_status(mp, "blessed_until", 300)
+                        save_player(mp); buffed.append(mp["username"])
+        if not buffed:
+            set_status(p, "blessed_until", 300); buffed = [p["username"]]; save_player(p)
+        lines.append(f"🛡️ *Rune Barrier!* +20% DEF for 5 minutes!\n🛡️ Protected: {', '.join(buffed)}")
+        await send_group(update, "\n".join(lines), delay=20); return
+
+    elif stype == "party_full_buff":
+        gid = p.get("guild_id")
+        buffed = []
+        if gid and str(gid) != "None":
+            g = get_guild(gid)
+            if g:
+                for mid in sjl(g.get("members"), []):
+                    mp = get_player(mid)
+                    if mp:
+                        set_status(mp, "blessed_until", 600)
+                        for _f in ["hexed_until", "weakened_until"]: mp[_f] = None
+                        save_player(mp); buffed.append(mp["username"])
+        if not buffed:
+            set_status(p, "blessed_until", 600)
+            for _f in ["hexed_until", "weakened_until"]: p[_f] = None
+            buffed = [p["username"]]; save_player(p)
+        lines.append(f"🎶 *Ancient Aria!* +15% ATK/DEF/dodge for 10 min! Debuffs cleared.\n"
+                     f"✨ Buffed: {', '.join(buffed)}")
+        await send_group(update, "\n".join(lines), delay=20); return
+
+    elif stype == "ultimate_buff":
+        gid = p.get("guild_id")
+        buffed = []
+        if gid and str(gid) != "None":
+            g = get_guild(gid)
+            if g:
+                for mid in sjl(g.get("members"), []):
+                    mp = get_player(mid)
+                    if mp:
+                        mp["hp"] = calc_max_hp(mp)
+                        set_status(mp, "blessed_until", 1800)
+                        save_player(mp); buffed.append(mp["username"])
+        if not buffed:
+            p["hp"] = calc_max_hp(p)
+            set_status(p, "blessed_until", 1800)
+            buffed = [p["username"]]; save_player(p)
+        lines.append(f"✨ *Magnum Opus!* Full HP restored! +20% all stats 30 min!\n"
+                     f"🎵 Empowered: {', '.join(buffed)}")
+        await send_group(update, "\n".join(lines), delay=20); return
+
     # ── Offensive skills ──────────────────────────────────────────────────────
     if not update.message.reply_to_message:
         await send_group(update, f"Reply to your target's message then use /skill!", delay=9); return
@@ -10188,13 +11225,111 @@ async def _execute_skill(update, context, p, sk):
     elif stype == "bounty_mark":
         dmg = round(base * 0.8)
         lines.append(f"🔴 *Contract!* Marking *{d['username']}*  -  increased threat level.")
-    elif stype in ("aoe_recent_attackers","holy_nuke","execute_nuke","fear_kill",
-                   "random_aoe","bounce_spell","raid_aoe",
-                   "bind_attacker","dmg_field","combo_dmg","self_heal_buff",
-                   "revive_heal","execution_shot","multihit_crit","pierce_dodge"):
-        # Simplified fallback for complex skills
-        dmg = round(base * sk.get("mult",1.2))
-        lines.append(f"_(Full {stype} effect active)_")
+    elif stype == "aoe_heal_dmg":
+        wis = get_stat(p, "WIS")
+        heal = round(wis * 3)
+        p["hp"] = min(calc_max_hp(p), p["hp"] + heal)
+        lines.append(f"🌸 Healed self *+{heal} HP*! ({p['hp']}/{p['max_hp']})")
+        if _ts_active(d, "poison_until") or d.get("poison_damage"):
+            dmg = round(wis * 6)
+            lines.append("☠️ *Blossom Nova!* Poisoned target takes WIS×6 burst!")
+        else:
+            dmg = round(wis * 3)
+    elif stype == "aoe_poison_strong":
+        wis = get_stat(p, "WIS")
+        dmg = round(wis * 1.5)
+        set_status(d, "poison_until", 600)
+        d["poison_damage"] = max(wis, 15)
+        d["poison_last_tick"] = datetime.now().isoformat()
+        lines.append(f"☠️ *Toxic Bloom!* WIS-scaling poison applied to {d['username']} for 10 min!")
+    elif stype == "nature_nuke":
+        wis = get_stat(p, "WIS")
+        dmg = round(wis * 7)
+        set_status(d, "poison_until", 300)
+        d["poison_damage"] = max(wis * 2, 20)
+        d["poison_last_tick"] = datetime.now().isoformat()
+        set_status(d, "healing_blocked_until", 1800)
+        lines.append(f"🌿 *Wrath of the Wild!* WIS×7 = {dmg}! Poisoned + no healing 30 min!")
+    elif stype == "drain_debuff":
+        steal = round(d["hp"] * 0.25)
+        p["hp"] = min(calc_max_hp(p), p["hp"] + steal)
+        dmg = steal
+        set_status(d, "hexed_until", 180)
+        set_status(d, "weakened_until", 180)
+        lines.append(f"💀 *Doom Curse!* Drained *{steal} HP* from {d['username']}! Hex + Weak 3 min!")
+    elif stype == "curse_chain":
+        int_v = get_stat(p, "INT")
+        dmg = round(int_v * 1.5)
+        set_status(d, "hexed_until", 300)
+        set_status(d, "weakened_until", 300)
+        set_status(d, "exposed_until", 300)
+        lines.append(f"💜 *Vex Chain!* {d['username']}: -25% ATK/DEF + exposed 5 min!")
+    elif stype == "mass_debuff":
+        int_v = get_stat(p, "INT")
+        dmg = round(int_v * 2.5)
+        set_status(d, "hexed_until", 3600)
+        set_status(d, "weakened_until", 3600)
+        set_status(d, "stunned_until", 60)
+        lines.append(f"💜 *Dread Proclamation!* Max curses on {d['username']} for 1 hour! Stunned 60s!")
+    elif stype == "stun_def_dmg":
+        str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
+        dmg = round((str_v + def_v) * sk.get("mult", 1.0))
+        if random.random() < 0.40:
+            set_status(d, "stunned_until", 30)
+            lines.append(f"🛡️ *Shield Slam!* {dmg} damage! {d['username']} *Stunned* 30s!")
+        else:
+            lines.append(f"🛡️ *Shield Slam!* (STR+DEF) = {dmg} damage!")
+    elif stype == "intercept_aoe":
+        def_v = get_stat(p, "DEF")
+        dmg = round(def_v * 2)
+        set_status(p, "def_reflect_until", 120)
+        lines.append(f"🛡️ *Vanguard's Presence!* DEF×2 = {dmg} damage! Intercept active 2 min!")
+    elif stype == "holy_warrior_nuke":
+        str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
+        dmg = round(str_v * 4 + def_v * 4)
+        set_status(d, "stunned_until", 60)
+        lines.append(f"⚡ *Bifrost Descent!* STR×4+DEF×4 = {dmg} holy damage! {d['username']} stunned 60s!")
+    elif stype == "godlike_lightning":
+        str_v = get_stat(p, "STR")
+        dmg = round(str_v * 8)
+        set_status(d, "hexed_until", 180)
+        set_status(d, "weakened_until", 180)
+        lines.append(f"⚡ *Valhalla's Thunder!* STR×8 = {dmg} divine lightning! {d['username']} hexed + weakened!")
+    elif stype == "aoe_bleed_multihit":
+        hits = sk.get("hits", 4)
+        dmg = sum(round(base * sk.get("mult", 0.6)) for _ in range(hits))
+        set_status(d, "bleed_until", 300)
+        d["bleed_damage"] = 15
+        d["bleed_last_tick"] = datetime.now().isoformat()
+        lines.append(f"🌀 *Blade Storm!* {hits}-hit combo ({dmg} total)! {d['username']} *Bleeding* 15/30s!")
+    elif stype == "execute_multihit":
+        hits = sk.get("hits", 8)
+        hp_pct = d["hp"] / max(1, d["max_hp"])
+        mult = 1.0 if hp_pct <= 0.50 else sk.get("mult", 0.5)
+        dmg = sum(round(base * mult) for _ in range(hits))
+        if hp_pct <= 0.50:
+            lines.append(f"💀 *Execute!* {d['username']} below 50% — full power!")
+        lines.append(f"🌀 *Thousand Cuts!* {hits} hits = *{dmg} total damage!*")
+    elif stype == "vanish_dmg":
+        agi = get_stat(p, "AGI")
+        dmg = round(agi * 4)
+        set_status(p, "vanish_until", 30)
+        lines.append(f"👻 *Phase Step!* Vanishes + reappears: AGI×4 = {dmg} burst damage!")
+    elif stype == "phantom_aoe":
+        agi = get_stat(p, "AGI")
+        dmg = round(agi * 2.5)
+        lines.append(f"🌀 *Ethereal Storm!* AGI×2.5 = {dmg} phantom damage!")
+    elif stype == "bounce_spell":
+        str_v = get_stat(p, "STR")
+        dmg = round(str_v * 2)
+        lines.append(f"⚡ *Chain Lightning!* STR×2 = {dmg} lightning — bounces to nearby targets!")
+    elif stype in ("aoe_recent_attackers", "holy_nuke", "execute_nuke", "fear_kill",
+                   "random_aoe", "raid_aoe", "bind_attacker", "dmg_field",
+                   "combo_dmg", "revive_heal", "execution_shot",
+                   "multihit_crit", "pierce_dodge", "guaranteed_hit"):
+        stat_key = sk.get("stat", get_primary_stat(p))
+        dmg = round(get_stat(p, stat_key) * sk.get("mult", 1.5))
+        lines.append(f"💥 *{sk['name']}!* {dmg} damage!")
 
     # Apply defense
     if stype not in ("pierce_all","void_nuke","holy_dmg"):
@@ -11726,6 +12861,169 @@ def calc_dungeon_cp(p):
             + get_weapon_atk(p) * 3
             + get_armor_def(p) * 2
             + len(sjl(p.get("all_skills"),[])) * 30)
+
+# ── MARRIAGE ─────────────────────────────────────────────────────────────────
+async def marry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    # Show own marriage status if no target
+    if not update.message.reply_to_message and not context.args:
+        if p.get("married_to_id") and p.get("married_to_name"):
+            ma = p.get("married_at","unknown date")
+            await send_group(update,
+                f"💍 *Married to {p['married_to_name']}*\n"
+                f"_Since {ma[:10] if ma else '?'}_\n\n"
+                f"Use /divorce to end the marriage.", delay=30); return
+        await send_group(update,
+            "💍 *Marriage*\n\n"
+            "Reply to someone's message and type /marry to propose!\n"
+            "Costs *1,000 gold* each. Benefits:\n"
+            "• 💍 Shown on your /stats profile\n"
+            "• 🏅 Exclusive *Beloved* title\n"
+            "• ✨ +3% EXP bonus on all gains\n\n"
+            "_Both partners must agree._", delay=30); return
+
+    du = update.message.reply_to_message.from_user if update.message.reply_to_message else None
+    if not du:
+        await send_group(update, "Reply to the person you want to propose to!", delay=9); return
+    if du.id == user.id:
+        await send_group(update, "You can't marry yourself!", delay=9); return
+
+    tp = get_player(du.id)
+    if not tp:
+        await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+
+    if p.get("married_to_id"):
+        await send_group(update, f"💍 You're already married to *{p.get('married_to_name')}*! Use /divorce first.", delay=12); return
+    if tp.get("married_to_id"):
+        await send_group(update, f"💔 {du.first_name} is already married!", delay=12); return
+    if p.get("gold", 0) < 1000:
+        await send_group(update, "💰 You need at least *1,000 gold* to propose!", delay=9); return
+
+    # Send proposal
+    pending_marriages[user.id] = {
+        "target_id": du.id,
+        "chat_id": update.effective_chat.id,
+        "expires": (datetime.now() + timedelta(minutes=5)).isoformat(),
+    }
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("💍 Accept",  callback_data=f"marry_accept_{user.id}"),
+        InlineKeyboardButton("💔 Decline", callback_data=f"marry_decline_{user.id}"),
+    ]])
+    await send_group(update,
+        f"💍 *{user.first_name}* proposes to *{du.first_name}*!\n\n"
+        f"_{du.first_name}, will you accept?_\n"
+        f"Cost: 1,000 gold each (2,000 total)\n\n"
+        f"_Proposal expires in 5 minutes._",
+        permanent=False, delay=300, reply_markup=markup)
+
+
+async def marry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    action = parts[1]          # accept or decline
+    proposer_id = int(parts[2])
+
+    proposal = pending_marriages.get(proposer_id)
+    if not proposal:
+        await query.edit_message_text("💔 This proposal has already expired.", parse_mode="Markdown"); return
+    if datetime.now() > datetime.fromisoformat(proposal["expires"]):
+        pending_marriages.pop(proposer_id, None)
+        await query.edit_message_text("💔 This proposal has expired.", parse_mode="Markdown"); return
+    if query.from_user.id != proposal["target_id"]:
+        await query.answer("This proposal isn't for you!", show_alert=True); return
+
+    pending_marriages.pop(proposer_id, None)
+    proposer = get_player(proposer_id)
+    target   = get_player(proposal["target_id"])
+
+    if action == "decline":
+        await query.edit_message_text(
+            f"💔 *{query.from_user.first_name}* declined the proposal.",
+            parse_mode="Markdown"); return
+
+    # Accept — validate
+    if not proposer or not target:
+        await query.edit_message_text("❌ Player data not found.", parse_mode="Markdown"); return
+    if proposer.get("married_to_id") or target.get("married_to_id"):
+        await query.edit_message_text("💔 One of you is already married.", parse_mode="Markdown"); return
+    if proposer.get("gold", 0) < 1000:
+        await query.edit_message_text("💰 The proposer no longer has enough gold!", parse_mode="Markdown"); return
+    if target.get("gold", 0) < 1000:
+        await query.edit_message_text("💰 You don't have enough gold (need 1,000)!", parse_mode="Markdown"); return
+
+    now_str = datetime.now().isoformat()
+    # Deduct gold, link records
+    proposer["gold"] -= 1000;  target["gold"] -= 1000
+    proposer["married_to_id"]   = target["user_id"]
+    proposer["married_to_name"] = target["username"]
+    proposer["married_at"]      = now_str
+    target["married_to_id"]     = proposer["user_id"]
+    target["married_to_name"]   = proposer["username"]
+    target["married_at"]        = now_str
+    award_title(proposer, "Beloved"); award_title(target, "Beloved")
+    save_player(proposer); save_player(target)
+
+    await query.edit_message_text(
+        f"💍 *{proposer['username']}* and *{target['username']}* are now married!\n\n"
+        f"🏅 Both received the *Beloved* title.\n"
+        f"✨ +3% EXP bonus active for both.\n\n"
+        f"_Congratulations!_ 🎉",
+        parse_mode="Markdown")
+
+
+async def divorce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if not p.get("married_to_id"):
+        await send_group(update, "💔 You're not married.", delay=9); return
+
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Confirm Divorce", callback_data=f"divorce_confirm_{user.id}"),
+        InlineKeyboardButton("❌ Cancel",          callback_data=f"divorce_cancel_{user.id}"),
+    ]])
+    await send_group(update,
+        f"💔 Are you sure you want to divorce *{p['married_to_name']}*?\n\n"
+        f"_This removes the Beloved title and EXP bonus for both of you._",
+        permanent=False, delay=60, reply_markup=markup)
+
+
+async def divorce_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    action = parts[1]  # confirm or cancel
+    uid    = int(parts[2])
+    if query.from_user.id != uid:
+        await query.answer("This isn't your divorce!", show_alert=True); return
+
+    if action == "cancel":
+        await query.edit_message_text("_Divorce cancelled._", parse_mode="Markdown"); return
+
+    p = get_player(uid)
+    if not p or not p.get("married_to_id"):
+        await query.edit_message_text("💔 You are not currently married.", parse_mode="Markdown"); return
+
+    spouse = get_player(p["married_to_id"])
+    spouse_name = p["married_to_name"]
+
+    p["married_to_id"] = None; p["married_to_name"] = None; p["married_at"] = None
+    save_player(p)
+    if spouse:
+        spouse["married_to_id"] = None; spouse["married_to_name"] = None; spouse["married_at"] = None
+        save_player(spouse)
+
+    await query.edit_message_text(
+        f"💔 *{p['username']}* and *{spouse_name}* are now divorced.\n\n"
+        f"_The Beloved title and EXP bonus have been removed._",
+        parse_mode="Markdown")
+
 
 async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -13442,7 +14740,7 @@ async def rankwins_cmd(update, context):
 GUIDE_PAGES = [
     # Page 1 - Getting Started
     (
-        "🎱 *8Ball World  -  Getting Started* (1/8)\n"
+        "🎱 *8Ball World  -  Getting Started* (1/9)\n"
         "\n"
         "Welcome to 8Ball World  -  a fantasy RPG built inside Telegram.\n"
         "\n"
@@ -13461,43 +14759,53 @@ GUIDE_PAGES = [
     ),
     # Page 2 - Character Building
     (
-        "🎱 *8Ball World  -  Building Your Character* (2/8)\n"
+        "🎱 *8Ball World  -  Building Your Character* (2/9)\n"
         "\n"
-        "Use /class at Level 5 to pick your starting class. Browse with arrows to see each class's full Path A and Path B skill trees before committing.\n"
+        "Use /class at Level 5 to pick your starting class. Browse with arrows to see each class's Path A and Path B.\n"
         "\n"
-        "⚔️ *Warrior* — STR-based. Absorbs hits, dominates the battlefield.\n"
-        "  Path A (Paladin): Holy tank — shields, wards, group buffs, divine nukes\n"
-        "  Path B (Blade Master): Pure damage — Triple Strike, Rampage, Decimation\n"
+        "⚔️ *Warrior* — STR. Tank/bruiser. Absorbs hits, dominates the battlefield.\n"
+        "  Path A (Paladin): Holy tank — shields, group buffs, divine nukes\n"
+        "  Path B (Warlord): Pure damage — Triple Strike, Rampage, Decimation\n"
         "\n"
-        "🔮 *Mage* — INT-based. Powerful spells and crowd control.\n"
-        "  Path A (Sage): Pure magic — Chain Lightning, Meteor AOE, Absolute Zero (freeze)\n"
-        "  Path B (Void Mage): Dark arts — Hexes, drain, void nuke, void collapse\n"
+        "🔮 *Mage* — INT. Powerful spells and crowd control.\n"
+        "  Path A (Sage): Pure magic — Chain Lightning, Meteor AOE, Absolute Zero\n"
+        "  Path B (Void Mage): Dark arts — Hexes, drain, void collapse\n"
         "\n"
-        "🔪 *Thief* — LUK/AGI-based. Crits, evasion, gold generation.\n"
+        "🔪 *Thief* — LUK/AGI. Crits, evasion, gold generation.\n"
         "  Path A (Wraith): Ghost — stealth, phantom strike, undetectable dodge\n"
-        "  Path B (Assassin): Assassination — poison, bleeds, execute on low HP\n"
+        "  Path B (Specialist): Assassination — poison, bleeds, execute\n"
         "\n"
-        "🏹 *Archer* — DEX-based. Precision and bounty hunting.\n"
-        "  Path A (Strider): Ranger — steady aim, nature bond, sniper shot\n"
-        "  Path B (Bounty Hunter): Bounty — place contracts, track targets, 750g bounties\n"
+        "🏹 *Archer* — DEX. Precision and bounty hunting.\n"
+        "  Path A (Strider): Ranger — steady aim, nature bond, arrow storm\n"
+        "  Path B (Deadeye): Bounty — contracts, 12-hour kills, escalating damage\n"
         "\n"
-        "📿 *Priest* — WIS-based. The only class that can revive players.\n"
-        "  Path A (High Priest): Holy healer — group heals, divine shield, mass resurrection\n"
-        "  Path B (Zealot): Dark cleric — condemn (unrevivable), curse, inquisition\n"
+        "📿 *Priest* — WIS. The only class that can revive players.\n"
+        "  Path A (Saint): Holy healer — group heals, mass resurrection, EXP aura\n"
+        "  Path B (Zealot): Dark cleric — condemn (unrevivable), curse stacking\n"
         "\n"
-        "At Lv 10, use /prestige to choose Path A or B. Your class evolves automatically at Lv 30, 60, and 100.\n"
+        "🌸 *Botanist* — WIS. Nature magic, healing, and deadly poisons.\n"
+        "  Path A (Wildflower Empress): Healing/support — bloom heals, petal veil, Garden of Eden\n"
+        "  Path B (Nature's Chosen): Offense/poison — thorn aura, toxic bloom, Wrath of the Wild\n"
         "\n"
-        "*Stats* (spend with /allocate):\n"
-        "STR — Physical damage | INT — Magic spell damage | AGI — Dodge chance\n"
-        "DEX — Crit chance & accuracy | WIS — Healing power | LUK — Loot & gold drops\n"
+        "💜 *Enchantress* — INT. Charms, hexes, and party buffs.\n"
+        "  Path A (Dread Empress): Curse stacking — hexmark, doom curse, mass debuffs\n"
+        "  Path B (Grand Muse): Party support — war song, ancient aria, Magnum Opus\n"
         "\n"
-        "📿 *Priest note:* Chalkers can /heal for free (no potions needed) and can revive themselves — just use /heal with no reply. WIS scales your heal power directly.\n"
+        "⚡ *Valkyrie* — STR. Norse warrior-healer hybrid.\n"
+        "  Path A (Iron Valkyrie): Defense — block, runic ward, Bifrost Descent\n"
+        "  Path B (Divine Tempest): Lightning offense — storm crits, chain lightning, Valhalla's Thunder\n"
         "\n"
-        "Use /skill to browse your full skill tree including locked tiers. Use /class to preview what's coming next as you level."
+        "🌀 *Phantom Dancer* — AGI. Evasion, combos, and ghost-step.\n"
+        "  Path A (Danse Macabre): Combo offense — blade storm, thousand cuts, Macabre Finale\n"
+        "  Path B (Ethereal Sovereign): Evasion — phase step, mist form, Ethereal Storm\n"
+        "\n"
+        "At Lv 10, use /prestige to choose Path A or B. Class evolves at Lv 30, 60, 100.\n"
+        "\n"
+        "*Stats:* STR — Physical dmg | INT — Magic dmg | AGI — Dodge | DEX — Crit | WIS — Healing | LUK — Loot"
     ),
     # Page 3 - Daily Activities
     (
-        "🎱 *8Ball World  -  Daily Activities* (3/8)\n"
+        "🎱 *8Ball World  -  Daily Activities* (3/9)\n"
         "\n"
         "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
         "\n"
@@ -13518,7 +14826,7 @@ GUIDE_PAGES = [
     ),
     # Page 4 - Combat & Raids
     (
-        "🎱 *8Ball World  -  Combat & Raids* (4/8)\n"
+        "🎱 *8Ball World  -  Combat & Raids* (4/9)\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
         "Reply to any player's message and use /attack to fight them. Winners steal gold and EXP. Losers are defeated for 6 hours and lose 10% EXP.\n"
@@ -13562,7 +14870,7 @@ GUIDE_PAGES = [
     ),
     # Page 5 - Gear & Economy
     (
-        "🎱 *8Ball World  -  Gear & Economy* (5/8)\n"
+        "🎱 *8Ball World  -  Gear & Economy* (5/9)\n"
         "\n"
         "*Gear Slots*\n"
         "Weapon, Armor, Shield, Accessory. Use /equip to browse your bag and tap to equip. Use /unequip to remove gear.\n"
@@ -13602,7 +14910,7 @@ GUIDE_PAGES = [
     ),
     # Page 6 - Command Reference
     (
-        "🎱 *8Ball World  -  Command Reference* (6/8)\n"
+        "🎱 *8Ball World  -  Command Reference* (6/9)\n"
         "\n"
         "*Character*\n"
         "/ascend  -  Create your RPG character (DM only)\n"
@@ -13678,11 +14986,15 @@ GUIDE_PAGES = [
         "/guildleave  -  Leave your guild\n"
         "/guilddisband confirm  -  Disband your guild\n"
         "/guildwar  -  Declare war via guild picker (leader, 24hr)\n"
-        "/gbank deposit/withdraw  -  Guild bank"
+        "/gbank deposit/withdraw  -  Guild bank\n"
+        "\n"
+        "*Marriage*\n"
+        "/marry  -  Propose (reply to target) or check marriage status\n"
+        "/divorce  -  End your marriage (button confirmation)"
     ),
     # Page 7 - Guilds & Advanced
     (
-        "🎱 *8Ball World  -  Guilds & Advanced Systems* (7/8)\n"
+        "🎱 *8Ball World  -  Guilds & Advanced Systems* (7/9)\n"
         "\n"
         "*Guilds*\n"
         "Guilds level up as members donate gold via /guilddonate, unlocking EXP bonuses, shop discounts, and more.\n"
@@ -13715,7 +15027,7 @@ GUIDE_PAGES = [
     ),
     # Page 8 - Pets
     (
-        "🎱 *8Ball World  -  Pets* (8/8)\n"
+        "🎱 *8Ball World  -  Pets* (8/9)\n"
         "\n"
         "*Getting a Pet*\n"
         "Buy eggs from the Pet Shop (/petshop) or find them in dungeons and quests.\n"
@@ -13759,9 +15071,35 @@ GUIDE_PAGES = [
         "/hatch — hatch an egg from your inventory\n"
         "/petrename [name] — rename your active pet\n"
     ),
+    # Page 9 - Marriage
+    (
+        "🎱 *8Ball World  -  Marriage* (9/9)\n"
+        "\n"
+        "*Getting Married*\n"
+        "Reply to any player's message and type /marry to propose.\n"
+        "The proposal costs *1,000 gold from each partner* (2,000 total).\n"
+        "Your partner gets Accept / Decline buttons. Proposal expires in 5 minutes.\n"
+        "\n"
+        "*Marriage Benefits*\n"
+        "💍 Marriage is shown on your /stats profile\n"
+        "🏅 Both partners receive the exclusive *Beloved* title\n"
+        "✨ +3% EXP bonus on every EXP gain, forever\n"
+        "\n"
+        "*Commands*\n"
+        "/marry — Propose (reply to partner) or check your own marriage status\n"
+        "/divorce — End the marriage (confirmation button required)\n"
+        "\n"
+        "*Notes*\n"
+        "• You can only be married to one person at a time\n"
+        "• Divorce removes the EXP bonus for both partners\n"
+        "• Marriage date shows on your /stats profile\n"
+        "• The Beloved title remains earned even after divorce\n"
+        "\n"
+        "💍 _Love in a Telegram RPG. We're not judging._"
+    ),
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands", "Guilds & Advanced", "Pets"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands", "Guilds & Advanced", "Pets", "Marriage"]
 
 async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
     total = len(GUIDE_PAGES)
@@ -14362,14 +15700,14 @@ POOL_ITEM_TABLE = [
     # ── Common weapons ──
     ("Iron Broadsword",0.018),("Rusty Shiv",0.018),("Steel Knight Sword",0.012),
     # ── Common armors ──
-    ("Rusty Iron Vest",0.018),("Rack Cloth Vest",0.018),("Reinforced Chalk Coat",0.012),
+    ("Rusty Iron Vest",0.018),("Rustic Cloth Vest",0.018),("Reinforced Hide Coat",0.012),
     # ── Common accessories ──
     ("Iron Shard Ring",0.020),("Worn Leather Band",0.020),("Scout's Pendant",0.018),
     ("Brass Ring",0.016),("Traveler's Coin",0.016),
     # ── Uncommon weapons ──
-    ("Crystal Core Wand",0.008),("Warlock's Dread Staff",0.007),("Ferrule Dart",0.007),
+    ("Crystal Core Wand",0.008),("Warlock's Dread Staff",0.007),("Bloodsteel Shuriken",0.007),
     # ── Uncommon armors ──
-    ("Iron Scale Vest",0.008),("Shadow Leather Coat",0.007),("Toughened Rail Coat",0.007),
+    ("Iron Scale Vest",0.008),("Shadow Leather Coat",0.007),("Toughened Leather Coat",0.007),
     # ── Uncommon accessories ──
     ("Silk Band",0.008),("Rune Ring",0.008),("Obsidian Stud",0.007),
     ("Bloodstone Band",0.007),("Shadowmark Signet",0.006),("Hunter's Fang",0.006),
@@ -14385,7 +15723,7 @@ POOL_ITEM_TABLE = [
     ("Stone Heart",0.002),("Beast Fang Chain",0.002),("Traveler's Compass",0.002),
     ("The Storm Torc",0.002),
     # ── Rare shields ──
-    ("Iron Rail Guard",0.002),("The Chalk Wall",0.002),
+    ("Iron Wall Shield",0.002),("The Stone Wall",0.002),
     # ── Epic weapons ──
     ("Ruinblade",0.0005),("Shadow Death Star",0.0005),
     # ── Epic armors ──
@@ -14396,11 +15734,11 @@ POOL_ITEM_TABLE = [
     ("The Shadow Whisper",0.0004),("Guardian's Talisman",0.0004),
     ("The Crossed Blades Pendant",0.0003),("The Iron and Flame Pendant",0.0003),
     # ── Epic shields ──
-    ("The Diamond Rack",0.0003),
+    ("The Crystal Barrier",0.0003),
     # ── Legendary weapons ──
     ("Grand Inquisitor's Cross",0.00008),("The Final Judgment",0.00008),
     # ── Legendary armors ──
-    ("Legendary Cue Coat",0.00008),
+    ("Legendary Runecoat",0.00008),
     # ── Legendary accessories ──
     ("Shard of the Void",0.00006),("Ring of the Endless",0.00006),
     ("The Warlord's Ring",0.00005),("The Eternal Ring",0.00005),
@@ -14435,6 +15773,26 @@ POOL_CLASS_FLAVOR = {
         "Something guided your hand. You'll take it.",
         "Faith and geometry are closer than most people think.",
         "The light favors the prepared.",
+    ],
+    "botanist": [
+        "The table blooms with possibility beneath your touch.",
+        "Every angle is a petal. Every shot a bloom.",
+        "Nature guided the cue. You just held it.",
+    ],
+    "enchantress": [
+        "The balls moved before you touched them. Coincidence.",
+        "You charmed the pocket into cooperating.",
+        "A whisper, a wink — the shot went exactly where you wanted.",
+    ],
+    "valkyrie": [
+        "Chosen by the table itself. The shot rang like thunder.",
+        "You struck as if fate demanded it. It did.",
+        "Where there is will, there is a way in.",
+    ],
+    "phantom_dancer": [
+        "You were already in position before the cue ball stopped.",
+        "They blinked. You cleared the rack.",
+        "Grace and speed — the two things that never miss.",
     ],
 }
 
@@ -16170,6 +17528,12 @@ def main():
     app.add_handler(CommandHandler("bounties",   bounties_cmd))
     app.add_handler(CommandHandler("changelog",  changelog_cmd))
     app.add_handler(CommandHandler("gear",       gear_cmd))
+
+    # Marriage
+    app.add_handler(CommandHandler("marry",   marry_cmd))
+    app.add_handler(CommandHandler("divorce", divorce_cmd))
+    app.add_handler(CallbackQueryHandler(marry_callback,   pattern="^marry_(accept|decline)_"))
+    app.add_handler(CallbackQueryHandler(divorce_callback, pattern="^divorce_(confirm|cancel)_"))
 
     # Combat & Dungeons
     app.add_handler(CommandHandler("duel",       duel_cmd))
