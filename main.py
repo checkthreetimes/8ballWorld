@@ -3858,7 +3858,7 @@ async def check_idle_reward(user, s, p, bot, chat_id):
                 f"📈 *{s['username']}* reached *Level {s['level']}*!",
                 permanent=True))
 
-    await announce(bot, chat_id, msg, permanent=True)
+    await announce(bot, chat_id, msg, delay=8)
 
 async def gear_cmd(update, context):
     user = update.effective_user
@@ -13413,19 +13413,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if p: rpg_exp += 150
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🔥 *{user.first_name}* hit a *50 message streak!* +150 EXP!",
-                permanent=True))
+                delay=8))
         if dm >= 100 and not cds_s.get("streak_100"):
             cds_s["streak_100"] = True; shadow_exp += 300; rpg_gold += 30
             if p: rpg_exp += 300
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🔥 *{user.first_name}* hit a *100 message streak!* +300 EXP!",
-                permanent=True))
+                delay=8))
         if dm >= 500 and not cds_s.get("streak_500"):
             cds_s["streak_500"] = True; shadow_exp += 800
             if p: rpg_exp += 800
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🏆 *{user.first_name}* hit a *500 message streak!* +800 EXP! 🎱",
-                permanent=True))
+                delay=8))
 
     # Apply shadow EXP
     s["passive_cooldowns"] = json.dumps(cds_s)
