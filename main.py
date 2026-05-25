@@ -4072,9 +4072,9 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         dmg = round(agi * 2.5)
         lines.append(f"🌀 *Ethereal Storm!* Phantom wave: AGI×2.5 = {dmg} phantom damage!")
     elif stype == "bounce_spell":
-        str_v = get_stat(p, "STR")
-        dmg = round(str_v * 2)
-        lines.append(f"⚡ *Chain Lightning!* STR×2 = {dmg} lightning damage!")
+        int_v = get_stat(p, "INT")
+        dmg = round(int_v * 2)
+        lines.append(f"⚡ *Chain Lightning!* INT×2 = {dmg} lightning damage!")
     elif stype in ("guaranteed_hit", "execute_nuke"):
         stat_key = sk.get("stat", get_primary_stat(p))
         dmg = round(get_stat(p, stat_key) * sk.get("mult", 2.0))
@@ -4214,6 +4214,8 @@ async def _raid_turn_timeout(bot, chat_id, raid_state, uid, player_name):
         lines.append(f"🩸 Bleed: {bleed_dmg} dmg!")
 
     await bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown")
+
+    raid_state["acted_this_round"].add(uid)
 
     if raid_state["enemy_hp"] <= 0:
         await _handle_wave_clear(bot, chat_id, raid_state, p)
@@ -5345,13 +5347,14 @@ def get_active_war(gid1, gid2=None):
 def save_guild(g):
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO guilds
-        (guild_id,name,leader_id,members,level,exp,bank,created_at,war_wins)
-        VALUES(?,?,?,?,?,?,?,?,?)""",
+        (guild_id,name,leader_id,members,level,exp,bank,created_at,war_wins,bank_gold)
+        VALUES(?,?,?,?,?,?,?,?,?,?)""",
         (g.get("guild_id"),g["name"],g["leader_id"],g["members"],
          safe_int(g.get("level"),1),safe_int(g.get("exp")),
          safe_int(g.get("bank")),
          g.get("created_at",datetime.now().isoformat()),
-         safe_int(g.get("war_wins"))))
+         safe_int(g.get("war_wins")),
+         safe_int(g.get("bank_gold"))))
     conn.commit(); conn.close()
 
 def add_guild_exp(g, amount):
@@ -6032,7 +6035,8 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             delay=9); return
 
     # Block attack if target has been offline for 30+ minutes
-    target_last_seen = d.get("last_seen")
+    s_tgt = get_shadow(du.id)
+    target_last_seen = s_tgt.get("last_seen") if s_tgt else None
     if target_last_seen:
         try:
             away_secs = (datetime.now() - datetime.fromisoformat(target_last_seen)).total_seconds()
@@ -9361,7 +9365,7 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
                     save_player(tp)
                     lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 6hr defeat. -{exp_loss} EXP.")
                 else:
-                    lines.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for *{edm}!* ({php}/{pmhp} boss HP)")
+                    lines.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for *{edm}!* ({php}/{pmhp} HP)")
                 save_player(tp)
 
     # All dead check
@@ -9531,7 +9535,6 @@ async def guildcreate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def guildjoin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     user = query.from_user
     p = get_player(user.id)
     if not p:
@@ -10745,7 +10748,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 out.append(f"💥 *{sk['name']}!* {dmg} damage!")
             elif stype in ("drain", "drain_kill", "hp_drain"):
                 drain_pct = sk.get("drain_pct", 0.30)
-                dmg = round(boss_dict["data"]["max_hp"] * drain_pct)
+                dmg = round(boss_dict["hp"] * drain_pct)
                 heal = round(dmg * sk.get("heal_pct", 0.50))
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
                 out.append(f"🩸 *{sk['name']}!* Drained {dmg} HP! Healed {heal}.")
@@ -10758,6 +10761,8 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             participant["dmg"] += dmg
             out.append(f"❤️ Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}")
         if boss_dict["hp"] > 0:
+            if "player_hp" not in boss_dict:
+                boss_dict["player_hp"] = {}; boss_dict["player_max_hp"] = {}
             alive = [u for u in boss_dict["participants"]
                      if not is_defeated(get_player(u["id"])) and boss_dict.get("player_hp",{}).get(u["id"],1) > 0]
             if alive and random.random() < 0.90:
@@ -11381,9 +11386,9 @@ async def _execute_skill(update, context, p, sk):
         dmg = round(agi * 2.5)
         lines.append(f"🌀 *Ethereal Storm!* AGI×2.5 = {dmg} phantom damage!")
     elif stype == "bounce_spell":
-        str_v = get_stat(p, "STR")
-        dmg = round(str_v * 2)
-        lines.append(f"⚡ *Chain Lightning!* STR×2 = {dmg} lightning — bounces to nearby targets!")
+        int_v = get_stat(p, "INT")
+        dmg = round(int_v * 2)
+        lines.append(f"⚡ *Chain Lightning!* INT×2 = {dmg} lightning — bounces to nearby targets!")
     elif stype in ("aoe_recent_attackers", "holy_nuke", "execute_nuke", "fear_kill",
                    "random_aoe", "raid_aoe", "bind_attacker", "dmg_field",
                    "combo_dmg", "revive_heal", "execution_shot",
@@ -13536,6 +13541,30 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             arena["log"].append(f"🩸 {atk_name} takes {atk_state['dot_dmg']} from {atk_state['dot_type']}!")
             if atk_state["dot_turns"] == 0:
                 atk_state["dot_type"] = None; atk_state["dot_dmg"] = 0
+            if arena[atk_hp_key] <= 0:
+                arena["status"] = "done"
+                winner_id = arena["p2_id"] if is_p1 else arena["p1_id"]
+                loser_id  = arena["p1_id"] if is_p1 else arena["p2_id"]
+                wp = get_player(winner_id); lp = get_player(loser_id)
+                wager = arena["wager"]
+                if wp and lp:
+                    if wager > 0: wp["gold"] = wp.get("gold",0) + wager * 2
+                    wp["wins"] = wp.get("wins",0) + 1
+                    for _d, _e, _g in track_objective(wp, "arena_win"):
+                        wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
+                    add_exp(wp, 50 + wp["level"] * 5)
+                    save_player(wp); save_player(lp)
+                w_name = wp["username"] if wp else "Unknown"
+                arena["log"].append(f"☠️ {atk_name} falls to DOT! 🏆 *{w_name}* wins!")
+                active_arenas.pop(chat_id, None)
+                card_text = build_arena_card(arena)
+                if arena.get("msg_id"):
+                    try: await update.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
+                    except Exception: pass
+                try:
+                    await update.get_bot().send_message(chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown")
+                except Exception: pass
+                return
         if atk_state["regen_turns"] > 0:
             arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + atk_state["regen_hp"])
             atk_state["regen_turns"] -= 1
