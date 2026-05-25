@@ -7151,18 +7151,14 @@ async def soloraid_cmd(update, context):
         "player_max_hp": mhp,
     }
     wave_count = len(tier["wave_enemies"]) + 1
-    sr_markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⚔️ Attack", callback_data=f"sr_act_{user.id}_atk"),
-        InlineKeyboardButton("✨ Skill",  callback_data=f"sr_act_{user.id}_skl"),
-    ]])
     await send_group(update,
         f"🎱 *SOLO RAID  -  {tier['name']}*\n\n"
         f"🌊 {wave_count} waves + final boss\n\n"
         f"🌊 *Wave 1  -  {first_enemy['name']}*\n"
         f"❤️ HP: {first_enemy['hp']}\n"
         f"💀 Damage: {first_enemy['dmg_min']}–{first_enemy['dmg_max']}\n\n"
-        f"Use /solostrike to attack!",
-        permanent=False, delay=120, reply_markup=sr_markup)
+        f"Use the buttons or /solostrike to attack!",
+        permanent=False, delay=120, reply_markup=_build_sr_markup(user.id))
 
 
 async def solostrike_cmd(update, context):
@@ -7261,12 +7257,8 @@ async def solostrike_cmd(update, context):
                     if sr["player_hp"] > 0 and sr["player_hp"] <= round(sr["player_max_hp"] * 0.30):
                         lines.append(f"⚠️ *Critically low HP!* ({sr['player_hp']}/{sr['player_max_hp']}) Use /skill or a vial!")
 
-    sr_markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⚔️ Attack", callback_data=f"sr_act_{user.id}_atk"),
-        InlineKeyboardButton("✨ Skill",  callback_data=f"sr_act_{user.id}_skl"),
-    ]])
     save_player(p)
-    await send_group(update, "\n".join(lines), delay=20, reply_markup=sr_markup)
+    await send_group(update, "\n".join(lines), delay=20, reply_markup=_build_sr_markup(user.id))
 
 
 async def soloraidstatus_cmd(update, context):
@@ -9201,6 +9193,22 @@ async def sell_rarity_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 # ── BOSS ──────────────────────────────────────────────────────────────────────
+def _build_boss_markup(uid):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚔️ Attack", callback_data=f"boss_act_{uid}_atk"),
+         InlineKeyboardButton("✨ Skill",  callback_data=f"boss_act_{uid}_skl")],
+        [InlineKeyboardButton("🩺 Heal",   callback_data=f"boss_act_{uid}_heal"),
+         InlineKeyboardButton("🏃 Flee",   callback_data=f"boss_act_{uid}_flee")],
+    ])
+
+def _build_sr_markup(uid):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚔️ Attack", callback_data=f"sr_act_{uid}_atk"),
+         InlineKeyboardButton("✨ Skill",  callback_data=f"sr_act_{uid}_skl")],
+        [InlineKeyboardButton("🩺 Heal",   callback_data=f"sr_act_{uid}_heal"),
+         InlineKeyboardButton("🏃 Flee",   callback_data=f"sr_act_{uid}_flee")],
+    ])
+
 async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
@@ -9230,16 +9238,13 @@ async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not bd or bd.get("secret"):
         await send_group(update, "Unknown boss. Try `/boss` to see the list.", delay=9); return
     active_bosses[chat_id] = {"data":bd.copy(),"hp":bd["max_hp"],
+                               "summoner_id": user.id,
                                "participants":[{"id":user.id,"name":user.first_name,"dmg":0}]}
-    boss_spawn_markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⚔️ Attack", callback_data=f"boss_act_{user.id}_atk"),
-        InlineKeyboardButton("✨ Skill",  callback_data=f"boss_act_{user.id}_skl"),
-    ]])
     await send_group(update,
         f"🎱 *{bd['name']} HAS APPEARED!*\n\n_{bd['desc']}_\n\n"
         f"❤️ HP: {bd['max_hp']} | 💀 {bd['dmg_min']}–{bd['dmg_max']} dmg\n\n"
-        f"*{user.first_name}* engaged!\nOthers: `/boss {key}` | All: /strike",
-        permanent=False, delay=300, reply_markup=boss_spawn_markup)
+        f"*{user.first_name}* engaged! Use the buttons below or /strike.",
+        permanent=False, delay=600, reply_markup=_build_boss_markup(user.id))
 
 async def boss_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle boss selection button from /boss menu."""
@@ -9271,18 +9276,15 @@ async def boss_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     active_bosses[chat_id] = {
         "data": bd.copy(), "hp": bd["max_hp"],
+        "summoner_id": uid,
         "participants": [{"id": uid, "name": query.from_user.first_name, "dmg": 0}]
     }
-    boss_spawn_markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⚔️ Attack", callback_data=f"boss_act_{uid}_atk"),
-        InlineKeyboardButton("✨ Skill",  callback_data=f"boss_act_{uid}_skl"),
-    ]])
     try:
         await query.edit_message_text(
             f"🎱 *{bd['name']} HAS APPEARED!*\n\n_{bd['desc']}_\n\n"
             f"❤️ HP: {bd['max_hp']} | 💀 {bd['dmg_min']}–{bd['dmg_max']} dmg\n\n"
-            f"*{query.from_user.first_name}* engaged! Use /strike to attack.",
-            parse_mode="Markdown", reply_markup=boss_spawn_markup)
+            f"*{query.from_user.first_name}* engaged! Use the buttons below or /strike.",
+            parse_mode="Markdown", reply_markup=_build_boss_markup(uid))
     except Exception:
         pass
 
@@ -10556,7 +10558,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 _SKILL_PAGE_SIZE = 4
 
-def _build_skill_picker_keyboard(all_skills, uid, page, target_uid=None):
+def _build_skill_picker_keyboard(all_skills, uid, page, target_uid=None, show_close=True):
     """Return InlineKeyboardMarkup for a page of skills (4 per page)."""
     start = page * _SKILL_PAGE_SIZE
     end   = min(start + _SKILL_PAGE_SIZE, len(all_skills))
@@ -10574,7 +10576,8 @@ def _build_skill_picker_keyboard(all_skills, uid, page, target_uid=None):
         nav.append(InlineKeyboardButton("Next ▶", callback_data=cb))
     if nav:
         keyboard.append(nav)
-    keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+    if show_close:
+        keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
     return InlineKeyboardMarkup(keyboard)
 
 async def skillpage_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -10702,7 +10705,11 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             if killed and raid_kind == "solo":
                 active_soloraids.pop(uid, None)
         save_player(p)
-        await send_result("\n".join(out))
+        sr_markup = _build_sr_markup(uid) if raid_kind == "solo" and uid in active_soloraids else None
+        try:
+            await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown", reply_markup=sr_markup)
+        except Exception:
+            await context.bot.send_message(chat_id, "\n".join(out)[:4096], parse_mode="Markdown")
         return
 
     # ── Boss context ──────────────────────────────────────────────────────────
@@ -10770,7 +10777,12 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                             out.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for *{edm}!* ({php}/{pmhp} HP)")
                         save_player(tp)
         save_player(p)
-        await send_result("\n".join(out))
+        summoner_id = boss_dict.get("summoner_id", uid)
+        markup = _build_boss_markup(summoner_id) if boss_dict["hp"] > 0 else None
+        try:
+            await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown", reply_markup=markup)
+        except Exception:
+            await context.bot.send_message(chat_id, "\n".join(out)[:4096], parse_mode="Markdown")
         return
 
     # ── PVP context (target_uid provided) ────────────────────────────────────
@@ -16767,7 +16779,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("No skills unlocked yet!", show_alert=True); return
         sr = active_soloraids[uid]
         if len(all_skills) > 1:
-            markup = _build_skill_picker_keyboard(all_skills, uid, 0)
+            markup = _build_skill_picker_keyboard(all_skills, uid, 0, show_close=False)
             await query.edit_message_text(
                 f"🔮 *vs {sr['enemy']['name']}* — choose a skill:",
                 parse_mode="Markdown", reply_markup=markup)
@@ -16829,12 +16841,30 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 return
 
         save_player(p)
-        sr_markup = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⚔️ Attack", callback_data=f"sr_act_{uid}_atk"),
-            InlineKeyboardButton("✨ Skill",  callback_data=f"sr_act_{uid}_skl"),
-        ]])
         try:
-            await query.edit_message_text(text="\n".join(out)[:4096], parse_mode="Markdown", reply_markup=sr_markup)
+            await query.edit_message_text(text="\n".join(out)[:4096], parse_mode="Markdown", reply_markup=_build_sr_markup(uid))
+        except Exception: pass
+        return
+
+    if action == "heal":
+        sr = active_soloraids[uid]
+        heal_amt = round(sr["player_max_hp"] * 0.25)
+        sr["player_hp"] = min(sr["player_max_hp"], sr["player_hp"] + heal_amt)
+        save_player(p)
+        try:
+            await query.edit_message_text(
+                f"🩺 *{user.first_name}* rests and recovers *{heal_amt} HP!*\n"
+                f"❤️ HP: {sr['player_hp']}/{sr['player_max_hp']} | "
+                f"Enemy HP: {sr['enemy_hp']}/{sr['enemy_max_hp']}",
+                parse_mode="Markdown", reply_markup=_build_sr_markup(uid))
+        except Exception: pass
+        return
+
+    if action == "flee":
+        active_soloraids.pop(uid, None)
+        save_player(p)
+        try:
+            await query.edit_message_text("🏃 *You fled from the solo raid!*", parse_mode="Markdown")
         except Exception: pass
         return
 
@@ -16929,13 +16959,9 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     if sr["player_hp"] <= round(sr["player_max_hp"] * 0.30):
                         lines.append(f"⚠️ *Critically low HP!* Use /skill or a vial!")
 
-    sr_markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⚔️ Attack", callback_data=f"sr_act_{uid}_atk"),
-        InlineKeyboardButton("✨ Skill",  callback_data=f"sr_act_{uid}_skl"),
-    ]])
     save_player(p)
     try:
-        await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=sr_markup)
+        await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=_build_sr_markup(uid))
     except Exception: pass
 
 
@@ -16943,18 +16969,16 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
 async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    parts = query.data.split("_")
     # format: boss_act_{uid}_{action}
+    parts = query.data.split("_", 3)
     if len(parts) < 4:
         return
     try:
-        uid = int(parts[2])
-        action = parts[3]
+        uid = int(parts[2]); action = parts[3]
     except (ValueError, IndexError):
         return
     if query.from_user.id != uid:
-        await query.answer("This isn't your fight!", show_alert=True)
-        return
+        await query.answer("These buttons are for the summoner only!", show_alert=True); return
 
     user = query.from_user
     p = get_player(uid)
@@ -16977,8 +17001,15 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         all_skills = sjl(p.get("all_skills"), [])
         if not all_skills:
             await query.answer("No skills unlocked yet!", show_alert=True); return
+        # Ensure player is a participant before picker so skill_pick_callback can find them
+        if uid not in [u["id"] for u in boss_dict["participants"]]:
+            boss_dict["participants"].append({"id": uid, "name": user.first_name, "dmg": 0})
+            if "player_hp" not in boss_dict:
+                boss_dict["player_hp"] = {}; boss_dict["player_max_hp"] = {}
+            mhp = calc_max_hp(p)
+            boss_dict["player_hp"][uid] = mhp; boss_dict["player_max_hp"][uid] = mhp
         if len(all_skills) > 1:
-            markup = _build_skill_picker_keyboard(all_skills, uid, 0)
+            markup = _build_skill_picker_keyboard(all_skills, uid, 0, show_close=False)
             await query.edit_message_text(
                 f"🔮 *vs {boss_dict['data']['name']}* — choose a skill:",
                 parse_mode="Markdown", reply_markup=markup)
@@ -17094,13 +17125,49 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         save_player(p)
-        boss_markup = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⚔️ Attack", callback_data=f"boss_act_{uid}_atk"),
-            InlineKeyboardButton("✨ Skill",  callback_data=f"boss_act_{uid}_skl"),
-        ]])
         try:
-            await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=boss_markup)
+            await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=_build_boss_markup(uid))
         except Exception: pass
+        return
+
+    if action == "heal":
+        if "player_hp" not in boss_dict:
+            boss_dict["player_hp"] = {}; boss_dict["player_max_hp"] = {}
+            for u in boss_dict["participants"]:
+                pp2 = get_player(u["id"])
+                if pp2:
+                    mhp2 = calc_max_hp(pp2)
+                    boss_dict["player_hp"][u["id"]] = mhp2
+                    boss_dict["player_max_hp"][u["id"]] = mhp2
+        max_hp = boss_dict["player_max_hp"].get(uid, calc_max_hp(p))
+        cur_hp = boss_dict["player_hp"].get(uid, max_hp)
+        heal_amt = round(max_hp * 0.25)
+        boss_dict["player_hp"][uid] = min(max_hp, cur_hp + heal_amt)
+        try:
+            await query.edit_message_text(
+                f"🩺 *{user.first_name}* recovers *{heal_amt} HP!*\n"
+                f"❤️ Your HP: {boss_dict['player_hp'][uid]}/{max_hp}\n"
+                f"💀 Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}",
+                parse_mode="Markdown", reply_markup=_build_boss_markup(uid))
+        except Exception: pass
+        return
+
+    if action == "flee":
+        boss_dict["participants"] = [u for u in boss_dict["participants"] if u["id"] != uid]
+        boss_dict.get("player_hp", {}).pop(uid, None)
+        boss_dict.get("player_max_hp", {}).pop(uid, None)
+        if not boss_dict["participants"]:
+            active_bosses.pop(chat_id, None); secret_boss_active.pop(chat_id, None)
+            try:
+                await query.edit_message_text("🏃 *All players fled! The boss vanishes.*", parse_mode="Markdown")
+            except Exception: pass
+        else:
+            try:
+                await query.edit_message_text(
+                    f"🏃 *{user.first_name}* fled!\n"
+                    f"💀 Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}",
+                    parse_mode="Markdown", reply_markup=_build_boss_markup(uid))
+            except Exception: pass
         return
 
     # action == "atk"
@@ -17195,12 +17262,8 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     save_player(p)
-    boss_markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⚔️ Attack", callback_data=f"boss_act_{uid}_atk"),
-        InlineKeyboardButton("✨ Skill",  callback_data=f"boss_act_{uid}_skl"),
-    ]])
     try:
-        await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=boss_markup)
+        await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=_build_boss_markup(uid))
     except Exception: pass
 
 
