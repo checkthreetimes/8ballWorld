@@ -174,7 +174,7 @@ def safe_inv(p):    return sjl(p.get("inventory"), [])
 def safe_stats(p):
     return sjl(p.get("stats"),
                {"STR":5,"DEF":0,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5})
-def safe_titles(p): return sjl(p.get("titles"), ["Fresh Rack"])
+def safe_titles(p): return sjl(p.get("titles"), ["Adventurer"])  # default is Adventurer
 def safe_cds(p):    return sjl(p.get("passive_cooldowns"), {})
 def safe_int(v, d=0):
     try: return int(v or d)
@@ -192,12 +192,12 @@ def resolve_item_ci(typed, collection):
 WORLD_NAME = "The World of 8Ball"
 
 WEATHER_TABLE = [
-    {"name":"Fresh Cloth",        "desc":"The table is pristine. A new cloth, tight and fast.",          "exp_mod":1.20,"dmg_mod":1.00},
-    {"name":"Dead Cloth",         "desc":"The felt is damp and slow. Every shot dies early.",             "exp_mod":1.00,"dmg_mod":0.90},
-    {"name":"Tournament Ready",   "desc":"The table is set for championship play. Everything is in balance.", "exp_mod":1.10,"dmg_mod":1.10},
-    {"name":"Chalk Haze",         "desc":"Chalk dust hangs in the air. Visibility is low. Instinct takes over.", "exp_mod":0.90,"dmg_mod":1.15},
-    {"name":"The Action Hour",    "desc":"Something shifts. The felt teems with energy. High stakes incoming.", "exp_mod":1.30,"dmg_mod":1.20,"secret_eligible":True},
-    {"name":"Worn Felt",          "desc":"The cloth is threadbare and sluggish. Nothing moves like it should.", "exp_mod":0.85,"dmg_mod":0.85},
+    {"name":"Clear Skies",         "desc":"The air is sharp and alive. Everything moves exactly as it should.",  "exp_mod":1.20,"dmg_mod":1.00},
+    {"name":"Heavy Rain",          "desc":"A cold downpour slows everything down. Movement is sluggish.",          "exp_mod":1.00,"dmg_mod":0.90},
+    {"name":"Perfect Conditions",  "desc":"The world is in balance. Ideal for battle and glory alike.",             "exp_mod":1.10,"dmg_mod":1.10},
+    {"name":"Arcane Mist",         "desc":"Arcane energy warps the air. Reality flickers. Trust your instincts.",  "exp_mod":0.90,"dmg_mod":1.15},
+    {"name":"Blood Moon",          "desc":"Something ancient awakens. The air crackles with power. High stakes incoming.", "exp_mod":1.30,"dmg_mod":1.20,"secret_eligible":True},
+    {"name":"Cursed Fog",          "desc":"A thick haze clings to everything. Nothing moves as it should.",         "exp_mod":0.85,"dmg_mod":0.85},
 ]
 _weather_cache = {"weather":None,"set_at":None}
 def get_weather():
@@ -223,11 +223,11 @@ def exp_for_level(level):
 def max_hp_for_level(level): return 100 + (level - 1) * 15
 
 RANK_TIERS = [
-    {"name":"👑 Hall of Fame",         "emoji":"👑","min":75,"max":100},
+    {"name":"👑 Legends",         "emoji":"👑","min":75,"max":100},
     {"name":"🎱 Tournament Players",   "emoji":"🎱","min":50,"max":74},
     {"name":"🔥 On the Rise",          "emoji":"🔥","min":25,"max":49},
     {"name":"💬 Regular Players",      "emoji":"💬","min":10,"max":24},
-    {"name":"🌱 Fresh Racks",          "emoji":"🌱","min":1,  "max":9},
+    {"name":"🌱 Newcomers",          "emoji":"🌱","min":1,  "max":9},
 ]
 def get_tier(level):
     for t in RANK_TIERS:
@@ -249,7 +249,7 @@ CLASS_TREE = {
         "name":"Warrior","primary_stat":"STR","line":"warrior",
         "weapon_types":["sword_1h","sword_2h"],
         "armor_type":"warrior_armor",
-        "desc":"A force at the break. Built to scatter racks and dominate the table.",
+        "desc":"A force of nature. Built to crush enemies and dominate any battlefield.",
         "stat_bonus":{"STR":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Iron Will",
@@ -307,7 +307,7 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Bulwark",
              "passive":"15% chance to completely block any incoming hit.",
              "active":"Rally","type":"self_heal_buff",
-             "desc":"Restore 30% of your own HP. Grant all hall members in chat +15% damage for 10 minutes.",
+             "desc":"Restore 30% of your own HP. Grant all guild members in chat +15% damage for 10 minutes.",
              "passive_key":"bulwark"},
         ]
     },
@@ -315,13 +315,13 @@ CLASS_TREE = {
         "name":"Paladin","primary_stat":"STR","line":"warrior","path":"A",
         "weapon_types":["sword_1h","shield"],
         "armor_type":"warrior_armor",
-        "desc":"The pinnacle of pure power pool. Every shot is a clinic.",
+        "desc":"The pinnacle of pure power. Every strike is a masterclass.",
         "stat_bonus":{"STR":4,"DEF":4,"WIS":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Divine Judgment",
              "passive":"All holy skills deal 25% more damage.",
              "active":"Wrath of the Fallen","type":"holy_nuke",
-             "desc":"Massive STR+DEF+WIS x3 combined hit. On kill: all hall members in chat gain +20% damage for 30 minutes.",
+             "desc":"Massive STR+DEF+WIS x3 combined hit. On kill: all guild members in chat gain +20% damage for 30 minutes.",
              "passive_key":"divine_judgment"},
         ]
     },
@@ -471,7 +471,7 @@ CLASS_TREE = {
         "name":"Hexblade","primary_stat":"INT","line":"mage","path":"B",
         "weapon_types":["staff"],
         "armor_type":"mage_armor",
-        "desc":"A hustler with an edge. The mark never sees it coming.",
+        "desc":"A shadow with an edge. The mark never sees it coming.",
         "stat_bonus":{"INT":2,"STR":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Cursed Blade",
@@ -504,7 +504,7 @@ CLASS_TREE = {
         "name":"Lich","primary_stat":"INT","line":"mage","path":"B",
         "weapon_types":["staff"],
         "armor_type":"mage_armor",
-        "desc":"Death doesn't stop a Rail Wraith. Neither does a bad rack.",
+        "desc":"Death doesn't stop a Rail Wraith. Nothing does.",
         "stat_bonus":{"INT":4,"WIS":2},
         "skills":[
             {"tier":4,"unlock":60,"name":"Undying",
@@ -599,7 +599,7 @@ CLASS_TREE = {
         "name":"Wraith","primary_stat":"LUK","line":"thief","path":"A",
         "weapon_types":["dagger"],
         "armor_type":"thief_armor",
-        "desc":"The cue moves. Nobody held it.",
+        "desc":"The blade moves. Nobody held it.",
         "stat_bonus":{"AGI":6,"INT":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Death's Shadow",
@@ -731,7 +731,7 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":3,"DEF":3},
         "skills":[
             {"tier":4,"unlock":60,"name":"Guardian Stance",
-             "passive":"If a hall member is attacked you have 20% chance to intercept the hit.",
+             "passive":"If a guild member is attacked you have 20% chance to intercept the hit.",
              "active":"Barrage","type":"random_aoe",
              "desc":"Fire 6 arrows at random active players in chat. Each deals AGI x1.5 damage.",
              "passive_key":"guardian_stance"},
@@ -855,13 +855,13 @@ CLASS_TREE = {
         "name":"Bishop","primary_stat":"WIS","line":"priest","path":"A",
         "weapon_types":["rosary"],
         "armor_type":"priest_armor",
-        "desc":"Studies the table like scripture. Knows it better than the felt itself.",
+        "desc":"Studies the sacred texts like scripture. Knows the divine arts better than anyone.",
         "stat_bonus":{"WIS":4},
         "skills":[
             {"tier":3,"unlock":30,"name":"Sacred Ground",
              "passive":"Players you have healed take 10% less damage for 1 hour after being healed.",
              "active":"Mass Heal","type":"group_heal",
-             "desc":"Heal all hall members currently in chat for WIS x3 HP each. No potion required.",
+             "desc":"Heal all guild members currently in chat for WIS x3 HP each. No potion required.",
              "passive_key":"sacred_ground"},
         ]
     },
@@ -869,13 +869,13 @@ CLASS_TREE = {
         "name":"High Priest","primary_stat":"WIS","line":"priest","path":"A",
         "weapon_types":["rosary"],
         "armor_type":"priest_armor",
-        "desc":"The stakes are never too high. The chalk never runs out.",
+        "desc":"The stakes are never too high. The path never ends.",
         "stat_bonus":{"WIS":5,"DEF":1},
         "skills":[
             {"tier":4,"unlock":60,"name":"Resurrection",
              "passive":"Once per day if you reach 0 HP you automatically revive at 30% HP.",
              "active":"Miracle","type":"full_revive",
-             "desc":"Fully restore target to max HP. Grant 2 hours invincibility. Costs one Golden Triangle.",
+             "desc":"Fully restore target to max HP. Grant 2 hours invincibility. Costs one Holy Water Vial.",
              "passive_key":"resurrection"},
         ]
     },
@@ -887,9 +887,9 @@ CLASS_TREE = {
         "stat_bonus":{"WIS":6,"DEF":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Divine Presence",
-             "passive":"All hall members in active chat gain +5% EXP and regen 5 HP every 30 minutes while you are online.",
+             "passive":"All guild members in active chat gain +5% EXP and regen 5 HP every 30 minutes while you are online.",
              "active":"Absolution","type":"mass_cleanse",
-             "desc":"Cleanse ALL debuffs from ALL hall members. Grant 30 minutes of blessed status (+10% all stats). COUNTERS Zealot's revival block.",
+             "desc":"Cleanse ALL debuffs from ALL guild members. Grant 30 minutes of blessed status (+10% all stats). COUNTERS Zealot's revival block.",
              "passive_key":"divine_presence"},
         ]
     },
@@ -916,7 +916,7 @@ CLASS_TREE = {
         "name":"Exorcist","primary_stat":"WIS","line":"priest","path":"B",
         "weapon_types":["cross"],
         "armor_type":"priest_armor",
-        "desc":"Enforces the rules of The Felt with zero mercy.",
+        "desc":"Enforces the laws of the divine with zero mercy.",
         "stat_bonus":{"WIS":3,"INT":1},
         "skills":[
             {"tier":3,"unlock":30,"name":"Purge",
@@ -985,7 +985,7 @@ HEALER_CLASSES = {"priest","cleric","bishop","high_priest","saint"}
 
 # ── TITLES ────────────────────────────────────────────────────────────────────
 TITLES = {
-    "Fresh Rack":    {"type":"level","threshold":1},
+    "Adventurer":    {"type":"level","threshold":1},
     "On the Come Up":     {"type":"level","threshold":3},
     "Seasoned Stroke":         {"type":"level","threshold":7},
     "Pocket King":     {"type":"level","threshold":10},
@@ -993,13 +993,13 @@ TITLES = {
     "Never Scratches":    {"type":"level","threshold":20},
     "Gone Pro":    {"type":"prestige","threshold":1},
     "Never Off the Table":  {"type":"wins","threshold":10},
-    "Never Lost the Rack":  {"type":"wins","threshold":25},
+    "The Undefeated":  {"type":"wins","threshold":25},
     "The Closer": {"type":"wins","threshold":5},
     "Ghost at the Table":          {"type":"dodges","threshold":5},
     "Road Player":    {"type":"quests","threshold":20},
-    "Hall Crawler": {"type":"quests","threshold":10},
-    "Rack Collector":     {"type":"quests","threshold":5},
-    "The Chalker":      {"type":"heals","threshold":5},
+    "Dungeon Crawler": {"type":"quests","threshold":10},
+    "Treasure Hunter":     {"type":"quests","threshold":5},
+    "The Healer":      {"type":"heals","threshold":5},
     "Table Guardian":        {"type":"heals","threshold":10},
     "1-Ball Slayer": {"type":"special","threshold":0},
     "3-Ball Slayer":{"type":"special","threshold":0},
@@ -1010,10 +1010,10 @@ TITLES = {
     "Railfinder":      {"type":"special","threshold":0},
     "The Angle Reader":        {"type":"special","threshold":0},
     "The Called Shot":  {"type":"special","threshold":0},
-    "Hall Founder":   {"type":"special","threshold":0},
+    "Guild Founder":   {"type":"special","threshold":0},
     "Break Leader":     {"type":"special","threshold":0},
     "Tip Maker":       {"type":"crafts","threshold":5},
-    "Cue Maker":    {"type":"crafts","threshold":10},
+    "The Blacksmith":    {"type":"crafts","threshold":10},
     "Master Craftsman":         {"type":"crafts","threshold":20},
     "Century Break":         {"type":"level","threshold":100},
     # Reinforce / Ascend
@@ -1029,7 +1029,7 @@ TITLES = {
 }
 
 TITLE_BONUSES = {
-    "Fresh Rack":           {"all_stats": 1},
+    "Adventurer":           {"all_stats": 1},
     "On the Come Up":       {"all_stats": 2},
     "Seasoned Stroke":      {"STR": 3, "AGI": 3},
     "Pocket King":          {"STR": 5, "DEF": 5},
@@ -1037,13 +1037,13 @@ TITLE_BONUSES = {
     "Never Scratches":      {"AGI": 8, "LUK": 5},
     "Gone Pro":             {"all_stats": 8},
     "Never Off the Table":  {"STR": 6, "WIS": 6},
-    "Never Lost the Rack":  {"STR": 8, "DEF": 6},
+    "The Undefeated":       {"STR": 8, "DEF": 6},
     "The Closer":           {"STR": 5, "LUK": 8},
     "Ghost at the Table":   {"AGI": 10, "LUK": 6},
     "Road Player":          {"all_stats": 6},
-    "Hall Crawler":         {"STR": 4, "DEX": 4, "LUK": 4},
-    "Rack Collector":       {"LUK": 12},
-    "The Chalker":          {"WIS": 8},
+    "Dungeon Crawler":      {"STR": 4, "DEX": 4, "LUK": 4},
+    "Treasure Hunter":      {"LUK": 12},
+    "The Healer":           {"WIS": 8},
     "Table Guardian":       {"DEF": 10, "WIS": 5},
     "1-Ball Slayer":        {"STR": 5},
     "3-Ball Slayer":        {"STR": 8},
@@ -1054,10 +1054,10 @@ TITLE_BONUSES = {
     "Railfinder":           {"DEX": 12, "AGI": 8},
     "The Angle Reader":     {"INT": 12, "DEX": 8},
     "The Called Shot":      {"all_stats": 12},
-    "Hall Founder":         {"WIS": 6, "all_stats": 3},
+    "Guild Founder":        {"WIS": 6, "all_stats": 3},
     "Break Leader":         {"STR": 8, "WIS": 6},
     "Tip Maker":            {"DEX": 6, "LUK": 6},
-    "Cue Maker":            {"STR": 6, "DEX": 8},
+    "The Blacksmith":       {"STR": 6, "DEX": 8},
     "Master Craftsman":     {"all_stats": 8},
     "Century Break":        {"all_stats": 20, "LUK": 15},
     "The Forger":           {"STR": 5, "DEX": 5},
@@ -1137,7 +1137,7 @@ DAILY_QUEST_POOL = [
     {"id":"skill_use",    "desc":"Use your skill {n} time(s)",        "targets":[3,5,8],  "exp":[200,400,600],"gold":[40,80,120]},
     {"id":"quest_run",    "desc":"Complete /quest {n} time(s)",       "targets":[2,4,6],  "exp":[300,500,800],"gold":[60,100,160]},
     {"id":"boss_attempt", "desc":"Participate in {n} boss fight(s)",  "targets":[1,2,3],  "exp":[500,800,1200],"gold":[100,160,220]},
-    {"id":"pool_run",     "desc":"Play /pool {n} time(s)",            "targets":[3,6,10], "exp":[200,400,700],"gold":[40,80,140]},
+    {"id":"pool_run",     "desc":"Complete {n} adventure(s)",          "targets":[3,6,10], "exp":[200,400,700],"gold":[40,80,140]},
     {"id":"heal_ally",    "desc":"Heal {n} ally(s)",                  "targets":[1,2,4],  "exp":[300,600,900],"gold":[60,120,180]},
     {"id":"solo_win",     "desc":"Win {n} solo raid(s)",              "targets":[1,2,3],  "exp":[500,900,1400],"gold":[100,180,260]},
     {"id":"raid_hit",     "desc":"Land {n} raid hit(s)",              "targets":[5,10,15],"exp":[300,600,900],"gold":[60,120,180]},
@@ -1343,91 +1343,91 @@ SHIELDS = {
 
 ACCESSORIES = {
     # Common
-    "Chalk Nub":         {"slot":"ring","effect":{"atk":2},"rarity":"common",
+    "Iron Shard Ring":   {"slot":"ring","effect":{"atk":2},"rarity":"common",
                                 "desc":"Slightly sharpens your focus."},
-    "Worn Tip Wrap":        {"slot":"ring","effect":{"hp":10},"rarity":"common",
+    "Worn Leather Band":    {"slot":"ring","effect":{"hp":10},"rarity":"common",
                                 "desc":"+10 max HP."},
-    "Brass Rail Ring":             {"slot":"ring","effect":{"any_stat":3},"rarity":"common",
+    "Brass Ring":              {"slot":"ring","effect":{"any_stat":3},"rarity":"common",
                                 "desc":"+3 to one stat of your choice on equip."},
-    "Pocket Marker":               {"slot":"amulet","effect":{"hp":5},"rarity":"common",
+    "Scout's Pendant":             {"slot":"amulet","effect":{"hp":5},"rarity":"common",
                                 "desc":"+5 max HP."},
-    "Road Player's Coin":        {"slot":"amulet","effect":{"all_stats":2},"rarity":"common",
+    "Traveler's Coin":       {"slot":"amulet","effect":{"all_stats":2},"rarity":"common",
                                 "desc":"+2 to all stats."},
     # Uncommon
-    "Silk Tip Ring":           {"slot":"ring","effect":{"AGI":6},"rarity":"uncommon",
+    "Silk Band":           {"slot":"ring","effect":{"AGI":6},"rarity":"uncommon",
                                 "desc":"+6 AGI."},
-    "Chalk Cross Pendant":       {"slot":"ring","effect":{"WIS":6},"rarity":"uncommon",
+    "Rune Ring":           {"slot":"ring","effect":{"WIS":6},"rarity":"uncommon",
                                 "desc":"+6 WIS."},
-    "Black Ball Stud":       {"slot":"ring","effect":{"any_stat":6},"rarity":"uncommon",
+    "Obsidian Stud":       {"slot":"ring","effect":{"any_stat":6},"rarity":"uncommon",
                                 "desc":"+6 STR or +6 INT (choose on equip)."},
-    "Red Ball Band":         {"slot":"ring","effect":{"hp":8,"STR":3},"rarity":"uncommon",
+    "Bloodstone Band":     {"slot":"ring","effect":{"hp":8,"STR":3},"rarity":"uncommon",
                                 "desc":"+8 HP, +3 STR."},
-    "Road Shark Signet":      {"slot":"ring","effect":{"atk":4,"gold_bonus":0.05},"rarity":"uncommon",
+    "Shadowmark Signet":   {"slot":"ring","effect":{"atk":4,"gold_bonus":0.05},"rarity":"uncommon",
                                 "desc":"+4 ATK, +5% gold drops."},
-    "Chalk Cross Pendant":       {"slot":"amulet","effect":{"WIS":6},"rarity":"uncommon",
+    "Rune Cross Pendant":  {"slot":"amulet","effect":{"WIS":6},"rarity":"uncommon",
                                 "desc":"+6 WIS."},
-    "Hustler's Tooth":   {"slot":"amulet","effect":{"STR":6,"AGI":3},"rarity":"uncommon",
+    "Hunter's Fang":     {"slot":"amulet","effect":{"STR":6,"AGI":3},"rarity":"uncommon",
                                 "desc":"+6 STR, +3 AGI."},
-    "Chalk Bead Necklace":      {"slot":"amulet","effect":{"INT":8},"rarity":"uncommon",
+    "Crystal Bead Necklace":      {"slot":"amulet","effect":{"INT":8},"rarity":"uncommon",
                                 "desc":"+8 INT."},
     # Rare
-    "The Action Coin":            {"slot":"ring","effect":{"AGI":12,"crit_bonus":0.08},"rarity":"rare",
+    "Fortune Coin":               {"slot":"ring","effect":{"AGI":12,"crit_bonus":0.08},"rarity":"rare",
                                 "desc":"+12 AGI, +8% crit damage."},
-    "Break Master's Clasp":       {"slot":"ring","effect":{"STR":12,"DEF":8},"rarity":"rare",
+    "War Master's Clasp":         {"slot":"ring","effect":{"STR":12,"DEF":8},"rarity":"rare",
                                 "desc":"+12 STR, +8 DEF."},
-    "Diamond Sight Medallion":           {"slot":"ring","effect":{"INT":12,"WIS":8},"rarity":"rare",
+    "Hawk Eye Medallion":         {"slot":"ring","effect":{"INT":12,"WIS":8},"rarity":"rare",
                                 "desc":"+12 INT, +8 WIS."},
-    "Ghost Ball Loop":            {"slot":"ring","effect":{"AGI":10,"dodge_bonus":0.10},"rarity":"rare",
+    "Phantom Loop":               {"slot":"ring","effect":{"AGI":10,"dodge_bonus":0.10},"rarity":"rare",
                                 "desc":"+10 AGI, +10% dodge chance."},
-    "Closer's Band":      {"slot":"ring","effect":{"STR":10,"lifesteal_flat":5},"rarity":"rare",
+    "Warrior's Band":      {"slot":"ring","effect":{"STR":10,"lifesteal_flat":5},"rarity":"rare",
                                 "desc":"+10 STR. Kills restore 5 HP."},
-    "English Coil":      {"slot":"ring","effect":{"INT":14},"rarity":"rare",
+    "Mage's Coil":         {"slot":"ring","effect":{"INT":14},"rarity":"rare",
                                 "desc":"+14 INT."},
-    "Slate Heart":     {"slot":"amulet","effect":{"DEF":15,"hp":20},"rarity":"rare",
+    "Stone Heart":         {"slot":"amulet","effect":{"DEF":15,"hp":20},"rarity":"rare",
                                 "desc":"+15 DEF, +20 HP."},
-    "Shark Tooth Chain":     {"slot":"amulet","effect":{"STR":10,"lifesteal_flat":5},"rarity":"rare",
+    "Beast Fang Chain":      {"slot":"amulet","effect":{"STR":10,"lifesteal_flat":5},"rarity":"rare",
                                 "desc":"+10 STR. +5 HP per hit landed."},
-    "Road Player's Compass":      {"slot":"amulet","effect":{"all_stats":10,"explore_bonus":0.10},"rarity":"rare",
+    "Traveler's Compass":         {"slot":"amulet","effect":{"all_stats":10,"explore_bonus":0.10},"rarity":"rare",
                                 "desc":"+10 to all stats, +10% explore rewards."},
-    "The Break Torc":      {"slot":"amulet","effect":{"AGI":10,"INT":10},"rarity":"rare",
+    "The Storm Torc":      {"slot":"amulet","effect":{"AGI":10,"INT":10},"rarity":"rare",
                                 "desc":"+10 AGI, +10 INT."},
     # Epic
-    "Double Kiss Ring":       {"slot":"ring","effect":{"atk":20,"DEF":15},"rarity":"epic",
+    "Twin Strike Ring":       {"slot":"ring","effect":{"atk":20,"DEF":15},"rarity":"epic",
                                 "desc":"+20 ATK, +15 DEF."},
-    "Eye of the Table":        {"slot":"ring","effect":{"AGI":18,"dodge_bonus":0.12},"rarity":"epic",
+    "Eye of the Void":         {"slot":"ring","effect":{"AGI":18,"dodge_bonus":0.12},"rarity":"epic",
                                 "desc":"+18 AGI, +12% dodge."},
-    "Blackball Circle":     {"slot":"ring","effect":{"INT":22,"reflect_pct":0.10},"rarity":"epic",
+    "Void Circle":          {"slot":"ring","effect":{"INT":22,"reflect_pct":0.10},"rarity":"epic",
                                 "desc":"+22 INT, 10% reflect damage."},
-    "Break Knuckle":     {"slot":"ring","effect":{"STR":20,"low_hp_dmg_bonus":0.10},"rarity":"epic",
+    "War Knuckle":       {"slot":"ring","effect":{"STR":20,"low_hp_dmg_bonus":0.10},"rarity":"epic",
                                 "desc":"+20 STR, +10% damage when below 30% HP."},
-    "House Saint's Band":       {"slot":"ring","effect":{"WIS":20,"heal_bonus":0.30},"rarity":"epic",
+    "Cleric's Band":          {"slot":"ring","effect":{"WIS":20,"heal_bonus":0.30},"rarity":"epic",
                                 "desc":"+20 WIS, heals are 30% more effective."},
-    "Chalk Heart":    {"slot":"amulet","effect":{"hp":25,"all_stats":15},"rarity":"epic",
+    "Runed Heart":     {"slot":"amulet","effect":{"hp":25,"all_stats":15},"rarity":"epic",
                                 "desc":"+25 HP, +15 to all stats."},
-    "The Hustler's Whisper":     {"slot":"amulet","effect":{"AGI":20,"crit_bonus":0.15},"rarity":"epic",
+    "The Shadow Whisper":        {"slot":"amulet","effect":{"AGI":20,"crit_bonus":0.15},"rarity":"epic",
                                 "desc":"+20 AGI, +15% crit chance."},
-    "The Safety Talisman":          {"slot":"amulet","effect":{"DEF":25,"block_chance":0.10},"rarity":"epic",
+    "Guardian's Talisman":       {"slot":"amulet","effect":{"DEF":25,"block_chance":0.10},"rarity":"epic",
                                 "desc":"+25 DEF, 10% chance to block any incoming hit."},
-    "The Crossed Cues Pendant":       {"slot":"amulet","effect":{"WIS":20,"revive_heal_bonus":0.20},"rarity":"epic",
+    "The Crossed Blades Pendant":     {"slot":"amulet","effect":{"WIS":20,"revive_heal_bonus":0.20},"rarity":"epic",
                                 "desc":"+20 WIS, revive heals 20% more HP."},
-    "The Slate and Felt Pendant":     {"slot":"amulet","effect":{"STR":22,"INT":22},"rarity":"epic",
+    "The Iron and Flame Pendant":     {"slot":"amulet","effect":{"STR":22,"INT":22},"rarity":"epic",
                                 "desc":"+22 STR, +22 INT."},
     # Legendary
-    "Splinter of the Break":       {"slot":"ring","effect":{"atk":35,"DEF":35},"rarity":"legendary",
+    "Shard of the Void":           {"slot":"ring","effect":{"atk":35,"DEF":35},"rarity":"legendary",
                                 "desc":"+35 ATK, +35 DEF."},
-    "The Endless Run":           {"slot":"ring","effect":{"all_stats":30,"hp":50},"rarity":"legendary",
+    "Ring of the Endless":        {"slot":"ring","effect":{"all_stats":30,"hp":50},"rarity":"legendary",
                                 "desc":"+30 to all stats, +50 HP."},
-    "The Old Road Ring":    {"slot":"ring","effect":{"primary_stat":40},"rarity":"legendary",
+    "The Warlord's Ring":   {"slot":"ring","effect":{"primary_stat":40},"rarity":"legendary",
                                 "desc":"+40 to your primary class stat."},
-    "The Rack Eternal":               {"slot":"ring","effect":{"all_stats":25,"dodge_bonus":0.05},"rarity":"legendary",
+    "The Eternal Ring":            {"slot":"ring","effect":{"all_stats":25,"dodge_bonus":0.05},"rarity":"legendary",
                                 "desc":"+25 all stats, 5% chance to dodge any attack."},
-    "The Final Shot Locket":      {"slot":"amulet","effect":{"revive_once":True},"rarity":"legendary",
+    "The Last Stand Locket":      {"slot":"amulet","effect":{"revive_once":True},"rarity":"legendary",
                                 "desc":"Revive once per combat at 20% HP."},
-    "The Felt Soul":        {"slot":"amulet","effect":{"primary_stat":40,"hp":100},"rarity":"legendary",
+    "The Soul Amulet":      {"slot":"amulet","effect":{"primary_stat":40,"hp":100},"rarity":"legendary",
                                 "desc":"+40 to primary class stat, +100 HP."},
-    "The Diamond Shard":       {"slot":"amulet","effect":{"WIS":35,"priest_aoe":True},"rarity":"legendary",
+    "The Divine Shard":        {"slot":"amulet","effect":{"WIS":35,"priest_aoe":True},"rarity":"legendary",
                                 "desc":"+35 WIS, priest skills affect 2 targets at once."},
-    "The Blackball Mark":        {"slot":"amulet","effect":{"INT":35,"spell_double_chance":0.15},"rarity":"legendary",
+    "The Void Mark":          {"slot":"amulet","effect":{"INT":35,"spell_double_chance":0.15},"rarity":"legendary",
                                 "desc":"+35 INT, 15% chance spells hit twice."},
 }
 
@@ -1435,33 +1435,468 @@ RARITY_EMOJI = {
     "common":"⚪","uncommon":"🟢","rare":"🔵","epic":"🟣","legendary":"🟡","mythic":"🔴","legacy":"🟤"
 }
 
+# ── PET SYSTEM ────────────────────────────────────────────────────────────────
+ELEMENT_EMOJI = {
+    "fire":"🔥","water":"💧","earth":"🌿","wind":"🌪️",
+    "shadow":"🌑","holy":"✨","void":"🌀","lightning":"⚡","nature":"🍃",
+}
+PERSONALITY_EMOJI = {
+    "playful":"🎉","fierce":"😤","calm":"😌","mischievous":"😈",
+    "loyal":"💛","lazy":"💤","greedy":"🤑","timid":"🫢",
+}
+PERSONALITY_FEED = {
+    "playful":    "bounces with excitement and gobbles it right up!",
+    "fierce":     "snatches the food in one bite and gives you a satisfied grunt.",
+    "calm":       "eats slowly and deliberately, then nods in quiet appreciation.",
+    "mischievous":"knocks it around the floor first, then eats it while eyeing you sideways.",
+    "loyal":      "waits patiently until you're ready, then eats with a happy wag.",
+    "lazy":       "barely opens one eye, drags itself over, and eats without fully getting up.",
+    "greedy":     "inhales the food before you even finish offering it. Already looking for more.",
+    "timid":      "approaches cautiously, sniffs it twice, then eats it quietly.",
+}
+PERSONALITY_TRAIN = {
+    "playful":    "leaps into training like it's a game — loves every second of it!",
+    "fierce":     "trains with total intensity. Nothing held back.",
+    "calm":       "goes through every exercise with steady, focused patience.",
+    "mischievous":"goofs off half the time but somehow still gets stronger.",
+    "loyal":      "pushes through every drill just to make you proud.",
+    "lazy":       "completes the minimum required and immediately lies back down.",
+    "greedy":     "will only train if you promise snacks afterward.",
+    "timid":      "hesitates at first but gains confidence as it goes.",
+}
+PERSONALITY_BATTLE = {
+    "playful":    "dives in enthusiastically",
+    "fierce":     "launches a ferocious strike",
+    "calm":       "strikes with precision",
+    "mischievous":"attacks from a completely unexpected angle",
+    "loyal":      "fights fiercely to protect you",
+    "lazy":       "reluctantly joins in",
+    "greedy":     "attacks hard — there's a reward in it after all",
+    "timid":      "musters its courage and strikes",
+}
+
+# Each species: name, element, rarity, base_atk, base_def, personality, emoji, desc, egg
+PET_SPECIES = {
+    # ── DOGS ─────────────────────────────────────────────────────────────────
+    "iron_hound":       {"name":"Iron Hound",       "element":"earth",    "rarity":"uncommon","base_atk":6, "base_def":4, "personality":"loyal",      "emoji":"🐕","desc":"A rugged mutt with iron-hard hide. Stubborn and reliable.","def_ability":"intercept"},
+    "thunder_mastiff":  {"name":"Thunder Mastiff",  "element":"lightning","rarity":"rare",    "base_atk":10,"base_def":5, "personality":"fierce",     "emoji":"🐕","desc":"A massive war-bred mastiff cracking with static charge.","def_ability":"counter"},
+    "shadow_pup":       {"name":"Shadow Pup",       "element":"shadow",   "rarity":"uncommon","base_atk":5, "base_def":3, "personality":"mischievous","emoji":"🐕","desc":"A tiny hound that phases in and out of darkness. Trouble magnet.","def_ability":"stun"},
+    "frost_husky":      {"name":"Frost Husky",      "element":"water",    "rarity":"rare",    "base_atk":8, "base_def":6, "personality":"playful",    "emoji":"🐕","desc":"A snow-white husky with ice-blue eyes. Loves cold and chaos equally.","def_ability":"shield"},
+    "emberpaw":         {"name":"Emberpaw",          "element":"fire",     "rarity":"epic",    "base_atk":14,"base_def":7, "personality":"fierce",     "emoji":"🐕","desc":"A hound wreathed in embers. Leaves scorched pawprints everywhere it walks.","def_ability":"counter"},
+    "celestial_shepherd":{"name":"Celestial Shepherd","element":"holy",   "rarity":"legendary","base_atk":20,"base_def":12,"personality":"loyal",     "emoji":"🐕","desc":"Blessed guardian. It has watched over the same bloodline for centuries.","def_ability":"intercept"},
+    # ── CATS ─────────────────────────────────────────────────────────────────
+    "soot_cat":         {"name":"Soot Cat",         "element":"shadow",   "rarity":"common",  "base_atk":4, "base_def":2, "personality":"mischievous","emoji":"🐈","desc":"Always covered in ash. Knocks things off tables on purpose.","def_ability":"shield"},
+    "ember_tabby":      {"name":"Ember Tabby",      "element":"fire",     "rarity":"uncommon","base_atk":6, "base_def":3, "personality":"playful",    "emoji":"🐈","desc":"An orange tabby with a perpetually warm belly and a flair for drama.","def_ability":"stun"},
+    "moonwhisker":      {"name":"Moonwhisker",       "element":"void",     "rarity":"rare",    "base_atk":9, "base_def":5, "personality":"calm",       "emoji":"🐈","desc":"Silver-furred and ancient-eyed. It always knows where the danger is.","def_ability":"shield"},
+    "storm_lynx":       {"name":"Storm Lynx",        "element":"lightning","rarity":"rare",    "base_atk":11,"base_def":4, "personality":"fierce",     "emoji":"🐈","desc":"A wild lynx that crackles with electricity. Doesn't do cuddling.","def_ability":"stun"},
+    "crystal_manx":     {"name":"Crystal Manx",      "element":"earth",    "rarity":"epic",    "base_atk":13,"base_def":9, "personality":"calm",       "emoji":"🐈","desc":"Its fur has crystallized into translucent armor. Unbothered by everything.","def_ability":"intercept"},
+    "spectre_panther":  {"name":"Spectre Panther",   "element":"shadow",   "rarity":"legendary","base_atk":22,"base_def":10,"personality":"fierce",    "emoji":"🐈","desc":"A panther that walks between worlds. You only see it when it wants you to.","def_ability":"counter"},
+    # ── DRAGONS ──────────────────────────────────────────────────────────────
+    "cave_drake":       {"name":"Cave Drake",        "element":"earth",    "rarity":"uncommon","base_atk":8, "base_def":6, "personality":"lazy",       "emoji":"🐉","desc":"A squat cave-dwelling drake. Prefers sleeping on gold to doing anything.","def_ability":"shield"},
+    "flame_whelp":      {"name":"Flame Whelp",       "element":"fire",     "rarity":"rare",    "base_atk":11,"base_def":5, "personality":"playful",    "emoji":"🐉","desc":"A baby fire dragon. Adorable. Also highly flammable to everything nearby.","def_ability":"counter"},
+    "frost_wyrm":       {"name":"Frost Wyrm",         "element":"water",    "rarity":"rare",    "base_atk":10,"base_def":7, "personality":"calm",       "emoji":"🐉","desc":"A serpentine ice dragon. Glacially patient. Glacially powerful.","def_ability":"intercept"},
+    "storm_drake":      {"name":"Storm Drake",        "element":"lightning","rarity":"epic",    "base_atk":16,"base_def":8, "personality":"fierce",     "emoji":"🐉","desc":"A drake born from a lightning storm. Every battle is a thunderstorm.","def_ability":"counter"},
+    "void_drake":       {"name":"Void Drake",         "element":"void",     "rarity":"epic",    "base_atk":15,"base_def":9, "personality":"mischievous","emoji":"🐉","desc":"A dragon that exists partially in another dimension. Bites from angles that shouldn't exist.","def_ability":"stun"},
+    "ancient_dragon":   {"name":"Ancient Dragon",     "element":"fire",     "rarity":"legendary","base_atk":24,"base_def":14,"personality":"loyal",     "emoji":"🐉","desc":"A dragon old enough to remember the first age. Chooses its partners wisely.","def_ability":"counter"},
+    "prismatic_dragon": {"name":"Prismatic Dragon",   "element":"holy",     "rarity":"mythic",  "base_atk":35,"base_def":20,"personality":"timid",     "emoji":"🐉","desc":"A dragon of pure light. Its colors shift with every heartbeat. Extraordinarily rare.","def_ability":"lifesteal"},
+    # ── SNAKES ───────────────────────────────────────────────────────────────
+    "viridian_cobra":   {"name":"Viridian Cobra",    "element":"nature",   "rarity":"common",  "base_atk":5, "base_def":2, "personality":"timid",     "emoji":"🐍","desc":"A bright green cobra. Shy until provoked — then very much not shy.","def_ability":"poison"},
+    "crimson_viper":    {"name":"Crimson Viper",     "element":"fire",     "rarity":"uncommon","base_atk":7, "base_def":3, "personality":"fierce",     "emoji":"🐍","desc":"A blood-red viper with venom that burns like magma. Aggressive by nature.","def_ability":"poison"},
+    "shadow_boa":       {"name":"Shadow Boa",         "element":"shadow",   "rarity":"rare",    "base_atk":9, "base_def":6, "personality":"calm",       "emoji":"🐍","desc":"A massive boa that melts into darkness. Wraps enemies in crushing silence.","def_ability":"intercept"},
+    "frost_asp":        {"name":"Frost Asp",          "element":"water",    "rarity":"rare",    "base_atk":10,"base_def":5, "personality":"calm",       "emoji":"🐍","desc":"A pale blue asp whose bite freezes the wound instantly. Eerily quiet.","def_ability":"stun"},
+    "ghost_mamba":      {"name":"Ghost Mamba",        "element":"shadow",   "rarity":"epic",    "base_atk":15,"base_def":7, "personality":"mischievous","emoji":"🐍","desc":"A translucent mamba that strikes from inside your shadow. You won't see it coming.","def_ability":"poison"},
+    "oracle_python":    {"name":"Oracle Python",      "element":"holy",     "rarity":"legendary","base_atk":21,"base_def":12,"personality":"calm",      "emoji":"🐍","desc":"An ancient python with golden eyes that have seen everything. Strikes only when certain.","def_ability":"lifesteal"},
+    # ── BEARS ────────────────────────────────────────────────────────────────
+    "forest_cub":       {"name":"Forest Cub",         "element":"nature",   "rarity":"common",  "base_atk":5, "base_def":5, "personality":"playful",   "emoji":"🐻","desc":"A roly-poly cub that plays more than it fights. Plenty of time to grow into danger.","def_ability":"intercept"},
+    "cave_bear":        {"name":"Cave Bear",           "element":"earth",    "rarity":"uncommon","base_atk":8, "base_def":8, "personality":"fierce",    "emoji":"🐻","desc":"A boulder with fur and opinions. Will protect its partner with everything it has.","def_ability":"intercept"},
+    "frost_bear":       {"name":"Frost Bear",          "element":"water",    "rarity":"rare",    "base_atk":11,"base_def":10,"personality":"loyal",     "emoji":"🐻","desc":"A glacier-white bear of immense size and patience. Nothing moves it until it decides to move.","def_ability":"intercept"},
+    "shadow_grizzly":   {"name":"Shadow Grizzly",      "element":"shadow",   "rarity":"epic",    "base_atk":17,"base_def":11,"personality":"fierce",    "emoji":"🐻","desc":"A grizzly that hunts in pitch darkness. The only warning is the sound of impact.","def_ability":"counter"},
+    # ── HAWKS & BIRDS ─────────────────────────────────────────────────────────
+    "swift_sparrow":    {"name":"Swift Sparrow",       "element":"wind",     "rarity":"common",  "base_atk":4, "base_def":2, "personality":"playful",   "emoji":"🦅","desc":"A tiny sparrow with ridiculous speed. Darts in, strikes, gone.","def_ability":"stun"},
+    "storm_hawk":       {"name":"Storm Hawk",           "element":"lightning","rarity":"uncommon","base_atk":7, "base_def":3, "personality":"fierce",    "emoji":"🦅","desc":"A raptor that dives through storm clouds. Talons charged with electricity.","def_ability":"stun"},
+    "ember_falcon":     {"name":"Ember Falcon",         "element":"fire",     "rarity":"rare",    "base_atk":11,"base_def":4, "personality":"fierce",    "emoji":"🦅","desc":"A falcon trailing fire from its wingtips. Precision predator.","def_ability":"counter"},
+    "frost_raven":      {"name":"Frost Raven",           "element":"water",    "rarity":"rare",    "base_atk":9, "base_def":5, "personality":"calm",      "emoji":"🦅","desc":"A raven carved from ice. It watches everything and judges silently.","def_ability":"shield"},
+    "shadow_eagle":     {"name":"Shadow Eagle",         "element":"shadow",   "rarity":"epic",    "base_atk":16,"base_def":6, "personality":"mischievous","emoji":"🦅","desc":"An eagle that vanishes into shadow mid-dive. Hits before the target knows it's there.","def_ability":"stun"},
+    "celestial_phoenix":{"name":"Celestial Phoenix",   "element":"holy",     "rarity":"legendary","base_atk":23,"base_def":11,"personality":"loyal",    "emoji":"🦅","desc":"A phoenix reborn each dawn. Fights alongside its partner through every kind of death.","def_ability":"lifesteal"},
+    # ── WOLVES ───────────────────────────────────────────────────────────────
+    "timber_wolf":      {"name":"Timber Wolf",         "element":"earth",    "rarity":"common",  "base_atk":5, "base_def":3, "personality":"fierce",    "emoji":"🐺","desc":"A pack hunter from the deep forest. Loyal to its chosen pack.","def_ability":"intercept"},
+    "shadow_wolf":      {"name":"Shadow Wolf",          "element":"shadow",   "rarity":"rare",    "base_atk":10,"base_def":5, "personality":"mischievous","emoji":"🐺","desc":"A wolf that hunts between dimensions. Impossible to track. Loves to play.","def_ability":"stun"},
+    "frost_wolf":       {"name":"Frost Wolf",            "element":"water",    "rarity":"rare",    "base_atk":9, "base_def":7, "personality":"loyal",     "emoji":"🐺","desc":"A white wolf born in a blizzard. It would die before abandoning its partner.","def_ability":"intercept"},
+    "thunder_wolf":     {"name":"Thunder Wolf",          "element":"lightning","rarity":"epic",    "base_atk":16,"base_def":7, "personality":"fierce",    "emoji":"🐺","desc":"A wolf that outruns lightning. It strikes before the thunder arrives.","def_ability":"counter"},
+    "dire_wolf":        {"name":"Dire Wolf",             "element":"void",     "rarity":"legendary","base_atk":25,"base_def":13,"personality":"fierce",   "emoji":"🐺","desc":"An ancient apex predator. Commands silence in any room it enters.","def_ability":"counter"},
+    # ── HORSES ───────────────────────────────────────────────────────────────
+    "wild_stallion":    {"name":"Wild Stallion",        "element":"earth",    "rarity":"uncommon","base_atk":7, "base_def":5, "personality":"fierce",    "emoji":"🐴","desc":"An untamed horse from the open plains. Respects strength. Nothing else.","def_ability":"shield"},
+    "nightmare_steed":  {"name":"Nightmare",            "element":"shadow",   "rarity":"epic",    "base_atk":18,"base_def":9, "personality":"fierce",    "emoji":"🐴","desc":"A horse of living shadow and hellfire. Its hoofbeats echo in places they shouldn't.","def_ability":"counter"},
+    "celestial_steed":  {"name":"Celestial Steed",     "element":"holy",     "rarity":"legendary","base_atk":22,"base_def":13,"personality":"loyal",    "emoji":"🐴","desc":"A white war horse that gallops between stars. Chosen few ever ride it.","def_ability":"shield"},
+    # ── FANTASY BEASTS ───────────────────────────────────────────────────────
+    "slime_wisp":       {"name":"Slime Wisp",           "element":"void",     "rarity":"common",  "base_atk":3, "base_def":4, "personality":"playful",   "emoji":"🫧","desc":"A blobby little wisp that bounces everywhere. Giggles. Somehow deals damage.","def_ability":"shield"},
+    "stone_golem_pup":  {"name":"Stone Golem Pup",     "element":"earth",    "rarity":"uncommon","base_atk":5, "base_def":8, "personality":"lazy",      "emoji":"🗿","desc":"A miniature stone golem that moves exactly as fast as it wants to. Very slow.","def_ability":"intercept"},
+    "fairy_fox":        {"name":"Fairy Fox",             "element":"wind",     "rarity":"uncommon","base_atk":6, "base_def":3, "personality":"playful",   "emoji":"🦊","desc":"A fox trailing sparkling dust. Charming, fast, and entirely too clever.","def_ability":"stun"},
+    "crystal_crab":     {"name":"Crystal Crab",          "element":"earth",    "rarity":"rare",    "base_atk":7, "base_def":12,"personality":"timid",     "emoji":"🦀","desc":"A crab with a shell of solid quartz. Near-impenetrable defense. Pinches only when startled.","def_ability":"intercept"},
+    "lava_toad":        {"name":"Lava Toad",             "element":"fire",     "rarity":"rare",    "base_atk":10,"base_def":8, "personality":"lazy",      "emoji":"🐸","desc":"A rotund toad that sweats magma. It will not hurry. It doesn't need to.","def_ability":"counter"},
+    "shadow_sprite":    {"name":"Shadow Sprite",         "element":"shadow",   "rarity":"rare",    "base_atk":12,"base_def":4, "personality":"mischievous","emoji":"🌑","desc":"A tiny shadow elemental with a chaotic streak a mile wide.","def_ability":"poison"},
+    "arc_elemental":    {"name":"Arc Elemental",         "element":"lightning","rarity":"epic",    "base_atk":17,"base_def":6, "personality":"calm",      "emoji":"⚡","desc":"A being of pure lightning given shape. Measured, dangerous, exact.","def_ability":"stun"},
+    "bloodhound_specter":{"name":"Bloodhound Specter",  "element":"shadow",   "rarity":"epic",    "base_atk":19,"base_def":7, "personality":"fierce",    "emoji":"👻","desc":"The ghost of a legendary hunting hound. Still on the hunt. Always.","def_ability":"counter"},
+    "void_wisp":        {"name":"Void Wisp",             "element":"void",     "rarity":"epic",    "base_atk":16,"base_def":8, "personality":"mischievous","emoji":"🌀","desc":"A flickering wisp of void energy. It doesn't follow rules. Especially yours.","def_ability":"poison"},
+    "storm_titan":      {"name":"Storm Titan",           "element":"lightning","rarity":"legendary","base_atk":26,"base_def":14,"personality":"fierce",   "emoji":"⚡","desc":"An elemental titan born from the heart of the greatest storm ever recorded.","def_ability":"counter"},
+    "the_ancient_one":  {"name":"The Ancient One",       "element":"void",     "rarity":"mythic",  "base_atk":38,"base_def":22,"personality":"calm",     "emoji":"🌀","desc":"A being older than the world's name. It watches with the patience of eternity. Extraordinarily rare.","def_ability":"lifesteal"},
+    "celestial_pup":    {"name":"Celestial Pup",         "element":"holy",     "rarity":"mythic",  "base_atk":32,"base_def":25,"personality":"loyal",    "emoji":"✨","desc":"A small divine being that chose to look like a puppy. Nobody questions it. It's too cute.","def_ability":"intercept"},
+}
+
+# Defensive ability definitions
+PET_DEF_ABILITIES = {
+    "intercept":  {"name":"Intercept",     "emoji":"🛡️","desc":"Jumps in front of the attack, absorbing damage for you.",     "proc_base":0.20},
+    "counter":    {"name":"Counter Strike","emoji":"⚔️","desc":"Retaliates instantly with a fierce counter attack.",           "proc_base":0.18},
+    "poison":     {"name":"Venom Bite",    "emoji":"🐍","desc":"Sinks fangs into the attacker, applying poison.",             "proc_base":0.16},
+    "stun":       {"name":"Stunning Blow", "emoji":"⚡","desc":"Delivers a blow that stuns the attacker (miss next attack).", "proc_base":0.14},
+    "lifesteal":  {"name":"Life Drain",    "emoji":"💜","desc":"Drains life force from the attacker and channels it to you.", "proc_base":0.16},
+    "shield":     {"name":"Aura Shield",   "emoji":"✨","desc":"Projects a protective aura that reduces incoming damage.",    "proc_base":0.22},
+}
+
+PERSONALITY_DEFEND = {
+    "playful":    "leaps in front of you with a gleeful yip!",
+    "fierce":     "snarls and throws itself between you and the attacker!",
+    "calm":       "steps forward with quiet, unshakable resolve.",
+    "mischievous":"appears from nowhere and intercepts the hit!",
+    "loyal":      "refuses to let you take that hit alone.",
+    "lazy":       "manages to drag itself over just in time.",
+    "greedy":     "protects you — but will expect a snack for this.",
+    "timid":      "trembles but holds the line for you.",
+}
+
+# EXP needed per pet level
+def pet_exp_for_level(lvl): return lvl * 50 + (lvl * lvl * 5)
+
+# Passive bonus unlocks by pet level
+PET_LEVEL_PASSIVES = {
+    5:   {"atk_flat": 2},
+    10:  {"atk_flat": 5},
+    15:  {"atk_flat": 5,  "crit_bonus": 0.03},
+    20:  {"atk_flat": 8,  "crit_bonus": 0.05},
+    25:  {"atk_flat": 10, "crit_bonus": 0.05, "dodge_bonus": 0.03},
+    30:  {"atk_flat": 12, "crit_bonus": 0.08, "dodge_bonus": 0.05},
+    40:  {"atk_flat": 15, "crit_bonus": 0.10, "dodge_bonus": 0.05, "lifesteal_flat": 5},
+    50:  {"atk_flat": 20, "crit_bonus": 0.12, "dodge_bonus": 0.08, "lifesteal_flat": 10},
+    60:  {"atk_flat": 26, "crit_bonus": 0.14, "dodge_bonus": 0.10, "lifesteal_flat": 13},
+    75:  {"atk_flat": 33, "crit_bonus": 0.17, "dodge_bonus": 0.13, "lifesteal_flat": 17},
+    100: {"atk_flat": 42, "crit_bonus": 0.22, "dodge_bonus": 0.17, "lifesteal_flat": 22},
+}
+
+def get_pet_passives(pet_level):
+    bonus = {}
+    for threshold in sorted(PET_LEVEL_PASSIVES.keys()):
+        if pet_level >= threshold:
+            bonus = dict(PET_LEVEL_PASSIVES[threshold])
+    return bonus
+
+def get_pet_def_proc_chance(pet):
+    """Chance that pet's defensive ability triggers when owner is attacked."""
+    sp = PET_SPECIES.get(pet.get("species"), {})
+    da = sp.get("def_ability")
+    if not da: return 0.0
+    lvl = pet.get("level", 1)
+    if lvl < 10: return 0.0          # ability not yet unlocked
+    base = PET_DEF_ABILITIES[da]["proc_base"]
+    level_bonus = min(0.30, lvl * 0.004)   # up to +30% at L75
+    hunger_ok = pet.get("hunger", 100) >= 20
+    mood_ok   = pet.get("mood", 100)   >= 30
+    if not hunger_ok or not mood_ok: return 0.0
+    return round(base + level_bonus, 3)
+
+def apply_pet_defense(pet, attacker, dmg_after_def, extra_notes):
+    """
+    Check if the defender's pet triggers its defensive ability.
+    Mutates dmg_after_def (returns new value) and appends to extra_notes.
+    Also returns any status to apply to attacker: ("poison"|"stun"|None, value).
+    """
+    if dmg_after_def <= 0:
+        return dmg_after_def, None, None
+    chance = get_pet_def_proc_chance(pet)
+    if chance <= 0 or random.random() > chance:
+        return dmg_after_def, None, None
+    sp     = PET_SPECIES.get(pet.get("species"), {})
+    da     = sp.get("def_ability", "shield")
+    lvl    = pet.get("level", 1)
+    pers   = sp.get("personality", "calm")
+    emoji  = sp.get("emoji", "🐾")
+    pname  = pet.get("nickname") or sp.get("name", "Your Pet")
+    defend_flavor = PERSONALITY_DEFEND.get(pers, "steps in to defend you!")
+    ability_info  = PET_DEF_ABILITIES.get(da, {})
+    ab_emoji = ability_info.get("emoji", "🐾")
+    status_type = None
+    status_val  = None
+
+    if da == "intercept":
+        absorb_pct = min(0.60, 0.20 + lvl * 0.005)
+        absorbed   = round(dmg_after_def * absorb_pct)
+        dmg_after_def = max(0, dmg_after_def - absorbed)
+        extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Intercept!* Absorbed *{absorbed} dmg*!")
+
+    elif da == "counter":
+        counter_dmg = round(5 + lvl * 1.2)
+        if attacker:
+            attacker["hp"] = max(0, attacker.get("hp", 0) - counter_dmg)
+        extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Counter Strike!* Deals *{counter_dmg} dmg* back!")
+
+    elif da == "poison":
+        poison_dmg = round(4 + lvl * 0.5)
+        status_type = "poison"
+        status_val  = poison_dmg
+        extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Venom Bite!* Attacker is *poisoned* ({poison_dmg} dmg/30s)!")
+
+    elif da == "stun":
+        status_type = "stun"
+        status_val  = 1
+        extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Stunning Blow!* Attacker is *stunned* — misses next attack!")
+
+    elif da == "lifesteal":
+        heal_amt = round(8 + lvl * 0.6)
+        status_type = "lifesteal_to_owner"
+        status_val  = heal_amt
+        extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Life Drain!* Drained *{heal_amt} HP* from attacker!")
+
+    elif da == "shield":
+        shield_pct = min(0.40, 0.10 + lvl * 0.003)
+        absorbed   = round(dmg_after_def * shield_pct)
+        dmg_after_def = max(0, dmg_after_def - absorbed)
+        extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Aura Shield!* Shielded *{absorbed} dmg*!")
+
+    return dmg_after_def, status_type, status_val
+
+# Eggs and their hatch pools by rarity weight
+PET_EGG_POOLS = {
+    "Common Egg":   {"common":0.65,"uncommon":0.30,"rare":0.05},
+    "Rare Egg":     {"uncommon":0.40,"rare":0.45,"epic":0.15},
+    "Dragon Egg":   {"rare":0.35,"epic":0.50,"legendary":0.15},
+    "Mythic Egg":   {"epic":0.40,"legendary":0.45,"mythic":0.15},
+}
+
+def _hatch_species(egg_name):
+    """Pick a random species from egg pool, weighted by rarity."""
+    pool = PET_EGG_POOLS.get(egg_name)
+    if not pool: return None
+    roll = random.random()
+    cumulative = 0.0
+    target_rarity = None
+    for rarity, weight in pool.items():
+        cumulative += weight
+        if roll <= cumulative:
+            target_rarity = rarity; break
+    if not target_rarity:
+        target_rarity = list(pool.keys())[-1]
+    candidates = [sid for sid, sd in PET_SPECIES.items() if sd["rarity"] == target_rarity]
+    return random.choice(candidates) if candidates else None
+
+def get_pet_atk_bonus(pet):
+    """Raw ATK a pet contributes per attack. Reduced by low hunger/mood."""
+    sp = PET_SPECIES.get(pet.get("species"), {})
+    base = sp.get("base_atk", 0) + pet.get("level", 1) * 2
+    passives = get_pet_passives(pet.get("level", 1))
+    base += passives.get("atk_flat", 0)
+    hunger = pet.get("hunger", 100)
+    mood   = pet.get("mood", 100)
+    if hunger < 20: base = round(base * 0.5)
+    elif mood < 40: base = 0
+    return max(0, base)
+
+def pet_status_tag(pet):
+    """Short status summary for a pet."""
+    hunger = pet.get("hunger", 100)
+    mood   = pet.get("mood", 100)
+    if hunger < 20:   return "😫 Starving"
+    if hunger < 50:   return "😕 Hungry"
+    if mood < 40:     return "😢 Sad"
+    if mood < 70:     return "😐 Okay"
+    if mood >= 90:    return "😄 Thrilled"
+    return "🙂 Happy"
+
+def _decay_pet(pet):
+    """Apply hunger/mood decay based on elapsed time. Mutates in place."""
+    now = datetime.now()
+    last_fed_str = pet.get("last_fed")
+    if last_fed_str:
+        try:
+            hours_since = (now - datetime.fromisoformat(last_fed_str)).total_seconds() / 3600
+            decay = round(hours_since * 5)  # -5 hunger per hour
+            pet["hunger"] = max(0, pet.get("hunger", 100) - decay)
+        except Exception: pass
+    # Mood drops when hungry
+    if pet.get("hunger", 100) < 30:
+        mood_decay = round((30 - pet["hunger"]) * 0.5)
+        pet["mood"] = max(0, pet.get("mood", 100) - mood_decay)
+
+def get_active_pet_record(owner_id):
+    """Fetch the active pet for a player from the DB."""
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    c.execute("SELECT * FROM pets WHERE owner_id=? AND is_active=1", (owner_id,))
+    row = c.fetchone(); conn.close()
+    if row:
+        pet = dict(row)
+        _decay_pet(pet)
+        return pet
+    return None
+
+def get_all_pets(owner_id):
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    c.execute("SELECT * FROM pets WHERE owner_id=? ORDER BY is_active DESC, level DESC", (owner_id,))
+    rows = [dict(r) for r in c.fetchall()]; conn.close()
+    for p in rows: _decay_pet(p)
+    return rows
+
+def save_pet(pet):
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("""INSERT OR REPLACE INTO pets
+        (pet_id,owner_id,species,nickname,level,exp,hunger,mood,last_fed,last_trained,is_active,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (pet.get("pet_id"), pet["owner_id"], pet["species"],
+         pet.get("nickname"), pet.get("level",1), pet.get("exp",0),
+         pet.get("hunger",100), pet.get("mood",100),
+         pet.get("last_fed"), pet.get("last_trained"),
+         pet.get("is_active",0), pet.get("created_at", datetime.now().isoformat())))
+    conn.commit(); conn.close()
+
+def _pet_display_name(pet):
+    sp = PET_SPECIES.get(pet.get("species"), {})
+    nick = pet.get("nickname")
+    base = sp.get("name", pet.get("species","Unknown"))
+    return f"{nick} ({base})" if nick else base
+
+def _build_pet_card(pet):
+    """Build full status card text for a pet."""
+    sp      = PET_SPECIES.get(pet.get("species"), {})
+    dname   = _pet_display_name(pet)
+    lvl     = pet.get("level", 1)
+    exp     = pet.get("exp", 0)
+    exp_needed = pet_exp_for_level(lvl)
+    hunger  = pet.get("hunger", 100)
+    mood    = pet.get("mood", 100)
+    elem    = sp.get("element","?")
+    rar     = sp.get("rarity","common")
+    pers    = sp.get("personality","calm")
+    emoji   = sp.get("emoji","🐾")
+    elem_e  = ELEMENT_EMOJI.get(elem,"")
+    pers_e  = PERSONALITY_EMOJI.get(pers,"")
+    rar_e   = RARITY_EMOJI.get(rar,"")
+    status  = pet_status_tag(pet)
+    atk_bon = get_pet_atk_bonus(pet)
+    passives = get_pet_passives(lvl)
+
+    hunger_bar = "█" * round(hunger/10) + "░" * (10 - round(hunger/10))
+    mood_bar   = "█" * round(mood/10)   + "░" * (10 - round(mood/10))
+    exp_bar_pct = min(1.0, exp / max(1, exp_needed))
+    exp_bar     = "█" * int(exp_bar_pct * 8) + "░" * (8 - int(exp_bar_pct * 8))
+
+    lines = [
+        f"{emoji} *{dname}*  {rar_e} {rar.capitalize()}",
+        f"{elem_e} {elem.capitalize()}  |  {pers_e} {pers.capitalize()}",
+        f"_{sp.get('desc','')}_",
+        "",
+        f"*Level {lvl}*",
+        f"✨ EXP: `{exp}/{exp_needed}` [{exp_bar}]",
+        f"🍖 Hunger: {hunger}/100  [{hunger_bar}]",
+        f"💛 Mood:   {mood}/100  [{mood_bar}]",
+        f"Status: {status}",
+        "",
+        f"⚔️ Combat ATK: +*{atk_bon}* per attack",
+    ]
+    if passives:
+        plines = []
+        if passives.get("crit_bonus"):  plines.append(f"+{round(passives['crit_bonus']*100)}% crit")
+        if passives.get("dodge_bonus"): plines.append(f"+{round(passives['dodge_bonus']*100)}% dodge")
+        if passives.get("lifesteal_flat"): plines.append(f"+{passives['lifesteal_flat']} lifesteal")
+        if plines: lines.append("✨ Passives: " + "  |  ".join(plines))
+    next_unlock = next((t for t in sorted(PET_LEVEL_PASSIVES) if t > lvl), None)
+    if next_unlock:
+        lines.append(f"🔒 Next unlock: Level {next_unlock}")
+    # Defensive ability
+    sp_def = sp.get("def_ability")
+    if sp_def and lvl >= 10:
+        ab_info = PET_DEF_ABILITIES.get(sp_def, {})
+        chance  = round(get_pet_def_proc_chance(pet) * 100)
+        lines.append(f"{ab_info.get('emoji','🐾')} *{ab_info.get('name','Ability')}* ({chance}% proc)")
+    elif sp_def:
+        ab_info = PET_DEF_ABILITIES.get(sp_def, {})
+        lines.append(f"🔒 *{ab_info.get('name','Ability')}* unlocks at Level 10")
+    return "\n".join(lines)
+
+def _pet_list_markup(pets, page=0, page_size=5):
+    start = page * page_size
+    chunk = pets[start:start+page_size]
+    rows = []
+    for pet in chunk:
+        sp = PET_SPECIES.get(pet.get("species"),{})
+        emoji = sp.get("emoji","🐾")
+        dname = _pet_display_name(pet)
+        active_tag = " ✅" if pet.get("is_active") else ""
+        rows.append([InlineKeyboardButton(
+            f"{emoji} {dname} Lv{pet.get('level',1)}{active_tag}",
+            callback_data=f"petview_{pet['pet_id']}")])
+    nav = []
+    if page > 0:    nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"petlist_{page-1}"))
+    if start+page_size < len(pets): nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"petlist_{page+1}"))
+    if nav: rows.append(nav)
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data="petmain")])
+    return InlineKeyboardMarkup(rows)
+
+def _pet_view_markup(pet_id, is_active):
+    rows = []
+    if not is_active:
+        rows.append([InlineKeyboardButton("✅ Make Active", callback_data=f"petactivate_{pet_id}")])
+    rows.append([
+        InlineKeyboardButton("🍖 Feed",  callback_data=f"petfeed_{pet_id}"),
+        InlineKeyboardButton("🏋️ Train", callback_data=f"pettrain_{pet_id}"),
+    ])
+    rows.append([InlineKeyboardButton("📝 Rename", callback_data=f"petrename_{pet_id}")])
+    rows.append([
+        InlineKeyboardButton("🔙 All Pets", callback_data="petlist_0"),
+        InlineKeyboardButton("❌ Release",  callback_data=f"petrelease_{pet_id}"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+def _pet_main_markup():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 My Pets",  callback_data="petlist_0"),
+         InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")],
+        [InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
+    ])
+
 # Items that can be found in game
 CONSUMABLES = {
-    "Chalk Vial":       {"desc":"Restores 50 HP.","sell":75},
-    "Premium Chalk Draft": {"desc":"Restores 100 HP.","sell":200},
-    "Champion's Chalk Flask":  {"desc":"Restores 200 HP.","sell":450},
-    "The Re-Rack":       {"desc":"Revive a defeated player.","sell":750},
-    "The Golden Triangle":          {"desc":"Required for Miracle (High Roller skill).","sell":1000},
-    "Slate Fragment":        {"desc":"Crafting material. Rare drop.","sell":100},
-    "The Custom Tip Scroll":   {"desc":"Used to enchant gear. Future system.","sell":150},
+    # Healing
+    "Health Potion":          {"desc":"Restores 50 HP.","sell":75},
+    "Greater Health Potion":  {"desc":"Restores 100 HP.","sell":200},
+    "Grand Restorative Flask":{"desc":"Restores 200 HP.","sell":450},
+    # Revive
+    "Scroll of Revival":      {"desc":"Revive a defeated player.","sell":750},
+    # Skill items
+    "Holy Water Vial":        {"desc":"Required for Miracle (High Priest skill).","sell":1000},
+    # Crafting
+    "Iron Shard":             {"desc":"Crafting material. Rare drop.","sell":100},
+    "Enchanting Scroll":      {"desc":"Used to enchant gear.","sell":150},
+    # Pets
+    "Pet Snack":              {"desc":"Feeds your active pet. Restores 30 hunger and 10 mood.","sell":20},
+    "Common Egg":             {"desc":"A warm egg. Common or uncommon pet inside.","sell":150},
+    "Rare Egg":               {"desc":"A glowing egg. Uncommon to rare pet inside.","sell":400},
+    "Dragon Egg":             {"desc":"A heavy scaled egg. Rare to epic pet inside.","sell":1000},
+    "Mythic Egg":             {"desc":"A shimmering egg. Epic to mythic pet inside.","sell":3000},
 }
 
 # ── CRAFTING RECIPES ──────────────────────────────────────────────────────────
 RECIPES = {
-    "Iron Compound":  {"mats": {"Slate Fragment": 4},                "result": "Steel Knight Sword"},
-    "Scale Plating":  {"mats": {"Slate Fragment": 3},                "result": "Soldier's Plating"},
-    "Charm Craft":    {"mats": {"Slate Fragment": 4},                "result": "Silver Prayer Beads"},
-    "Enchant Bundle": {"mats": {"Slate Fragment": 6},                "result": "The Custom Tip Scroll"},
-    "Scale Blade":    {"mats": {"Slate Fragment": 7},                "result": "Ranger's Marked Bow"},
+    "Iron Compound":  {"mats": {"Iron Shard": 4},                "result": "Steel Knight Sword"},
+    "Scale Plating":  {"mats": {"Iron Shard": 3},                "result": "Soldier's Plating"},
+    "Charm Craft":    {"mats": {"Iron Shard": 4},                "result": "Silver Prayer Beads"},
+    "Enchant Bundle": {"mats": {"Iron Shard": 6},                "result": "Enchanting Scroll"},
+    "Scale Blade":    {"mats": {"Iron Shard": 7},                "result": "Ranger's Marked Bow"},
 }
 
 SHOP_POOL = [
-    {"item":"Chalk Vial","price":150,"desc":"Restores 50 HP."},
-    {"item":"Premium Chalk Draft","price":400,"desc":"Restores 100 HP."},
-    {"item":"Champion's Chalk Flask","price":900,"desc":"Restores 200 HP."},
-    {"item":"The Re-Rack","price":1500,"desc":"Revive a defeated player."},
-    {"item":"Slate Fragment","price":300,"desc":"Crafting material."},
-    {"item":"The Custom Tip Scroll","price":500,"desc":"Enchant gear. Future use."},
+    {"item":"Health Potion","price":150,"desc":"Restores 50 HP."},
+    {"item":"Greater Health Potion","price":400,"desc":"Restores 100 HP."},
+    {"item":"Grand Restorative Flask","price":900,"desc":"Restores 200 HP."},
+    {"item":"Scroll of Revival","price":1500,"desc":"Revive a defeated player."},
+    {"item":"Iron Shard","price":300,"desc":"Crafting material."},
+    {"item":"Enchanting Scroll","price":500,"desc":"Enchant gear. Future use."},
 ]
 ENHANCE_COSTS = {1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:18, 9:23, 10:30}
 ENHANCE_RATES = {1:1.00, 2:0.95, 3:0.90, 4:0.85, 5:0.75,
@@ -1507,218 +1942,218 @@ def get_daily_shop():
 # ── BOSSES ────────────────────────────────────────────────────────────────────
 BOSSES = {
     "1 ball": {"name":"The 1 Ball","hp":1200,"max_hp":1200,"dmg_min":68,"dmg_max":120,
-               "exp":2000,"gold":150,"title":"1-Ball Slayer","desc":"The break leaves it alone every time. It's had enough.",
-               "loot_table":[("Premium Chalk Draft","uncommon"),("Slate Fragment","uncommon"),("Slate Guard","uncommon")]},
+               "exp":2000,"gold":150,"title":"1-Ball Slayer","desc":"Every warrior left it standing. It has grown tired of waiting.",
+               "loot_table":[("Greater Health Potion","uncommon"),("Iron Shard","uncommon"),("Soldier's Plating","uncommon")]},
     "3 ball": {"name":"The 3 Ball","hp":2000,"max_hp":2000,"dmg_min":105,"dmg_max":165,
-               "exp":4000,"gold":300,"title":"3-Ball Slayer","desc":"Sits in the cluster and waits. When it moves, things break.",
-               "loot_table":[("Champion's Chalk Flask","rare"),("Slate Fragment","uncommon"),("Precision Rack","rare")]},
+               "exp":4000,"gold":300,"title":"3-Ball Slayer","desc":"Lurks in the shadows and waits. When it strikes, things shatter.",
+               "loot_table":[("Grand Restorative Flask","rare"),("Iron Shard","uncommon"),("Ranger's Marked Bow","rare")]},
     "5 ball": {"name":"The 5 Ball","hp":3000,"max_hp":3000,"dmg_min":143,"dmg_max":210,
-               "exp":7000,"gold":500,"title":"5-Ball Slayer","desc":"The middle of the rack. The heart of the problem.",
-               "loot_table":[("The Re-Rack","rare"),("Blackwood Bridge Stick","rare"),("The Action Coin","rare")]},
+               "exp":7000,"gold":500,"title":"5-Ball Slayer","desc":"The heart of the dungeon. The middle cannot be ignored.",
+               "loot_table":[("Scroll of Revival","rare"),("Warlock's Dread Staff","rare"),("Fortune Coin","rare")]},
     "7 ball": {"name":"The 7 Ball","hp":4500,"max_hp":4500,"dmg_min":180,"dmg_max":270,
-               "exp":12000,"gold":800,"title":"7-Ball Slayer","desc":"The last ball before the money ball. It knows what it guards.",
-               "loot_table":[("Heavy Breaker Staff","epic"),("Blacklight Cloak","epic"),("Double Kiss Ring","epic")]},
+               "exp":12000,"gold":800,"title":"7-Ball Slayer","desc":"The last guardian before the final boss. It knows what it protects.",
+               "loot_table":[("Warlord's Edge","epic"),("Void-Touched Robe","epic"),("Twin Strike Ring","epic")]},
     "8 ball": {"name":"The 8 Ball","hp":8000,"max_hp":8000,"dmg_min":225,"dmg_max":375,
-               "exp":20000,"gold":2000,"title":"8-Ball Champion","desc":"The money ball. The only one that matters at the end.",
-               "loot_table":[("The Rack Splitter","legendary"),("The Nap Robe","legendary"),("The Endless Run","legendary")]},
+               "exp":20000,"gold":2000,"title":"8-Ball Champion","desc":"The final boss. The only one that matters in the end.",
+               "loot_table":[("Ruinblade","legendary"),("Archmage's Sanctum Robe","legendary"),("Ring of the Endless","legendary")]},
     "void":   {"name":"The Void Ball","hp":15000,"max_hp":15000,"dmg_min":375,"dmg_max":600,
-               "exp":50000,"gold":5000,"title":"Blackball Slayer","desc":"A ball that was never racked. It came from somewhere else.","secret":True,
-               "loot_table":[("Splinter of the Break","legendary"),("The Final Shot Locket","legendary"),("The Blackball Mark","legendary")]},
+               "exp":50000,"gold":5000,"title":"Blackball Slayer","desc":"It was never part of this realm. It came from somewhere else.","secret":True,
+               "loot_table":[("Shard of the Void","legendary"),("The Last Stand Locket","legendary"),("The Void Mark","legendary")]},
 }
 
 RAID_TIERS = [
-    {"name":"The Felt Skirmish","min_level":1,"waves":2,"wave_boss_key":"1 ball",
-     "wave_enemies":[{"name":"Rack Grunt","hp":150,"dmg_min":15,"dmg_max":30},
-                     {"name":"Side Rail Mob","hp":250,"dmg_min":20,"dmg_max":40}],
+    {"name":"The Forest Skirmish","min_level":1,"waves":2,"wave_boss_key":"1 ball",
+     "wave_enemies":[{"name":"Goblin Scout","hp":150,"dmg_min":15,"dmg_max":30},
+                     {"name":"Cursed Wanderer","hp":250,"dmg_min":20,"dmg_max":40}],
      "exp_reward":600,"gold_reward":120,
      "loot_table":[
-         ("Worn Practice Cue",0.40),("Chalk Shiv",0.35),("Chalk Nub",0.30),
-         ("Worn Tip Wrap",0.30),("Pocket Marker",0.25),("Brass Rail Ring",0.20),
-         ("Road Player's Coin",0.15),("Silk Tip Ring",0.10),("Black Ball Stud",0.08),
-         ("Slate Fragment",0.12),("Chalk Vial",0.20),
+         ("Iron Broadsword",0.40),("Rusty Shiv",0.35),("Iron Shard Ring",0.30),
+         ("Worn Leather Band",0.30),("Scout's Pendant",0.25),("Brass Ring",0.20),
+         ("Traveler's Coin",0.15),("Silk Band",0.10),("Obsidian Stud",0.08),
+         ("Iron Shard",0.12),("Health Potion",0.20),
      ]},
-    {"name":"The Corner Pocket Assault","min_level":5,"waves":3,"wave_boss_key":"3 ball",
-     "wave_enemies":[{"name":"Chalk Golem","hp":400,"dmg_min":35,"dmg_max":60},
+    {"name":"The Fortress Assault","min_level":5,"waves":3,"wave_boss_key":"3 ball",
+     "wave_enemies":[{"name":"Stone Golem","hp":400,"dmg_min":35,"dmg_max":60},
                      {"name":"Pocket Demon","hp":600,"dmg_min":45,"dmg_max":75},
-                     {"name":"Rack Fiend","hp":800,"dmg_min":55,"dmg_max":90}],
+                     {"name":"Cursed Knight","hp":800,"dmg_min":55,"dmg_max":90}],
      "exp_reward":1400,"gold_reward":300,
      "loot_table":[
-         ("Graphite Break Cue",0.35),("Blue Diamond Chalk",0.30),("Blackwood Bridge Stick",0.25),
-         ("Red Ball Band",0.25),("Road Shark Signet",0.20),("Hustler's Tooth",0.18),
-         ("Chalk Bead Necklace",0.18),("Iron Scale Vest",0.15),("Shadow Leather Coat",0.12),
-         ("Slate Fragment",0.25),("The Action Coin",0.10),("Diamond Sight Medallion",0.08),
-         ("The Custom Tip Scroll",0.10),
+         ("Steel Knight Sword",0.35),("Crystal Core Wand",0.30),("Warlock's Dread Staff",0.25),
+         ("Bloodstone Band",0.25),("Shadowmark Signet",0.20),("Hunter's Fang",0.18),
+         ("Crystal Bead Necklace",0.18),("Iron Scale Vest",0.15),("Shadow Leather Coat",0.12),
+         ("Iron Shard",0.25),("Fortune Coin",0.10),("Hawk Eye Medallion",0.08),
+         ("Enchanting Scroll",0.10),
      ]},
-    {"name":"The Break Line Siege","min_level":10,"waves":3,"wave_boss_key":"5 ball",
-     "wave_enemies":[{"name":"Felt Wraith","hp":1000,"dmg_min":65,"dmg_max":100},
-                     {"name":"Cue Specter","hp":1500,"dmg_min":85,"dmg_max":130},
+    {"name":"The Citadel Siege","min_level":10,"waves":3,"wave_boss_key":"5 ball",
+     "wave_enemies":[{"name":"Ashen Wraith","hp":1000,"dmg_min":65,"dmg_max":100},
+                     {"name":"Void Specter","hp":1500,"dmg_min":85,"dmg_max":130},
                      {"name":"Break Titan","hp":2000,"dmg_min":100,"dmg_max":150}],
      "exp_reward":3000,"gold_reward":700,
      "loot_table":[
-         ("Heavy Breaker Staff",0.30),("The Extension",0.20),("Ferrule Dart",0.25),
-         ("Break Master's Clasp",0.22),("Ghost Ball Loop",0.18),("Closer's Band",0.16),
-         ("English Coil",0.15),("Slate Heart",0.18),("Shark Tooth Chain",0.15),
-         ("Road Player's Compass",0.12),("The Break Torc",0.12),
-         ("Slate Fragment",0.35),("The Custom Tip Scroll",0.20),("The Re-Rack",0.08),
+         ("Warlord's Edge",0.30),("Void Channel Staff",0.20),("Ferrule Dart",0.25),
+         ("War Master's Clasp",0.22),("Phantom Loop",0.18),("Warrior's Band",0.16),
+         ("Mage's Coil",0.15),("Stone Heart",0.18),("Beast Fang Chain",0.15),
+         ("Traveler's Compass",0.12),("The Storm Torc",0.12),
+         ("Iron Shard",0.35),("Enchanting Scroll",0.20),("Scroll of Revival",0.08),
      ]},
-    {"name":"The Final Rack  -  Endgame","min_level":15,"waves":4,"wave_boss_key":"8 ball",
-     "wave_enemies":[{"name":"Shadow Rack","hp":2500,"dmg_min":100,"dmg_max":160},
+    {"name":"The Final Sanctum  -  Endgame","min_level":15,"waves":4,"wave_boss_key":"8 ball",
+     "wave_enemies":[{"name":"Shadow Knight","hp":2500,"dmg_min":100,"dmg_max":160},
                      {"name":"Void Ball","hp":3500,"dmg_min":130,"dmg_max":200},
-                     {"name":"8Ball Sentinel","hp":5000,"dmg_min":150,"dmg_max":230},
+                     {"name":"Cursed Sentinel","hp":5000,"dmg_min":150,"dmg_max":230},
                      {"name":"Doom Cluster","hp":6000,"dmg_min":180,"dmg_max":260}],
      "exp_reward":8000,"gold_reward":2000,
      "loot_table":[
-         ("The Rack Splitter",0.12),("The Grand Bridge",0.10),("Chalked Finger",0.15),
-         ("Double Kiss Ring",0.18),("Eye of the Table",0.16),("Blackball Circle",0.14),
-         ("Break Knuckle",0.14),("House Saint's Band",0.12),("Chalk Heart",0.14),
-         ("The Hustler's Whisper",0.12),("The Safety Talisman",0.10),
-         ("Splinter of the Break",0.06),("The Endless Run",0.05),("The Old Road Ring",0.04),
-         ("The Rack Eternal",0.04),("Slate Fragment",0.50),("The Custom Tip Scroll",0.35),
-         ("The Re-Rack",0.15),
+         ("Ruinblade",0.12),("The Mind's Eye",0.10),("Runed Finger",0.15),
+         ("Twin Strike Ring",0.18),("Eye of the Void",0.16),("Void Circle",0.14),
+         ("War Knuckle",0.14),("Cleric's Band",0.12),("Runed Heart",0.14),
+         ("The Shadow Whisper",0.12),("Guardian's Talisman",0.10),
+         ("Shard of the Void",0.06),("Ring of the Endless",0.05),("The Warlord's Ring",0.04),
+         ("The Eternal Ring",0.04),("Iron Shard",0.50),("Enchanting Scroll",0.35),
+         ("Scroll of Revival",0.15),
      ]},
 ]
 
 SOLO_RAID_TIERS = [
-    {"name":"The Quiet Table","min_level":1,"wave_boss_key":"1 ball",
+    {"name":"The Quiet Ruins","min_level":1,"wave_boss_key":"1 ball",
      "wave_enemies":[
-         {"name":"Rookie Hustler","hp":80,"dmg_min":8,"dmg_max":18},
-         {"name":"Back Room Brawler","hp":130,"dmg_min":12,"dmg_max":24},
+         {"name":"Young Raider","hp":80,"dmg_min":8,"dmg_max":18},
+         {"name":"Dungeon Brawler","hp":130,"dmg_min":12,"dmg_max":24},
      ],
      "exp_reward":400,"gold_reward":80,
      "loot_table":[
-         ("Worn Practice Cue",0.40),("Chalk Shiv",0.35),("Chalk Nub",0.30),
-         ("Worn Tip Wrap",0.28),("Pocket Marker",0.25),("Brass Rail Ring",0.22),
-         ("Road Player's Coin",0.18),("Silk Tip Ring",0.12),("Black Ball Stud",0.10),
-         ("Slate Fragment",0.15),("Chalk Vial",0.25),
+         ("Iron Broadsword",0.40),("Rusty Shiv",0.35),("Iron Shard Ring",0.30),
+         ("Worn Leather Band",0.28),("Scout's Pendant",0.25),("Brass Ring",0.22),
+         ("Traveler's Coin",0.18),("Silk Band",0.12),("Obsidian Stud",0.10),
+         ("Iron Shard",0.15),("Health Potion",0.25),
      ]},
     {"name":"The Side Pocket Run","min_level":5,"wave_boss_key":"3 ball",
      "wave_enemies":[
-         {"name":"Chalk Bruiser","hp":200,"dmg_min":20,"dmg_max":38},
+         {"name":"Stone Bruiser","hp":200,"dmg_min":20,"dmg_max":38},
          {"name":"Rail Runner","hp":320,"dmg_min":28,"dmg_max":50},
-         {"name":"Pocket Shark","hp":450,"dmg_min":35,"dmg_max":62},
+         {"name":"Dungeon Rogue","hp":450,"dmg_min":35,"dmg_max":62},
      ],
      "exp_reward":900,"gold_reward":200,
      "loot_table":[
-         ("Graphite Break Cue",0.32),("Blue Diamond Chalk",0.28),("Blackwood Bridge Stick",0.22),
-         ("Red Ball Band",0.24),("Road Shark Signet",0.20),("Hustler's Tooth",0.16),
-         ("Chalk Bead Necklace",0.16),("Slate Fragment",0.28),
-         ("The Action Coin",0.10),("Diamond Sight Medallion",0.07),
-         ("The Custom Tip Scroll",0.08),
+         ("Steel Knight Sword",0.32),("Crystal Core Wand",0.28),("Warlock's Dread Staff",0.22),
+         ("Bloodstone Band",0.24),("Shadowmark Signet",0.20),("Hunter's Fang",0.16),
+         ("Crystal Bead Necklace",0.16),("Iron Shard",0.28),
+         ("Fortune Coin",0.10),("Hawk Eye Medallion",0.07),
+         ("Enchanting Scroll",0.08),
      ]},
     {"name":"The One-Man Break","min_level":10,"wave_boss_key":"5 ball",
      "wave_enemies":[
-         {"name":"Felt Enforcer","hp":500,"dmg_min":40,"dmg_max":65},
-         {"name":"Cue Wraith","hp":750,"dmg_min":55,"dmg_max":85},
+         {"name":"Iron Enforcer","hp":500,"dmg_min":40,"dmg_max":65},
+         {"name":"Shadow Wraith","hp":750,"dmg_min":55,"dmg_max":85},
          {"name":"The Closer's Shadow","hp":1000,"dmg_min":65,"dmg_max":100},
      ],
      "exp_reward":2000,"gold_reward":480,
      "loot_table":[
-         ("Heavy Breaker Staff",0.28),("The Extension",0.18),("Ferrule Dart",0.24),
-         ("Break Master's Clasp",0.20),("Ghost Ball Loop",0.16),("Closer's Band",0.14),
-         ("English Coil",0.14),("Slate Heart",0.16),("Shark Tooth Chain",0.14),
-         ("Slate Fragment",0.35),("The Custom Tip Scroll",0.18),("The Re-Rack",0.07),
+         ("Warlord's Edge",0.28),("Void Channel Staff",0.18),("Ferrule Dart",0.24),
+         ("War Master's Clasp",0.20),("Phantom Loop",0.16),("Warrior's Band",0.14),
+         ("Mage's Coil",0.14),("Stone Heart",0.16),("Beast Fang Chain",0.14),
+         ("Iron Shard",0.35),("Enchanting Scroll",0.18),("Scroll of Revival",0.07),
      ]},
     {"name":"The Ghost Run","min_level":15,"wave_boss_key":"8 ball",
      "wave_enemies":[
-         {"name":"Void Rack","hp":1200,"dmg_min":65,"dmg_max":110},
+         {"name":"Void Knight","hp":1200,"dmg_min":65,"dmg_max":110},
          {"name":"8Ball Phantom","hp":1800,"dmg_min":85,"dmg_max":140},
          {"name":"The Dead Stroke","hp":2400,"dmg_min":100,"dmg_max":165},
          {"name":"Final Ghost","hp":3000,"dmg_min":115,"dmg_max":185},
      ],
      "exp_reward":5000,"gold_reward":1400,
      "loot_table":[
-         ("Chalked Finger",0.14),("Double Kiss Ring",0.16),("Eye of the Table",0.14),
-         ("Blackball Circle",0.12),("Break Knuckle",0.12),("House Saint's Band",0.10),
-         ("Chalk Heart",0.12),("The Hustler's Whisper",0.10),("The Safety Talisman",0.09),
-         ("Splinter of the Break",0.05),("The Endless Run",0.04),("The Old Road Ring",0.03),
-         ("The Rack Eternal",0.03),("Slate Fragment",0.50),("The Custom Tip Scroll",0.30),
-         ("The Re-Rack",0.12),
+         ("Runed Finger",0.14),("Twin Strike Ring",0.16),("Eye of the Void",0.14),
+         ("Void Circle",0.12),("War Knuckle",0.12),("Cleric's Band",0.10),
+         ("Runed Heart",0.12),("The Shadow Whisper",0.10),("Guardian's Talisman",0.09),
+         ("Shard of the Void",0.05),("Ring of the Endless",0.04),("The Warlord's Ring",0.03),
+         ("The Eternal Ring",0.03),("Iron Shard",0.50),("Enchanting Scroll",0.30),
+         ("Scroll of Revival",0.12),
      ]},
 ]
 
 EXPLORE_ZONES = [
-    {"name":"The Old Pool Hall","tier":"Easy","exp":500,"gold":50,
-     "loot_table":[("Chalk Vial",0.15),("Chalk Shiv",0.10),("Chalk Beads",0.10),
-                   ("Chalk Nub",0.08),("Worn Tip Wrap",0.08)],
+    {"name":"The Ancient Ruins","tier":"Easy","exp":500,"gold":50,
+     "loot_table":[("Health Potion",0.15),("Rusty Shiv",0.10),("Wooden Prayer Beads",0.10),
+                   ("Iron Shard Ring",0.08),("Worn Leather Band",0.08)],
      "fail_msg":"The road was longer than expected. You return empty-handed."},
     {"name":"The Back Room","tier":"Medium","exp":900,"gold":100,
-     "loot_table":[("Premium Chalk Draft",0.10),("Mushroom Tip Blade",0.08),("Worn Practice Cue",0.08),
-                   ("Silk Tip Ring",0.06),("Red Ball Band",0.05)],
+     "loot_table":[("Greater Health Potion",0.10),("Mushroom Tip Blade",0.08),("Iron Broadsword",0.08),
+                   ("Silk Band",0.06),("Bloodstone Band",0.05)],
      "fail_msg":"The bandits were too many. You barely escaped."},
     {"name":"The Condemned Hall","tier":"Hard","exp":1500,"gold":200,
-     "loot_table":[("Champion's Chalk Flask",0.05),("The Re-Rack",0.03),("Slate Fragment",0.15),
-                   ("The Action Coin",0.05),("Slate Heart",0.05),("Graphite Break Cue",0.04)],
+     "loot_table":[("Grand Restorative Flask",0.05),("Scroll of Revival",0.03),("Iron Shard",0.15),
+                   ("Fortune Coin",0.05),("Stone Heart",0.05),("Steel Knight Sword",0.04)],
      "fail_msg":"The ruins shifted and swallowed the path. You find nothing."},
-    {"name":"The Shark's Den","tier":"Elite","exp":2500,"gold":400,
-     "loot_table":[("Slate Fragment",0.30),("The Custom Tip Scroll",0.15),
-                   ("Heavy Breaker Staff",0.03),("The Extension",0.03),
-                   ("Double Kiss Ring",0.03),("Chalk Heart",0.03)],
+    {"name":"The Shadow Den","tier":"Elite","exp":2500,"gold":400,
+     "loot_table":[("Iron Shard",0.30),("Enchanting Scroll",0.15),
+                   ("Warlord's Edge",0.03),("Void Channel Staff",0.03),
+                   ("Twin Strike Ring",0.03),("Runed Heart",0.03)],
      "fail_msg":"The dragon was awake. You fled with your life."},
     {"name":"The Corner Pocket","tier":"Legendary","exp":5000,"gold":800,
-     "loot_table":[("The Rack Splitter",0.01),("The Grand Bridge",0.01),("Splinter of the Break",0.01),
-                   ("The Final Shot Locket",0.01),("The Blackball Mark",0.01),
-                   ("Slate Fragment",0.20),("The Custom Tip Scroll",0.20)],
+     "loot_table":[("Ruinblade",0.01),("The Mind's Eye",0.01),("Shard of the Void",0.01),
+                   ("The Last Stand Locket",0.01),("The Void Mark",0.01),
+                   ("Iron Shard",0.20),("Enchanting Scroll",0.20)],
      "fail_msg":"The void rejected you. You wake up back at camp, shaken."},
 ]
 
 SOLO_QUESTS = [
-    {"tier":"Easy","text":"You ran a message across town to a player who couldn't leave their table.","exp":30,"gold":5,
-     "loot_table":[("Chalk Vial",0.05),("Chalk Shiv",0.03),("Chalk Beads",0.03)]},
-    {"tier":"Easy","text":"You chalked up for a stranger who'd run out mid-game.","exp":25,"gold":8,
-     "loot_table":[("Chalk Nub",0.05),("Pocket Marker",0.05)]},
-    {"tier":"Easy","text":"You cleared the back room of a pool hall that hadn't been touched in years.","exp":20,"gold":10,
-     "loot_table":[("Chalk Vial",0.05),("Brass Rail Ring",0.04)]},
-    {"tier":"Easy","text":"You walked a rookie home after they lost their stake money. Good people exist.","exp":35,"gold":5,
-     "loot_table":[("Worn Tip Wrap",0.05),("Road Player's Coin",0.04)]},
-    {"tier":"Easy","text":"You recovered a cue for an old player who couldn't get to the hall himself.","exp":28,"gold":7,
-     "loot_table":[("Chalk Vial",0.06),("Chalk Shiv",0.03)]},
-    {"tier":"Medium","text":"You survived a night in the back room with real money on the table.","exp":55,"gold":20,
-     "loot_table":[("Premium Chalk Draft",0.03),("Worn Practice Cue",0.04),("Silk Tip Ring",0.03)]},
-    {"tier":"Medium","text":"You tracked a hustler who'd been working the hall under a fake name.","exp":60,"gold":25,
-     "loot_table":[("Mushroom Tip Blade",0.04),("Red Ball Band",0.03),("Black Ball Stud",0.03)]},
-    {"tier":"Medium","text":"You went heads up with the hall's best player. Walked out with their respect.","exp":65,"gold":30,
-     "loot_table":[("Slate Fragment",0.05),("Road Shark Signet",0.03),("Hustler's Tooth",0.03)]},
-    {"tier":"Medium","text":"You cleared the table alone in a packed room with everyone watching.","exp":70,"gold":25,
-     "loot_table":[("Standard Magic Rack",0.04),("Blue Diamond Chalk",0.04),("Iron Chalk Ring",0.04)]},
-    {"tier":"Hard","text":"You shut down a shark who'd been running the hall for six months.","exp":80,"gold":50,
-     "loot_table":[("Slate Fragment",0.10),("Champion's Chalk Flask",0.01),("The Re-Rack",0.01),
-                   ("Ferrule Dart",0.02),("Blackwood Bridge Stick",0.02)]},
-    {"tier":"Hard","text":"You broke into the closed tournament room and played the setup tables alone.","exp":75,"gold":60,
-     "loot_table":[("Slate Fragment",0.10),("The Custom Tip Scroll",0.05),
-                   ("Break Master's Clasp",0.02),("Diamond Sight Medallion",0.02)]},
-    {"tier":"Hard","text":"You beat the house player straight up, no handicap, on their home table.","exp":80,"gold":55,
-     "loot_table":[("Slate Fragment",0.12),("The Custom Tip Scroll",0.05),
-                   ("Precision Rack",0.02),("Graphite Break Cue",0.02)]},
+    {"tier":"Easy","text":"You ran a message across town to a wanderer who couldn't leave their post.","exp":30,"gold":5,
+     "loot_table":[("Health Potion",0.05),("Rusty Shiv",0.03),("Wooden Prayer Beads",0.03)]},
+    {"tier":"Easy","text":"You offered aid to a stranger who'd run out of supplies mid-journey.","exp":25,"gold":8,
+     "loot_table":[("Iron Shard Ring",0.05),("Scout's Pendant",0.05)]},
+    {"tier":"Easy","text":"You cleared an ancient ruin that hadn't been touched in years.","exp":20,"gold":10,
+     "loot_table":[("Health Potion",0.05),("Brass Ring",0.04)]},
+    {"tier":"Easy","text":"You walked a recruit home after they lost their coin. Good people exist.","exp":35,"gold":5,
+     "loot_table":[("Worn Leather Band",0.05),("Traveler's Coin",0.04)]},
+    {"tier":"Easy","text":"You recovered a lost relic for an old wanderer who couldn't make the journey himself.","exp":28,"gold":7,
+     "loot_table":[("Health Potion",0.06),("Rusty Shiv",0.03)]},
+    {"tier":"Medium","text":"You survived a night in the back room with real stakes on the line.","exp":55,"gold":20,
+     "loot_table":[("Greater Health Potion",0.03),("Iron Broadsword",0.04),("Silk Band",0.03)]},
+    {"tier":"Medium","text":"You tracked a rogue agent who'd been working the region under a false identity.","exp":60,"gold":25,
+     "loot_table":[("Mushroom Tip Blade",0.04),("Bloodstone Band",0.03),("Obsidian Stud",0.03)]},
+    {"tier":"Medium","text":"You challenged the region's best warrior. Walked out with their respect.","exp":65,"gold":30,
+     "loot_table":[("Iron Shard",0.05),("Shadowmark Signet",0.03),("Hunter's Fang",0.03)]},
+    {"tier":"Medium","text":"You stormed a fortified position alone with everyone watching.","exp":70,"gold":25,
+     "loot_table":[("Repeating Crossbow",0.04),("Crystal Core Wand",0.04),("Silver Prayer Beads",0.04)]},
+    {"tier":"Hard","text":"You shut down a warlord who'd been terrorizing the region for six months.","exp":80,"gold":50,
+     "loot_table":[("Iron Shard",0.10),("Grand Restorative Flask",0.01),("Scroll of Revival",0.01),
+                   ("Ferrule Dart",0.02),("Warlock's Dread Staff",0.02)]},
+    {"tier":"Hard","text":"You broke into the sealed vault and survived every trap inside.","exp":75,"gold":60,
+     "loot_table":[("Iron Shard",0.10),("Enchanting Scroll",0.05),
+                   ("War Master's Clasp",0.02),("Hawk Eye Medallion",0.02)]},
+    {"tier":"Hard","text":"You defeated the fortress champion straight up, no advantage, on their home ground.","exp":80,"gold":55,
+     "loot_table":[("Iron Shard",0.12),("Enchanting Scroll",0.05),
+                   ("Ranger's Marked Bow",0.02),("Steel Knight Sword",0.02)]},
 ]
 
 RANDOM_EVENTS = [
     {"key":"traveler","freq":"common",
      "msg":"🎱 *A Road Player has set up at the far table.*\nFirst to /greet gets a tip and something useful.",
-     "exp":300,"loot_table":[("Chalk Vial",0.40),("Slate Fragment",0.20),("Chalk Nub",0.20),("Pocket Marker",0.20)]},
+     "exp":300,"loot_table":[("Health Potion",0.40),("Iron Shard",0.20),("Iron Shard Ring",0.20),("Scout's Pendant",0.20)]},
     {"key":"bandit","freq":"common",
-     "msg":"🗡️ *A hustler who lost badly is looking for someone to blame.* 150 HP. Use /fight. Take them down for +250 EXP.",
+     "msg":"🗡️ *A rogue warrior who lost badly is looking for someone to blame.* 150 HP. Use /fight. Take them down for +250 EXP.",
      "enemy_hp":150,"exp_reward":250,
-     "loot_table":[("Chalk Vial",0.30),("Chalk Shiv",0.15),("Brass Rail Ring",0.10)]},
+     "loot_table":[("Health Potion",0.30),("Rusty Shiv",0.15),("Brass Ring",0.10)]},
     {"key":"ghost","freq":"common",
-     "msg":"👻 *Something that used to play here doesn't know it's gone.* 200 HP. Use /shoot to send it off. +300 EXP.",
+     "msg":"👻 *Something that used to wander here doesn't know it's gone.* 200 HP. Use /shoot to send it off. +300 EXP.",
      "enemy_hp":200,"exp_reward":300,
-     "loot_table":[("Premium Chalk Draft",0.20),("Worn Tip Wrap",0.15)]},
+     "loot_table":[("Greater Health Potion",0.20),("Worn Leather Band",0.15)]},
     {"key":"merchant","freq":"uncommon",
-     "msg":"🛍️ *A cue dealer just set up in the corner.*\n/greet them for 20% off at the shop for 30 minutes.",
+     "msg":"🛍️ *A traveling merchant just arrived.*\n/greet them for 20% off at the shop for 30 minutes.",
      "discount":0.20,"duration_min":30},
     {"key":"rival","freq":"uncommon",
      "msg":"⚔️ *Someone walked in looking for action.*\nFirst to /fight claims the table. Winner gets bonus EXP and gold."},
     {"key":"drake","freq":"uncommon",
-     "msg":"🎱 *A legendary shark just sat down uninvited.* 500 HP. Reply with /strike to run them off. Rewards split by damage dealt.",
+     "msg":"🎱 *A legendary raider just walked in uninvited.* 500 HP. Reply with /strike to run them off. Rewards split by damage dealt.",
      "enemy_hp":500,"exp_reward":1000,
-     "loot_table":[("Slate Fragment",0.50),("The Custom Tip Scroll",0.20),("The Re-Rack",0.10)]},
+     "loot_table":[("Iron Shard",0.50),("Enchanting Scroll",0.20),("Scroll of Revival",0.10)]},
     {"key":"cache","freq":"uncommon",
-     "msg":"💰 *Someone left a bag under the corner table and didn't come back.*\nFirst to /claim gets what's inside.",
-     "loot_table":[("Slate Fragment",0.30),("Premium Chalk Draft",0.30),("Silk Tip Ring",0.20),("Chalk Bead Necklace",0.20)]},
+     "msg":"💰 *Someone left a bag in the corner and didn't come back.*\nFirst to /claim gets what's inside.",
+     "loot_table":[("Iron Shard",0.30),("Greater Health Potion",0.30),("Silk Band",0.20),("Crystal Bead Necklace",0.20)]},
     {"key":"storm","freq":"uncommon",
-     "msg":"🌩️ *The hall's AC blew.* The felt is different now. Table conditions changed."},
+     "msg":"🌩️ *Something disrupted the ley lines.* The air is different now. Conditions changed."},
     {"key":"legendary_merchant","freq":"rare",
-     "msg":"👑 *A master cue maker just walked in with a case.* 10 minutes only. Use /shop legend.","duration_min":10},
+     "msg":"👑 *A legendary craftsman just arrived with rare wares.* 10 minutes only. Use /shop legend.","duration_min":10},
     {"key":"shrine","freq":"rare",
      "msg":"🔮 *An old trophy was found behind the wall.*\nFirst to /pray gets something from it."},
     {"key":"cursed","freq":"rare",
@@ -1761,7 +2196,7 @@ IDLE_FLAVOR = {
 DUNGEON_THEMES = [
     {
         "name": "The Sunken Hall",
-        "desc": "An old pool hall reclaimed by groundwater. The tables are still level.",
+        "desc": "Ancient ruins reclaimed by groundwater. The stone is still level.",
         "enemy_prefix": ["Drowned","Waterlogged","Barnacled","Tide-Cursed"],
         "trap_flavor": ["a pressure plate beneath inches of dark water",
                         "a rusted portcullis rigged to drop",
@@ -1771,12 +2206,12 @@ DUNGEON_THEMES = [
                         "Somewhere deeper, water drips in an endless rhythm.",
                         "The floor is slick and cold beneath your feet.",
                         "Pale fish dart through cracks in the stone."],
-        "boss_name": "The Hall Manager",
-        "boss_desc": "He ran this hall for forty years. It sank with him. He didn't leave.",
+        "boss_name": "The Dungeon Lord",
+        "boss_desc": "He ruled this place for forty years. It sank with him. He didn't leave.",
     },
     {
-        "name": "The Burned Billiard Room",
-        "desc": "A private billiard room that caught fire mid-session. The game was never finished.",
+        "name": "The Burned Chamber",
+        "desc": "A sealed chamber that caught fire mid-battle. The fight was never finished.",
         "enemy_prefix": ["Charred","Cinder","Smoldering","Ash-Born"],
         "trap_flavor": ["jets of flame erupting from the floor",
                         "a tripwire connected to a wall of fire",
@@ -1787,11 +2222,11 @@ DUNGEON_THEMES = [
                         "The heat is oppressive and constant.",
                         "Blackened bones line the walls in neat rows."],
         "boss_name": "The Burned Out Champion",
-        "boss_desc": "Won everything there was to win. Then the hall burned. Now he wanders the smoke.",
+        "boss_desc": "Won everything there was to win. Then the sanctum fell. Now he wanders the ash.",
     },
     {
-        "name": "The Abandoned Pool Hall",
-        "desc": "Closed without notice. Locked from the outside. Nobody knows why.",
+        "name": "The Abandoned Sanctum",
+        "desc": "Sealed without notice. Locked from the outside. Nobody knows why.",
         "enemy_prefix": ["Spectral","Siege-Cursed","Hollow","Battleborn"],
         "trap_flavor": ["a crossbow mounted to the wall still loaded",
                         "a floor section rigged to collapse into darkness",
@@ -1805,8 +2240,8 @@ DUNGEON_THEMES = [
         "boss_desc": "Ran the last tournament held here. Still calling the shots. Nobody's listening.",
     },
     {
-        "name": "The Felt Maze",
-        "desc": "A hall built entirely of table felt. The layout changes. The exits don't stay put.",
+        "name": "The Shadow Maze",
+        "desc": "A hall built of illusion and shadow. The layout changes. The exits don't stay put.",
         "enemy_prefix": ["Vine-Choked","Root-Twisted","Spore-Touched","Feral"],
         "trap_flavor": ["carnivorous vines dropping from the ceiling",
                         "spore clouds that cloud the mind",
@@ -1816,12 +2251,12 @@ DUNGEON_THEMES = [
                         "Something breathes here. You can feel it.",
                         "Bioluminescent fungi cast everything in pale blue light.",
                         "The labyrinth shifts  -  the walls have moved since you passed them."],
-        "boss_name": "The Felt Itself",
-        "boss_desc": "The table stopped being furniture a long time ago. It has opinions now.",
+        "boss_name": "The Maze Itself",
+        "boss_desc": "The labyrinth stopped being stone a long time ago. It has will now.",
     },
     {
-        "name": "The Broken Table Room",
-        "desc": "Every table in here has a broken leg. They're still in use. Nobody knows why.",
+        "name": "The Fractured Vault",
+        "desc": "Every artifact here is cracked or shattered. They still hum with power. Nobody knows why.",
         "enemy_prefix": ["Fractured","Void-Touched","Rift-Born","Unbound"],
         "trap_flavor": ["unstable arcane nodes that discharge on proximity",
                         "a rift in space that pulls at anything nearby",
@@ -1831,12 +2266,12 @@ DUNGEON_THEMES = [
                         "Books orbit the ceiling slowly, still open to their last page.",
                         "The floor is translucent. Something massive moves beneath it.",
                         "You hear conversations that happened in this room long ago."],
-        "boss_name": "The Rulebook Gone Wrong",
-        "boss_desc": "Someone wrote new rules for the table. The table accepted them. This is the result.",
+        "boss_name": "The Corrupted Codex",
+        "boss_desc": "Someone rewrote the laws of this place. The vault accepted them. This is the result.",
     },
     {
-        "name": "The Basement Tables",
-        "desc": "Below the main floor. No windows. No clock. The game never stops down here.",
+        "name": "The Deep Vaults",
+        "desc": "Below the main level. No windows. No clock. The fighting never stops down here.",
         "enemy_prefix": ["Clockwork","Steam-Wreathed","Corroded","Iron-Boned"],
         "trap_flavor": ["gears that engage and crush without warning",
                         "steam vents at scalding pressure",
@@ -1846,8 +2281,8 @@ DUNGEON_THEMES = [
                         "Steam fills every corridor at knee height.",
                         "The noise is constant. You stop being able to hear yourself think.",
                         "Pipes sweat rust-colored water onto everything."],
-        "boss_name": "The Automated Rack Machine",
-        "boss_desc": "Racks every ball. Every time. With zero interest in who wins.",
+        "boss_name": "The Iron Construct",
+        "boss_desc": "Built to destroy without reason or pause. It has no interest in who wins.",
     },
     {
         "name": "The White Cloth Wastes",
@@ -1862,11 +2297,11 @@ DUNGEON_THEMES = [
                         "The silence here is total and wrong.",
                         "The cold has a weight to it, like it's alive."],
         "boss_name": "The Cold Stroke Master",
-        "boss_desc": "Never rushes. Never reacts. Cold as the cloth. Hits harder for it.",
+        "boss_desc": "Never rushes. Never reacts. Cold as stone. Hits harder for it.",
     },
     {
-        "name": "The Red Felt Sanctum",
-        "desc": "Red felt from floor to ceiling. The pockets are real. So is whatever guards them.",
+        "name": "The Crimson Sanctum",
+        "desc": "Red stone from floor to ceiling. The passages are real. So is whatever guards them.",
         "enemy_prefix": ["Corrupted","Tainted","Blasphemous","Hollow-Faithful"],
         "trap_flavor": ["consecrated ground that burns the faithless",
                         "a bell toll that shatters concentration and causes damage",
@@ -1883,43 +2318,43 @@ DUNGEON_THEMES = [
 
 DUNGEON_LOOT = {
     "normal": {
-        "monster":   [("Chalk Vial",0.30),("Slate Fragment",0.12),
-                      ("Chalk Shiv",0.08),("Chalk Beads",0.08)],
-        "treasure":  [("Premium Chalk Draft",0.20),("Slate Fragment",0.20),
-                      ("Silk Tip Ring",0.08),("Red Ball Band",0.08),
-                      ("Worn Practice Cue",0.06)],
-        "mini_boss": [("Slate Fragment",0.40),("The Custom Tip Scroll",0.10),
-                      ("Champion's Chalk Flask",0.15),("The Action Coin",0.06)],
-        "boss":      [("Slate Fragment",0.50),("The Custom Tip Scroll",0.20),
-                      ("The Re-Rack",0.10),("Break Master's Clasp",0.05)],
+        "monster":   [("Health Potion",0.30),("Iron Shard",0.12),
+                      ("Rusty Shiv",0.08),("Wooden Prayer Beads",0.08)],
+        "treasure":  [("Greater Health Potion",0.20),("Iron Shard",0.20),
+                      ("Silk Band",0.08),("Bloodstone Band",0.08),
+                      ("Iron Broadsword",0.06)],
+        "mini_boss": [("Iron Shard",0.40),("Enchanting Scroll",0.10),
+                      ("Grand Restorative Flask",0.15),("Fortune Coin",0.06)],
+        "boss":      [("Iron Shard",0.50),("Enchanting Scroll",0.20),
+                      ("Scroll of Revival",0.10),("War Master's Clasp",0.05)],
         "completion_bonus": {"exp": 800, "gold": 200},
     },
     "hard": {
-        "monster":   [("Premium Chalk Draft",0.15),("Slate Fragment",0.20),
-                      ("Mushroom Tip Blade",0.07),("Worn Practice Cue",0.07)],
-        "treasure":  [("Slate Fragment",0.30),("The Custom Tip Scroll",0.15),
-                      ("Champion's Chalk Flask",0.10),("The Action Coin",0.07),
-                      ("Break Master's Clasp",0.05),("Diamond Sight Medallion",0.05)],
-        "mini_boss": [("Slate Fragment",0.50),("The Custom Tip Scroll",0.25),
-                      ("The Re-Rack",0.10),("Graphite Break Cue",0.05)],
-        "boss":      [("Slate Fragment",0.60),("The Custom Tip Scroll",0.30),
-                      ("The Re-Rack",0.15),("Heavy Breaker Staff",0.04),
-                      ("The Extension",0.04),("Double Kiss Ring",0.04)],
+        "monster":   [("Greater Health Potion",0.15),("Iron Shard",0.20),
+                      ("Mushroom Tip Blade",0.07),("Iron Broadsword",0.07)],
+        "treasure":  [("Iron Shard",0.30),("Enchanting Scroll",0.15),
+                      ("Grand Restorative Flask",0.10),("Fortune Coin",0.07),
+                      ("War Master's Clasp",0.05),("Hawk Eye Medallion",0.05)],
+        "mini_boss": [("Iron Shard",0.50),("Enchanting Scroll",0.25),
+                      ("Scroll of Revival",0.10),("Steel Knight Sword",0.05)],
+        "boss":      [("Iron Shard",0.60),("Enchanting Scroll",0.30),
+                      ("Scroll of Revival",0.15),("Warlord's Edge",0.04),
+                      ("Void Channel Staff",0.04),("Twin Strike Ring",0.04)],
         "completion_bonus": {"exp": 1800, "gold": 450},
     },
     "legendary": {
-        "monster":   [("Slate Fragment",0.30),("The Custom Tip Scroll",0.10),
-                      ("Champion's Chalk Flask",0.12),("The Re-Rack",0.05)],
-        "treasure":  [("Slate Fragment",0.40),("The Custom Tip Scroll",0.25),
-                      ("The Re-Rack",0.12),("Chalk Heart",0.05),
-                      ("The Hustler's Whisper",0.04),("Eye of the Table",0.04)],
-        "mini_boss": [("Slate Fragment",0.60),("The Custom Tip Scroll",0.35),
-                      ("Heavy Breaker Staff",0.05),("Blacklight Cloak",0.05),
-                      ("Double Kiss Ring",0.05)],
-        "boss":      [("Slate Fragment",0.70),("The Custom Tip Scroll",0.40),
-                      ("The Rack Splitter",0.02),("The Grand Bridge",0.02),
-                      ("Splinter of the Break",0.02),("The Final Shot Locket",0.02),
-                      ("The Endless Run",0.02)],
+        "monster":   [("Iron Shard",0.30),("Enchanting Scroll",0.10),
+                      ("Grand Restorative Flask",0.12),("Scroll of Revival",0.05)],
+        "treasure":  [("Iron Shard",0.40),("Enchanting Scroll",0.25),
+                      ("Scroll of Revival",0.12),("Runed Heart",0.05),
+                      ("The Shadow Whisper",0.04),("Eye of the Void",0.04)],
+        "mini_boss": [("Iron Shard",0.60),("Enchanting Scroll",0.35),
+                      ("Warlord's Edge",0.05),("Void-Touched Robe",0.05),
+                      ("Twin Strike Ring",0.05)],
+        "boss":      [("Iron Shard",0.70),("Enchanting Scroll",0.40),
+                      ("Ruinblade",0.02),("The Mind's Eye",0.02),
+                      ("Shard of the Void",0.02),("The Last Stand Locket",0.02),
+                      ("Ring of the Endless",0.02)],
         "completion_bonus": {"exp": 4000, "gold": 1000},
     },
 }
@@ -2050,25 +2485,25 @@ def set_status(p, key, duration_seconds):
 
 def get_active_statuses(p):
     statuses = []
-    if is_distracted(p):      statuses.append("😵 Miscued (30% miss)")
-    if is_entangled(p):       statuses.append("🌿 Snookered (can't attack)")
-    if is_frozen(p):          statuses.append("🧊 Table Locked (can't attack)")
-    if is_stunned(p):         statuses.append("⚡ Scratched (miss next attack)")
-    if is_vanished(p):        statuses.append("👻 Ghost Cued (untargetable)")
-    if is_poisoned(p):    statuses.append(f"🐍 Chalk Dusted ({p.get('poison_damage',6)} dmg/30s)")
-    if is_burning(p):     statuses.append(f"🔥 Felt Burning ({p.get('burn_damage',8)} dmg/20s)")
-    if has_ward(p):       statuses.append("✨ Safety Play (next hit -40%)")
-    if is_exposed(p):     statuses.append("🗡️ Open Table (+15% dmg taken)")
-    if is_branded(p):     statuses.append("🔥 Chalk Marked (next attack -30%)")
+    if is_distracted(p):      statuses.append("😵 Disoriented (30% miss)")
+    if is_entangled(p):       statuses.append("🌿 Rooted (can't attack)")
+    if is_frozen(p):          statuses.append("🧊 Frozen Solid (can't attack)")
+    if is_stunned(p):         statuses.append("⚡ Stunned (miss next attack)")
+    if is_vanished(p):        statuses.append("👻 Vanished (untargetable)")
+    if is_poisoned(p):    statuses.append(f"🐍 Poisoned ({p.get('poison_damage',6)} dmg/30s)")
+    if is_burning(p):     statuses.append(f"🔥 Burning ({p.get('burn_damage',8)} dmg/20s)")
+    if has_ward(p):       statuses.append("✨ Warded (next hit -40%)")
+    if is_exposed(p):     statuses.append("🗡️ Exposed (+15% dmg taken)")
+    if is_branded(p):     statuses.append("🔥 Branded (next attack -30%)")
     if is_marked(p):      statuses.append("🎯 Marked for Death (+20% dmg taken)")
     if is_bleeding(p):        statuses.append(f"🩸 Draw Bleed ({p.get('bleed_damage',10)} dmg/30s)")
     if is_hexed(p):           statuses.append("💀 Hooked (-25% damage)")
     if is_blessed(p):         statuses.append("✨ In Stroke (+10% all stats)")
-    if is_weakened(p):        statuses.append("💔 Miscue Form (+25% dmg taken)")
-    if is_healing_blocked(p): statuses.append("🚫 No Re-Rack")
+    if is_weakened(p):        statuses.append("💔 Weakened (+25% dmg taken)")
+    if is_healing_blocked(p): statuses.append("🚫 No Revival")
     if is_revival_blocked(p): statuses.append("☠️ Condemned (Verdict's Call)")
     if is_silenced(p):        statuses.append("🤐 Frozen Stroke (no skills)")
-    if is_invincible(p):      statuses.append("🛡️ Still Chalking (Still Recovering)")
+    if is_invincible(p):      statuses.append("🛡️ Still Recovering (Invincible)")
     return statuses
 
 # ── GEAR HELPERS ──────────────────────────────────────────────────────────────
@@ -2588,7 +3023,7 @@ def _defeated_msg(p):
     msg = "💀 You're defeated!"
     if cause:  msg += f"\n☠️ Defeated by: _{cause}_"
     if countdown: msg += f"\n⏳ Back in: *{countdown}*"
-    msg += "\n_Ask a Chalker to revive you, or wait it out._"
+    msg += "\n_Ask a Priest to revive you, or wait it out._"
     return msg
 
 async def _notify_defeat(bot, p, cause_str):
@@ -2597,7 +3032,7 @@ async def _notify_defeat(bot, p, cause_str):
         countdown = time_until(p.get("defeated_until")) or "6 hours"
         await bot.send_message(
             chat_id=p["user_id"],
-            text=f"💀 You were defeated by *{cause_str}*!\n⏳ Back in: *{countdown}*\n_Use /heal or ask a Chalker to get back sooner._",
+            text=f"💀 You were defeated by *{cause_str}*!\n⏳ Back in: *{countdown}*\n_Use /heal or ask a Priest to get back sooner._",
             parse_mode="Markdown")
     except Exception:
         pass
@@ -3154,6 +3589,11 @@ def check_miss(attacker, defender):
         if pk == "void_rift":     dodge += 0.25
         if pk == "quick_hands":   dodge += get_stat(defender, "AGI") * 0.005
 
+    # Pet passive dodge bonus (defender)
+    def_pet = get_active_pet_record(defender.get("user_id"))
+    if def_pet:
+        dodge += get_pet_passives(def_pet.get("level",1)).get("dodge_bonus", 0)
+
     # Attacker miss penalty
     if is_distracted(attacker): dodge += 0.30
 
@@ -3183,6 +3623,9 @@ def check_crit(attacker):
     base_crit += get_enchant_bonus(attacker, "crit_bonus")
     if cls and cls.get("passive_key") == "quick_hands":
         base_crit += 0.15
+    atk_pet = get_active_pet_record(attacker.get("user_id"))
+    if atk_pet:
+        base_crit += get_pet_passives(atk_pet.get("level", 1)).get("crit_bonus", 0)
     return random.random() < base_crit
 
 def apply_crit(attacker, dmg):
@@ -3205,6 +3648,9 @@ def apply_lifesteal(attacker, dmg):
     enc_heal = get_enchant_bonus(attacker, "lifesteal_flat")
     if enc_heal:
         healed += enc_heal
+    ls_pet = get_active_pet_record(attacker.get("user_id"))
+    if ls_pet:
+        healed += get_pet_passives(ls_pet.get("level", 1)).get("lifesteal_flat", 0)
     if healed:
         attacker["hp"] = min(calc_max_hp(attacker), attacker["hp"] + healed)
     return healed
@@ -3260,7 +3706,7 @@ def init_db():
         losses INTEGER DEFAULT 0, quests_done INTEGER DEFAULT 0,
         heals_given INTEGER DEFAULT 0, dodges INTEGER DEFAULT 0,
         crafts_done INTEGER DEFAULT 0, perm_dmg_bonus INTEGER DEFAULT 0,
-        titles TEXT DEFAULT '["Fresh Rack"]',
+        titles TEXT DEFAULT '["Adventurer"]',
         active_title TEXT DEFAULT 'The Newcomer',
         class_id TEXT DEFAULT NULL,
         class_path TEXT DEFAULT NULL,
@@ -3586,6 +4032,51 @@ def init_db():
     except Exception as e:
         logger.error(f"v21 item rename failed: {e}")
 
+    # ── Pets table ───────────────────────────────────────────────────────────
+    conn.execute("""CREATE TABLE IF NOT EXISTS pets (
+        pet_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id   INTEGER NOT NULL,
+        species    TEXT NOT NULL,
+        nickname   TEXT,
+        level      INTEGER DEFAULT 1,
+        exp        INTEGER DEFAULT 0,
+        hunger     INTEGER DEFAULT 100,
+        mood       INTEGER DEFAULT 100,
+        last_fed   TEXT,
+        last_trained TEXT,
+        is_active  INTEGER DEFAULT 0,
+        created_at TEXT
+    )""")
+    conn.commit()
+    # Re-open connection for the v22 consumable rename migration
+    try:
+        migc = sqlite3.connect(DB_PATH); migc.row_factory = sqlite3.Row; cc = migc.cursor()
+        cc.execute("SELECT user_id,inventory,equipped_weapon,equipped_armor,equipped_shield,equipped_accessory,enhancements,enchants FROM players")
+        rows_c = cc.fetchall(); mc_count = 0
+        for row in rows_c:
+            changed = False; uid = row["user_id"]
+            inv = sjl(row["inventory"],[])
+            new_inv = [_ITEM_RENAME.get(i,i) for i in inv]
+            if new_inv != inv: changed = True
+            ew  = _ITEM_RENAME.get(row["equipped_weapon"],  row["equipped_weapon"])
+            ea  = _ITEM_RENAME.get(row["equipped_armor"],   row["equipped_armor"])
+            es  = _ITEM_RENAME.get(row["equipped_shield"],  row["equipped_shield"])
+            eac = _ITEM_RENAME.get(row["equipped_accessory"],row["equipped_accessory"])
+            if ew!=row["equipped_weapon"] or ea!=row["equipped_armor"] or es!=row["equipped_shield"] or eac!=row["equipped_accessory"]: changed=True
+            enh = sjl(row["enhancements"],{}); new_enh={_ITEM_RENAME.get(k,k):v for k,v in enh.items()}
+            if new_enh!=enh: changed=True
+            enc = sjl(row["enchants"],{});    new_enc={_ITEM_RENAME.get(k,k):v for k,v in enc.items()}
+            if new_enc!=enc: changed=True
+            if changed:
+                cc.execute("UPDATE players SET inventory=?,equipped_weapon=?,equipped_armor=?,equipped_shield=?,equipped_accessory=?,enhancements=?,enchants=? WHERE user_id=?",
+                    (json.dumps(new_inv),ew,ea,es,eac,json.dumps(new_enh),json.dumps(new_enc),uid))
+                mc_count+=1
+        migc.commit(); migc.close()
+        if mc_count>0: logger.info(f"v22 consumable rename: updated {mc_count} player(s)")
+    except Exception as e: logger.error(f"v22 consumable rename failed: {e}")
+
+    conn = sqlite3.connect(DB_PATH)  # reopen for remaining setup
+
     # Clear stale explore locks on startup
     conn3 = sqlite3.connect(DB_PATH)
     c3 = conn3.cursor()
@@ -3669,7 +4160,7 @@ def init_db():
         # Consumables
         "Health Potion":"Chalk Vial","Super Health Potion":"Premium Chalk Draft",
         "Mega Health Potion":"Champion's Chalk Flask","Revival Charm":"The Re-Rack",
-        "Holy Relic":"The Golden Triangle","Dragon Scale":"Slate Fragment",
+        "Holy Relic":"Holy Water Vial","Dragon Scale":"Iron Shard",
         "Enchanting Scroll":"The Custom Tip Scroll",
     }
 
@@ -3749,7 +4240,58 @@ def save_shadow(s):
 
 # Normalizes pool-hall item names → RPG names at save time (catches loot drops too)
 _ITEM_RENAME = {
-    "Custom Tip Scroll":   "The Custom Tip Scroll",
+    # Consumable renames (pool-hall → RPG)
+    "Custom Tip Scroll":        "Enchanting Scroll",
+    "The Custom Tip Scroll":    "Enchanting Scroll",
+    "Chalk Vial":               "Health Potion",
+    "Premium Chalk Draft":      "Greater Health Potion",
+    "Champion's Chalk Flask":   "Grand Restorative Flask",
+    "The Re-Rack":              "Scroll of Revival",
+    "The Golden Triangle":      "Holy Water Vial",
+    "Slate Fragment":           "Iron Shard",
+    # Accessory renames (pool-hall → RPG)
+    "Chalk Nub":                "Iron Shard Ring",
+    "Worn Tip Wrap":            "Worn Leather Band",
+    "Brass Rail Ring":          "Brass Ring",
+    "Pocket Marker":            "Scout's Pendant",
+    "Road Player's Coin":       "Traveler's Coin",
+    "Silk Tip Ring":            "Silk Band",
+    "Chalk Cross Pendant":      "Rune Cross Pendant",
+    "Black Ball Stud":          "Obsidian Stud",
+    "Red Ball Band":            "Bloodstone Band",
+    "Road Shark Signet":        "Shadowmark Signet",
+    "Hustler's Tooth":          "Hunter's Fang",
+    "Chalk Bead Necklace":      "Crystal Bead Necklace",
+    "The Action Coin":          "Fortune Coin",
+    "Break Master's Clasp":     "War Master's Clasp",
+    "Diamond Sight Medallion":  "Hawk Eye Medallion",
+    "Ghost Ball Loop":          "Phantom Loop",
+    "Closer's Band":            "Warrior's Band",
+    "English Coil":             "Mage's Coil",
+    "Slate Heart":              "Stone Heart",
+    "Shark Tooth Chain":        "Beast Fang Chain",
+    "Road Player's Compass":    "Traveler's Compass",
+    "The Break Torc":           "The Storm Torc",
+    "Double Kiss Ring":         "Twin Strike Ring",
+    "Eye of the Table":         "Eye of the Void",
+    "Blackball Circle":         "Void Circle",
+    "Break Knuckle":            "War Knuckle",
+    "House Saint's Band":       "Cleric's Band",
+    "Chalk Heart":              "Runed Heart",
+    "The Hustler's Whisper":    "The Shadow Whisper",
+    "The Safety Talisman":      "Guardian's Talisman",
+    "The Crossed Cues Pendant": "The Crossed Blades Pendant",
+    "The Slate and Felt Pendant": "The Iron and Flame Pendant",
+    "Splinter of the Break":    "Shard of the Void",
+    "The Endless Run":          "Ring of the Endless",
+    "The Old Road Ring":        "The Warlord's Ring",
+    "The Rack Eternal":         "The Eternal Ring",
+    "The Final Shot Locket":    "The Last Stand Locket",
+    "The Felt Soul":            "The Soul Amulet",
+    "The Diamond Shard":        "The Divine Shard",
+    "The Blackball Mark":       "The Void Mark",
+    "Iron Chalk Ring":          "Silver Prayer Beads",
+    "Chalk Beads":              "Wooden Prayer Beads",
     # Weapons
     "Cracked House Cue":   "Rusty Shortsword",
     "Worn Practice Cue":   "Iron Broadsword",
@@ -3932,13 +4474,13 @@ def new_player(s):
         "gold": max(50, slvl * 10), "wins": 0, "losses": 0,
         "quests_done": 0, "heals_given": 0, "dodges": 0,
         "crafts_done": 0, "perm_dmg_bonus": 0,
-        "titles": json.dumps(["Fresh Rack"]),
-        "active_title": "Fresh Rack",
+        "titles": json.dumps(["Adventurer"]),
+        "active_title": "Adventurer",
         "class_id": None, "class_path": None,
         "all_skills": json.dumps([]),
         "stat_points": slvl * 3 + slvl // 5,
         "stats": json.dumps(DEFAULT_STATS.copy()),
-        "inventory": json.dumps(["Chalk Vial", "Chalk Vial"]),
+        "inventory": json.dumps(["Health Potion", "Health Potion"]),
         "passive_cooldowns": json.dumps({}),
         "equipped_weapon": None, "equipped_armor": None,
         "equipped_shield": None, "equipped_accessory": None,
@@ -4061,7 +4603,51 @@ def add_exp(p, amount, weather=None):
             award_title(p, "Century Break")
         for t in check_titles(p):
             msgs.append(f"🏅 New title: *{t}*!")
+    # Award pet EXP (15% of player EXP)
+    if amount > 0 and p.get("user_id"):
+        pet_msg = give_pet_exp(p["user_id"], amount)
+        if pet_msg:
+            msgs.append(pet_msg)
     return msgs, leveled_up
+
+def give_pet_exp(owner_id, raw_amount):
+    """Award exp to owner's active pet. Returns level-up message or ''."""
+    pet = get_active_pet_record(owner_id)
+    if not pet: return ""
+    if pet.get("level", 1) >= 100: return ""
+    amount = max(1, round(raw_amount * 0.15))
+    pet["exp"] = pet.get("exp", 0) + amount
+    leveled = False
+    msg = ""
+    while pet["level"] < 100 and pet["exp"] >= pet_exp_for_level(pet["level"]):
+        pet["exp"] -= pet_exp_for_level(pet["level"])
+        pet["level"] += 1
+        leveled = True
+    if leveled:
+        sp    = PET_SPECIES.get(pet.get("species"), {})
+        pname = pet.get("nickname") or sp.get("name", "Your pet")
+        emoji = sp.get("emoji", "🐾")
+        msg = f"{emoji} *{pname}* leveled up to *Level {pet['level']}*!"
+        # check for ability unlock at L10
+        if pet["level"] == 10:
+            da = sp.get("def_ability")
+            if da:
+                ab = PET_DEF_ABILITIES.get(da, {})
+                msg += f"\n🔓 *{ab.get('name','Ability')}* defensive ability unlocked!"
+        # milestones
+        for milestone in [25, 50, 75, 100]:
+            if pet["level"] == milestone:
+                msg += f"\n🏆 Milestone: Pet reached Level {milestone}!"
+    # Save pet
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        c.execute("UPDATE pets SET exp=?, level=? WHERE pet_id=?",
+                  (pet["exp"], pet["level"], pet["pet_id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    return msg
 
 def add_shadow_exp(s, amount):
     if s["level"] >= 100: return [], False
@@ -4333,7 +4919,7 @@ async def gear_cmd(update, context):
     lines.append(f"Total Armor DEF: *{get_armor_def(p)}*")
     lines.append(f"\n`/enhance` to upgrade  |  `/enchant` to enchant")
 
-    await send_group(update, "\n".join(lines), permanent=True)
+    await send_group(update, "\n".join(lines), permanent=False, delay=120)
 
 # ── RANK ──────────────────────────────────────────────────────────────────────
 async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4380,7 +4966,7 @@ async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             badge2 = medals2.get(i2, f"#{i2}")
             wl2 = f"{row2['wins']}W / {row2['losses']}L"
             lines2.append(f"{badge2} *{row2['username']}*  -  {wl2} | Lv {row2['level']}")
-        await send_group(update, "\n".join(lines2), permanent=True); return
+        await send_group(update, "\n".join(lines2), permanent=False, delay=120); return
 
     if context.args and context.args[0].lower() == "me":
         pos = next((i+1 for i,e in enumerate(ranked) if e["user_id"]==user.id), None)
@@ -4391,7 +4977,7 @@ async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i, entry in enumerate(ranked[start_m:end_m], start=start_m):
             arrow = "▶️ " if entry["user_id"] == user.id else "    "
             lines.append(f"{arrow}{fmt_ranked(i, entry)}")
-        await send_group(update, "\n".join(lines), permanent=True); return
+        await send_group(update, "\n".join(lines), permanent=False, delay=120); return
 
     PAGE_SIZE = 10
     page_entries = ranked[:PAGE_SIZE]
@@ -4530,12 +5116,12 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if t_boss:
         await send_group(update, f"⚔️ *{d['username']}* is in a boss fight  -  can't be targeted!", delay=9); return
 
-    # Block friendly fire within the same Hall
+    # Block friendly fire within the same guild
     if a.get("guild_id") and str(a.get("guild_id")) == str(d.get("guild_id")):
         g = get_guild(a["guild_id"])
-        gname = g["name"] if g else "your Hall"
+        gname = g["name"] if g else "your Guild"
         await send_group(update,
-            f"🏰 *{d['username']}* is in *{gname}* — you can't attack your own Hall members!",
+            f"🏰 *{d['username']}* is in *{gname}* — you can't attack your own guild members!",
             delay=9); return
 
     # Block attack if target has been offline for 30+ minutes
@@ -4811,6 +5397,18 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             dmg_after_def = d["hp"] - 1
             d["unbreakable_used"] = True
 
+    # Pet defensive ability (defender's pet may intercept/counter/shield)
+    def_pet_rec = get_active_pet_record(du.id) if hasattr(du, 'id') else None
+    if def_pet_rec:
+        dmg_after_def, pet_status_type, pet_status_val = apply_pet_defense(def_pet_rec, a, dmg_after_def, extra_notes)
+        if pet_status_type == "stun" and a:
+            set_status(a, "stunned_until", 30)
+        elif pet_status_type == "poison" and a and pet_status_val:
+            a["poison_damage"] = pet_status_val
+            set_status(a, "poison_until", 60)
+        elif pet_status_type == "lifesteal_to_owner" and d and pet_status_val:
+            d["hp"] = min(calc_max_hp(d), d.get("hp", 0) + pet_status_val)
+
     # Apply damage
     d["hp"] = max(0, d["hp"] - dmg_after_def)
 
@@ -4826,6 +5424,23 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if extra_notes: action += "\n" + "\n".join(extra_notes)
     if healed:      action += f" | 🩸 +{healed} HP"
     if proc_fired:  action += f"\n{proc_msg}"
+
+    # ── Pet auto-attack ───────────────────────────────────────────────────────
+    active_pet = get_active_pet_record(au.id)
+    if active_pet:
+        pet_atk = get_pet_atk_bonus(active_pet)
+        sp_pet  = PET_SPECIES.get(active_pet.get("species"), {})
+        pname   = _pet_display_name(active_pet)
+        pers    = sp_pet.get("personality", "calm")
+        emoji_p = sp_pet.get("emoji", "🐾")
+        if active_pet.get("hunger", 100) < 20:
+            action += f"\n{emoji_p} _{pname} is too hungry to fight!_"
+        elif active_pet.get("mood", 100) < 40:
+            action += f"\n{emoji_p} _{pname} is too sad to join in._"
+        elif pet_atk > 0:
+            d["hp"] = max(0, d["hp"] - pet_atk)
+            battle_msg = PERSONALITY_BATTLE.get(pers, "attacks")
+            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*!"
 
     # Check defeat
     lvl_msgs = []
@@ -4972,7 +5587,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_defeated(t) and get_class_line(h) != "priest":
         await send_group(update,
             f"❌ *{t['username']}* is defeated  -  vials can't revive them!\n"
-            f"Use a *The Re-Rack* from your inventory, or ask a Chalker.", delay=9)
+            f"Use a *Scroll of Revival* from your inventory, or ask a Priest.", delay=9)
         return
 
     cid = h.get("class_id","")
@@ -4989,15 +5604,15 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             heal_amount = round(heal_amount * 1.25)
     else:
         # Non-priest  -  requires potion
-        if "Champion's Chalk Flask" in inv:
-            potion = "Champion's Chalk Flask"; heal_amount = 200
-        elif "Premium Chalk Draft" in inv:
-            potion = "Premium Chalk Draft"; heal_amount = 100
-        elif "Chalk Vial" in inv:
-            potion = "Chalk Vial"; heal_amount = 50
+        if "Grand Restorative Flask" in inv:
+            potion = "Grand Restorative Flask"; heal_amount = 200
+        elif "Greater Health Potion" in inv:
+            potion = "Greater Health Potion"; heal_amount = 100
+        elif "Health Potion" in inv:
+            potion = "Health Potion"; heal_amount = 50
         else:
             await send_group(update,
-                "❌ You need a Chalk Vial to heal someone!\n"
+                "❌ You need a Health Potion to heal someone!\n"
                 "Chalkers can heal for free with /skill.", delay=9); return
         inv.remove(potion)
         h["inventory"] = json.dumps(inv)
@@ -5029,7 +5644,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     is_self = (tu.id == hu.id)
     if is_priest_healer:
-        cls_name_h = get_player_class(h)["name"] if get_player_class(h) else "Chalker"
+        cls_name_h = get_player_class(h)["name"] if get_player_class(h) else "Priest"
         if is_self and was_defeated:
             msg = (
                 f"🙏 *{h['username']}* ({cls_name_h}) channels divine energy and *revives themselves*!\n"
@@ -5072,7 +5687,7 @@ def _exp_bar(current, needed, length=10):
 def _build_stats_pages(p, viewing_name=None):
     real_max     = calc_max_hp(p)
     defeated_str = " *(Defeated)*" if is_defeated(p) else ""
-    recovering   = " *(Still Chalking)*" if is_invincible(p) else ""
+    recovering   = " *(Invincible)*" if is_invincible(p) else ""
     cls          = get_player_class(p)
     cls_name     = cls["name"] if cls else ("Choose at Lv 5  -  /class" if p["level"] >= 5 else "Unlocks at Lv 5")
     path_str     = f"  -  Path {p.get('class_path','?')}" if p.get("class_path") else ""
@@ -5221,7 +5836,7 @@ async def _send_stats_page(target, target_uid: int, page: int, edit: bool = Fals
     if edit:
         await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
     else:
-        await send_group(target, text, permanent=True, reply_markup=markup)
+        await send_group(target, text, permanent=False, delay=120, reply_markup=markup)
 
 
 async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5349,7 +5964,7 @@ async def raid_cmd(update, context):
         f"Others: type /raid to join!\n"
         f"Minimum 2 players required.\n\n"
         f"_Leader: /raidstart when ready. Lobby expires in 15 minutes._",
-        permanent=True)
+        permanent=False, delay=180)
 
 
 async def raidstart_cmd(update, context):
@@ -5410,7 +6025,7 @@ async def raidstart_cmd(update, context):
         f"❤️ HP: {first_enemy['hp']}\n"
         f"💀 Damage: {first_enemy['dmg_min']}-{first_enemy['dmg_max']}\n\n"
         f"Use /raidstrike to attack!",
-        permanent=True)
+        permanent=False, delay=180)
 
     # Start first turn
     await _announce_turn(context.bot, chat_id, raid)
@@ -5616,7 +6231,7 @@ async def soloraid_cmd(update, context):
         f"❤️ HP: {first_enemy['hp']}\n"
         f"💀 Damage: {first_enemy['dmg_min']}–{first_enemy['dmg_max']}\n\n"
         f"Use /solostrike to attack!",
-        permanent=True, reply_markup=sr_markup)
+        permanent=False, delay=120, reply_markup=sr_markup)
 
 
 async def solostrike_cmd(update, context):
@@ -6354,12 +6969,12 @@ async def allocate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         alloc_text = (f"📊 *Stat Allocation*  -  *{sp}* points available\n\n"
             f"STR:{sd.get('STR',5)} AGI:{sd.get('AGI',5)} INT:{sd.get('INT',5)} "
             f"WIS:{sd.get('WIS',5)} DEX:{sd.get('DEX',5)} LUK:{sd.get('LUK',5)}\n\n"
-            f"📌 STR  -  Attack damage (Breaker)\n"
+            f"📌 STR  -  Attack damage (Warrior)\n"
             f"📌 AGI  -  Dodge & crit\n"
-            f"📌 INT  -  Spell damage (Hustler)\n"
-            f"📌 WIS  -  Heal power (Chalker)\n"
-            f"📌 DEX  -  Accuracy & crit (Marksman)\n"
-            f"📌 LUK  -  Crit & gold bonus (Shark)\n"
+            f"📌 INT  -  Spell damage (Mage)\n"
+            f"📌 WIS  -  Heal power (Priest)\n"
+            f"📌 DEX  -  Accuracy & crit (Archer)\n"
+            f"📌 LUK  -  Crit & gold bonus (Thief)\n"
             f"📌 DEF  -  From gear only (cannot allocate)\n\n"
             f"🧭 {rec}\n\nUsage: `/allocate STR 5`")
         alloc_rows = []
@@ -6403,14 +7018,14 @@ async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Rare potion chance
     item = None
     if random.random() < 0.10:
-        item = random.choice(["Chalk Vial","Premium Chalk Draft","Champion's Chalk Flask"])
+        item = random.choice(["Health Potion","Greater Health Potion","Grand Restorative Flask"])
         add_item(p, item)
     daily_exp = 200 + (p["level"] * 10)
     lmsgs, leveled = add_exp(p, daily_exp)
     save_player(p)
     msg = f"🎁 *Daily Reward!*\n\n✨ +{daily_exp} EXP | 💰 +{gold} Gold"
     if item: msg += f" | 🎒 *{item}* (lucky drop!)"
-    else:    msg += f"\n_(No chalk today  -  check the /shop)_"
+    else:    msg += f"\n_(Nothing extra today  -  check the /shop)_"
     if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
     if leveled and p["level"] % 10 == 0:
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
@@ -6615,7 +7230,7 @@ async def explore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = (f"🗺️ *{pp['username']}* returns from *{zone['name']}*.\n\n"
                    f"❌ {zone['fail_msg']}\n"
                    f"💰 Salvaged {cons} gold on the way back.")
-        await announce(bot, chat_id, msg, permanent=True)
+        await announce(bot, chat_id, msg, delay=90)
 
     task = asyncio.create_task(deliver_result())
     explore_timers[user.id] = task
@@ -6684,7 +7299,7 @@ async def explore_zone_callback(update: Update, context: ContextTypes.DEFAULT_TY
                    f"❌ {zone['fail_msg']}\n"
                    f"💰 Salvaged {cons} gold on the way back.")
             save_player(p2)
-        await announce(bot, chat_id, msg, permanent=True)
+        await announce(bot, chat_id, msg, delay=90)
 
     task = asyncio.create_task(deliver_result())
     explore_timers[uid] = task
@@ -6907,9 +7522,9 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False):
     # Add per-item sell buttons for bag sections
     sell_buttons = []
     BULK_SELL_PROTECTED = {
-        "Dragon Scale", "Slate Fragment", "Enchanting Scroll",
-        "The Custom Tip Scroll", "Revival Charm", "The Re-Rack",
-        "Holy Relic", "The Golden Triangle",
+        "Iron Shard", "Enchanting Scroll",
+        "Scroll of Revival", "Holy Water Vial",
+        "Common Egg", "Rare Egg", "Dragon Egg", "Mythic Egg", "Pet Snack",
     }
     RARITY_SELL_VALUES = {"common": 20, "uncommon": 60, "rare": 200, "epic": 600, "legendary": 2000}
     if section not in ("Equipped", "Materials", "Consumables"):
@@ -7197,14 +7812,14 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(f"{item_name} not in your bag!", show_alert=True); return
     inv.remove(item_name); p["inventory"] = json.dumps(inv)
     msg = f"✅ Used *{item_name}*. "
-    if item_name in ("Chalk Vial", "Premium Chalk Draft", "Champion's Chalk Flask"):
+    if item_name in ("Health Potion", "Greater Health Potion", "Grand Restorative Flask"):
         if is_defeated(p):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
-            await query.answer("You're defeated — vials won't help!", show_alert=True); return
-        hp_gain = {"Chalk Vial": 50, "Premium Chalk Draft": 100, "Champion's Chalk Flask": 200}.get(item_name, 50)
+            await query.answer("You're defeated — potions won't help!", show_alert=True); return
+        hp_gain = {"Health Potion": 50, "Greater Health Potion": 100, "Grand Restorative Flask": 200}.get(item_name, 50)
         p["hp"] = min(calc_max_hp(p), p["hp"] + hp_gain)
         msg += f"❤️ +{hp_gain} HP ({p['hp']}/{calc_max_hp(p)})"
-    elif item_name == "The Re-Rack":
+    elif item_name == "Scroll of Revival":
         if not is_defeated(p):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
             await query.answer("You're not defeated — save it for when you need it!", show_alert=True); return
@@ -7348,46 +7963,46 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     inv.remove(item); p["inventory"] = json.dumps(inv)
     msg = f"✅ Used *{item}*. "
-    if item == "Chalk Vial":
+    if item == "Health Potion":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "❌ You're defeated  -  vials won't help.\n"
-                "Use a *The Re-Rack* to revive yourself, or wait for a Chalker.", delay=9)
+                "❌ You're defeated  -  potions won't help.\n"
+                "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
         p["hp"] = min(calc_max_hp(p), p["hp"]+50);   msg += f"❤️ +50 HP ({p['hp']}/{calc_max_hp(p)})"
-    elif item == "Premium Chalk Draft":
+    elif item == "Greater Health Potion":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "❌ You're defeated  -  vials won't help.\n"
-                "Use a *The Re-Rack* to revive yourself, or wait for a Chalker.", delay=9)
+                "❌ You're defeated  -  potions won't help.\n"
+                "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
         p["hp"] = min(calc_max_hp(p), p["hp"]+100);  msg += f"❤️ +100 HP ({p['hp']}/{calc_max_hp(p)})"
-    elif item == "Champion's Chalk Flask":
+    elif item == "Grand Restorative Flask":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "❌ You're defeated  -  vials won't help.\n"
-                "Use a *The Re-Rack* to revive yourself, or wait for a Chalker.", delay=9)
+                "❌ You're defeated  -  potions won't help.\n"
+                "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
         p["hp"] = min(calc_max_hp(p), p["hp"]+200);  msg += f"❤️ +200 HP ({p['hp']}/{calc_max_hp(p)})"
-    elif item == "The Re-Rack":
+    elif item == "Scroll of Revival":
         if not is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
-                "You're not defeated  -  save your Re-Rack for when you need it!", delay=9)
+                "You're not defeated  -  save your Scroll of Revival for when you need it!", delay=9)
             return
         if is_revival_blocked(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
                 "☠️ You have been condemned by Verdict  -  you cannot be revived!\n"
-                "Only a *House Saint's Absolution* can lift this curse.", delay=9)
+                "Only a *Cleric's Absolution* can lift this curse.", delay=9)
             return
         p["defeated_until"] = None
         p["hp"] = p["max_hp"] // 2
@@ -7454,10 +8069,9 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     BULK_SELL_PROTECTED = {
-        "Dragon Scale", "Slate Fragment",
-        "Enchanting Scroll", "The Custom Tip Scroll",
-        "Revival Charm", "The Re-Rack",
-        "Holy Relic", "The Golden Triangle",
+        "Iron Shard", "Enchanting Scroll",
+        "Scroll of Revival", "Holy Water Vial",
+        "Common Egg", "Rare Egg", "Dragon Egg", "Mythic Egg", "Pet Snack",
     }
 
     if context.args[0].lower() == "all":
@@ -7606,8 +8220,9 @@ async def sell_rarity_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if not p: await query.answer("Player not found.", show_alert=True); return
 
     BULK_SELL_PROTECTED = {
-        "Dragon Scale","Slate Fragment","Enchanting Scroll","The Custom Tip Scroll",
-        "Revival Charm","The Re-Rack","Holy Relic","The Golden Triangle",
+        "Iron Shard","Enchanting Scroll",
+        "Scroll of Revival","Holy Water Vial",
+        "Common Egg","Rare Egg","Dragon Egg","Mythic Egg","Pet Snack",
     }
     rarity_prices = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
     inv = sjl(p.get("inventory"), [])
@@ -7683,7 +8298,7 @@ async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎱 *{bd['name']} HAS APPEARED!*\n\n_{bd['desc']}_\n\n"
         f"❤️ HP: {bd['max_hp']} | 💀 {bd['dmg_min']}–{bd['dmg_max']} dmg\n\n"
         f"*{user.first_name}* engaged!\nOthers: `/boss {key}` | All: /strike",
-        permanent=True, reply_markup=boss_spawn_markup)
+        permanent=False, delay=300, reply_markup=boss_spawn_markup)
 
 async def boss_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle boss selection button from /boss menu."""
@@ -7933,11 +8548,11 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/guildcreate [name]  -  Found a hall (100g)\n"
         "/guildjoin  -  Browse and join available halls\n"
         "/guildinfo  -  Your hall info and perks\n"
-        "/guildlist  -  Top halls leaderboard\n"
-        "/guilddonate [amount]  -  Donate gold to hall bank\n"
+        "/guildlist  -  Top guilds leaderboard\n"
+        "/guilddonate [amount]  -  Donate gold to guild bank\n"
         "/guildkick @user  -  Kick a member (leader only)\n"
-        "/guildleave  -  Leave your current hall\n"
-        "/guilddisband  -  Disband your hall (leader only)",
+        "/guildleave  -  Leave your current guild\n"
+        "/guilddisband  -  Disband your guild (leader only)",
         delay=15)
 
 
@@ -7948,7 +8563,7 @@ async def guildcreate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await send_group(update, "Usage: /guildcreate [name]", delay=9); return
     if p.get("guild_id") and str(p.get("guild_id")) != "None":
-        await send_group(update, "You're already in a hall!", delay=9); return
+        await send_group(update, "You're already in a guild!", delay=9); return
     if p.get("gold",0) < 100:
         await send_group(update, "Need 100 gold to found a hall!", delay=9); return
     name = " ".join(context.args)
@@ -7958,14 +8573,14 @@ async def guildcreate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   (name, user.id, json.dumps([user.id])))
         conn.commit(); gid = c.lastrowid
     except sqlite3.IntegrityError:
-        await send_group(update, f"Hall '{name}' already exists!", delay=9)
+        await send_group(update, f"Guild '{name}' already exists!", delay=9)
         conn.close(); return
     conn.close()
     p["guild_id"] = gid; p["gold"] = p.get("gold",0) - 100
-    award_title(p, "Hall Founder"); save_player(p)
+    award_title(p, "Guild Founder"); save_player(p)
     asyncio.create_task(announce(context.bot, update.effective_chat.id,
-        f"🏰 *{name}* hall founded by *{user.first_name}*!"))
-    await send_group(update, f"🏰 *{name}* founded!\n🏅 Title: *Hall Founder*!", delay=15)
+        f"🏰 *{name}* guild founded by *{user.first_name}*!"))
+    await send_group(update, f"🏰 *{name}* founded!\n🏅 Title: *Guild Founder*!", delay=15)
 
 
 async def guildjoin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7976,14 +8591,14 @@ async def guildjoin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
     if p.get("guild_id") and str(p.get("guild_id")) != "None":
-        await query.answer("You're already in a hall!", show_alert=True); return
+        await query.answer("You're already in a guild!", show_alert=True); return
     gid = int(query.data.split("_")[-1])
     g = get_guild(gid)
     if not g:
-        await query.answer("Hall no longer exists.", show_alert=True); return
+        await query.answer("Guild no longer exists.", show_alert=True); return
     members = sjl(g["members"], [])
     if user.id in members:
-        await query.answer("You're already in this hall.", show_alert=True); return
+        await query.answer("You're already in this guild.", show_alert=True); return
     members.append(user.id)
     g["members"] = json.dumps(members); save_guild(g)
     p["guild_id"] = gid; save_player(p)
@@ -7997,7 +8612,7 @@ async def guildjoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if p.get("guild_id") and str(p.get("guild_id")) != "None":
-        await send_group(update, "You're already in a hall! Use /guildleave first.", delay=9); return
+        await send_group(update, "You're already in a guild! Use /guildleave first.", delay=9); return
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
     c.execute("SELECT guild_id,name,level,members FROM guilds ORDER BY level DESC LIMIT 10")
     rows = c.fetchall(); conn.close()
@@ -8049,7 +8664,7 @@ async def guildinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_name = " ".join(context.args)
         g = get_guild_by_name(target_name)
         if not g:
-            await send_group(update, f"Hall *{target_name}* not found.", delay=9); return
+            await send_group(update, f"Guild *{target_name}* not found.", delay=9); return
         text, markup = _build_guildinfo_overview(g)
         await send_group(update, text, reply_markup=markup, delay=25)
         return
@@ -8085,7 +8700,7 @@ async def guildinfo_view_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.answer(); return
     g = get_guild(gid)
     if not g:
-        await query.answer("Hall no longer exists.", show_alert=True); return
+        await query.answer("Guild no longer exists.", show_alert=True); return
     text, markup = _build_guildinfo_overview(g)
     await query.answer()
     await query.edit_message_text(text, reply_markup=markup, parse_mode="Markdown")
@@ -8100,7 +8715,7 @@ async def guildinfo_members_callback(update: Update, context: ContextTypes.DEFAU
         await query.answer(); return
     g = get_guild(gid)
     if not g:
-        await query.answer("Hall no longer exists.", show_alert=True); return
+        await query.answer("Guild no longer exists.", show_alert=True); return
 
     member_ids = sjl(g.get("members", "[]"), [])
     member_rows = []
@@ -8169,10 +8784,10 @@ async def guilddonate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if not p.get("guild_id"):
-        await send_group(update, "You're not in a hall!", delay=9); return
+        await send_group(update, "You're not in a guild!", delay=9); return
     g = get_guild(p["guild_id"])
     if not g:
-        await send_group(update, "Hall not found.", delay=9); return
+        await send_group(update, "Guild not found.", delay=9); return
 
     # Typed amount still works
     if context.args:
@@ -8205,7 +8820,7 @@ async def guilddonate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     glvl = safe_int(g.get("level"), 1)
     nxt = guild_exp_for_level(glvl) if glvl < 10 else "MAX"
     await send_group(update,
-        f"🏰 *{g['name']}* — Hall Bank: {safe_int(g.get('bank'))}g\n"
+        f"🏰 *{g['name']}* — Guild Bank: {safe_int(g.get('bank'))}g\n"
         f"⭐ Level {glvl} | EXP: {safe_int(g.get('exp'))}/{nxt}\n"
         f"Your gold: *{gold}g*\n\nHow much to donate?",
         reply_markup=markup, delay=30)
@@ -8220,18 +8835,18 @@ async def guilddonate_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("This isn't your donation menu!", show_alert=True); return
     p = get_player(uid)
     if not p: await query.answer("Player not found.", show_alert=True); return
-    if not p.get("guild_id"): await query.answer("You're not in a hall!", show_alert=True); return
+    if not p.get("guild_id"): await query.answer("You're not in a guild!", show_alert=True); return
     if p.get("gold", 0) < amount:
         await query.answer(f"Not enough gold! Have {p.get('gold',0)}g.", show_alert=True); return
     g = get_guild(p["guild_id"])
-    if not g: await query.answer("Hall not found.", show_alert=True); return
+    if not g: await query.answer("Guild not found.", show_alert=True); return
     p["gold"] -= amount; g["bank"] = safe_int(g.get("bank")) + amount
     gmsgs = add_guild_exp(g, amount//10); save_guild(g); save_player(p)
     lv_note = (" ".join(gmsgs) + " ") if gmsgs else ""
     await query.answer(f"Donated {amount}g!")
     await query.edit_message_text(
         f"💰 *{query.from_user.first_name}* donated *{amount}g* to *{g['name']}*!\n"
-        f"Hall Bank: *{safe_int(g.get('bank'))}g* {lv_note}",
+        f"Guild Bank: *{safe_int(g.get('bank'))}g* {lv_note}",
         parse_mode="Markdown")
 
 
@@ -8240,18 +8855,18 @@ async def guildkick_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if not p.get("guild_id"):
-        await send_group(update, "You're not in a hall!", delay=9); return
+        await send_group(update, "You're not in a guild!", delay=9); return
     g = get_guild(p["guild_id"])
     if not g or g["leader_id"] != user.id:
-        await send_group(update, "Only the hall leader can kick members.", delay=9); return
+        await send_group(update, "Only the guild leader can kick members.", delay=9); return
 
     # If replying to a message, kick that player directly
     if update.message.reply_to_message:
         tp = get_player(update.message.reply_to_message.from_user.id)
         if not tp or tp.get("guild_id") != p.get("guild_id"):
-            await send_group(update, "That player isn't in your hall.", delay=9); return
+            await send_group(update, "That player isn't in your guild.", delay=9); return
         if update.message.reply_to_message.from_user.id == user.id:
-            await send_group(update, "You can't kick yourself! Use /guilddisband to close the hall.", delay=9); return
+            await send_group(update, "You can't kick yourself! Use /guilddisband to close the guild.", delay=9); return
         members = sjl(g["members"], [])
         if update.message.reply_to_message.from_user.id in members:
             members.remove(update.message.reply_to_message.from_user.id)
@@ -8279,7 +8894,7 @@ async def guildkick_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     markup = InlineKeyboardMarkup(buttons)
     await send_group(update,
-        f"🚫 *{g['name']} — Kick a Member*\n\nSelect who to remove from the hall:",
+        f"🚫 *{g['name']} — Kick a Member*\n\nSelect who to remove from the guild:",
         delay=30, reply_markup=markup)
 
 
@@ -8293,18 +8908,18 @@ async def guildkick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except (IndexError, ValueError):
         return
     if query.from_user.id != uid:
-        await query.answer("Only the Hall leader can kick members!", show_alert=True); return
+        await query.answer("Only the Guild leader can kick members!", show_alert=True); return
 
     p = get_player(uid)
     if not p:
         await query.edit_message_text("Player not found."); return
     g = get_guild(p.get("guild_id")) if p.get("guild_id") else None
     if not g or g.get("leader_id") != uid:
-        await query.edit_message_text("Only the Hall leader can kick members."); return
+        await query.edit_message_text("Only the Guild leader can kick members."); return
 
     tp = get_player(target_uid)
     if not tp or str(tp.get("guild_id")) != str(g["guild_id"]):
-        await query.edit_message_text("That player is no longer in your hall."); return
+        await query.edit_message_text("That player is no longer in your guild."); return
     if target_uid == uid:
         await query.edit_message_text("You can't kick yourself!"); return
 
@@ -8322,16 +8937,16 @@ async def guildleave_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if not p.get("guild_id"):
-        await send_group(update, "You're not in a hall!", delay=9); return
+        await send_group(update, "You're not in a guild!", delay=9); return
     g = get_guild(p["guild_id"])
     if g and g["leader_id"] == user.id:
-        await send_group(update, "Leaders can't leave  -  use /guilddisband to close the hall.", delay=9); return
+        await send_group(update, "Leaders can't leave  -  use /guilddisband to close the guild.", delay=9); return
     if g:
         members = sjl(g["members"], [])
         if user.id in members: members.remove(user.id)
         g["members"] = json.dumps(members); save_guild(g)
     p["guild_id"] = None; save_player(p)
-    await send_group(update, f"👋 You've left *{g['name'] if g else 'your hall'}*.", delay=9)
+    await send_group(update, f"👋 You've left *{g['name'] if g else 'your guild'}*.", delay=9)
 
 
 async def guilddisband_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -8339,16 +8954,16 @@ async def guilddisband_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if not p.get("guild_id"):
-        await send_group(update, "You're not in a hall.", delay=9); return
+        await send_group(update, "You're not in a guild.", delay=9); return
     g = get_guild(p["guild_id"])
     if not g:
-        await send_group(update, "Hall not found.", delay=9); return
+        await send_group(update, "Guild not found.", delay=9); return
     if g["leader_id"] != user.id:
-        await send_group(update, "Only the hall leader can disband the hall.", delay=9); return
+        await send_group(update, "Only the guild leader can disband the guild.", delay=9); return
     if not context.args or context.args[0].lower() != "confirm":
         gdisband_markup = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Disband Hall", callback_data=f"gdisband_confirm_{user.id}"),
-            InlineKeyboardButton("❌ Cancel",       callback_data=f"gdisband_cancel_{user.id}"),
+            InlineKeyboardButton("✅ Disband Guild", callback_data=f"gdisband_confirm_{user.id}"),
+            InlineKeyboardButton("❌ Cancel",        callback_data=f"gdisband_cancel_{user.id}"),
         ]])
         await send_group(update,
             f"⚠️ This permanently disbands *{g['name']}* and removes all members.\n"
@@ -8359,7 +8974,7 @@ async def guilddisband_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("DELETE FROM guilds WHERE guild_id=?", (p["guild_id"],))
     conn.commit(); conn.close()
     p["guild_id"] = None; save_player(p)
-    await send_group(update, f"🏚️ *{g['name']}* has been disbanded.", permanent=True)
+    await send_group(update, f"🏚️ *{g['name']}* has been disbanded.", permanent=False, delay=30)
 
 async def guilddisband_callback(update, context):
     """Handle guild disband confirm/cancel buttons."""
@@ -8388,11 +9003,11 @@ async def guilddisband_callback(update, context):
     # action == "confirm"
     p = get_player(uid)
     if not p or not p.get("guild_id"):
-        await query.answer("No hall found!", show_alert=True)
+        await query.answer("No guild found!", show_alert=True)
         return
     g = get_guild(p["guild_id"])
     if not g or g["leader_id"] != uid:
-        await query.answer("Only the hall leader can disband!", show_alert=True)
+        await query.answer("Only the guild leader can disband!", show_alert=True)
         return
     guild_name = g["name"]
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
@@ -8445,7 +9060,7 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
     g = get_guild(p.get("guild_id")) if p.get("guild_id") else None
     if not g:
-        await send_group(update, "You're not in a Hall. Use /guildjoin first!", delay=9); return
+        await send_group(update, "You're not in a Guild. Use /guildjoin first!", delay=9); return
 
     # Resolve any wars that just expired
     resolved = await resolve_expired_wars()
@@ -8491,7 +9106,7 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if g.get("leader_id") != user.id:
             await send_group(update,
                 f"⚔️ *{g['name']}* has no active guild war.\n\n"
-                f"_Only the Hall leader can declare war._", delay=12)
+                f"_Only the Guild leader can declare war._", delay=12)
             return
 
         conn_gl = sqlite3.connect(DB_PATH); conn_gl.row_factory = sqlite3.Row; c_gl = conn_gl.cursor()
@@ -8519,7 +9134,7 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Args provided — legacy typed path (still works)
     if g.get("leader_id") != user.id:
-        await send_group(update, "Only the Hall leader can declare war!", delay=9); return
+        await send_group(update, "Only the Guild leader can declare war!", delay=9); return
 
     target_name = " ".join(args)
     conn_gw3 = sqlite3.connect(DB_PATH); conn_gw3.row_factory = sqlite3.Row; c3 = conn_gw3.cursor()
@@ -8527,7 +9142,7 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     enemy_g = c3.fetchone()
     conn_gw3.close()
     if not enemy_g:
-        await send_group(update, f"Hall *{target_name}* not found. Use /guildwar to pick from a list.", delay=12); return
+        await send_group(update, f"Guild *{target_name}* not found. Use /guildwar to pick from a list.", delay=12); return
     enemy_g = dict(enemy_g)
     if enemy_g["guild_id"] == g["guild_id"]:
         await send_group(update, "You can't declare war on yourself!", delay=9); return
@@ -8559,7 +9174,7 @@ async def guildwar_declare_callback(update: Update, context: ContextTypes.DEFAUL
     except (IndexError, ValueError):
         await query.answer(); return
     if query.from_user.id != uid:
-        await query.answer("Only the Hall leader who opened this can pick!", show_alert=True); return
+        await query.answer("Only the Guild leader who opened this can pick!", show_alert=True); return
 
     try:
         p = get_player(uid)
@@ -8567,13 +9182,13 @@ async def guildwar_declare_callback(update: Update, context: ContextTypes.DEFAUL
             await query.answer("Player not found.", show_alert=True); return
         g = get_guild(p.get("guild_id")) if p.get("guild_id") else None
         if not g or g.get("leader_id") != uid:
-            await query.answer("Only the Hall leader can declare war.", show_alert=True); return
+            await query.answer("Only the Guild leader can declare war.", show_alert=True); return
 
         conn_e = sqlite3.connect(DB_PATH); conn_e.row_factory = sqlite3.Row; c_e = conn_e.cursor()
         c_e.execute("SELECT * FROM guilds WHERE guild_id=?", (enemy_gid,))
         enemy_row = c_e.fetchone(); conn_e.close()
         if not enemy_row:
-            await query.answer("That Hall no longer exists.", show_alert=True); return
+            await query.answer("That Guild no longer exists.", show_alert=True); return
         enemy_g = dict(enemy_row)
 
         g_gid   = str(g["guild_id"])
@@ -8610,14 +9225,14 @@ async def gbank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
     g = get_guild(p.get("guild_id")) if p.get("guild_id") else None
     if not g:
-        await send_group(update, "You're not in a Hall!", delay=9); return
+        await send_group(update, "You're not in a Guild!", delay=9); return
 
     args = context.args or []
 
     if not args:
         bank = safe_int(g.get("bank_gold"))
         await send_group(update,
-            f"🏦 *{g['name']} Hall Bank*\n\n"
+            f"🏦 *{g['name']} Guild Bank*\n\n"
             f"Balance: *{bank:,}g*\n\n"
             f"_/gbank deposit [amount] — add gold_\n"
             f"_/gbank withdraw [amount] — leader only_", delay=15); return
@@ -8644,7 +9259,7 @@ async def gbank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif sub == "withdraw":
         if g.get("leader_id") != user.id:
-            await send_group(update, "Only the Hall leader can withdraw!", delay=9); return
+            await send_group(update, "Only the Guild leader can withdraw!", delay=9); return
         if len(args) < 2:
             await send_group(update, "Usage: /gbank withdraw [amount]", delay=9); return
         try:
@@ -9165,12 +9780,12 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         stype = sk.get("type", "damage")
         _support_types = {"self_heal", "self_heal_buff", "group_heal", "dmg_reduction_buff",
                           "revive_heal", "regen", "full_revive", "heal_shield", "mass_cleanse"}
-        # Block offensive skills on Hall members
+        # Block offensive skills on guild members
         if stype not in _support_types:
             if p.get("guild_id") and str(p.get("guild_id")) == str(tp.get("guild_id")):
                 g_s = get_guild(p["guild_id"])
-                gname_s = g_s["name"] if g_s else "your Hall"
-                await send_result(f"🏰 {tp['username']} is in {gname_s} — can't use offensive skills on Hall members!"); return
+                gname_s = g_s["name"] if g_s else "your Guild"
+                await send_result(f"🏰 {tp['username']} is in {gname_s} — can't use offensive skills on guild members!"); return
         # Healing/support skills bypass invincibility and defeated checks
         if stype not in _support_types:
             if is_defeated(tp):
@@ -9213,11 +9828,11 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await send_result("\n".join(out)); return
         if stype == "full_revive":
             inv = sjl(p.get("inventory"), [])
-            if "The Golden Triangle" not in inv:
-                await send_result("✨ Miracle requires a The Golden Triangle — you don't have one."); return
+            if "Holy Water Vial" not in inv:
+                await send_result("✨ Miracle requires a Holy Water Vial — you don't have one."); return
             if tp.get("revival_blocked_until") and _ts_active(tp, "revival_blocked_until"):
                 await send_result(f"☠️ {tp['username']} is condemned — cannot be revived!"); return
-            inv.remove("The Golden Triangle")
+            inv.remove("Holy Water Vial")
             p["inventory"] = json.dumps(inv)
             tp["hp"] = calc_max_hp(tp)
             tp["defeated_until"] = None
@@ -9246,6 +9861,17 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             out.append("🏹 *Piercing Shot!*")
         if check_crit(p):
             dmg = apply_crit(p, dmg); out.append("💥 *CRITICAL HIT!*")
+        # Pet defensive ability for skill damage
+        sk_def_pet = get_active_pet_record(tp.get("user_id")) if tp.get("user_id") else None
+        if sk_def_pet:
+            dmg, sk_pet_st, sk_pet_val = apply_pet_defense(sk_def_pet, p, dmg, out)
+            if sk_pet_st == "stun":
+                set_status(p, "stunned_until", 30)
+            elif sk_pet_st == "poison" and sk_pet_val:
+                p["poison_damage"] = sk_pet_val
+                set_status(p, "poison_until", 60)
+            elif sk_pet_st == "lifesteal_to_owner" and sk_pet_val:
+                tp["hp"] = min(calc_max_hp(tp), tp.get("hp", 0) + sk_pet_val)
         tp["hp"] = max(0, tp["hp"] - dmg)
         out.append(f"💥 *{dmg} damage!* {tp['username']} HP: {tp['hp']}/{tp['max_hp']}")
         if tp["hp"] == 0:
@@ -9387,11 +10013,11 @@ async def _execute_skill(update, context, p, sk):
         if not tp:
             await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
         inv = sjl(p.get("inventory"), [])
-        if "The Golden Triangle" not in inv:
-            await send_group(update, "✨ *Miracle* requires a *The Golden Triangle* — you don't have one.", delay=9); return
+        if "Holy Water Vial" not in inv:
+            await send_group(update, "✨ *Miracle* requires a *Holy Water Vial* — you don't have one.", delay=9); return
         if tp.get("revival_blocked_until") and _ts_active(tp, "revival_blocked_until"):
             await send_group(update, f"☠️ *{tp['username']}* is condemned — cannot be revived!", delay=9); return
-        inv.remove("The Golden Triangle")
+        inv.remove("Holy Water Vial")
         p["inventory"] = json.dumps(inv)
         tp["hp"] = calc_max_hp(tp)
         tp["defeated_until"] = None
@@ -9399,7 +10025,7 @@ async def _execute_skill(update, context, p, sk):
         save_player(tp); save_player(p)
         lines.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored!\n"
                      f"❤️ Full HP restored! 🛡️ 2 hours invincibility granted.\n"
-                     f"_(Used: The Golden Triangle)_")
+                     f"_(Used: Holy Water Vial)_")
         await send_group(update, "\n".join(lines), delay=20); return
 
     elif stype == "self_heal_buff":
@@ -9646,7 +10272,7 @@ async def cooldowns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = datetime.now().strftime("%Y-%m-%d")
     exp_count = safe_int(p.get("explore_count_today")) if p.get("explore_date")==today else 0
     lines.append(f"🗺️ Explore: {exp_count}/2 today")
-    lines.append(f"🏰 Hall Run: {time_remaining(p.get('last_dungeon'), 86400)}")
+    lines.append(f"🏰 Dungeon Run: {time_remaining(p.get('last_dungeon'), 86400)}")
     if is_defeated(p):
         end  = datetime.fromisoformat(p["defeated_until"])
         diff = end - datetime.now()
@@ -9843,11 +10469,11 @@ async def claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     inv = sjl(p.get("inventory"), [])
     if slate_count:
-        inv.extend(["Slate Fragment"] * slate_count)
+        inv.extend(["Iron Shard"] * slate_count)
     if scale_count:
-        inv.extend(["Slate Fragment"] * scale_count)
+        inv.extend(["Iron Shard"] * scale_count)
     if bonus_scroll:
-        inv.append("The Custom Tip Scroll")
+        inv.append("Enchanting Scroll")
     p["inventory"] = json.dumps(inv)
     p["gold"] = p.get("gold", 0) + gold_reward
     p["last_claim"] = today
@@ -9860,11 +10486,11 @@ async def claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💰 +{gold_reward} gold",
     ]
     if slate_count:
-        lines.append(f"🪨 +{slate_count} Slate Fragment (Day 3+ streak)")
+        lines.append(f"🪨 +{slate_count} Iron Shard (Day 3+ streak)")
     if scale_count:
-        lines.append(f"🪨 +{scale_count} Slate Fragment (Day 7+ streak)")
+        lines.append(f"🪨 +{scale_count} Iron Shard (Day 7+ streak)")
     if bonus_scroll:
-        lines.append(f"📜 +1 Custom Tip Scroll (Day 14+ streak)")
+        lines.append(f"📜 +1 Enchanting Scroll (Day 14+ streak)")
     lines.append(f"\n_Streak: {streak} day{'s' if streak != 1 else ''} — claim again tomorrow to keep it going!_")
     await send_group(update, "\n".join(lines), delay=25)
 
@@ -9984,7 +10610,7 @@ async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if t != p.get("active_title"):
                 buttons.append([InlineKeyboardButton(f"🏅 Equip: {t}", callback_data=f"settitle_{uid}_{t}")])
         markup = InlineKeyboardMarkup(buttons) if buttons else None
-        await send_group(update, "\n".join(lines), permanent=True, reply_markup=markup); return
+        await send_group(update, "\n".join(lines), permanent=False, delay=90, reply_markup=markup); return
     chosen_typed = " ".join(context.args)
     chosen = resolve_item_ci(chosen_typed, titles)
     if not chosen:
@@ -10236,7 +10862,7 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         lines = ["⚒️ *Enhancement* — choose a slot:\n"]
         inv = sjl(p.get("inventory"), [])
-        lines.append(f"🪨 Slate Fragments: {inv.count('Slate Fragment')}\n")
+        lines.append(f"🪨 Iron Shards: {inv.count('Iron Shard')}\n")
         buttons = []
         for slot_label, slot_key, slot_id in [
                 ("⚔️ Weapon", "equipped_weapon", "weapon"),
@@ -10246,7 +10872,7 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not name: continue
             lv    = get_enhancement(p, name)
             stars = "⭐" * lv if lv else "+0"
-            nxt   = "MAX" if lv >= 10 else f"+{lv+1} ({int(ENHANCE_RATES[lv+1]*100)}% | {ENHANCE_COSTS[lv+1]} Slate)"
+            nxt   = "MAX" if lv >= 10 else f"+{lv+1} ({int(ENHANCE_RATES[lv+1]*100)}% | {ENHANCE_COSTS[lv+1]} Shards)"
             lines.append(f"{slot_label}: *{name}* {stars}\n  → {nxt}")
             buttons.append([InlineKeyboardButton(
                 f"{slot_label}: {name} {stars}",
@@ -10279,13 +10905,13 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rate    = ENHANCE_RATES[next_lv]
 
     inv = sjl(p.get("inventory"), [])
-    if inv.count("Slate Fragment") < cost:
+    if inv.count("Iron Shard") < cost:
         await send_group(update,
-            f"❌ Need {cost} Slate Fragment(s), have {inv.count('Slate Fragment')}.\n"
-            f"Slate Fragments drop from bosses, explores, and quests.", delay=9); return
+            f"❌ Need {cost} Iron Shard(s), have {inv.count('Iron Shard')}.\n"
+            f"Iron Shards drop from bosses, explores, and quests.", delay=9); return
 
     for _ in range(cost):
-        inv.remove("Slate Fragment")
+        inv.remove("Iron Shard")
     p["inventory"] = json.dumps(inv)
 
     if random.random() < rate:
@@ -10296,7 +10922,7 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚒️ *Enhancement Success!*\n\n"
             f"*{item_name}* → *+{next_lv}* {'⭐' * next_lv}\n"
             f"+{bonus} {stat_label} total from enhancement\n"
-            f"Used {cost} Slate Fragment(s).", delay=20)
+            f"Used {cost} Iron Shard(s).", delay=20)
     else:
         if current >= 6:
             set_enhancement(p, item_name, current - 1)
@@ -10304,13 +10930,13 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update,
                 f"💔 *Enhancement Failed!*\n\n"
                 f"*{item_name}* dropped from +{current} to +{current - 1}!\n"
-                f"Used {cost} Slate Fragment(s). Try again.", delay=20)
+                f"Used {cost} Iron Shard(s). Try again.", delay=20)
         else:
             save_player(p)
             await send_group(update,
                 f"💔 *Enhancement Failed!*\n\n"
                 f"*{item_name}* stays at +{current}.\n"
-                f"Used {cost} Slate Fragment(s). Try again.", delay=20)
+                f"Used {cost} Iron Shard(s). Try again.", delay=20)
 
 async def enhance_slot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle slot button from /enhance menu."""
@@ -10339,11 +10965,11 @@ async def enhance_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
     next_lv = current + 1
     cost = ENHANCE_COSTS[next_lv]; rate = ENHANCE_RATES[next_lv]
     inv = sjl(p.get("inventory"), [])
-    if inv.count("Slate Fragment") < cost:
-        await query.answer(f"Need {cost} Slate Fragment(s), have {inv.count('Slate Fragment')}.", show_alert=True); return
+    if inv.count("Iron Shard") < cost:
+        await query.answer(f"Need {cost} Iron Shard(s), have {inv.count('Iron Shard')}.", show_alert=True); return
     await query.answer()
     for _ in range(cost):
-        inv.remove("Slate Fragment")
+        inv.remove("Iron Shard")
     p["inventory"] = json.dumps(inv)
     if random.random() < rate:
         set_enhancement(p, item_name, next_lv)
@@ -10351,19 +10977,19 @@ async def enhance_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
         save_player(p)
         await query.edit_message_text(
             f"⚒️ *Enhancement Success!*\n\n*{item_name}* → *+{next_lv}* {'⭐' * next_lv}\n"
-            f"+{bonus} {stat_label} total from enhancement\nUsed {cost} Slate Fragment(s).",
+            f"+{bonus} {stat_label} total from enhancement\nUsed {cost} Iron Shard(s).",
             parse_mode="Markdown")
     else:
         if current >= 6:
             set_enhancement(p, item_name, current - 1); save_player(p)
             await query.edit_message_text(
                 f"💔 *Enhancement Failed!*\n\n*{item_name}* dropped from +{current} to +{current-1}!\n"
-                f"Used {cost} Slate Fragment(s).", parse_mode="Markdown")
+                f"Used {cost} Iron Shard(s).", parse_mode="Markdown")
         else:
             save_player(p)
             await query.edit_message_text(
                 f"💔 *Enhancement Failed!*\n\n*{item_name}* stays at +{current}.\n"
-                f"Used {cost} Slate Fragment(s).", parse_mode="Markdown")
+                f"Used {cost} Iron Shard(s).", parse_mode="Markdown")
 
 # ── ENCHANT ───────────────────────────────────────────────────────────────────
 async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -10374,7 +11000,7 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         lines = ["✨ *Enchanting* — choose a slot:\n"]
         inv = sjl(p.get("inventory"), [])
-        lines.append(f"📜 Custom Tip Scrolls: {inv.count('The Custom Tip Scroll')}\n")
+        lines.append(f"📜 Enchanting Scrolls: {inv.count('Enchanting Scroll')}\n")
         buttons = []
         for slot_label, slot_key, slot_id in [
                 ("⚔️ Weapon",    "equipped_weapon",    "weapon"),
@@ -10412,9 +11038,9 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, f"No {slot} equipped!", delay=9); return
 
     inv = sjl(p.get("inventory"), [])
-    if "The Custom Tip Scroll" not in inv:
+    if "Enchanting Scroll" not in inv:
         await send_group(update,
-            "❌ You need a *Custom Tip Scroll*.\n"
+            "❌ You need an *Enchanting Scroll*.\n"
             "They drop from explores, quests, and the shop.", delay=9); return
 
     encs = get_enchant(p, item_name)
@@ -10423,7 +11049,7 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ *{item_name}* already has 3 enchants (maximum).\n"
             f"Current: {', '.join(e['id'].capitalize() for e in encs)}"); return
 
-    inv.remove("The Custom Tip Scroll")
+    inv.remove("Enchanting Scroll")
     p["inventory"] = json.dumps(inv)
 
     pool = ENCHANT_EFFECTS.get(effect_pool_key, [])
@@ -10463,13 +11089,13 @@ async def enchant_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if not item_name:
         await query.answer(f"No {slot} equipped!", show_alert=True); return
     inv = sjl(p.get("inventory"), [])
-    if "The Custom Tip Scroll" not in inv:
-        await query.answer("You need a Custom Tip Scroll to enchant!", show_alert=True); return
+    if "Enchanting Scroll" not in inv:
+        await query.answer("You need an Enchanting Scroll to enchant!", show_alert=True); return
     encs = get_enchant(p, item_name)
     if len(encs) >= 3:
         await query.answer(f"{item_name} already has 3 enchants (max)!", show_alert=True); return
     await query.answer()
-    inv.remove("The Custom Tip Scroll")
+    inv.remove("Enchanting Scroll")
     p["inventory"] = json.dumps(inv)
     pool = ENCHANT_EFFECTS.get(effect_pool_key, [])
     effect = random.choice(pool)
@@ -11172,7 +11798,7 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"\n🏆 *{winner['username']}* wins the duel!")
         if wager > 0:
             lines.append(f"💰 +{wager}g collected from {loser['username']}.")
-        await send_group(update, "\n".join(lines), permanent=True, delay=60)
+        await send_group(update, "\n".join(lines), permanent=False, delay=60)
         return
 
     if not update.message.reply_to_message:
@@ -12026,8 +12652,8 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await send_group(update, "Your healing is blocked!", delay=5); return
             items[item_name] -= 1
             if items[item_name] <= 0: del items[item_name]
-            if "Chalk Vial" in item_name or "Chalk Draft" in item_name or "Chalk Flask" in item_name:
-                heal_val = {"Chalk Vial":50,"Premium Chalk Draft":100,"Champion's Chalk Flask":200}.get(item_name,50)
+            if "Health Potion" in item_name or "Restorative Flask" in item_name or "Greater Health" in item_name:
+                heal_val = {"Health Potion":50,"Greater Health Potion":100,"Grand Restorative Flask":200}.get(item_name,50)
                 arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal_val)
                 log_entry = f"🧪 {atk_name} drinks *{item_name}*! +{heal_val} HP."
             else:
@@ -12436,7 +13062,7 @@ def _resolve_dungeon_room(p, room_type, theme, diff, room_num, hp_remaining, cla
                      "Someone camped here before you. Their fire ring is cold but you restart it.",
                      "Not ideal. But you've slept in worse places.",
                      "A natural chamber  -  wide enough to breathe in.",
-                     "The hall run offers a rare moment of silence. You take it."],
+                     "The dungeon run offers a rare moment of silence. You take it."],
         "altar":    ["A stone altar dominates the room. Old carvings. Something dried on the surface.",
                      "The altar pulses with a light that has no source.",
                      "Offerings have been left here recently. Someone else has been through.",
@@ -12447,7 +13073,7 @@ def _resolve_dungeon_room(p, room_type, theme, diff, room_num, hp_remaining, cla
                      f"They were in the ceiling. {enemy_name}s, plural. Dropping together.",
                      f"A second {enemy_name} you didn't see. The first was a distraction.",
                      f"The passage narrows right as the {enemy_name}s spring their trap."],
-        "merchant": ["A hooded figure sits cross-legged on a bedroll with wares. Inside a hall run.",
+        "merchant": ["A hooded figure sits cross-legged on a bedroll with wares. Inside a dungeon run.",
                      "You smell pipe smoke before you see them  -  a merchant, impossibly calm.",
                      "A small stall set up in an alcove. The merchant nods like they expected you.",
                      "Someone has been down here long enough to set up shop. They look comfortable."],
@@ -12481,7 +13107,7 @@ def _resolve_dungeon_room(p, room_type, theme, diff, room_num, hp_remaining, cla
             "It gets more of you than you wanted. You push through.",
             "Not your finest moment. You survive it.",
             "You take the hit and keep moving. No other option.",
-            "The hall run wins this exchange. You absorb it and press on.",
+            "The dungeon run wins this exchange. You absorb it and press on.",
             "A rough one. You'll feel this in the later rooms.",
         ])
 
@@ -12564,7 +13190,7 @@ def _resolve_dungeon_boss(p, theme, diff, class_line):
         f"The {theme['boss_name']}'s chamber is vast. It has been here a very long time.",
         f"You hear it breathing before the door is fully open.",
         f"The {theme['boss_name']} doesn't move when you enter. It watches.",
-        f"Everything in the hall run led here. The {theme['boss_name']} is the reason.",
+        f"Everything in the dungeon run led here. The {theme['boss_name']} is the reason.",
     ])
     if epic:
         outcome = random.choice([
@@ -12577,12 +13203,12 @@ def _resolve_dungeon_boss(p, theme, diff, class_line):
         ])
     elif success:
         outcome = random.choice([
-            (f"The {theme['boss_name']} is every bit the threat the hall run promised. "
+            (f"The {theme['boss_name']} is every bit the threat the dungeon run promised. "
              f"You give everything. A long brutal exchange. You're still standing. Barely."),
             (f"It takes several attempts to find the pattern. When you do, the "
              f"{theme['boss_name']} falls on your terms, not its own."),
             (f"You go in hard and don't let up. The {theme['boss_name']} is stronger "
-             f"than anything else in this hall run. So are you, today."),
+             f"than anything else in this dungeon run. So are you, today."),
             (f"A war of attrition. The {theme['boss_name']} has endurance. You have more. "
              f"When it drops the silence is absolute."),
         ])
@@ -12656,9 +13282,9 @@ def _build_dungeon_recap(p, theme, diff, results, total_exp, total_gold,
 
     lines.append("\n━━━━━━━━━━━━━━━━")
     if not run_failed:
-        lines.append(f"✅ *Hall Run Complete  -  {diff.capitalize()}*\n")
+        lines.append(f"✅ *Dungeon Run Complete  -  {diff.capitalize()}*\n")
     else:
-        lines.append("🏃 *Hall Run Abandoned  -  retreated alive*\n")
+        lines.append("🏃 *Dungeon Run Abandoned  -  retreated alive*\n")
     lines.append("🏆 *Total Rewards:*")
     lines.append(f"✨ +{total_exp:,} EXP | 💰 +{total_gold:,} gold")
     for item in items_found:
@@ -12680,12 +13306,12 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if is_defeated(p):
-        await send_group(update, "💀 You're too beaten up to enter a hall run!", delay=9); return
+        await send_group(update, "💀 You're too beaten up to enter a dungeon run!", delay=9); return
     if not check_cooldown(p.get("last_dungeon"), 86400):
         await send_group(update,
-            f"⏳ Hall run cooldown: {time_remaining(p.get('last_dungeon'), 86400)}", delay=9); return
+            f"⏳ Dungeon run cooldown: {time_remaining(p.get('last_dungeon'), 86400)}", delay=9); return
     if user.id in active_dungeons:
-        await send_group(update, "🏰 You're already in a hall run! Wait for your return.", delay=9); return
+        await send_group(update, "🏰 You're already in a dungeon run! Wait for your return.", delay=9); return
 
     if not context.args:
         # Show difficulty picker with inline buttons
@@ -12710,7 +13336,7 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     level_reqs = {"normal": 1, "hard": 15, "legendary": 40}
     if p["level"] < level_reqs[diff]:
         await send_group(update,
-            f"❌ *{diff.capitalize()}* hall runs require Level {level_reqs[diff]}. "
+            f"❌ *{diff.capitalize()}* dungeon runs require Level {level_reqs[diff]}. "
             f"You're Level {p['level']}.", delay=9); return
 
     theme = random.choice(DUNGEON_THEMES)
@@ -12736,7 +13362,7 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎯 Difficulty: *{diff.capitalize()}*\n"
         f"🚪 {len(rooms)} rooms + final boss\n\n"
         f"_Results in {timer_display[diff]}._",
-        permanent=True, delay=300)
+        permanent=False, delay=300)
 
     async def run_dungeon():
         await asyncio.sleep(timers[diff])
@@ -12784,7 +13410,7 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         recap = _build_dungeon_recap(
             fp, theme, diff, results, total_exp, total_gold,
             items_found, run_failed, lmsgs)
-        await announce(context.bot, chat_id, recap, permanent=True)
+        await announce(context.bot, chat_id, recap, delay=180)
         if leveled and fp["level"] % 10 == 0:
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🎉 *{fp['username']}* reached *Level {fp['level']}* "
@@ -12814,9 +13440,9 @@ async def rankwins_cmd(update, context):
 GUIDE_PAGES = [
     # Page 1 - Getting Started
     (
-        "🎱 *8Ball World  -  Getting Started* (1/7)\n"
+        "🎱 *8Ball World  -  Getting Started* (1/8)\n"
         "\n"
-        "Welcome to 8Ball World  -  a pool hall RPG built inside Telegram.\n"
+        "Welcome to 8Ball World  -  a fantasy RPG built inside Telegram.\n"
         "\n"
         "*Two ways to play:*\n"
         "Shadow  -  Just chat in the group. You earn EXP automatically from messages and level up over time. No setup needed.\n"
@@ -12833,28 +13459,28 @@ GUIDE_PAGES = [
     ),
     # Page 2 - Character Building
     (
-        "🎱 *8Ball World  -  Building Your Character* (2/7)\n"
+        "🎱 *8Ball World  -  Building Your Character* (2/8)\n"
         "\n"
         "Use /class at Level 5 to pick your starting class. Browse with arrows to see each class's full Path A and Path B skill trees before committing.\n"
         "\n"
-        "⚔️ *Warrior (Breaker)* — STR-based. Absorbs hits, controls the table.\n"
-        "  Path A (Godbank): Holy tank — shields, wards, group buffs, divine nukes\n"
-        "  Path B (8ball Lord): Pure damage — Triple Strike, Rampage, Decimation\n"
+        "⚔️ *Warrior* — STR-based. Absorbs hits, dominates the battlefield.\n"
+        "  Path A (Paladin): Holy tank — shields, wards, group buffs, divine nukes\n"
+        "  Path B (Blade Master): Pure damage — Triple Strike, Rampage, Decimation\n"
         "\n"
-        "🔮 *Mage (Baizer)* — INT-based. Powerful spells and crowd control.\n"
+        "🔮 *Mage* — INT-based. Powerful spells and crowd control.\n"
         "  Path A (Sage): Pure magic — Chain Lightning, Meteor AOE, Absolute Zero (freeze)\n"
         "  Path B (Void Mage): Dark arts — Hexes, drain, void nuke, void collapse\n"
         "\n"
-        "🔪 *Thief (Shark)* — LUK/AGI-based. Crits, evasion, gold generation.\n"
+        "🔪 *Thief* — LUK/AGI-based. Crits, evasion, gold generation.\n"
         "  Path A (Wraith): Ghost — stealth, phantom strike, undetectable dodge\n"
-        "  Path B (Specialist): Assassination — poison, bleeds, execute on low HP\n"
+        "  Path B (Assassin): Assassination — poison, bleeds, execute on low HP\n"
         "\n"
-        "🏹 *Archer (Marksman)* — DEX-based. Precision and bounty hunting.\n"
+        "🏹 *Archer* — DEX-based. Precision and bounty hunting.\n"
         "  Path A (Strider): Ranger — steady aim, nature bond, sniper shot\n"
-        "  Path B (Railrunner): Bounty Hunter — place contracts, track targets, 750g bounties\n"
+        "  Path B (Bounty Hunter): Bounty — place contracts, track targets, 750g bounties\n"
         "\n"
-        "📿 *Priest (Chalker)* — WIS-based. The only class that can revive players.\n"
-        "  Path A (Saint): Holy healer — group heals, divine shield, mass resurrection\n"
+        "📿 *Priest* — WIS-based. The only class that can revive players.\n"
+        "  Path A (High Priest): Holy healer — group heals, divine shield, mass resurrection\n"
         "  Path B (Zealot): Dark cleric — condemn (unrevivable), curse, inquisition\n"
         "\n"
         "At Lv 10, use /prestige to choose Path A or B. Your class evolves automatically at Lv 30, 60, and 100.\n"
@@ -12869,7 +13495,7 @@ GUIDE_PAGES = [
     ),
     # Page 3 - Daily Activities
     (
-        "🎱 *8Ball World  -  Daily Activities* (3/7)\n"
+        "🎱 *8Ball World  -  Daily Activities* (3/8)\n"
         "\n"
         "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
         "\n"
@@ -12879,18 +13505,18 @@ GUIDE_PAGES = [
         "/train  -  EXP gain with class bonus  (30 min)\n"
         "/quest  -  EXP + gold + possible loot  (1 hour)\n"
         "/explore  -  Best loot drops, big EXP  (1hr, 2x per day)\n"
-        "/pool  -  Pool shot for EXP, gold, and items  (8 seconds)\n"
-        "/dungeon  -  Hall Run solo boss encounter  (once per day)\n"
-        "/dungeonhard  -  Harder hall run, better rewards (Lv 15+)\n"
-        "/dungeonlegendary  -  Hardest hall run, best loot (Lv 40+)\n"
+        "/pool  -  Roll for EXP, gold, and items  (8 seconds)\n"
+        "/dungeon  -  Dungeon Run solo boss encounter  (once per day)\n"
+        "/dungeonhard  -  Harder dungeon run, better rewards (Lv 15+)\n"
+        "/dungeonlegendary  -  Hardest dungeon run, best loot (Lv 40+)\n"
         "\n"
-        "💡 /pool is your main source of rare weapons and accessories. The rarer the shot (epic, legendary), the better the potential drop. Keep shooting.\n"
+        "💡 /pool is your main source of rare weapons and accessories. The rarer the roll (epic, legendary), the better the potential drop. Keep rolling.\n"
         "\n"
         "💡 /hustle runs all ready cooldowns at once — daily, train, quest, pool, claim, and explore. Use it every time you're in the group."
     ),
     # Page 4 - Combat & Raids
     (
-        "🎱 *8Ball World  -  Combat & Raids* (4/7)\n"
+        "🎱 *8Ball World  -  Combat & Raids* (4/8)\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
         "Reply to any player's message and use /attack to fight them. Winners steal gold and EXP. Losers are defeated for 6 hours and lose 10% EXP.\n"
@@ -12925,53 +13551,56 @@ GUIDE_PAGES = [
         "*Defeat & Revival*\n"
         "When your HP hits 0 you are defeated for 6 hours and lose 10% EXP. Options to recover:\n"
         "• Wait it out (6 hours)\n"
-        "• Use *The Re-Rack* from your inventory (/use)\n"
-        "• Ask a Chalker (Priest) to /heal you  -  they revive for free\n"
-        "• 📿 Chalkers can also /heal themselves with no reply to self-revive"
+        "• Use *Scroll of Revival* from your inventory (/use)\n"
+        "• Ask a Priest to /heal you  -  they revive for free\n"
+        "• 📿 Chalkers can also /heal themselves with no reply to self-revive\n"
+        "\n"
+        "*Pets in Combat*\n"
+        "Your active pet auto-attacks with you. If attacked, it may trigger its defensive ability (intercept, counter, poison, stun, lifesteal, or shield). Defensive abilities unlock at pet Level 10."
     ),
     # Page 5 - Gear & Economy
     (
-        "🎱 *8Ball World  -  Gear & Economy* (5/7)\n"
+        "🎱 *8Ball World  -  Gear & Economy* (5/8)\n"
         "\n"
         "*Gear Slots*\n"
         "Weapon, Armor, Shield, Accessory. Use /equip to browse your bag and tap to equip. Use /unequip to remove gear.\n"
-        "/enhance  -  Upgrade gear with Slate Fragments. Tap the slot button. +1 to +10 max. Fails are possible at high levels.\n"
-        "/enchant  -  Add random enchants via Custom Tip Scrolls (up to 3 per item). Tap slot to enchant.\n"
+        "/enhance  -  Upgrade gear with Iron Shards. Tap the slot button. +1 to +10 max. Fails are possible at high levels.\n"
+        "/enchant  -  Add random enchants via Enchanting Scrolls (up to 3 per item). Tap slot to enchant.\n"
         "/reinforce  -  Sacrifice a duplicate weapon or armor to permanently raise its base stats (+1 ATK/DEF per reinforce, max 20). Tap to select.\n"
         "/reinforce ascend  -  After 20 reinforces, Ascend the item to ★ tier (+5 flat bonus, resets to 0/20). Up to ★★★.\n"
         "\n"
         "*Consumable Items*\n"
         "Use /use to open your consumables and tap to use an item.\n"
-        "• Chalk Vial — +50 HP\n"
-        "• Premium Chalk Draft — +100 HP\n"
-        "• Champion's Chalk Flask — +200 HP\n"
-        "• The Re-Rack — Full self-revive from defeat (1 hour invincibility after)\n"
-        "• Slate Fragment — Used for /enhance\n"
-        "• Dragon Scale — Crafting material for /forge\n"
-        "• The Custom Tip Scroll — Used for /enchant\n"
+        "• Health Potion — +50 HP\n"
+        "• Greater Health Potion — +100 HP\n"
+        "• Grand Restorative Flask — +200 HP\n"
+        "• Scroll of Revival — Full self-revive from defeat (1 hour invincibility after)\n"
+        "• Iron Shard — Used for /enhance\n"
+        "• Iron Shard — Crafting material for /forge\n"
+        "• Enchanting Scroll — Used for /enchant\n"
         "\n"
         "*Titles*\n"
         "/title — View your earned titles and tap to equip one. Titles show on your /stats and some grant stat bonuses.\n"
         "\n"
         "*Daily Claim*\n"
-        "/claim — Daily reward with streak bonuses: Slate Fragments (Day 3+), Dragon Scales (Day 7+), Custom Tip Scrolls (Day 14+).\n"
+        "/claim — Daily reward with streak bonuses: Iron Shards (Day 3+), Iron Shards (Day 7+), Enchanting Scrolls (Day 14+).\n"
         "\n"
         "*Crafting*\n"
-        "/forge — View recipes and craft items from Slate Fragments and Dragon Scales.\n"
+        "/forge — View recipes and craft items from Iron Shards.\n"
         "\n"
         "*Trading*\n"
         "/trade  -  Reply to a player to open the trade menu. Pick an item from buttons, then pick a price (or gift for free). They type /accept to complete it.\n"
         "\n"
         "*Economy*\n"
         "/inventory — Browse your bag by category. Tap 💰 Sell buttons to sell items directly.\n"
-        "/shop  -  Daily rotating shop (Hall members get a discount at guild level 7+)\n"
+        "/shop  -  Daily rotating shop (Guild members get a discount at guild level 7+)\n"
         "\n"
         "*Set Bonuses*\n"
         "Equip matching legendary pieces to unlock set bonuses shown in /stats Gear page."
     ),
     # Page 6 - Command Reference
     (
-        "🎱 *8Ball World  -  Command Reference* (6/7)\n"
+        "🎱 *8Ball World  -  Command Reference* (6/8)\n"
         "\n"
         "*Character*\n"
         "/ascend  -  Create your RPG character (DM only)\n"
@@ -12990,7 +13619,7 @@ GUIDE_PAGES = [
         "/train  -  EXP training (30min)\n"
         "/quest  -  EXP + gold + loot (1hr)\n"
         "/explore  -  Big drops, big EXP (1hr, 2x/day)\n"
-        "/pool  -  Pool shot for EXP, gold, items (8s)\n"
+        "/pool  -  Roll for EXP, gold, items (8s)\n"
         "/dungeon  -  Solo boss run (daily)\n"
         "/dungeonhard  -  Hard dungeon\n"
         "/dungeonlegendary  -  Legendary dungeon\n"
@@ -13010,8 +13639,8 @@ GUIDE_PAGES = [
         "*Gear & Economy*\n"
         "/equip  -  Browse bag and tap to equip\n"
         "/unequip  -  Tap a slot to unequip gear back to bag\n"
-        "/enhance  -  Upgrade gear with Slate Fragments (button menu)\n"
-        "/enchant  -  Add enchants via Custom Tip Scrolls (button menu)\n"
+        "/enhance  -  Upgrade gear with Iron Shards (button menu)\n"
+        "/enchant  -  Add enchants via Enchanting Scrolls (button menu)\n"
         "/reinforce  -  Tap to sacrifice duplicate gear for +1 ATK/DEF\n"
         "/use  -  Use a consumable (button menu)\n"
         "/title  -  View and equip your earned titles\n"
@@ -13037,38 +13666,38 @@ GUIDE_PAGES = [
         "/bounties  -  View the active bounty board\n"
         "_Thief classes: no fee + premium amounts (up to 10,000g), max 3 contracts. Railrunner: no fee + Execution Order (2,000g bounty + Marked debuff via skill)._\n"
         "\n"
-        "*Halls (Guilds)*\n"
-        "/guildjoin  -  Browse + join a hall\n"
-        "/guildcreate [name]  -  Create a hall (100g)\n"
-        "/guildinfo [Hall Name]  -  Your hall details (or look up any hall)\n"
-        "/guildlist  -  All active halls\n"
-        "/guilddonate [amt]  -  Donate gold to hall\n"
+        "*Guilds*\n"
+        "/guildjoin  -  Browse + join a guild\n"
+        "/guildcreate [name]  -  Create a guild (100g)\n"
+        "/guildinfo [Guild Name]  -  Your guild details (or look up any guild)\n"
+        "/guildlist  -  All active guilds\n"
+        "/guilddonate [amt]  -  Donate gold to guild\n"
         "/guildkick @user  -  Kick member (leader)\n"
-        "/guildleave  -  Leave your hall\n"
-        "/guilddisband confirm  -  Disband your hall\n"
+        "/guildleave  -  Leave your guild\n"
+        "/guilddisband confirm  -  Disband your guild\n"
         "/guildwar  -  Declare war via guild picker (leader, 24hr)\n"
-        "/gbank deposit/withdraw  -  Hall bank"
+        "/gbank deposit/withdraw  -  Guild bank"
     ),
     # Page 7 - Guilds & Advanced
     (
-        "🎱 *8Ball World  -  Guilds & Advanced Systems* (7/7)\n"
+        "🎱 *8Ball World  -  Guilds & Advanced Systems* (7/8)\n"
         "\n"
-        "*Halls (Guilds)*\n"
-        "Halls level up as members donate gold via /guilddonate, unlocking EXP bonuses, shop discounts, and more.\n"
-        "/guildjoin  -  Browse and join a Hall\n"
-        "/guildcreate [name]  -  Create a Hall (100g)\n"
-        "/guildinfo  -  View your Hall details and perks\n"
+        "*Guilds*\n"
+        "Guilds level up as members donate gold via /guilddonate, unlocking EXP bonuses, shop discounts, and more.\n"
+        "/guildjoin  -  Browse and join a Guild\n"
+        "/guildcreate [name]  -  Create a Guild (100g)\n"
+        "/guildinfo  -  View your Guild details and perks\n"
         "\n"
-        "*Hall Bank*\n"
-        "/gbank — View the Hall treasury. Members can deposit gold. Leaders can withdraw for upgrades or emergencies.\n"
+        "*Guild Bank*\n"
+        "/gbank — View the Guild treasury. Members can deposit gold. Leaders can withdraw for upgrades or emergencies.\n"
         "\n"
         "*Guild Wars*\n"
-        "/guildwar — Hall leaders tap a guild from the list to declare a 24-hour war.\n"
-        "During a war, /guildwar shows the live score AND lists the enemy Hall members by name so you know who to hunt.\n"
+        "/guildwar — Guild leaders tap a guild from the list to declare a 24-hour war.\n"
+        "During a war, /guildwar shows the live score AND lists the enemy Guild members by name so you know who to hunt.\n"
         "Each kill against an enemy member scores a point. Most points after 24 hours wins.\n"
         "Each war kill also counts as double EXP toward your daily objectives.\n"
-        "When the war ends, the winning Hall earns +2,000 Hall EXP (ties get +500 each) and a Win is recorded on /war.\n"
-        "/guildinfo [Hall Name] — Look up any Hall's members, level, and war record.\n"
+        "When the war ends, the winning Guild earns +2,000 Guild EXP (ties get +500 each) and a Win is recorded on /war.\n"
+        "/guildinfo [Guild Name] — Look up any Guild's members, level, and war record.\n"
         "\n"
         "*Bounties*\n"
         "/bounty  -  Reply to any player's message. Amount buttons appear (100–5000g). Multiple players can stack bounties on the same target.\n"
@@ -13080,11 +13709,57 @@ GUIDE_PAGES = [
         "*Kill Streaks & Wanted System*\n"
         "Every kill without dying extends your streak (visible in /who). 5+ kills in one day marks you as 🔴 WANTED — higher risk but all eyes on you.\n"
         "\n"
-        "🎱 *Good luck at the table.*"
-    )
+        "🎱 *Good luck on your adventure.*"
+    ),
+    # Page 8 - Pets
+    (
+        "🎱 *8Ball World  -  Pets* (8/8)\n"
+        "\n"
+        "*Getting a Pet*\n"
+        "Buy eggs from the Pet Shop (/petshop) or find them in dungeons and quests.\n"
+        "Use /hatch to hatch an egg. You can own multiple pets but only one is active at a time.\n"
+        "\n"
+        "*Pet Combat (Automatic)*\n"
+        "Your active pet auto-attacks alongside you every /attack or /skill.\n"
+        "Well-fed pets (hunger > 20) with good mood (mood > 40) join the fight.\n"
+        "When YOU are attacked, your pet may trigger its defensive ability:\n"
+        "🛡️ Intercept — absorbs a portion of incoming damage\n"
+        "⚔️ Counter Strike — retaliates against the attacker\n"
+        "🐍 Venom Bite — poisons the attacker\n"
+        "⚡ Stunning Blow — stuns the attacker (miss next attack)\n"
+        "💜 Life Drain — steals HP from attacker and heals you\n"
+        "✨ Aura Shield — reduces incoming damage\n"
+        "Defensive abilities unlock at pet Level 10.\n"
+        "\n"
+        "*Pet Care*\n"
+        "Use /pet to manage your pet. Feed with 🍖 and train with 🏋️.\n"
+        "Hungry or sad pets won't fight at full power.\n"
+        "Keep hunger > 20 and mood > 40 for full combat effectiveness.\n"
+        "\n"
+        "*Pet Leveling*\n"
+        "Your pet earns 15% of all EXP you gain — passively, with no effort required.\n"
+        "Pets level from 1 to 100. As they grow:\n"
+        "  L5+: Attack bonus begins\n"
+        "  L10: Defensive ability unlocks\n"
+        "  L15: Crit bonus starts\n"
+        "  L25: Dodge bonus starts\n"
+        "  L40: Lifesteal passive starts\n"
+        "  L75–100: Elite tier bonuses\n"
+        "\n"
+        "*Species & Rarity*\n"
+        "Common → Uncommon → Rare → Epic → Legendary → Mythic\n"
+        "Higher rarity = higher base stats and better ability proc chance.\n"
+        "55+ species: dogs, cats, dragons, wolves, bears, birds, snakes, horses, fantasy beasts.\n"
+        "\n"
+        "*Commands*\n"
+        "/pet — manage your active pet\n"
+        "/petshop — buy eggs and snacks\n"
+        "/hatch — hatch an egg from your inventory\n"
+        "/petrename [name] — rename your active pet\n"
+    ),
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands", "Guilds & Advanced"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands", "Guilds & Advanced", "Pets"]
 
 async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
     total = len(GUIDE_PAGES)
@@ -13107,6 +13782,369 @@ async def guide_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     page = int(query.data.split("_")[-1])
     await _send_guide_page(query.message.chat.id, context.bot, page, edit_msg=query.message)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PET COMMANDS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "🐾 Register first with /start.", delay=9); return
+    try: await update.message.delete()
+    except: pass
+    pet = get_active_pet_record(user.id)
+    if not pet:
+        text = (f"🐾 *{p['username']}'s Pets*\n\n"
+                "You don't have an active pet yet!\n"
+                "Get eggs from dungeons, quests, or the *Pet Shop*.\n"
+                "Get eggs from the *Pet Shop*, then hatch them from your bag using /hatch or the button below!")
+        markup = _pet_main_markup()
+    else:
+        text = _build_pet_card(pet)
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🍖 Feed",  callback_data=f"petfeed_{pet['pet_id']}"),
+             InlineKeyboardButton("🏋️ Train", callback_data=f"pettrain_{pet['pet_id']}")],
+            [InlineKeyboardButton("📋 All Pets", callback_data="petlist_0"),
+             InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")],
+        ])
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
+        reply_markup=markup)
+    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, 120))
+
+async def petshop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try: await update.message.delete()
+    except: pass
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p: return
+    text, markup = _build_petshop_menu(p)
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
+        reply_markup=markup)
+    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, 90))
+
+def _build_petshop_menu(p):
+    text = (f"🐾 *Pet Shop*\n💰 Your Gold: *{p.get('gold',0):,}g*\n\n"
+            "Buy eggs then tap *🥚 Hatch Egg* in your pet menu!\n\n"
+            "🥚 *Common Egg* — 300g\nCommon or Uncommon pet\n\n"
+            "🥚 *Rare Egg* — 800g\nUncommon to Rare pet\n\n"
+            "🥚 *Dragon Egg* — 2,000g\nRare to Epic pet\n\n"
+            "🥚 *Mythic Egg* — 5,000g\nEpic to Mythic pet\n\n"
+            "🍖 *Pet Snack* — 25g\nFeeds your active pet")
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🥚 Common Egg  300g",  callback_data="pbuy_Common Egg_300"),
+         InlineKeyboardButton("🥚 Rare Egg  800g",    callback_data="pbuy_Rare Egg_800")],
+        [InlineKeyboardButton("🥚 Dragon Egg  2000g", callback_data="pbuy_Dragon Egg_2000"),
+         InlineKeyboardButton("🥚 Mythic Egg  5000g", callback_data="pbuy_Mythic Egg_5000")],
+        [InlineKeyboardButton("🍖 Pet Snack  25g",    callback_data="pbuy_Pet Snack_25")],
+    ])
+    return text, markup
+
+async def petshop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user  = query.from_user
+    p = get_player(user.id)
+    if not p: await query.answer("Register first.", show_alert=True); return
+    data = query.data  # petshop or pbuy_ItemName_price
+
+    if data == "petshop":
+        text, markup = _build_petshop_menu(p)
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        await query.answer()
+        return
+
+    # pbuy_ItemName_price
+    _, item_name, price_str = data.split("_", 2)
+    price = int(price_str)
+    if p.get("gold", 0) < price:
+        await query.answer(f"Not enough gold! Need {price:,}g.", show_alert=True); return
+    p["gold"] -= price
+    inv = sjl(p.get("inventory"), [])
+    inv.append(item_name)
+    p["inventory"] = json.dumps(inv)
+    save_player(p)
+    await query.answer(f"✅ Bought {item_name}! Use /hatch to hatch eggs.")
+    text, markup = _build_petshop_menu(p)
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+
+async def hatch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Register first.", delay=8); return
+    inv = sjl(p.get("inventory"), [])
+    egg_types = ["Common Egg","Rare Egg","Dragon Egg","Mythic Egg"]
+    egg = next((e for e in egg_types if e in inv), None)
+    if not egg:
+        await send_group(update, "🥚 You don't have any eggs. Buy them from the *Pet Shop* (/petshop).", delay=12); return
+    try: await update.message.delete()
+    except: pass
+    inv.remove(egg)
+    p["inventory"] = json.dumps(inv)
+    save_player(p)
+    species_id = _hatch_species(egg)
+    if not species_id:
+        await send_group(update, "❌ The egg crumbled. Nothing hatched.", delay=10); return
+    sp = PET_SPECIES[species_id]
+    new_pet = {
+        "owner_id": user.id, "species": species_id,
+        "nickname": None, "level": 1, "exp": 0,
+        "hunger": 100, "mood": 100,
+        "last_fed": None, "last_trained": None,
+        "is_active": 0, "created_at": datetime.now().isoformat(),
+    }
+    # Auto-activate if no active pet
+    all_pets = get_all_pets(user.id)
+    if not any(pet.get("is_active") for pet in all_pets):
+        new_pet["is_active"] = 1
+    save_pet(new_pet)
+    rar_e = RARITY_EMOJI.get(sp["rarity"],"")
+    elem_e = ELEMENT_EMOJI.get(sp["element"],"")
+    active_note = " They're now your active companion!" if new_pet["is_active"] else " Use /pet → All Pets to activate them."
+    text = (f"🥚 *Hatch!*\n\n"
+            f"{sp['emoji']} *{sp['name']}* appeared!\n"
+            f"{rar_e} {sp['rarity'].capitalize()}  |  {elem_e} {sp['element'].capitalize()}\n\n"
+            f"_{sp['desc']}_\n\n"
+            f"Base ATK: +{sp['base_atk']}  |  Base DEF: +{sp['base_def']}\n"
+            f"Personality: {PERSONALITY_EMOJI.get(sp['personality'],'')} {sp['personality'].capitalize()}\n\n"
+            + active_note)
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=text, parse_mode="Markdown")
+    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, 60))
+
+async def hatch_egg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback version of hatch_cmd triggered by the 🥚 Hatch Egg button."""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    p = get_player(user.id)
+    if not p:
+        await query.answer("Register first.", show_alert=True); return
+    inv = sjl(p.get("inventory"), [])
+    egg_types = ["Common Egg","Rare Egg","Dragon Egg","Mythic Egg"]
+    egg = next((e for e in egg_types if e in inv), None)
+    if not egg:
+        await query.answer("🥚 No eggs in your bag! Buy some from the Pet Shop.", show_alert=True); return
+    inv.remove(egg)
+    p["inventory"] = json.dumps(inv)
+    save_player(p)
+    species_id = _hatch_species(egg)
+    if not species_id:
+        await query.answer("❌ The egg crumbled. Nothing hatched.", show_alert=True); return
+    sp = PET_SPECIES[species_id]
+    new_pet = {
+        "owner_id": user.id, "species": species_id,
+        "nickname": None, "level": 1, "exp": 0,
+        "hunger": 100, "mood": 100,
+        "last_fed": None, "last_trained": None,
+        "is_active": 0, "created_at": datetime.now().isoformat(),
+    }
+    all_pets = get_all_pets(user.id)
+    if not any(pet.get("is_active") for pet in all_pets):
+        new_pet["is_active"] = 1
+    save_pet(new_pet)
+    rar_e  = RARITY_EMOJI.get(sp["rarity"],"")
+    elem_e = ELEMENT_EMOJI.get(sp["element"],"")
+    active_note = " Now your active companion!" if new_pet["is_active"] else " Activate via /pet → All Pets."
+    text = (f"🥚 *Hatch!*\n\n"
+            f"{sp['emoji']} *{sp['name']}* appeared!\n"
+            f"{rar_e} {sp['rarity'].capitalize()}  |  {elem_e} {sp['element'].capitalize()}\n\n"
+            f"_{sp['desc']}_\n\n"
+            f"Base ATK: +{sp['base_atk']}  |  Base DEF: +{sp['base_def']}\n"
+            f"Personality: {PERSONALITY_EMOJI.get(sp['personality'],'')} {sp['personality'].capitalize()}\n\n"
+            + active_note)
+    msg = await context.bot.send_message(
+        chat_id=query.message.chat.id, text=text, parse_mode="Markdown")
+    asyncio.create_task(_auto_delete(context.bot, query.message.chat.id, msg.message_id, 60))
+
+async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles petmain, petlist_N, petview_ID, petactivate_ID, petfeed_ID, pettrain_ID, petrelease_ID"""
+    query = update.callback_query
+    user  = query.from_user
+    data  = query.data
+
+    if data == "petmain":
+        p = get_player(user.id)
+        pet = get_active_pet_record(user.id)
+        if not pet:
+            text = "🐾 No active pet. Get eggs from dungeons or the Pet Shop!"
+            markup = _pet_main_markup()
+        else:
+            text = _build_pet_card(pet)
+            markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🍖 Feed",  callback_data=f"petfeed_{pet['pet_id']}"),
+                 InlineKeyboardButton("🏋️ Train", callback_data=f"pettrain_{pet['pet_id']}")],
+                [InlineKeyboardButton("📋 All Pets", callback_data="petlist_0"),
+                 InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")],
+            ])
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        await query.answer(); return
+
+    if data.startswith("petlist_"):
+        page = int(data.split("_")[1])
+        pets = get_all_pets(user.id)
+        if not pets:
+            await query.edit_message_text("🐾 You have no pets yet!", reply_markup=_pet_main_markup())
+            await query.answer(); return
+        await query.edit_message_text(
+            f"🐾 *Your Pets* ({len(pets)} total)\nTap a pet to view or manage.",
+            parse_mode="Markdown", reply_markup=_pet_list_markup(pets, page))
+        await query.answer(); return
+
+    if data.startswith("petview_"):
+        pid = int(data.split("_")[1])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); _decay_pet(pet)
+        await query.edit_message_text(_build_pet_card(pet), parse_mode="Markdown",
+            reply_markup=_pet_view_markup(pid, bool(pet.get("is_active"))))
+        await query.answer(); return
+
+    if data.startswith("petactivate_"):
+        pid = int(data.split("_")[1])
+        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        c.execute("UPDATE pets SET is_active=0 WHERE owner_id=?", (user.id,))
+        c.execute("UPDATE pets SET is_active=1 WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        conn.commit(); conn.close()
+        conn2 = sqlite3.connect(DB_PATH); conn2.row_factory = sqlite3.Row; c2 = conn2.cursor()
+        c2.execute("SELECT * FROM pets WHERE pet_id=?", (pid,))
+        row = c2.fetchone(); conn2.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); _decay_pet(pet)
+        sp = PET_SPECIES.get(pet["species"],{})
+        await query.answer(f"✅ {sp.get('name','Pet')} is now your active companion!")
+        await query.edit_message_text(_build_pet_card(pet), parse_mode="Markdown",
+            reply_markup=_pet_view_markup(pid, True)); return
+
+    if data.startswith("petfeed_"):
+        pid = int(data.split("_")[1])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); _decay_pet(pet)
+        p = get_player(user.id)
+        inv = sjl(p.get("inventory"), [])
+        sp = PET_SPECIES.get(pet["species"], {})
+        pname = _pet_display_name(pet)
+        pers  = sp.get("personality","calm")
+        if "Pet Snack" in inv:
+            inv.remove("Pet Snack"); p["inventory"] = json.dumps(inv); save_player(p)
+            cost_note = "_(used 1 Pet Snack)_"
+        elif p.get("gold",0) >= 10:
+            p["gold"] -= 10; save_player(p)
+            cost_note = "_(cost 10g)_"
+        else:
+            await query.answer("No Pet Snacks and not enough gold (need 10g).", show_alert=True); return
+        pet["hunger"] = min(100, pet.get("hunger",0) + 30)
+        pet["mood"]   = min(100, pet.get("mood",0)   + 10)
+        pet["last_fed"] = datetime.now().isoformat()
+        save_pet(pet)
+        feed_msg = PERSONALITY_FEED.get(pers, "eats happily.")
+        await query.answer(f"🍖 Fed {pname}!")
+        await query.edit_message_text(
+            f"🍖 *{pname}* {feed_msg}\n{cost_note}\n\n" + _build_pet_card(pet),
+            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")))); return
+
+    if data.startswith("pettrain_"):
+        pid = int(data.split("_")[1])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); _decay_pet(pet)
+        sp = PET_SPECIES.get(pet["species"], {})
+        pname = _pet_display_name(pet)
+        pers  = sp.get("personality","calm")
+        # Cooldown: 4 hours
+        last_trained = pet.get("last_trained")
+        if last_trained:
+            try:
+                elapsed = (datetime.now() - datetime.fromisoformat(last_trained)).total_seconds()
+                if elapsed < 14400:
+                    remaining = round((14400 - elapsed) / 60)
+                    await query.answer(f"⏳ {pname} needs rest. Try again in {remaining} min.", show_alert=True); return
+            except Exception: pass
+        if pet.get("hunger", 100) < 20:
+            await query.answer(f"😫 {pname} is too hungry to train! Feed them first.", show_alert=True); return
+        gain = 30 + pet.get("level",1) * 5
+        pet["exp"] += gain
+        pet["mood"] = min(100, pet.get("mood",100) + 5)
+        pet["last_trained"] = datetime.now().isoformat()
+        # Level up
+        lvl_ups = []
+        while pet["exp"] >= pet_exp_for_level(pet["level"]):
+            pet["exp"] -= pet_exp_for_level(pet["level"])
+            pet["level"] += 1
+            lvl_ups.append(pet["level"])
+        save_pet(pet)
+        train_msg = PERSONALITY_TRAIN.get(pers, "trains diligently.")
+        lvl_note = "".join(f"\n🎉 *Level Up!* {pname} is now level {l}!" for l in lvl_ups)
+        await query.answer(f"🏋️ {pname} trained! +{gain} EXP")
+        await query.edit_message_text(
+            f"🏋️ *{pname}* {train_msg}\n+{gain} EXP gained!{lvl_note}\n\n" + _build_pet_card(pet),
+            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")))); return
+
+    if data.startswith("petrelease_"):
+        pid = int(data.split("_")[1])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row)
+        sp = PET_SPECIES.get(pet["species"],{})
+        pname = _pet_display_name(pet)
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("💔 Yes, release", callback_data=f"petrelease_confirm_{pid}"),
+            InlineKeyboardButton("❌ Cancel",        callback_data=f"petview_{pid}"),
+        ]])
+        await query.edit_message_text(
+            f"⚠️ *Release {pname}?*\n\nThis is permanent. {pname} will be gone forever.",
+            parse_mode="Markdown", reply_markup=markup)
+        await query.answer(); return
+
+    if data.startswith("petrelease_confirm_"):
+        pid = int(data.split("_")[2])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone()
+        if not row: conn.close(); await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); sp = PET_SPECIES.get(pet["species"],{})
+        pname = _pet_display_name(pet)
+        c.execute("DELETE FROM pets WHERE pet_id=?", (pid,)); conn.commit(); conn.close()
+        await query.answer(f"💔 {pname} has been released.")
+        await query.edit_message_text(
+            f"💔 *{pname}* has been released into the wild.\n_Goodbye, old friend._",
+            parse_mode="Markdown"); return
+
+    if data == "petshop":
+        p = get_player(user.id)
+        text, markup = _build_petshop_menu(p)
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        await query.answer(); return
+
+    await query.answer()
+
+async def petrename_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p: return
+    pet = get_active_pet_record(user.id)
+    if not pet:
+        await send_group(update, "🐾 No active pet to rename.", delay=8); return
+    args = context.args
+    if not args:
+        await send_group(update, "Usage: `/petrename <nickname>`", delay=8); return
+    nickname = " ".join(args)[:24]
+    pet["nickname"] = nickname
+    save_pet(pet)
+    sp = PET_SPECIES.get(pet["species"],{})
+    await send_group(update, f"📝 Your {sp.get('name','pet')} is now called *{nickname}*!", delay=15)
 
 async def guide_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -13147,74 +14185,74 @@ POOL_SHOTS = [
      "exp":44,"gold":5,"loot":None},
     {"id":"two_ball_run","weight":35,"rarity":"common",
      "text":"Two ball run before the pattern breaks. You'll take it.",
-     "exp":50,"gold":8,"loot":[("Chalk Vial",0.08)]},
+     "exp":50,"gold":8,"loot":[("Health Potion",0.08)]},
     {"id":"long_pot","weight":33,"rarity":"common",
      "text":"Long pot, full length of the table. The satisfying thud of a good hit.",
-     "exp":56,"gold":8,"loot":[("Chalk Vial",0.10)]},
+     "exp":56,"gold":8,"loot":[("Health Potion",0.10)]},
     {"id":"three_cushion","weight":30,"rarity":"common",
      "text":"Three cushion shot, exactly as planned. Nobody saw it but you know.",
-     "exp":63,"gold":10,"loot":[("Chalk Vial",0.12)]},
+     "exp":63,"gold":10,"loot":[("Health Potion",0.12)]},
     {"id":"position_play","weight":30,"rarity":"common",
      "text":"Perfect position play. You pot the ball and land exactly where you wanted.",
-     "exp":69,"gold":12,"loot":[("Chalk Vial",0.12),("Brass Rail Ring",0.05)]},
+     "exp":69,"gold":12,"loot":[("Health Potion",0.12),("Brass Ring",0.05)]},
     {"id":"break_and_run","weight":20,"rarity":"uncommon",
-     "text":"Break and run. Four balls drop on the break and you clear the table from there.",
-     "exp":100,"gold":20,"loot":[("Premium Chalk Draft",0.12),("Chalk Nub",0.08)]},
+     "text":"Break and run. Four targets drop on the break and you clear the field from there.",
+     "exp":100,"gold":20,"loot":[("Greater Health Potion",0.12),("Iron Shard Ring",0.08)]},
     {"id":"masse_shot","weight":20,"rarity":"uncommon",
-     "text":"Massé shot curves around the cluster perfectly. The crowd would have gone wild.",
-     "exp":106,"gold":22,"loot":[("Premium Chalk Draft",0.15),("Pocket Marker",0.08)]},
+     "text":"Massé shot curves around the obstacle perfectly. The crowd would have gone wild.",
+     "exp":106,"gold":22,"loot":[("Greater Health Potion",0.15),("Scout's Pendant",0.08)]},
     {"id":"bank_pot","weight":18,"rarity":"uncommon",
-     "text":"Bank pot off the far cushion drops clean. Calculated.",
-     "exp":113,"gold":25,"loot":[("Premium Chalk Draft",0.15),("Slate Fragment",0.06)]},
+     "text":"Bank pot off the far wall drops clean. Calculated.",
+     "exp":113,"gold":25,"loot":[("Greater Health Potion",0.15),("Iron Shard",0.06)]},
     {"id":"combo_pot","weight":18,"rarity":"uncommon",
-     "text":"Combo pot  -  cue ball kisses the 5, sends the 7 into the corner. Beautiful.",
-     "exp":119,"gold":28,"loot":[("Premium Chalk Draft",0.15),("Slate Fragment",0.08)]},
+     "text":"Combo strike  -  clips the 5, sends the 7 into the corner. Beautiful.",
+     "exp":119,"gold":28,"loot":[("Greater Health Potion",0.15),("Iron Shard",0.08)]},
     {"id":"five_ball_run","weight":16,"rarity":"uncommon",
-     "text":"Five ball run. Your focus is absolute. The table offers no resistance.",
-     "exp":125,"gold":30,"loot":[("Slate Fragment",0.12),("Worn Tip Wrap",0.08)]},
+     "text":"Five target run. Your focus is absolute. The field offers no resistance.",
+     "exp":125,"gold":30,"loot":[("Iron Shard",0.12),("Worn Leather Band",0.08)]},
     {"id":"called_shot","weight":16,"rarity":"uncommon",
-     "text":"Called shot  -  6 ball, side pocket, two cushions. You called it. It dropped.",
-     "exp":138,"gold":35,"loot":[("Slate Fragment",0.15),("Silk Tip Ring",0.05)]},
+     "text":"Called shot  -  6 ball, side pocket, two walls. You called it. It dropped.",
+     "exp":138,"gold":35,"loot":[("Iron Shard",0.15),("Silk Band",0.05)]},
     {"id":"century_break","weight":14,"rarity":"uncommon",
      "text":"Century break. You stop counting at twelve balls. The table is yours.",
-     "exp":150,"gold":40,"loot":[("Slate Fragment",0.18),("Red Ball Band",0.06)]},
+     "exp":150,"gold":40,"loot":[("Iron Shard",0.18),("Bloodstone Band",0.06)]},
     {"id":"maximum_break","weight":8,"rarity":"rare",
      "text":"Maximum break. Every ball. Every pocket. The felt bows to your command.",
-     "exp":250,"gold":80,"loot":[("Slate Fragment",0.30),("The Custom Tip Scroll",0.12),("The Action Coin",0.06)]},
+     "exp":250,"gold":80,"loot":[("Iron Shard",0.30),("Enchanting Scroll",0.12),("Fortune Coin",0.06)]},
     {"id":"trick_shot","weight":8,"rarity":"rare",
-     "text":"Trick shot  -  cue behind the back, jump shot over the cluster, corner pocket. "
+     "text":"Trick shot  -  a blind shot over the cluster, corner pocket. "
             "You don't even watch it drop. You already knew.",
-     "exp":275,"gold":90,"loot":[("Slate Fragment",0.30),("The Custom Tip Scroll",0.15),("Break Master's Clasp",0.04)]},
+     "exp":275,"gold":90,"loot":[("Iron Shard",0.30),("Enchanting Scroll",0.15),("War Master's Clasp",0.04)]},
     {"id":"ghost_ball","weight":7,"rarity":"rare",
-     "text":"Ghost ball method on an impossible cut. The cue ball threads a gap "
-            "that shouldn't exist. The 8 drops. You breathe.",
-     "exp":300,"gold":100,"loot":[("Slate Fragment",0.35),("The Custom Tip Scroll",0.18),("Diamond Sight Medallion",0.04)]},
+     "text":"Ghost ball method on an impossible cut. The path threads a gap "
+            "that shouldn't exist. It drops. You breathe.",
+     "exp":300,"gold":100,"loot":[("Iron Shard",0.35),("Enchanting Scroll",0.18),("Hawk Eye Medallion",0.04)]},
     {"id":"full_rack_clear","weight":6,"rarity":"rare",
-     "text":"Full rack clear on the break. All fifteen balls. One shot. "
-            "The table is empty before the echo dies.",
-     "exp":350,"gold":120,"loot":[("Slate Fragment",0.40),("The Custom Tip Scroll",0.20),
-                                   ("The Re-Rack",0.08),("Ghost Ball Loop",0.04)]},
+     "text":"Full rack clear on the break. All fifteen targets. One strike. "
+            "The field is empty before the echo dies.",
+     "exp":350,"gold":120,"loot":[("Iron Shard",0.40),("Enchanting Scroll",0.20),
+                                   ("Scroll of Revival",0.08),("Phantom Loop",0.04)]},
     {"id":"void_pocket","weight":3,"rarity":"epic",
-     "text":"The cue ball rolls toward a pocket that wasn't there a moment ago. "
-            "A void pocket. The ball disappears. Something falls out of the table "
+     "text":"The path leads toward a void that wasn't there a moment ago. "
+            "A pocket between worlds. Something disappears. Something falls out "
             "that was never inside it.",
-     "exp":625,"gold":200,"loot":[("Slate Fragment",0.60),("The Custom Tip Scroll",0.35),
-                                   ("The Re-Rack",0.15),("Chalk Heart",0.05),
-                                   ("Eye of the Table",0.04)]},
+     "exp":625,"gold":200,"loot":[("Iron Shard",0.60),("Enchanting Scroll",0.35),
+                                   ("Scroll of Revival",0.15),("Runed Heart",0.05),
+                                   ("Eye of the Void",0.04)]},
     {"id":"eight_ball_break","weight":3,"rarity":"epic",
      "text":"8 ball on the break. Dead center. Corner pocket. "
-            "The felt goes silent. Something ancient stirs beneath the table.",
-     "exp":750,"gold":250,"loot":[("Slate Fragment",0.65),("The Custom Tip Scroll",0.40),
-                                   ("The Hustler's Whisper",0.05),("The Safety Talisman",0.04)]},
+            "The felt goes silent. Something ancient stirs beneath.",
+     "exp":750,"gold":250,"loot":[("Iron Shard",0.65),("Enchanting Scroll",0.40),
+                                   ("The Shadow Whisper",0.05),("Guardian's Talisman",0.04)]},
     {"id":"corner_pocket_singularity","weight":1,"rarity":"legendary",
-     "text":"The corner pocket opens. Not just opens  -  becomes. "
-            "Every ball on the table rolls toward it simultaneously without being struck. "
-            "They vanish one by one. The table is left perfectly bare. "
-            "You didn't do that. Or maybe you did. The chalk dust settles. "
+     "text":"The void opens. Not just opens  -  becomes. "
+            "Every target in the field rolls toward it simultaneously without being struck. "
+            "They vanish one by one. The field is left perfectly bare. "
+            "You didn't do that. Or maybe you did. The dust settles. "
             "Something was left behind.",
-     "exp":1500,"gold":500,"loot":[("Slate Fragment",0.80),("The Custom Tip Scroll",0.60),
-                                    ("Splinter of the Break",0.03),("The Endless Run",0.03),
-                                    ("The Final Shot Locket",0.03)]},
+     "exp":1500,"gold":500,"loot":[("Iron Shard",0.80),("Enchanting Scroll",0.60),
+                                    ("Shard of the Void",0.03),("Ring of the Endless",0.03),
+                                    ("The Last Stand Locket",0.03)]},
 
     # ── Additional Common ────────────────────────────────────────────────
     {"id":"chalk_up","weight":38,"rarity":"common",
@@ -13227,7 +14265,7 @@ POOL_SHOTS = [
 
     {"id":"kitchen_shot","weight":34,"rarity":"common",
      "text":"Ball in hand from the kitchen. You make the most of it.",
-     "exp":38,"gold":6,"loot":[("Chalk Vial",0.10)]},
+     "exp":38,"gold":6,"loot":[("Health Potion",0.10)]},
 
     {"id":"frozen_ball","weight":33,"rarity":"common",
      "text":"Frozen ball on the rail. You play it safe and take the defensive.",
@@ -13235,76 +14273,76 @@ POOL_SHOTS = [
 
     {"id":"diamond_system","weight":31,"rarity":"common",
      "text":"You use the diamond system for a kick shot. It works. You act like it always does.",
-     "exp":42,"gold":7,"loot":[("Chalk Vial",0.08)]},
+     "exp":42,"gold":7,"loot":[("Health Potion",0.08)]},
 
     {"id":"one_pocket_defense","weight":30,"rarity":"common",
      "text":"A defensive shot worthy of one pocket. Nothing to pocket but nowhere to run either.",
-     "exp":45,"gold":9,"loot":[("Chalk Vial",0.10)]},
+     "exp":45,"gold":9,"loot":[("Health Potion",0.10)]},
 
     {"id":"stroke_check","weight":28,"rarity":"common",
      "text":"You pause. Check your stroke. Restart. It was worth the delay.",
-     "exp":48,"gold":10,"loot":[("Chalk Vial",0.12),("Brass Rail Ring",0.05)]},
+     "exp":48,"gold":10,"loot":[("Health Potion",0.12),("Brass Ring",0.05)]},
 
     # ── Additional Uncommon ──────────────────────────────────────────────
     {"id":"running_english","weight":18,"rarity":"uncommon",
      "text":"Running English off the far cushion opens the table completely. "
             "You read it perfectly.",
-     "exp":105,"gold":32,"loot":[("Slate Fragment",0.10),("Silk Tip Ring",0.07)]},
+     "exp":105,"gold":32,"loot":[("Iron Shard",0.10),("Silk Band",0.07)]},
 
     {"id":"stun_shot","weight":17,"rarity":"uncommon",
-     "text":"Stun shot. Cue ball stops dead. Exactly where you needed it. "
+     "text":"Stun shot. Dead stop. Exactly where you needed it. "
             "Nobody else saw that coming.",
-     "exp":115,"gold":36,"loot":[("Slate Fragment",0.12),("Road Shark Signet",0.04)]},
+     "exp":115,"gold":36,"loot":[("Iron Shard",0.12),("Shadowmark Signet",0.04)]},
 
     {"id":"screw_back","weight":16,"rarity":"uncommon",
-     "text":"Strong draw  -  screw back across the table. "
-            "The cue ball returns to you like it owed you something.",
-     "exp":125,"gold":40,"loot":[("Slate Fragment",0.15),("Black Ball Stud",0.05)]},
+     "text":"Strong draw back across the field. "
+            "It returns to you like it owed you something.",
+     "exp":125,"gold":40,"loot":[("Iron Shard",0.15),("Obsidian Stud",0.05)]},
 
     {"id":"two_way_shot","weight":15,"rarity":"uncommon",
      "text":"Two-way shot. If you make it, great. If you miss, you left them nothing. "
             "You make it.",
-     "exp":130,"gold":42,"loot":[("Slate Fragment",0.18),("The Custom Tip Scroll",0.08)]},
+     "exp":130,"gold":42,"loot":[("Iron Shard",0.18),("Enchanting Scroll",0.08)]},
 
     {"id":"jump_shot","weight":14,"rarity":"uncommon",
-     "text":"Jump shot over the cluster. Clean contact. The blocker never had a chance.",
-     "exp":140,"gold":45,"loot":[("Slate Fragment",0.20),("The Custom Tip Scroll",0.10),
-                                   ("Worn Tip Wrap",0.06)]},
+     "text":"Jump shot over the obstacle. Clean contact. The blocker never had a chance.",
+     "exp":140,"gold":45,"loot":[("Iron Shard",0.20),("Enchanting Scroll",0.10),
+                                   ("Worn Leather Band",0.06)]},
 
     {"id":"nine_ball_rotation","weight":13,"rarity":"uncommon",
-     "text":"Nine ball rotation  -  lowest ball first, every time, "
-            "three balls pocketed in sequence. The rack is learning to fear you.",
-     "exp":150,"gold":50,"loot":[("Slate Fragment",0.22),("The Custom Tip Scroll",0.12),
-                                   ("Road Player's Coin",0.05)]},
+     "text":"Nine ball rotation  -  lowest target first, every time, "
+            "three targets cleared in sequence. The field is learning to fear you.",
+     "exp":150,"gold":50,"loot":[("Iron Shard",0.22),("Enchanting Scroll",0.12),
+                                   ("Traveler's Coin",0.05)]},
 
     # ── Additional Rare ──────────────────────────────────────────────────
     {"id":"masse_curve","weight":6,"rarity":"rare",
-     "text":"Massé shot  -  cue nearly vertical, extreme spin, "
-            "the ball curves around the blocker like it changed its mind. "
-            "The felt remembers this shot.",
-     "exp":260,"gold":110,"loot":[("Slate Fragment",0.40),("The Custom Tip Scroll",0.22),
-                                    ("Re-Rack",0.06),("Action Coin",0.05)]},
+     "text":"Power strike with extreme spin, "
+            "the path curves around the blocker like it changed its mind. "
+            "The field remembers this moment.",
+     "exp":260,"gold":110,"loot":[("Iron Shard",0.40),("Enchanting Scroll",0.22),
+                                    ("Scroll of Revival",0.06),("Fortune Coin",0.05)]},
 
     {"id":"ghost_ball_method","weight":5,"rarity":"rare",
-     "text":"Ghost ball method on a thin cut  -  you aim at where the cue ball "
-            "needs to be, not where the object ball is. It drops clean.",
-     "exp":290,"gold":125,"loot":[("Slate Fragment",0.45),("The Custom Tip Scroll",0.25),
-                                    ("Re-Rack",0.08),("Ghost Ball Loop",0.04)]},
+     "text":"Ghost ball method on a thin cut  -  you aim at where the strike "
+            "needs to land, not where the target stands. It drops clean.",
+     "exp":290,"gold":125,"loot":[("Iron Shard",0.45),("Enchanting Scroll",0.25),
+                                    ("Scroll of Revival",0.08),("Phantom Loop",0.04)]},
 
     {"id":"three_cushion_carom","weight":4,"rarity":"rare",
-     "text":"Three cushion carom. Three rails before the second object ball. "
-            "Technically you weren't even trying to pocket anything. "
-            "Somehow something drops.",
-     "exp":320,"gold":135,"loot":[("Slate Fragment",0.50),("The Custom Tip Scroll",0.28),
-                                    ("Re-Rack",0.10),("Diamond Sight Medallion",0.04)]},
+     "text":"Three cushion carom. Three walls before the second target. "
+            "Technically you weren't even trying to drop anything. "
+            "Somehow something falls.",
+     "exp":320,"gold":135,"loot":[("Iron Shard",0.50),("Enchanting Scroll",0.28),
+                                    ("Scroll of Revival",0.10),("Hawk Eye Medallion",0.04)]},
 
     # ── Additional Epic ──────────────────────────────────────────────────
     {"id":"golden_break","weight":2,"rarity":"epic",
      "text":"Golden break. Nine ball drops on the break. "
             "You called it. Nobody believed you. "
             "The table is already empty. The game is already won.",
-     "exp":700,"gold":280,"loot":[("Slate Fragment",0.70),("The Custom Tip Scroll",0.45),
-                                    ("Re-Rack",0.20),("Deathwhisper Amulet",0.06),
+     "exp":700,"gold":280,"loot":[("Iron Shard",0.70),("Enchanting Scroll",0.45),
+                                    ("Scroll of Revival",0.20),("Deathwhisper Amulet",0.06),
                                     ("Dragon Soul Pendant",0.04)]},
 
     {"id":"call_shot_perfection","weight":2,"rarity":"epic",
@@ -13312,62 +14350,62 @@ POOL_SHOTS = [
             "Every ball dropped in the called pocket. "
             "Not one fluke, not one assumption. "
             "Pure declared intention, executed perfectly.",
-     "exp":750,"gold":300,"loot":[("Slate Fragment",0.72),("The Custom Tip Scroll",0.48),
-                                    ("Re-Rack",0.22),("Eye of the Storm",0.05),
+     "exp":750,"gold":300,"loot":[("Iron Shard",0.72),("Enchanting Scroll",0.48),
+                                    ("Scroll of Revival",0.22),("Eye of the Storm",0.05),
                                     ("Aegis Talisman",0.04)]},
 ]
 
 # Rolled on every /pool use as a secondary item chance
 POOL_ITEM_TABLE = [
     # ── Common weapons ──
-    ("Worn Practice Cue",0.018),("Chalk Shiv",0.018),("Graphite Break Cue",0.012),
+    ("Iron Broadsword",0.018),("Rusty Shiv",0.018),("Steel Knight Sword",0.012),
     # ── Common armors ──
-    ("Padded Cue Jacket",0.018),("Rack Cloth Vest",0.018),("Reinforced Chalk Coat",0.012),
+    ("Rusty Iron Vest",0.018),("Rack Cloth Vest",0.018),("Reinforced Chalk Coat",0.012),
     # ── Common accessories ──
-    ("Chalk Nub",0.020),("Worn Tip Wrap",0.020),("Pocket Marker",0.018),
-    ("Brass Rail Ring",0.016),("Road Player's Coin",0.016),
+    ("Iron Shard Ring",0.020),("Worn Leather Band",0.020),("Scout's Pendant",0.018),
+    ("Brass Ring",0.016),("Traveler's Coin",0.016),
     # ── Uncommon weapons ──
-    ("Blue Diamond Chalk",0.008),("Blackwood Bridge Stick",0.007),("Ferrule Dart",0.007),
+    ("Crystal Core Wand",0.008),("Warlock's Dread Staff",0.007),("Ferrule Dart",0.007),
     # ── Uncommon armors ──
     ("Iron Scale Vest",0.008),("Shadow Leather Coat",0.007),("Toughened Rail Coat",0.007),
     # ── Uncommon accessories ──
-    ("Silk Tip Ring",0.008),("Chalk Cross Pendant",0.008),("Black Ball Stud",0.007),
-    ("Red Ball Band",0.007),("Road Shark Signet",0.006),("Hustler's Tooth",0.006),
-    ("Chalk Bead Necklace",0.006),
+    ("Silk Band",0.008),("Rune Ring",0.008),("Obsidian Stud",0.007),
+    ("Bloodstone Band",0.007),("Shadowmark Signet",0.006),("Hunter's Fang",0.006),
+    ("Crystal Bead Necklace",0.006),
     # ── Rare weapons ──
-    ("Heavy Breaker Staff",0.003),("The Extension",0.003),("Chalked Finger",0.002),
-    ("The Grand Bridge",0.002),
+    ("Warlord's Edge",0.003),("Void Channel Staff",0.003),("Gnarled Twig Wand",0.002),
+    ("The Mind's Eye",0.002),
     # ── Rare armors ──
     ("Warlord's Plate",0.003),("Champion's Coat",0.003),("Shadowweave Armor",0.002),
     # ── Rare accessories ──
-    ("The Action Coin",0.003),("Break Master's Clasp",0.003),("Diamond Sight Medallion",0.003),
-    ("Ghost Ball Loop",0.002),("Closer's Band",0.002),("English Coil",0.002),
-    ("Slate Heart",0.002),("Shark Tooth Chain",0.002),("Road Player's Compass",0.002),
-    ("The Break Torc",0.002),
+    ("Fortune Coin",0.003),("War Master's Clasp",0.003),("Hawk Eye Medallion",0.003),
+    ("Phantom Loop",0.002),("Warrior's Band",0.002),("Mage's Coil",0.002),
+    ("Stone Heart",0.002),("Beast Fang Chain",0.002),("Traveler's Compass",0.002),
+    ("The Storm Torc",0.002),
     # ── Rare shields ──
     ("Iron Rail Guard",0.002),("The Chalk Wall",0.002),
     # ── Epic weapons ──
-    ("The Rack Splitter",0.0005),("Twin Tip Blades",0.0005),
+    ("Ruinblade",0.0005),("Shadow Death Star",0.0005),
     # ── Epic armors ──
     ("Void-Touched Armor",0.0005),("Sentinel's Plate",0.0005),
     # ── Epic accessories ──
-    ("Double Kiss Ring",0.0005),("Eye of the Table",0.0005),("Blackball Circle",0.0004),
-    ("Break Knuckle",0.0004),("House Saint's Band",0.0004),("Chalk Heart",0.0004),
-    ("The Hustler's Whisper",0.0004),("The Safety Talisman",0.0004),
-    ("The Crossed Cues Pendant",0.0003),("The Slate and Felt Pendant",0.0003),
+    ("Twin Strike Ring",0.0005),("Eye of the Void",0.0005),("Void Circle",0.0004),
+    ("War Knuckle",0.0004),("Cleric's Band",0.0004),("Runed Heart",0.0004),
+    ("The Shadow Whisper",0.0004),("Guardian's Talisman",0.0004),
+    ("The Crossed Blades Pendant",0.0003),("The Iron and Flame Pendant",0.0003),
     # ── Epic shields ──
     ("The Diamond Rack",0.0003),
     # ── Legendary weapons ──
-    ("The Crossed Cues",0.00008),("The Diamond Staff",0.00008),
+    ("Grand Inquisitor's Cross",0.00008),("The Final Judgment",0.00008),
     # ── Legendary armors ──
     ("Legendary Cue Coat",0.00008),
     # ── Legendary accessories ──
-    ("Splinter of the Break",0.00006),("The Endless Run",0.00006),
-    ("The Old Road Ring",0.00005),("The Rack Eternal",0.00005),
+    ("Shard of the Void",0.00006),("Ring of the Endless",0.00006),
+    ("The Warlord's Ring",0.00005),("The Eternal Ring",0.00005),
     # ── Legendary shields ──
-    ("The Perfect Break Rack",0.00004),
+    ("The Dead Reckoning",0.00004),
     # ── Crafting/consumables ──
-    ("Slate Fragment",0.025),("The Custom Tip Scroll",0.008),("The Re-Rack",0.003),
+    ("Iron Shard",0.025),("Enchanting Scroll",0.008),("Scroll of Revival",0.003),
 ]
 
 POOL_CLASS_FLAVOR = {
@@ -13542,7 +14580,7 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         gold = 50 + p["level"] * 5; p["gold"] = p.get("gold",0) + gold
         item = None
         if random.random() < 0.10:
-            item = random.choice(["Chalk Vial","Premium Chalk Draft","Champion's Chalk Flask"])
+            item = random.choice(["Health Potion","Greater Health Potion","Grand Restorative Flask"])
             add_item(p, item)
         daily_exp = 200 + p["level"] * 10
         lmsgs, _ = add_exp(p, daily_exp)
@@ -13642,9 +14680,9 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         scale_count  = 1 if streak >= 7 else 0
         bonus_scroll = streak >= 14
         inv = sjl(p.get("inventory"), [])
-        if slate_count: inv.extend(["Slate Fragment"] * slate_count)
-        if scale_count: inv.extend(["Slate Fragment"] * scale_count)
-        if bonus_scroll: inv.append("The Custom Tip Scroll")
+        if slate_count: inv.extend(["Iron Shard"] * slate_count)
+        if scale_count: inv.extend(["Iron Shard"] * scale_count)
+        if bonus_scroll: inv.append("Enchanting Scroll")
         p["inventory"] = json.dumps(inv)
         p["gold"] = p.get("gold", 0) + gold_reward
         p["last_claim"] = today_str
@@ -13652,9 +14690,9 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         streak_emojis = "🔥" * min(streak, 7)
         claim_entry = f"🎁 *Claim Day {streak}* {streak_emojis}: +{gold_reward}g"
         if slate_count or scale_count:
-            claim_entry += f", +{slate_count + scale_count} Slate Fragment"
+            claim_entry += f", +{slate_count + scale_count} Iron Shard"
         if bonus_scroll:
-            claim_entry += ", +1 Custom Tip Scroll"
+            claim_entry += ", +1 Enchanting Scroll"
         ran.append(claim_entry)
 
     # ── Explore ────────────────────────────────────────────────────────────────
@@ -14812,12 +15850,12 @@ async def dungeon_diff_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
     if is_defeated(p):
-        await query.answer("You're too beaten up to enter a hall run!", show_alert=True); return
+        await query.answer("You're too beaten up to enter a dungeon run!", show_alert=True); return
     if not check_cooldown(p.get("last_dungeon"), 86400):
         remaining = time_remaining(p.get("last_dungeon"), 86400)
-        await query.answer(f"Hall run cooldown: {remaining}", show_alert=True); return
+        await query.answer(f"Dungeon run cooldown: {remaining}", show_alert=True); return
     if uid in active_dungeons:
-        await query.answer("You're already in a hall run!", show_alert=True); return
+        await query.answer("You're already in a dungeon run!", show_alert=True); return
 
     if diff not in ("normal", "hard", "legendary"):
         diff = "normal"
@@ -14907,7 +15945,7 @@ async def dungeon_diff_callback(update: Update, context: ContextTypes.DEFAULT_TY
         save_player(fp)
         recap = _build_dungeon_recap(fp, theme, diff, results, total_exp, total_gold,
                                      items_found, run_failed, lmsgs)
-        await announce(context.bot, chat_id, recap, permanent=True)
+        await announce(context.bot, chat_id, recap, delay=180)
         if leveled and fp["level"] % 10 == 0:
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🎉 *{fp['username']}* reached *Level {fp['level']}* "
@@ -15022,12 +16060,12 @@ async def allocate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (f"📊 *Stat Allocation*  -  *{sp}* points available\n\n"
             f"STR:{sd.get('STR',5)} AGI:{sd.get('AGI',5)} INT:{sd.get('INT',5)} "
             f"WIS:{sd.get('WIS',5)} DEX:{sd.get('DEX',5)} LUK:{sd.get('LUK',5)}\n\n"
-            f"📌 STR  -  Attack damage (Breaker)\n"
+            f"📌 STR  -  Attack damage (Warrior)\n"
             f"📌 AGI  -  Dodge & crit\n"
-            f"📌 INT  -  Spell damage (Hustler)\n"
-            f"📌 WIS  -  Heal power (Chalker)\n"
-            f"📌 DEX  -  Accuracy & crit (Marksman)\n"
-            f"📌 LUK  -  Crit & gold bonus (Shark)\n"
+            f"📌 INT  -  Spell damage (Mage)\n"
+            f"📌 WIS  -  Heal power (Priest)\n"
+            f"📌 DEX  -  Accuracy & crit (Archer)\n"
+            f"📌 LUK  -  Crit & gold bonus (Thief)\n"
             f"📌 DEF  -  From gear only (cannot allocate)\n\n"
             f"🧭 {rec}")
     rows = []
@@ -15081,6 +16119,12 @@ def main():
     app.add_handler(CommandHandler("stats",        stats_cmd))
     app.add_handler(CommandHandler("guide",        guide_cmd))
     app.add_handler(CommandHandler("help",         guide_cmd))
+    # ── Pets ──────────────────────────────────────────────────────────────────
+    app.add_handler(CommandHandler("pet",          pet_cmd))
+    app.add_handler(CommandHandler("pets",         pet_cmd))
+    app.add_handler(CommandHandler("petshop",      petshop_cmd))
+    app.add_handler(CommandHandler("hatch",        hatch_cmd))
+    app.add_handler(CommandHandler("petrename",    petrename_cmd))
     app.add_handler(CommandHandler("weather",      weather_cmd))
     app.add_handler(CommandHandler("ascend",       ascend_cmd))
     app.add_handler(CommandHandler("cooldowns",    cooldowns_cmd))
@@ -15217,6 +16261,11 @@ def main():
     app.add_handler(CallbackQueryHandler(forge_craft_callback,  pattern="^forge_"))
     app.add_handler(CallbackQueryHandler(explore_zone_callback, pattern="^explore_"))
     app.add_handler(CallbackQueryHandler(guilddonate_callback,  pattern="^gdonate_"))
+    # ── Pets ──────────────────────────────────────────────────────────────────
+    app.add_handler(CallbackQueryHandler(petshop_callback,    pattern="^(petshop|pbuy_)"))
+    app.add_handler(CallbackQueryHandler(hatch_egg_callback,  pattern="^hatch_egg$"))
+    app.add_handler(CallbackQueryHandler(pet_main_callback,
+        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petrelease_)"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
