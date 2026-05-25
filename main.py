@@ -246,7 +246,7 @@ DEFAULT_STATS = {"STR":5,"DEF":0,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5}
 CLASS_TREE = {
     # ── WARRIOR ──────────────────────────────────────────────────────────────
     "warrior": {
-        "name":"Breaker","primary_stat":"STR","line":"warrior",
+        "name":"Warrior","primary_stat":"STR","line":"warrior",
         "weapon_types":["sword_1h","sword_2h"],
         "armor_type":"warrior_armor",
         "desc":"A force at the break. Built to scatter racks and dominate the table.",
@@ -265,7 +265,7 @@ CLASS_TREE = {
         ]
     },
     "page": {
-        "name":"Enforcer","primary_stat":"STR","line":"warrior","path":"A",
+        "name":"Page","primary_stat":"STR","line":"warrior","path":"A",
         "weapon_types":["sword_1h","shield"],
         "armor_type":"warrior_armor",
         "desc":"The break is just the beginning. Every hit is a statement.",
@@ -284,7 +284,7 @@ CLASS_TREE = {
         ]
     },
     "squire": {
-        "name":"Vanguard","primary_stat":"STR","line":"warrior","path":"A",
+        "name":"Squire","primary_stat":"STR","line":"warrior","path":"A",
         "weapon_types":["sword_1h","shield"],
         "armor_type":"warrior_armor",
         "desc":"Controls the table by controlling the shot order. Nothing happens by accident.",
@@ -298,7 +298,7 @@ CLASS_TREE = {
         ]
     },
     "knight": {
-        "name":"Bank Knight","primary_stat":"STR","line":"warrior","path":"A",
+        "name":"Knight","primary_stat":"STR","line":"warrior","path":"A",
         "weapon_types":["sword_1h","shield"],
         "armor_type":"warrior_armor",
         "desc":"Owns the table. Other players are just guests.",
@@ -312,7 +312,7 @@ CLASS_TREE = {
         ]
     },
     "paladin": {
-        "name":"Godbank","primary_stat":"STR","line":"warrior","path":"A",
+        "name":"Paladin","primary_stat":"STR","line":"warrior","path":"A",
         "weapon_types":["sword_1h","shield"],
         "armor_type":"warrior_armor",
         "desc":"The pinnacle of pure power pool. Every shot is a clinic.",
@@ -326,7 +326,7 @@ CLASS_TREE = {
         ]
     },
     "fighter": {
-        "name":"Hall Fighter","primary_stat":"STR","line":"warrior","path":"B",
+        "name":"Fighter","primary_stat":"STR","line":"warrior","path":"B",
         "weapon_types":["sword_2h"],
         "armor_type":"warrior_armor",
         "desc":"Takes the hit so the team doesn't have to. Unmovable.",
@@ -345,7 +345,7 @@ CLASS_TREE = {
         ]
     },
     "crusader": {
-        "name":"Pocket Knight","primary_stat":"STR","line":"warrior","path":"B",
+        "name":"Crusader","primary_stat":"STR","line":"warrior","path":"B",
         "weapon_types":["sword_2h"],
         "armor_type":"warrior_armor",
         "desc":"Locks down the table. Nothing gets through that shouldn't.",
@@ -359,7 +359,7 @@ CLASS_TREE = {
         ]
     },
     "hero": {
-        "name":"Pool Slayer","primary_stat":"STR","line":"warrior","path":"B",
+        "name":"Hero","primary_stat":"STR","line":"warrior","path":"B",
         "weapon_types":["sword_2h"],
         "armor_type":"warrior_armor",
         "desc":"The cushion is their weapon. Consistent, relentless, unbreakable.",
@@ -373,7 +373,7 @@ CLASS_TREE = {
         ]
     },
     "warlord": {
-        "name":"8ball Lord","primary_stat":"STR","line":"warrior","path":"B",
+        "name":"Warlord","primary_stat":"STR","line":"warrior","path":"B",
         "weapon_types":["sword_2h"],
         "armor_type":"warrior_armor",
         "desc":"The Lord of 8ball",
@@ -388,7 +388,7 @@ CLASS_TREE = {
     },
     # ── MAGE ─────────────────────────────────────────────────────────────────
     "mage": {
-        "name":"Baizer","primary_stat":"INT","line":"mage",
+        "name":"Mage","primary_stat":"INT","line":"mage",
         "weapon_types":["wand","staff"],
         "armor_type":"mage_armor",
         "desc":"Reads angles others can't see. The table is a puzzle only they can solve.",
@@ -407,7 +407,7 @@ CLASS_TREE = {
         ]
     },
     "arcanist": {
-        "name":"Trickster","primary_stat":"INT","line":"mage","path":"A",
+        "name":"Arcanist","primary_stat":"INT","line":"mage","path":"A",
         "weapon_types":["wand"],
         "armor_type":"mage_armor",
         "desc":"Shots that shouldn't work. They always work.",
@@ -426,7 +426,7 @@ CLASS_TREE = {
         ]
     },
     "sorcerer": {
-        "name":"Reader","primary_stat":"INT","line":"mage","path":"A",
+        "name":"Sorcerer","primary_stat":"INT","line":"mage","path":"A",
         "weapon_types":["wand"],
         "armor_type":"mage_armor",
         "desc":"Sees three shots ahead. The geometry is already solved.",
@@ -440,7 +440,7 @@ CLASS_TREE = {
         ]
     },
     "archmage": {
-        "name":"Mystic","primary_stat":"INT","line":"mage","path":"A",
+        "name":"Archmage","primary_stat":"INT","line":"mage","path":"A",
         "weapon_types":["wand"],
         "armor_type":"mage_armor",
         "desc":"The table obeys. Nobody's quite sure why.",
@@ -468,7 +468,7 @@ CLASS_TREE = {
         ]
     },
     "hexblade": {
-        "name":"Shark","primary_stat":"INT","line":"mage","path":"B",
+        "name":"Hexblade","primary_stat":"INT","line":"mage","path":"B",
         "weapon_types":["staff"],
         "armor_type":"mage_armor",
         "desc":"A hustler with an edge. The mark never sees it coming.",
@@ -487,7 +487,7 @@ CLASS_TREE = {
         ]
     },
     "warlock": {
-        "name":"Hex Shooter","primary_stat":"INT","line":"mage","path":"B",
+        "name":"Warlock","primary_stat":"INT","line":"mage","path":"B",
         "weapon_types":["staff"],
         "armor_type":"mage_armor",
         "desc":"Curses the table in their favor. Legal? Technically.",
@@ -501,7 +501,7 @@ CLASS_TREE = {
         ]
     },
     "lich": {
-        "name":"Rail Wraith","primary_stat":"INT","line":"mage","path":"B",
+        "name":"Lich","primary_stat":"INT","line":"mage","path":"B",
         "weapon_types":["staff"],
         "armor_type":"mage_armor",
         "desc":"Death doesn't stop a Rail Wraith. Neither does a bad rack.",
@@ -515,7 +515,7 @@ CLASS_TREE = {
         ]
     },
     "void_mage": {
-        "name":"Blackball","primary_stat":"INT","line":"mage","path":"B",
+        "name":"Void Mage","primary_stat":"INT","line":"mage","path":"B",
         "weapon_types":["staff"],
         "armor_type":"mage_armor",
         "desc":"The last ball on the table. The one that decides everything.",
@@ -530,7 +530,7 @@ CLASS_TREE = {
     },
     # ── THIEF ─────────────────────────────────────────────────────────────────
     "thief": {
-        "name":"Shark","primary_stat":"LUK","line":"thief",
+        "name":"Thief","primary_stat":"LUK","line":"thief",
         "weapon_types":["dagger","throwing_star"],
         "armor_type":"thief_armor",
         "desc":"Silent, precise, dangerous. In the water before you know it.",
@@ -549,7 +549,7 @@ CLASS_TREE = {
         ]
     },
     "rogue": {
-        "name":"Sneak","primary_stat":"LUK","line":"thief","path":"A",
+        "name":"Rogue","primary_stat":"LUK","line":"thief","path":"A",
         "weapon_types":["dagger"],
         "armor_type":"thief_armor",
         "desc":"Gets in, gets out, pockets something on the way.",
@@ -568,7 +568,7 @@ CLASS_TREE = {
         ]
     },
     "shadow": {
-        "name":"Cleaner","primary_stat":"LUK","line":"thief","path":"A",
+        "name":"Shadow","primary_stat":"LUK","line":"thief","path":"A",
         "weapon_types":["dagger"],
         "armor_type":"thief_armor",
         "desc":"Clears the table quietly. Nobody sees it happen.",
@@ -596,7 +596,7 @@ CLASS_TREE = {
         ]
     },
     "wraith": {
-        "name":"Ghost Cue","primary_stat":"LUK","line":"thief","path":"A",
+        "name":"Wraith","primary_stat":"LUK","line":"thief","path":"A",
         "weapon_types":["dagger"],
         "armor_type":"thief_armor",
         "desc":"The cue moves. Nobody held it.",
@@ -610,7 +610,7 @@ CLASS_TREE = {
         ]
     },
     "cutthroat": {
-        "name":"Cutter","primary_stat":"LUK","line":"thief","path":"B",
+        "name":"Cutthroat","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
         "desc":"Thin cut, maximum damage. Always the hard way.",
@@ -629,7 +629,7 @@ CLASS_TREE = {
         ]
     },
     "assassin": {
-        "name":"Bookmaker","primary_stat":"LUK","line":"thief","path":"B",
+        "name":"Assassin","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
         "desc":"Knows the odds. Sets them. Wins them.",
@@ -643,7 +643,7 @@ CLASS_TREE = {
         ]
     },
     "blade_master": {
-        "name":"Fixer","primary_stat":"LUK","line":"thief","path":"B",
+        "name":"Blade Master","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
         "desc":"Fixes every problem the same way  -  by making it disappear.",
@@ -657,7 +657,7 @@ CLASS_TREE = {
         ]
     },
     "specialist": {
-        "name":"Backdoor King","primary_stat":"LUK","line":"thief","path":"B",
+        "name":"Specialist","primary_stat":"LUK","line":"thief","path":"B",
         "weapon_types":["throwing_star"],
         "armor_type":"thief_armor",
         "desc":"Wins through angles nobody else considered legal.",
@@ -672,7 +672,7 @@ CLASS_TREE = {
     },
     # ── ARCHER ────────────────────────────────────────────────────────────────
     "archer": {
-        "name":"Marksman","primary_stat":"DEX","line":"archer",
+        "name":"Archer","primary_stat":"DEX","line":"archer",
         "weapon_types":["bow","crossbow"],
         "armor_type":"archer_armor",
         "desc":"Calls every shot before it happens. Never misses what matters.",
@@ -691,7 +691,7 @@ CLASS_TREE = {
         ]
     },
     "scout": {
-        "name":"Shot Caller","primary_stat":"DEX","line":"archer","path":"A",
+        "name":"Scout","primary_stat":"DEX","line":"archer","path":"A",
         "weapon_types":["bow"],
         "armor_type":"archer_armor",
         "desc":"Calls the corner pocket from downtown. Makes it every time.",
@@ -710,7 +710,7 @@ CLASS_TREE = {
         ]
     },
     "ranger": {
-        "name":"Sniper","primary_stat":"DEX","line":"archer","path":"A",
+        "name":"Ranger","primary_stat":"DEX","line":"archer","path":"A",
         "weapon_types":["bow"],
         "armor_type":"archer_armor",
         "desc":"One shot, one pocket. Distance is irrelevant.",
@@ -724,7 +724,7 @@ CLASS_TREE = {
         ]
     },
     "warden": {
-        "name":"Deadstroke","primary_stat":"DEX","line":"archer","path":"A",
+        "name":"Warden","primary_stat":"DEX","line":"archer","path":"A",
         "weapon_types":["bow"],
         "armor_type":"archer_armor",
         "desc":"In the zone. Untouchable. Every shot automatic.",
@@ -738,7 +738,7 @@ CLASS_TREE = {
         ]
     },
     "strider": {
-        "name":"Ghostman","primary_stat":"DEX","line":"archer","path":"A",
+        "name":"Strider","primary_stat":"DEX","line":"archer","path":"A",
         "weapon_types":["bow"],
         "armor_type":"archer_armor",
         "desc":"Moves through the table like it isn't there.",
@@ -752,7 +752,7 @@ CLASS_TREE = {
         ]
     },
     "bounty_hunter": {
-        "name":"Railrunner","primary_stat":"DEX","line":"archer","path":"B",
+        "name":"Bounty Hunter","primary_stat":"DEX","line":"archer","path":"B",
         "weapon_types":["crossbow"],
         "armor_type":"archer_armor",
         "desc":"Uses every cushion. The long way is the right way.",
@@ -785,7 +785,7 @@ CLASS_TREE = {
         ]
     },
     "sniper": {
-        "name":"Steadyhand","primary_stat":"DEX","line":"archer","path":"B",
+        "name":"Sniper","primary_stat":"DEX","line":"archer","path":"B",
         "weapon_types":["crossbow"],
         "armor_type":"archer_armor",
         "desc":"Never rushes. Never misses.",
@@ -814,7 +814,7 @@ CLASS_TREE = {
     },
     # ── PRIEST ────────────────────────────────────────────────────────────────
     "priest": {
-        "name":"Chalker","primary_stat":"WIS","line":"priest",
+        "name":"Priest","primary_stat":"WIS","line":"priest",
         "weapon_types":["rosary","cross"],
         "armor_type":"priest_armor",
         "desc":"Keeps everyone sharp. The one who holds the team together.",
@@ -833,7 +833,7 @@ CLASS_TREE = {
         ]
     },
     "cleric": {
-        "name":"Caller","primary_stat":"WIS","line":"priest","path":"A",
+        "name":"Cleric","primary_stat":"WIS","line":"priest","path":"A",
         "weapon_types":["rosary"],
         "armor_type":"priest_armor",
         "desc":"Keeps everything above board. Calls every shot clean.",
@@ -852,7 +852,7 @@ CLASS_TREE = {
         ]
     },
     "bishop": {
-        "name":"Table Monk","primary_stat":"WIS","line":"priest","path":"A",
+        "name":"Bishop","primary_stat":"WIS","line":"priest","path":"A",
         "weapon_types":["rosary"],
         "armor_type":"priest_armor",
         "desc":"Studies the table like scripture. Knows it better than the felt itself.",
@@ -866,7 +866,7 @@ CLASS_TREE = {
         ]
     },
     "high_priest": {
-        "name":"High Roller","primary_stat":"WIS","line":"priest","path":"A",
+        "name":"High Priest","primary_stat":"WIS","line":"priest","path":"A",
         "weapon_types":["rosary"],
         "armor_type":"priest_armor",
         "desc":"The stakes are never too high. The chalk never runs out.",
@@ -880,7 +880,7 @@ CLASS_TREE = {
         ]
     },
     "saint": {
-        "name":"House Saint","primary_stat":"WIS","line":"priest","path":"A",
+        "name":"Saint","primary_stat":"WIS","line":"priest","path":"A",
         "weapon_types":["rosary"],
         "armor_type":"priest_armor",
         "desc":"The table's guardian. Everyone plays better when they're around.",
@@ -894,7 +894,7 @@ CLASS_TREE = {
         ]
     },
     "acolyte": {
-        "name":"Judge","primary_stat":"WIS","line":"priest","path":"B",
+        "name":"Acolyte","primary_stat":"WIS","line":"priest","path":"B",
         "weapon_types":["cross"],
         "armor_type":"priest_armor",
         "desc":"Watches everything. Misses nothing. Rules on contact.",
@@ -913,7 +913,7 @@ CLASS_TREE = {
         ]
     },
     "exorcist": {
-        "name":"Referee","primary_stat":"WIS","line":"priest","path":"B",
+        "name":"Exorcist","primary_stat":"WIS","line":"priest","path":"B",
         "weapon_types":["cross"],
         "armor_type":"priest_armor",
         "desc":"Enforces the rules of The Felt with zero mercy.",
@@ -927,7 +927,7 @@ CLASS_TREE = {
         ]
     },
     "inquisitor": {
-        "name":"Bishop","primary_stat":"WIS","line":"priest","path":"B",
+        "name":"Inquisitor","primary_stat":"WIS","line":"priest","path":"B",
         "weapon_types":["cross"],
         "armor_type":"priest_armor",
         "desc":"Diagonal movement. Unexpected angles. Ruthless efficiency.",
@@ -941,7 +941,7 @@ CLASS_TREE = {
         ]
     },
     "zealot": {
-        "name":"Verdict","primary_stat":"WIS","line":"priest","path":"B",
+        "name":"Zealot","primary_stat":"WIS","line":"priest","path":"B",
         "weapon_types":["cross"],
         "armor_type":"priest_armor",
         "desc":"The final word on the table. Appeals are not accepted.",
@@ -973,11 +973,11 @@ BASE_CLASSES = ["warrior","mage","thief","archer","priest"]
 
 # Maps line key → display label showing class name + archetype for players
 LINE_ARCHETYPE = {
-    "warrior": "Warrior (Breaker)",
-    "mage":    "Mage (Baizer)",
-    "thief":   "Thief (Shark)",
-    "archer":  "Archer (Marksman)",
-    "priest":  "Priest (Chalker)",
+    "warrior": "Warrior",
+    "mage":    "Mage",
+    "thief":   "Thief",
+    "archer":  "Archer",
+    "priest":  "Priest",
 }
 
 # Priest classes that can revive for free
@@ -1071,35 +1071,61 @@ TITLE_BONUSES = {
 
 # ── ITEM SETS ─────────────────────────────────────────────────────────────────
 ITEM_SETS = {
-    "Breaker's Legacy": {
-        "pieces": ["The Rack Splitter", "Diamond Felt Armor"],
-        "bonus": {"STR": 12, "DEF": 8},
-        "desc": "Warrior 2pc — Legendary power",
+    # ── Warrior sets ──────────────────────────────────────────────────────────
+    "Knight's Vow": {
+        "pieces": ["Heaven's Cleave", "Dragonscale Plate"],
+        "bonus": {"STR": 14, "DEF": 10},
+        "desc": "Warrior Knight 2pc — Legendary honor",
     },
-    "The Diamond Court": {
-        "pieces": ["The Rack Splitter", "Diamond Felt Armor", "The Diamond Aegis"],
-        "bonus": {"STR": 20, "DEF": 15, "hp": 50},
-        "desc": "Warrior 3pc — Full legendary dominance",
+    "The Warlord's Throne": {
+        "pieces": ["Ruinblade", "Dragonscale Plate"],
+        "bonus": {"STR": 18, "DEF": 8},
+        "desc": "Warrior Fighter 2pc — Legendary fury",
     },
-    "Baizer's Throne": {
-        "pieces": ["The Grand Bridge", "The Nap Robe"],
-        "bonus": {"INT": 14, "WIS": 8},
-        "desc": "Mage 2pc — Legendary mastery",
+    "The Knight's Eternal Court": {
+        "pieces": ["Heaven's Cleave", "Dragonscale Plate", "Celestial Bulwark"],
+        "bonus": {"STR": 25, "DEF": 20, "hp": 60},
+        "desc": "Warrior Knight 3pc — Full legendary defense",
     },
-    "Shadow Runner": {
-        "pieces": ["The Ball Return", "The Ghost Coat"],
-        "bonus": {"AGI": 14, "DEX": 10},
-        "desc": "Thief 2pc — Legendary evasion",
+    "Arcane Sovereignty": {
+        "pieces": ["The Mind's Eye", "Archmage's Sanctum Robe"],
+        "bonus": {"INT": 16, "WIS": 10},
+        "desc": "Mage Arcane 2pc — Legendary mastery",
     },
-    "Perfect Break": {
-        "pieces": ["The Perfect Break Rack", "The Rack Scale"],
-        "bonus": {"DEX": 14, "AGI": 8},
-        "desc": "Archer 2pc — Legendary precision",
+    "Void Ascension": {
+        "pieces": ["Staff of Unending Night", "Archmage's Sanctum Robe"],
+        "bonus": {"INT": 14, "WIS": 12},
+        "desc": "Mage Dark Arts 2pc — Legendary dominion",
     },
-    "Diamond Devotion": {
-        "pieces": ["The Diamond Staff", "The House Saint Surplice"],
-        "bonus": {"WIS": 14, "INT": 8, "hp": 30},
-        "desc": "Priest 2pc — Legendary blessing",
+    "The Phantom Covenant": {
+        "pieces": ["Death's Whisper", "The Shadow Wrap"],
+        "bonus": {"AGI": 16, "LUK": 12},
+        "desc": "Thief Shadow 2pc — Legendary evasion",
+    },
+    "The Assassin's Pact": {
+        "pieces": ["The Reaper's Wheel", "The Death Grasp", "The Shadow Wrap"],
+        "bonus": {"AGI": 20, "STR": 12, "LUK": 10},
+        "desc": "Thief Assassin 3pc — Full legendary lethality",
+    },
+    "Ranger's Oath": {
+        "pieces": ["The Ghostwood Longbow", "The Shadowmark Leather"],
+        "bonus": {"DEX": 16, "AGI": 10},
+        "desc": "Archer Ranger 2pc — Legendary precision",
+    },
+    "Dead Man's Aim": {
+        "pieces": ["The Dead Reckoning", "The Shadowmark Leather"],
+        "bonus": {"DEX": 14, "AGI": 12},
+        "desc": "Archer Bounty Hunter 2pc — Legendary aim",
+    },
+    "Saint's Radiance": {
+        "pieces": ["The Eternal Prayer", "The High Saint's Vestment"],
+        "bonus": {"WIS": 16, "INT": 10, "hp": 35},
+        "desc": "Priest Cleric 2pc — Legendary blessing",
+    },
+    "The Eternal Judgment": {
+        "pieces": ["The Final Judgment", "The High Saint's Vestment"],
+        "bonus": {"WIS": 14, "INT": 14},
+        "desc": "Priest Inquisitor 2pc — Legendary wrath",
     },
 }
 
@@ -1119,72 +1145,200 @@ DAILY_QUEST_POOL = [
 
 # ── GEAR SYSTEM ───────────────────────────────────────────────────────────────
 WEAPONS = {
-    # ── WARRIOR ──────────────────────────────────────────────────────────────
-    "Cracked House Cue":        {"class":"warrior","type":"sword_1h","atk":3, "rarity":"common","line":"warrior"},
-    "Worn Practice Cue":        {"class":"warrior","type":"sword_1h","atk":7, "rarity":"uncommon","line":"warrior"},
-    "Graphite Break Cue":{"class":"warrior","type":"sword_1h","atk":14,"rarity":"rare","line":"warrior"},
-    "Heavy Breaker Staff":  {"class":"warrior","type":"sword_2h","atk":24,"rarity":"epic","line":"warrior"},
-    "The Rack Splitter":            {"class":"warrior","type":"sword_2h","atk":40,"rarity":"legendary","line":"warrior"},
-    # ── MAGE ─────────────────────────────────────────────────────────────────
-    "Chalked Finger":      {"class":"mage","type":"wand","atk":2, "rarity":"common","line":"mage"},
-    "Blue Diamond Chalk":   {"class":"mage","type":"wand","atk":8, "rarity":"uncommon","line":"mage"},
-    "Blackwood Bridge Stick":      {"class":"mage","type":"staff","atk":15,"rarity":"rare","line":"mage"},
-    "The Extension":      {"class":"mage","type":"staff","atk":26,"rarity":"epic","line":"mage"},
-    "The Grand Bridge":        {"class":"mage","type":"wand","atk":42,"rarity":"legendary","line":"mage"},
-    # ── ARCHER ────────────────────────────────────────────────────────────────
-    "Bent Triangle":      {"class":"archer","type":"bow","atk":3, "rarity":"common","line":"archer"},
-    "Standard Magic Rack":      {"class":"archer","type":"crossbow","atk":7,"rarity":"uncommon","line":"archer"},
-    "Precision Rack":  {"class":"archer","type":"bow","atk":13,"rarity":"rare","line":"archer"},
-    "Diamond Rack":     {"class":"archer","type":"bow","atk":23,"rarity":"epic","line":"archer"},
-    "The Perfect Break Rack":  {"class":"archer","type":"crossbow","atk":38,"rarity":"legendary","line":"archer"},
-    # ── THIEF ─────────────────────────────────────────────────────────────────
-    "Chalk Shiv":              {"class":"thief","type":"dagger","atk":4, "rarity":"common","line":"thief"},
-    "Mushroom Tip Blade":         {"class":"thief","type":"dagger","atk":9, "rarity":"uncommon","line":"thief"},
-    "Ferrule Dart":      {"class":"thief","type":"throwing_star","atk":14,"rarity":"rare","line":"thief"},
-    "Twin Tip Blades":     {"class":"thief","type":"throwing_star","atk":25,"rarity":"epic","line":"thief"},
-    "The Ball Return":     {"class":"thief","type":"dagger","atk":44,"rarity":"legendary","line":"thief"},
-    # ── PRIEST ────────────────────────────────────────────────────────────────
-    "Chalk Beads":     {"class":"priest","type":"rosary","atk":2, "rarity":"common","line":"priest"},
-    "Iron Chalk Ring":             {"class":"priest","type":"rosary","atk":6, "rarity":"uncommon","line":"priest"},
-    "The Spot Marker":        {"class":"priest","type":"cross","atk":12,"rarity":"rare","line":"priest"},
-    "The Crossed Cues":  {"class":"priest","type":"cross","atk":22,"rarity":"epic","line":"priest"},
-    "The Diamond Staff":         {"class":"priest","type":"cross","atk":36,"rarity":"legendary","line":"priest"},
+    # ── SWORD 1H (warrior base + knight path A) ───────────────────────────────
+    "Rusty Shortsword":          {"class":"warrior","type":"sword_1h","atk":4, "rarity":"common",   "line":"warrior"},
+    "Chipped Longsword":         {"class":"warrior","type":"sword_1h","atk":4, "rarity":"common",   "line":"warrior"},
+    "Iron Broadsword":           {"class":"warrior","type":"sword_1h","atk":9, "rarity":"uncommon", "line":"warrior"},
+    "Soldier's Blade":           {"class":"warrior","type":"sword_1h","atk":10,"rarity":"uncommon", "line":"warrior"},
+    "Steel Knight Sword":        {"class":"warrior","type":"sword_1h","atk":16,"rarity":"rare",     "line":"warrior"},
+    "Champion's Longsword":      {"class":"warrior","type":"sword_1h","atk":17,"rarity":"rare",     "line":"warrior"},
+    "Paladin's Edge":            {"class":"warrior","type":"sword_1h","atk":26,"rarity":"epic",     "line":"warrior"},
+    "Blessed Crusader Blade":    {"class":"warrior","type":"sword_1h","atk":28,"rarity":"epic",     "line":"warrior"},
+    "Heaven's Cleave":           {"class":"warrior","type":"sword_1h","atk":42,"rarity":"legendary","line":"warrior"},
+    "Oath of the First Knight":  {"class":"warrior","type":"sword_1h","atk":62,"rarity":"mythic",   "line":"warrior"},
+    # ── SWORD 2H (fighter path B only) ───────────────────────────────────────
+    "Crude Greatsword":          {"class":"warrior","type":"sword_2h","atk":5, "rarity":"common",   "line":"warrior"},
+    "Battered Claymore":         {"class":"warrior","type":"sword_2h","atk":5, "rarity":"common",   "line":"warrior"},
+    "Iron Greatsword":           {"class":"warrior","type":"sword_2h","atk":11,"rarity":"uncommon", "line":"warrior"},
+    "War Claymore":              {"class":"warrior","type":"sword_2h","atk":11,"rarity":"uncommon", "line":"warrior"},
+    "Battle Reaver":             {"class":"warrior","type":"sword_2h","atk":18,"rarity":"rare",     "line":"warrior"},
+    "Warbringer's Blade":        {"class":"warrior","type":"sword_2h","atk":18,"rarity":"rare",     "line":"warrior"},
+    "Warlord's Edge":            {"class":"warrior","type":"sword_2h","atk":29,"rarity":"epic",     "line":"warrior"},
+    "Titan Greatsword":          {"class":"warrior","type":"sword_2h","atk":29,"rarity":"epic",     "line":"warrior"},
+    "Ruinblade":                 {"class":"warrior","type":"sword_2h","atk":46,"rarity":"legendary","line":"warrior"},
+    "The World Splitter":        {"class":"warrior","type":"sword_2h","atk":66,"rarity":"mythic",   "line":"warrior"},
+    # ── WAND (mage base + arcane path A) ─────────────────────────────────────
+    "Gnarled Twig Wand":         {"class":"mage","type":"wand","atk":3, "rarity":"common",   "line":"mage"},
+    "Smooth Ash Wand":           {"class":"mage","type":"wand","atk":3, "rarity":"common",   "line":"mage"},
+    "Crystal Core Wand":         {"class":"mage","type":"wand","atk":8, "rarity":"uncommon", "line":"mage"},
+    "Ember Wand":                {"class":"mage","type":"wand","atk":8, "rarity":"uncommon", "line":"mage"},
+    "Arcanist's Focus":          {"class":"mage","type":"wand","atk":15,"rarity":"rare",     "line":"mage"},
+    "Sapphire Rod":              {"class":"mage","type":"wand","atk":15,"rarity":"rare",     "line":"mage"},
+    "Archmage's Scepter":        {"class":"mage","type":"wand","atk":25,"rarity":"epic",     "line":"mage"},
+    "Thundercrack Wand":         {"class":"mage","type":"wand","atk":25,"rarity":"epic",     "line":"mage"},
+    "The Mind's Eye":            {"class":"mage","type":"wand","atk":40,"rarity":"legendary","line":"mage"},
+    "Eternal Arcanum":           {"class":"mage","type":"wand","atk":60,"rarity":"mythic",   "line":"mage"},
+    # ── STAFF (dark arts path B) ──────────────────────────────────────────────
+    "Gnarled Root Staff":        {"class":"mage","type":"staff","atk":4, "rarity":"common",   "line":"mage"},
+    "Carved Bone Staff":         {"class":"mage","type":"staff","atk":4, "rarity":"common",   "line":"mage"},
+    "Shadow Oak Staff":          {"class":"mage","type":"staff","atk":9, "rarity":"uncommon", "line":"mage"},
+    "Hex-Carved Staff":          {"class":"mage","type":"staff","atk":9, "rarity":"uncommon", "line":"mage"},
+    "Warlock's Dread Staff":     {"class":"mage","type":"staff","atk":16,"rarity":"rare",     "line":"mage"},
+    "Lich's Conduit":            {"class":"mage","type":"staff","atk":16,"rarity":"rare",     "line":"mage"},
+    "Void Channel Staff":        {"class":"mage","type":"staff","atk":27,"rarity":"epic",     "line":"mage"},
+    "Soul Siphon Staff":         {"class":"mage","type":"staff","atk":27,"rarity":"epic",     "line":"mage"},
+    "Staff of Unending Night":   {"class":"mage","type":"staff","atk":43,"rarity":"legendary","line":"mage"},
+    "The Void Throne":           {"class":"mage","type":"staff","atk":63,"rarity":"mythic",   "line":"mage"},
+    # ── DAGGER (thief base + shadow path A) ──────────────────────────────────
+    "Rusty Shiv":                {"class":"thief","type":"dagger","atk":4, "rarity":"common",   "line":"thief"},
+    "Cracked Flint Dagger":      {"class":"thief","type":"dagger","atk":4, "rarity":"common",   "line":"thief"},
+    "Iron Stiletto":             {"class":"thief","type":"dagger","atk":10,"rarity":"uncommon", "line":"thief"},
+    "Shadow Dirk":               {"class":"thief","type":"dagger","atk":10,"rarity":"uncommon", "line":"thief"},
+    "Venomfang Blade":           {"class":"thief","type":"dagger","atk":17,"rarity":"rare",     "line":"thief"},
+    "Shadowstep Dagger":         {"class":"thief","type":"dagger","atk":17,"rarity":"rare",     "line":"thief"},
+    "Phantom Edge":              {"class":"thief","type":"dagger","atk":27,"rarity":"epic",     "line":"thief"},
+    "Soul-Drinker Blade":        {"class":"thief","type":"dagger","atk":27,"rarity":"epic",     "line":"thief"},
+    "Death's Whisper":           {"class":"thief","type":"dagger","atk":44,"rarity":"legendary","line":"thief"},
+    "The Final Cut":             {"class":"thief","type":"dagger","atk":62,"rarity":"mythic",   "line":"thief"},
+    # ── THROWING STAR (assassin path B weapon slot) ───────────────────────────
+    "Iron Throwing Star":        {"class":"thief","type":"throwing_star","atk":4, "rarity":"common",   "line":"thief"},
+    "Crude Shuriken":            {"class":"thief","type":"throwing_star","atk":4, "rarity":"common",   "line":"thief"},
+    "Balanced Steel Star":       {"class":"thief","type":"throwing_star","atk":9, "rarity":"uncommon", "line":"thief"},
+    "Razor Wind Star":           {"class":"thief","type":"throwing_star","atk":9, "rarity":"uncommon", "line":"thief"},
+    "Bloodsteel Shuriken":       {"class":"thief","type":"throwing_star","atk":16,"rarity":"rare",     "line":"thief"},
+    "Executioner's Star":        {"class":"thief","type":"throwing_star","atk":16,"rarity":"rare",     "line":"thief"},
+    "Shadow Death Star":         {"class":"thief","type":"throwing_star","atk":26,"rarity":"epic",     "line":"thief"},
+    "Void-Edged Shuriken":       {"class":"thief","type":"throwing_star","atk":26,"rarity":"epic",     "line":"thief"},
+    "The Reaper's Wheel":        {"class":"thief","type":"throwing_star","atk":42,"rarity":"legendary","line":"thief"},
+    "Black Orbit":               {"class":"thief","type":"throwing_star","atk":61,"rarity":"mythic",   "line":"thief"},
+    # ── BOW (archer base + ranger path A) ─────────────────────────────────────
+    "Frayed Hunting Bow":        {"class":"archer","type":"bow","atk":4, "rarity":"common",   "line":"archer"},
+    "Rough-Cut Yew Bow":         {"class":"archer","type":"bow","atk":4, "rarity":"common",   "line":"archer"},
+    "Recurve Hunter's Bow":      {"class":"archer","type":"bow","atk":9, "rarity":"uncommon", "line":"archer"},
+    "Forest Longbow":            {"class":"archer","type":"bow","atk":9, "rarity":"uncommon", "line":"archer"},
+    "Ranger's Marked Bow":       {"class":"archer","type":"bow","atk":16,"rarity":"rare",     "line":"archer"},
+    "Stormwood Bow":             {"class":"archer","type":"bow","atk":16,"rarity":"rare",     "line":"archer"},
+    "Warden's Gale Bow":         {"class":"archer","type":"bow","atk":26,"rarity":"epic",     "line":"archer"},
+    "Swiftshot Greatbow":        {"class":"archer","type":"bow","atk":26,"rarity":"epic",     "line":"archer"},
+    "The Ghostwood Longbow":     {"class":"archer","type":"bow","atk":42,"rarity":"legendary","line":"archer"},
+    "The Infinity Quiver":       {"class":"archer","type":"bow","atk":60,"rarity":"mythic",   "line":"archer"},
+    # ── CROSSBOW (bounty hunter path B) ───────────────────────────────────────
+    "Crude Wooden Crossbow":     {"class":"archer","type":"crossbow","atk":4, "rarity":"common",   "line":"archer"},
+    "Iron Crossbow":             {"class":"archer","type":"crossbow","atk":4, "rarity":"common",   "line":"archer"},
+    "Repeating Crossbow":        {"class":"archer","type":"crossbow","atk":9, "rarity":"uncommon", "line":"archer"},
+    "Hunter's Crossbow":         {"class":"archer","type":"crossbow","atk":9, "rarity":"uncommon", "line":"archer"},
+    "Precision Bolt Crossbow":   {"class":"archer","type":"crossbow","atk":16,"rarity":"rare",     "line":"archer"},
+    "Siege Crossbow":            {"class":"archer","type":"crossbow","atk":17,"rarity":"rare",     "line":"archer"},
+    "Deadeye's Repeater":        {"class":"archer","type":"crossbow","atk":27,"rarity":"epic",     "line":"archer"},
+    "Rapid-Fire Crossbow":       {"class":"archer","type":"crossbow","atk":27,"rarity":"epic",     "line":"archer"},
+    "The Dead Reckoning":        {"class":"archer","type":"crossbow","atk":44,"rarity":"legendary","line":"archer"},
+    "The Endless Bolt":          {"class":"archer","type":"crossbow","atk":63,"rarity":"mythic",   "line":"archer"},
+    # ── ROSARY (priest base + cleric path A) ──────────────────────────────────
+    "Wooden Prayer Beads":       {"class":"priest","type":"rosary","atk":3, "rarity":"common",   "line":"priest"},
+    "Clay Rosary":               {"class":"priest","type":"rosary","atk":3, "rarity":"common",   "line":"priest"},
+    "Silver Prayer Beads":       {"class":"priest","type":"rosary","atk":7, "rarity":"uncommon", "line":"priest"},
+    "Blessed Rosary":            {"class":"priest","type":"rosary","atk":7, "rarity":"uncommon", "line":"priest"},
+    "Goldweave Rosary":          {"class":"priest","type":"rosary","atk":14,"rarity":"rare",     "line":"priest"},
+    "Saint's Chain":             {"class":"priest","type":"rosary","atk":14,"rarity":"rare",     "line":"priest"},
+    "Holy Radiance Rosary":      {"class":"priest","type":"rosary","atk":24,"rarity":"epic",     "line":"priest"},
+    "Blessed Pearl Chain":       {"class":"priest","type":"rosary","atk":24,"rarity":"epic",     "line":"priest"},
+    "The Eternal Prayer":        {"class":"priest","type":"rosary","atk":38,"rarity":"legendary","line":"priest"},
+    "The Divine Rosary":         {"class":"priest","type":"rosary","atk":58,"rarity":"mythic",   "line":"priest"},
+    # ── CROSS (inquisitor path B) ─────────────────────────────────────────────
+    "Rough Iron Cross":          {"class":"priest","type":"cross","atk":4, "rarity":"common",   "line":"priest"},
+    "Carved Bone Cross":         {"class":"priest","type":"cross","atk":4, "rarity":"common",   "line":"priest"},
+    "Silver-Etched Cross":       {"class":"priest","type":"cross","atk":9, "rarity":"uncommon", "line":"priest"},
+    "Steel Inquisitor Cross":    {"class":"priest","type":"cross","atk":9, "rarity":"uncommon", "line":"priest"},
+    "Holy Judge's Cross":        {"class":"priest","type":"cross","atk":16,"rarity":"rare",     "line":"priest"},
+    "Knight's Inquisitor Cross": {"class":"priest","type":"cross","atk":16,"rarity":"rare",     "line":"priest"},
+    "Grand Inquisitor's Cross":  {"class":"priest","type":"cross","atk":26,"rarity":"epic",     "line":"priest"},
+    "Verdict Cross":             {"class":"priest","type":"cross","atk":26,"rarity":"epic",     "line":"priest"},
+    "The Final Judgment":        {"class":"priest","type":"cross","atk":43,"rarity":"legendary","line":"priest"},
+    "The Eternal Verdict":       {"class":"priest","type":"cross","atk":63,"rarity":"mythic",   "line":"priest"},
 }
 
 ARMORS = {
-    "Bar Room Vest":            {"class":"warrior","def":4, "rarity":"common","line":"warrior"},
-    "Slate Guard":         {"class":"warrior","def":11,"rarity":"uncommon","line":"warrior"},
-    "Red Cloth Plate":        {"class":"warrior","def":22,"rarity":"rare","line":"warrior"},
-    "Black Ball Plate":        {"class":"warrior","def":34,"rarity":"epic","line":"warrior"},
-    "Diamond Felt Armor":      {"class":"warrior","def":50,"rarity":"legendary","line":"warrior"},
-    "Worn Chalk Coat":       {"class":"mage","def":3,  "rarity":"common","line":"mage"},
-    "Green Baize Robe":     {"class":"mage","def":9,  "rarity":"uncommon","line":"mage"},
-    "White Glove Wrap":        {"class":"mage","def":18, "rarity":"rare","line":"mage"},
-    "Blacklight Cloak":        {"class":"mage","def":28, "rarity":"epic","line":"mage"},
-    "The Nap Robe":        {"class":"mage","def":44, "rarity":"legendary","line":"mage"},
-    "Corner Pocket Vest":   {"class":"archer","def":4, "rarity":"common","line":"archer"},
-    "Rail Leather Chest":   {"class":"archer","def":10,"rarity":"uncommon","line":"archer"},
-    "Diamond Point Plate":     {"class":"archer","def":20,"rarity":"rare","line":"archer"},
-    "Red Baize Brigandine": {"class":"archer","def":31,"rarity":"epic","line":"archer"},
-    "The Rack Scale":  {"class":"archer","def":47,"rarity":"legendary","line":"archer"},
-    "Hustle Coat":        {"class":"thief","def":3,  "rarity":"common","line":"thief"},
-    "Midnight Felt Coat":     {"class":"thief","def":10, "rarity":"uncommon","line":"thief"},
-    "The Sneak Mesh":   {"class":"thief","def":19, "rarity":"rare","line":"thief"},
-    "Backdoor Harness":{"class":"thief","def":30,"rarity":"epic","line":"thief"},
-    "The Ghost Coat":{"class":"thief","def":48, "rarity":"legendary","line":"thief"},
-    "Chalk Cloth Vestments":         {"class":"priest","def":3, "rarity":"common","line":"priest"},
-    "The Rule Book Robe":     {"class":"priest","def":8, "rarity":"uncommon","line":"priest"},
-    "The Referee Hood":       {"class":"priest","def":17,"rarity":"rare","line":"priest"},
-    "The Tournament Cloak":    {"class":"priest","def":27,"rarity":"epic","line":"priest"},
-    "The House Saint Surplice":       {"class":"priest","def":42,"rarity":"legendary","line":"priest"},
+    # ── WARRIOR PLATE ─────────────────────────────────────────────────────────
+    "Rusty Iron Vest":           {"class":"warrior","def":4, "rarity":"common",   "line":"warrior"},
+    "Studded Leather Plate":     {"class":"warrior","def":5, "rarity":"common",   "line":"warrior"},
+    "Iron Chain Mail":           {"class":"warrior","def":10,"rarity":"uncommon", "line":"warrior"},
+    "Soldier's Plating":         {"class":"warrior","def":11,"rarity":"uncommon", "line":"warrior"},
+    "Steel Breastplate":         {"class":"warrior","def":20,"rarity":"rare",     "line":"warrior"},
+    "Knight's Plate Armor":      {"class":"warrior","def":21,"rarity":"rare",     "line":"warrior"},
+    "Warlord's Battle Plate":    {"class":"warrior","def":33,"rarity":"epic",     "line":"warrior"},
+    "Indomitable Plate":         {"class":"warrior","def":34,"rarity":"epic",     "line":"warrior"},
+    "Dragonscale Plate":         {"class":"warrior","def":52,"rarity":"legendary","line":"warrior"},
+    "The Titan's Aegis Armor":   {"class":"warrior","def":76,"rarity":"mythic",   "line":"warrior"},
+    # ── MAGE ROBES ────────────────────────────────────────────────────────────
+    "Worn Cloth Robe":           {"class":"mage","def":3, "rarity":"common",   "line":"mage"},
+    "Apprentice's Robe":         {"class":"mage","def":3, "rarity":"common",   "line":"mage"},
+    "Scholar's Robe":            {"class":"mage","def":8, "rarity":"uncommon", "line":"mage"},
+    "Arcane Weave Robe":         {"class":"mage","def":9, "rarity":"uncommon", "line":"mage"},
+    "Sorcerer's Mantle":         {"class":"mage","def":18,"rarity":"rare",     "line":"mage"},
+    "Arcane Sigil Robe":         {"class":"mage","def":18,"rarity":"rare",     "line":"mage"},
+    "Archmage's Vestment":       {"class":"mage","def":30,"rarity":"epic",     "line":"mage"},
+    "Void-Touched Robe":         {"class":"mage","def":30,"rarity":"epic",     "line":"mage"},
+    "Archmage's Sanctum Robe":   {"class":"mage","def":46,"rarity":"legendary","line":"mage"},
+    "The Eternal Weave":         {"class":"mage","def":70,"rarity":"mythic",   "line":"mage"},
+    # ── THIEF LEATHERS ────────────────────────────────────────────────────────
+    "Torn Leather Vest":         {"class":"thief","def":3, "rarity":"common",   "line":"thief"},
+    "Padded Cloth Armor":        {"class":"thief","def":4, "rarity":"common",   "line":"thief"},
+    "Shadow Leathers":           {"class":"thief","def":9, "rarity":"uncommon", "line":"thief"},
+    "Rogue's Leathers":          {"class":"thief","def":10,"rarity":"uncommon", "line":"thief"},
+    "Nightstalker's Vest":       {"class":"thief","def":19,"rarity":"rare",     "line":"thief"},
+    "Shadow Mesh":               {"class":"thief","def":19,"rarity":"rare",     "line":"thief"},
+    "Phantom Leathers":          {"class":"thief","def":31,"rarity":"epic",     "line":"thief"},
+    "Assassin's Harness":        {"class":"thief","def":31,"rarity":"epic",     "line":"thief"},
+    "The Shadow Wrap":           {"class":"thief","def":48,"rarity":"legendary","line":"thief"},
+    "The Void Walker's Cloak":   {"class":"thief","def":72,"rarity":"mythic",   "line":"thief"},
+    # ── ARCHER LEATHERS ───────────────────────────────────────────────────────
+    "Padded Hunting Vest":       {"class":"archer","def":4, "rarity":"common",   "line":"archer"},
+    "Traveler's Leathers":       {"class":"archer","def":4, "rarity":"common",   "line":"archer"},
+    "Scout's Leathers":          {"class":"archer","def":10,"rarity":"uncommon", "line":"archer"},
+    "Ranger's Vest":             {"class":"archer","def":10,"rarity":"uncommon", "line":"archer"},
+    "Forest Scout Armor":        {"class":"archer","def":20,"rarity":"rare",     "line":"archer"},
+    "Warden's Leather Plate":    {"class":"archer","def":20,"rarity":"rare",     "line":"archer"},
+    "Strider's Marked Armor":    {"class":"archer","def":32,"rarity":"epic",     "line":"archer"},
+    "Deadeye's Plating":         {"class":"archer","def":32,"rarity":"epic",     "line":"archer"},
+    "The Shadowmark Leather":    {"class":"archer","def":50,"rarity":"legendary","line":"archer"},
+    "The Ghost Walker Vest":     {"class":"archer","def":74,"rarity":"mythic",   "line":"archer"},
+    # ── PRIEST VESTMENTS ──────────────────────────────────────────────────────
+    "Simple Cloth Vestment":     {"class":"priest","def":3, "rarity":"common",   "line":"priest"},
+    "Acolyte's Robe":            {"class":"priest","def":3, "rarity":"common",   "line":"priest"},
+    "Blessed Cloth Robe":        {"class":"priest","def":8, "rarity":"uncommon", "line":"priest"},
+    "Initiate's Vestment":       {"class":"priest","def":8, "rarity":"uncommon", "line":"priest"},
+    "Sanctified Robe":           {"class":"priest","def":17,"rarity":"rare",     "line":"priest"},
+    "Inquisitor's Mantle":       {"class":"priest","def":17,"rarity":"rare",     "line":"priest"},
+    "High Cleric's Vestment":    {"class":"priest","def":29,"rarity":"epic",     "line":"priest"},
+    "Zealot's Holy Robe":        {"class":"priest","def":29,"rarity":"epic",     "line":"priest"},
+    "The High Saint's Vestment": {"class":"priest","def":44,"rarity":"legendary","line":"priest"},
+    "Heaven's Blessing Robe":    {"class":"priest","def":68,"rarity":"mythic",   "line":"priest"},
 }
 
+# Shields: warrior knight path (A) + assassin claws (B, type="claw" uses "atk" not "def")
 SHIELDS = {
-    "Cracked Rack Shield":      {"class":"warrior","path":"A","def":3, "rarity":"common"},
-    "Iron Triangle":         {"class":"warrior","path":"A","def":8, "rarity":"uncommon"},
-    "The Break Shield":  {"class":"warrior","path":"A","def":16,"rarity":"rare"},
-    "Black Ball Barrier":   {"class":"warrior","path":"A","def":26,"rarity":"epic"},
-    "The Diamond Aegis":    {"class":"warrior","path":"A","def":40,"rarity":"legendary"},
+    # ── WARRIOR SHIELDS (knight path A) ───────────────────────────────────────
+    "Wooden Buckler":            {"class":"warrior","path":"A","def":3, "rarity":"common"},
+    "Battered Iron Shield":      {"class":"warrior","path":"A","def":3, "rarity":"common"},
+    "Soldier's Kite Shield":     {"class":"warrior","path":"A","def":8, "rarity":"uncommon"},
+    "Iron Heater Shield":        {"class":"warrior","path":"A","def":9, "rarity":"uncommon"},
+    "Knight's Bulwark":          {"class":"warrior","path":"A","def":17,"rarity":"rare"},
+    "Steel Tower Shield":        {"class":"warrior","path":"A","def":17,"rarity":"rare"},
+    "Holy Pavise":               {"class":"warrior","path":"A","def":28,"rarity":"epic"},
+    "Aegis of the Devoted":      {"class":"warrior","path":"A","def":28,"rarity":"epic"},
+    "Celestial Bulwark":         {"class":"warrior","path":"A","def":44,"rarity":"legendary"},
+    "The Eternal Oath":          {"class":"warrior","path":"A","def":65,"rarity":"mythic"},
+    # ── ASSASSIN CLAWS (assassin path B, shield slot, provides atk bonus) ─────
+    "Iron Claw Brace":           {"class":"thief","path":"B","type":"claw","atk":3, "rarity":"common"},
+    "Spiked Knuckle Claw":       {"class":"thief","path":"B","type":"claw","atk":3, "rarity":"common"},
+    "Razor Claw Gauntlet":       {"class":"thief","path":"B","type":"claw","atk":8, "rarity":"uncommon"},
+    "Hunting Claws":             {"class":"thief","path":"B","type":"claw","atk":8, "rarity":"uncommon"},
+    "Assassin's Talon":          {"class":"thief","path":"B","type":"claw","atk":15,"rarity":"rare"},
+    "Shadow Rend Claw":          {"class":"thief","path":"B","type":"claw","atk":15,"rarity":"rare"},
+    "Phantom Rend":              {"class":"thief","path":"B","type":"claw","atk":25,"rarity":"epic"},
+    "Venomous Fang Claw":        {"class":"thief","path":"B","type":"claw","atk":25,"rarity":"epic"},
+    "The Death Grasp":           {"class":"thief","path":"B","type":"claw","atk":40,"rarity":"legendary"},
+    "Soul Ripper Claw":          {"class":"thief","path":"B","type":"claw","atk":60,"rarity":"mythic"},
 }
 
 ACCESSORIES = {
@@ -1278,7 +1432,7 @@ ACCESSORIES = {
 }
 
 RARITY_EMOJI = {
-    "common":"⚪","uncommon":"🟢","rare":"🔵","epic":"🟣","legendary":"🟡"
+    "common":"⚪","uncommon":"🟢","rare":"🔵","epic":"🟣","legendary":"🟡","mythic":"🔴","legacy":"🟤"
 }
 
 # Items that can be found in game
@@ -1294,11 +1448,11 @@ CONSUMABLES = {
 
 # ── CRAFTING RECIPES ──────────────────────────────────────────────────────────
 RECIPES = {
-    "Iron Compound":  {"mats": {"Slate Fragment": 4},                "result": "Graphite Break Cue"},
-    "Scale Plating":  {"mats": {"Slate Fragment": 3},                "result": "Slate Guard"},
-    "Charm Craft":    {"mats": {"Slate Fragment": 4},                "result": "Iron Chalk Ring"},
+    "Iron Compound":  {"mats": {"Slate Fragment": 4},                "result": "Steel Knight Sword"},
+    "Scale Plating":  {"mats": {"Slate Fragment": 3},                "result": "Soldier's Plating"},
+    "Charm Craft":    {"mats": {"Slate Fragment": 4},                "result": "Silver Prayer Beads"},
     "Enchant Bundle": {"mats": {"Slate Fragment": 6},                "result": "The Custom Tip Scroll"},
-    "Scale Blade":    {"mats": {"Slate Fragment": 7},                "result": "Precision Rack"},
+    "Scale Blade":    {"mats": {"Slate Fragment": 7},                "result": "Ranger's Marked Bow"},
 }
 
 SHOP_POOL = [
@@ -3313,6 +3467,125 @@ def init_db():
 
     conn.close()
 
+    # ── v21 Item Rename Migration (pool-hall → RPG fantasy names) ────────────
+    ITEM_NAME_MAP_V21 = {
+        # Weapons — Warrior
+        "Cracked House Cue":       "Rusty Shortsword",
+        "Worn Practice Cue":       "Iron Broadsword",
+        "Graphite Break Cue":      "Steel Knight Sword",
+        "Heavy Breaker Staff":     "Warlord's Edge",
+        "The Rack Splitter":       "Ruinblade",
+        # Weapons — Mage
+        "Chalked Finger":          "Gnarled Twig Wand",
+        "Blue Diamond Chalk":      "Crystal Core Wand",
+        "Blackwood Bridge Stick":  "Warlock's Dread Staff",
+        "The Extension":           "Void Channel Staff",
+        "The Grand Bridge":        "The Mind's Eye",
+        # Weapons — Archer
+        "Bent Triangle":           "Frayed Hunting Bow",
+        "Standard Magic Rack":     "Repeating Crossbow",
+        "Precision Rack":          "Ranger's Marked Bow",
+        "Diamond Rack":            "Warden's Gale Bow",
+        "The Perfect Break Rack":  "The Dead Reckoning",
+        # Weapons — Thief
+        "Chalk Shiv":              "Rusty Shiv",
+        "Mushroom Tip Blade":      "Iron Stiletto",
+        "Ferrule Dart":            "Bloodsteel Shuriken",
+        "Twin Tip Blades":         "Shadow Death Star",
+        "The Ball Return":         "Death's Whisper",
+        # Weapons — Priest
+        "Chalk Beads":             "Wooden Prayer Beads",
+        "Iron Chalk Ring":         "Silver Prayer Beads",
+        "The Spot Marker":         "Holy Judge's Cross",
+        "The Crossed Cues":        "Grand Inquisitor's Cross",
+        "The Diamond Staff":       "The Final Judgment",
+        # Armors — Warrior
+        "Bar Room Vest":           "Rusty Iron Vest",
+        "Padded Cue Jacket":       "Rusty Iron Vest",
+        "Slate Guard":             "Soldier's Plating",
+        "Red Cloth Plate":         "Steel Breastplate",
+        "Black Ball Plate":        "Warlord's Battle Plate",
+        "Diamond Felt Armor":      "Dragonscale Plate",
+        # Armors — Mage
+        "Worn Chalk Coat":         "Worn Cloth Robe",
+        "Green Baize Robe":        "Arcane Weave Robe",
+        "White Glove Wrap":        "Sorcerer's Mantle",
+        "Blacklight Cloak":        "Void-Touched Robe",
+        "The Nap Robe":            "Archmage's Sanctum Robe",
+        # Armors — Archer
+        "Corner Pocket Vest":      "Padded Hunting Vest",
+        "Rail Leather Chest":      "Scout's Leathers",
+        "Diamond Point Plate":     "Forest Scout Armor",
+        "Red Baize Brigandine":    "Strider's Marked Armor",
+        "The Rack Scale":          "The Shadowmark Leather",
+        # Armors — Thief
+        "Hustle Coat":             "Torn Leather Vest",
+        "Midnight Felt Coat":      "Rogue's Leathers",
+        "The Sneak Mesh":          "Nightstalker's Vest",
+        "Backdoor Harness":        "Phantom Leathers",
+        "The Ghost Coat":          "The Shadow Wrap",
+        # Armors — Priest
+        "Chalk Cloth Vestments":   "Simple Cloth Vestment",
+        "The Rule Book Robe":      "Blessed Cloth Robe",
+        "The Referee Hood":        "Sanctified Robe",
+        "The Tournament Cloak":    "High Cleric's Vestment",
+        "The House Saint Surplice":"The High Saint's Vestment",
+        # Shields
+        "Cracked Rack Shield":     "Wooden Buckler",
+        "Iron Triangle":           "Soldier's Kite Shield",
+        "The Break Shield":        "Knight's Bulwark",
+        "Black Ball Barrier":      "Holy Pavise",
+        "The Diamond Aegis":       "Celestial Bulwark",
+    }
+
+    def _v21_list(lst):
+        return [ITEM_NAME_MAP_V21.get(x, x) for x in lst]
+
+    def _v21_dict(d):
+        return {ITEM_NAME_MAP_V21.get(k, k): v for k, v in d.items()}
+
+    try:
+        mig21 = sqlite3.connect(DB_PATH)
+        try:
+            mig21.row_factory = sqlite3.Row
+            c21 = mig21.cursor()
+            c21.execute("""SELECT user_id,inventory,equipped_weapon,equipped_armor,
+                                  equipped_shield,equipped_accessory,enhancements,enchants
+                           FROM players""")
+            rows21 = c21.fetchall()
+            migrated21 = 0
+            for row in rows21:
+                changed = False
+                uid = row["user_id"]
+                inv  = sjl(row["inventory"], [])
+                new_inv = _v21_list(inv)
+                if new_inv != inv: changed = True
+                ew  = ITEM_NAME_MAP_V21.get(row["equipped_weapon"],  row["equipped_weapon"])
+                ea  = ITEM_NAME_MAP_V21.get(row["equipped_armor"],   row["equipped_armor"])
+                es  = ITEM_NAME_MAP_V21.get(row["equipped_shield"],  row["equipped_shield"])
+                eac = ITEM_NAME_MAP_V21.get(row["equipped_accessory"], row["equipped_accessory"])
+                if (ew != row["equipped_weapon"] or ea != row["equipped_armor"] or
+                        es != row["equipped_shield"] or eac != row["equipped_accessory"]):
+                    changed = True
+                enh = sjl(row["enhancements"], {}); new_enh = _v21_dict(enh)
+                if new_enh != enh: changed = True
+                enc = sjl(row["enchants"], {});     new_enc = _v21_dict(enc)
+                if new_enc != enc: changed = True
+                if changed:
+                    c21.execute("""UPDATE players SET inventory=?,equipped_weapon=?,
+                                    equipped_armor=?,equipped_shield=?,equipped_accessory=?,
+                                    enhancements=?,enchants=? WHERE user_id=?""",
+                        (json.dumps(new_inv), ew, ea, es, eac,
+                         json.dumps(new_enh), json.dumps(new_enc), uid))
+                    migrated21 += 1
+            mig21.commit()
+            if migrated21 > 0:
+                logger.info(f"v21 item rename: updated {migrated21} player(s)")
+        finally:
+            mig21.close()
+    except Exception as e:
+        logger.error(f"v21 item rename failed: {e}")
+
     # Clear stale explore locks on startup
     conn3 = sqlite3.connect(DB_PATH)
     c3 = conn3.cursor()
@@ -3474,11 +3747,84 @@ def save_shadow(s):
          s.get("pending_items","[]")))
     conn.commit(); conn.close()
 
+# Normalizes pool-hall item names → RPG names at save time (catches loot drops too)
+_ITEM_RENAME = {
+    "Custom Tip Scroll":   "The Custom Tip Scroll",
+    # Weapons
+    "Cracked House Cue":   "Rusty Shortsword",
+    "Worn Practice Cue":   "Iron Broadsword",
+    "Graphite Break Cue":  "Steel Knight Sword",
+    "Heavy Breaker Staff": "Warlord's Edge",
+    "The Rack Splitter":   "Ruinblade",
+    "Chalked Finger":      "Gnarled Twig Wand",
+    "Blue Diamond Chalk":  "Crystal Core Wand",
+    "Blackwood Bridge Stick": "Warlock's Dread Staff",
+    "The Extension":       "Void Channel Staff",
+    "The Grand Bridge":    "The Mind's Eye",
+    "Bent Triangle":       "Frayed Hunting Bow",
+    "Standard Magic Rack": "Repeating Crossbow",
+    "Precision Rack":      "Ranger's Marked Bow",
+    "Diamond Rack":        "Warden's Gale Bow",
+    "The Perfect Break Rack": "The Dead Reckoning",
+    "Chalk Shiv":          "Rusty Shiv",
+    "Mushroom Tip Blade":  "Iron Stiletto",
+    "Ferrule Dart":        "Bloodsteel Shuriken",
+    "Twin Tip Blades":     "Shadow Death Star",
+    "The Ball Return":     "Death's Whisper",
+    "Chalk Beads":         "Wooden Prayer Beads",
+    "Iron Chalk Ring":     "Silver Prayer Beads",
+    "The Spot Marker":     "Holy Judge's Cross",
+    "The Crossed Cues":    "Grand Inquisitor's Cross",
+    "The Diamond Staff":   "The Final Judgment",
+    # Armors
+    "Bar Room Vest":       "Rusty Iron Vest",
+    "Padded Cue Jacket":   "Rusty Iron Vest",
+    "Slate Guard":         "Soldier's Plating",
+    "Red Cloth Plate":     "Steel Breastplate",
+    "Black Ball Plate":    "Warlord's Battle Plate",
+    "Diamond Felt Armor":  "Dragonscale Plate",
+    "Worn Chalk Coat":     "Worn Cloth Robe",
+    "Green Baize Robe":    "Arcane Weave Robe",
+    "White Glove Wrap":    "Sorcerer's Mantle",
+    "Blacklight Cloak":    "Void-Touched Robe",
+    "The Nap Robe":        "Archmage's Sanctum Robe",
+    "Corner Pocket Vest":  "Padded Hunting Vest",
+    "Rail Leather Chest":  "Scout's Leathers",
+    "Diamond Point Plate": "Forest Scout Armor",
+    "Red Baize Brigandine":"Strider's Marked Armor",
+    "The Rack Scale":      "The Shadowmark Leather",
+    "Hustle Coat":         "Torn Leather Vest",
+    "Midnight Felt Coat":  "Rogue's Leathers",
+    "The Sneak Mesh":      "Nightstalker's Vest",
+    "Backdoor Harness":    "Phantom Leathers",
+    "The Ghost Coat":      "The Shadow Wrap",
+    "Chalk Cloth Vestments":"Simple Cloth Vestment",
+    "The Rule Book Robe":  "Blessed Cloth Robe",
+    "The Referee Hood":    "Sanctified Robe",
+    "The Tournament Cloak":"High Cleric's Vestment",
+    "The House Saint Surplice":"The High Saint's Vestment",
+    # Shields
+    "Cracked Rack Shield": "Wooden Buckler",
+    "Iron Triangle":       "Soldier's Kite Shield",
+    "The Break Shield":    "Knight's Bulwark",
+    "Black Ball Barrier":  "Holy Pavise",
+    "The Diamond Aegis":   "Celestial Bulwark",
+}
+
 def save_player(p):
-    # Normalize any legacy item names in inventory
+    # Normalize old item names → new RPG names on every save
     inv = sjl(p.get("inventory"), [])
-    inv = ["The Custom Tip Scroll" if i == "Custom Tip Scroll" else i for i in inv]
+    inv = [_ITEM_RENAME.get(i, i) for i in inv]
     p["inventory"] = json.dumps(inv)
+    for slot in ("equipped_weapon", "equipped_armor", "equipped_shield", "equipped_accessory"):
+        if p.get(slot) in _ITEM_RENAME:
+            p[slot] = _ITEM_RENAME[p[slot]]
+    enh = sjl(p.get("enhancements"), {})
+    if any(k in _ITEM_RENAME for k in enh):
+        p["enhancements"] = json.dumps({_ITEM_RENAME.get(k, k): v for k, v in enh.items()})
+    enc = sjl(p.get("enchants"), {})
+    if any(k in _ITEM_RENAME for k in enc):
+        p["enchants"] = json.dumps({_ITEM_RENAME.get(k, k): v for k, v in enc.items()})
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     fields = [
         "user_id","username","hp","max_hp","exp","level","total_exp",
@@ -3919,22 +4265,30 @@ async def gear_cmd(update, context):
 
     lines.append("")
 
-    # Shield
+    # Shield / Claw
     shld_name = p.get("equipped_shield")
     if shld_name and shld_name in SHIELDS:
         s_data = SHIELDS[shld_name]
         enh = get_enhancement(p, shld_name)
-        base_def = s_data["def"]
         enh_bonus = enh * 2
-        total_def = base_def + enh_bonus
         rarity = RARITY_EMOJI.get(s_data["rarity"], "")
-        lines.append(f"🔰 *Shield*")
-        lines.append(f"{rarity} {shld_name}")
-        lines.append(f"DEF: {base_def} base + {enh_bonus} enhancement = *{total_def} total*")
+        is_claw = s_data.get("type") == "claw"
+        if is_claw:
+            base_stat = s_data.get("atk", 0)
+            total_stat = base_stat + enh_bonus
+            lines.append(f"🗡️ *Claw* (shield slot)")
+            lines.append(f"{rarity} {shld_name}")
+            lines.append(f"ATK: {base_stat} base + {enh_bonus} enhancement = *{total_stat} total*")
+        else:
+            base_stat = s_data.get("def", 0)
+            total_stat = base_stat + enh_bonus
+            lines.append(f"🔰 *Shield*")
+            lines.append(f"{rarity} {shld_name}")
+            lines.append(f"DEF: {base_stat} base + {enh_bonus} enhancement = *{total_stat} total*")
         if enh > 0:
             lines.append(f"Enhancement: *+{enh}* {'⭐' * enh}")
     else:
-        lines.append(f"🔰 *Shield*  -  None")
+        lines.append(f"🔰 *Shield / Claw*  -  None")
 
     lines.append("")
 
@@ -4295,6 +4649,16 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Damage ────────────────────────────────────────────────────────────────
     dmg = calc_attack_damage(a, w)
     extra_notes = []
+
+    # Assassin dual-equip check: throwing_star requires claw in shield slot
+    _a_weap = a.get("equipped_weapon", "")
+    _a_weap_type = WEAPONS.get(_a_weap, {}).get("type", "")
+    if _a_weap_type == "throwing_star":
+        _a_shld = a.get("equipped_shield", "")
+        _a_shld_type = SHIELDS.get(_a_shld, {}).get("type", "")
+        if _a_shld_type != "claw":
+            dmg = round(dmg * 0.75)
+            extra_notes.append("⚠️ _Missing claw  -  75% damage (equip a claw to fight at full power)_")
 
     # Crit check
     crit_forced = safe_cds(a).pop("next_crit_skill", None)
@@ -6463,9 +6827,10 @@ def _render_bag_item(p, item, count):
         d = SHIELDS[item]
         line = d.get("line", "")
         arch = LINE_ARCHETYPE.get(line, line.capitalize())
-        type_tag = f"🔰 Shield [{arch}]" if arch else "🔰 Shield"
+        is_claw = d.get("type") == "claw"
+        type_tag = (f"🗡️ Claw [{arch}]" if arch else "🗡️ Claw") if is_claw else (f"🔰 Shield [{arch}]" if arch else "🔰 Shield")
         rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
-        stat_str = f"+{d['def']} DEF"
+        stat_str = f"+{d.get('atk',0)} ATK" if is_claw else f"+{d.get('def',0)} DEF"
     elif item in ACCESSORIES:
         d = ACCESSORIES[item]
         type_tag = "💍 Accessory"
@@ -6725,9 +7090,15 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         s_data = SHIELDS[item_name]
         cls_line = get_class_line(p)
         path = p.get("class_path")
-        if cls_line != "warrior" or path != "A":
-            await send_group(update,
-                "❌ Only Warrior Path A (Page/Squire/Knight/Paladin) can use shields.", delay=9); return
+        is_claw = s_data.get("type") == "claw"
+        if is_claw:
+            if cls_line != "thief" or path != "B":
+                await send_group(update,
+                    "❌ Only Assassin path (Cutthroat/Assassin/Blade Master/Specialist) can use claws.", delay=9); return
+        else:
+            if cls_line != "warrior" or path != "A":
+                await send_group(update,
+                    "❌ Only Warrior Path A (Page/Squire/Knight/Paladin) can use shields.", delay=9); return
         old_name = p.get("equipped_shield")
         old_def = get_armor_def(p)
         p["equipped_shield"] = item_name
@@ -6735,13 +7106,19 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if old_name: inv.append(old_name)
         p["inventory"] = json.dumps(inv); save_player(p)
         new_def = get_armor_def(p)
-        if old_name:
-            compare = f"*{old_name}* ({old_def} DEF) -> *{item_name}* ({new_def} DEF)"
+        if is_claw:
+            stat_val = s_data.get("atk", 0)
+            await send_group(update,
+                f"🗡️ Equipped *{item_name}*! +{stat_val} ATK (claw slot)\n"
+                + (f"_Unequipped {old_name}_" if old_name else ""), delay=15)
         else:
-            compare = f"DEF: {old_def} -> {new_def}"
-        await send_group(update,
-            f"🔰 Equipped *{item_name}*!\n{compare}\n"
-            + (f"_Unequipped {old_name}_" if old_name else ""), delay=15)
+            if old_name:
+                compare = f"*{old_name}* ({old_def} DEF) -> *{item_name}* ({new_def} DEF)"
+            else:
+                compare = f"DEF: {old_def} -> {new_def}"
+            await send_group(update,
+                f"🔰 Equipped *{item_name}*!\n{compare}\n"
+                + (f"_Unequipped {old_name}_" if old_name else ""), delay=15)
     elif item_name in ACCESSORIES:
         old = p.get("equipped_accessory")
         p["equipped_accessory"] = item_name
