@@ -15147,10 +15147,11 @@ async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         text = _build_pet_card(pet)
         markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🍖 Feed",  callback_data=f"petfeed_{pet['pet_id']}"),
-             InlineKeyboardButton("🏋️ Train", callback_data=f"pettrain_{pet['pet_id']}")],
-            [InlineKeyboardButton("📋 All Pets", callback_data="petlist_0"),
-             InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")],
+            [InlineKeyboardButton("🍖 Feed",    callback_data=f"petfeed_{pet['pet_id']}"),
+             InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pet['pet_id']}")],
+            [InlineKeyboardButton("📝 Rename",  callback_data=f"petrename_{pet['pet_id']}"),
+             InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")],
+            [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")],
         ])
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
@@ -15183,6 +15184,7 @@ def _build_petshop_menu(p):
         [InlineKeyboardButton("🥚 Dragon Egg  2000g", callback_data="pbuy_Dragon Egg_2000"),
          InlineKeyboardButton("🥚 Mythic Egg  5000g", callback_data="pbuy_Mythic Egg_5000")],
         [InlineKeyboardButton("🍖 Pet Snack  25g",    callback_data="pbuy_Pet Snack_25")],
+        [InlineKeyboardButton("🔙 Back",              callback_data="petmain")],
     ])
     return text, markup
 
@@ -15318,10 +15320,11 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text = _build_pet_card(pet)
             markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🍖 Feed",  callback_data=f"petfeed_{pet['pet_id']}"),
-                 InlineKeyboardButton("🏋️ Train", callback_data=f"pettrain_{pet['pet_id']}")],
-                [InlineKeyboardButton("📋 All Pets", callback_data="petlist_0"),
-                 InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")],
+                [InlineKeyboardButton("🍖 Feed",    callback_data=f"petfeed_{pet['pet_id']}"),
+                 InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pet['pet_id']}")],
+                [InlineKeyboardButton("📝 Rename",  callback_data=f"petrename_{pet['pet_id']}"),
+                 InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")],
+                [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")],
             ])
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
         await query.answer(); return
@@ -15470,6 +15473,20 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, markup = _build_petshop_menu(p)
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
         await query.answer(); return
+
+    if data.startswith("petrename_"):
+        pid = int(data.split("_")[1])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row)
+        sp = PET_SPECIES.get(pet["species"], {})
+        pname = _pet_display_name(pet)
+        await query.answer(
+            f"Type /petrename <name> in chat to rename {pname}!\nExample: /petrename Shadow",
+            show_alert=True)
+        return
 
     await query.answer()
 
@@ -17634,7 +17651,7 @@ def main():
     app.add_handler(CallbackQueryHandler(petshop_callback,    pattern="^(petshop|pbuy_)"))
     app.add_handler(CallbackQueryHandler(hatch_egg_callback,  pattern="^hatch_egg$"))
     app.add_handler(CallbackQueryHandler(pet_main_callback,
-        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petrelease_)"))
+        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petrelease_|petrename_)"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
