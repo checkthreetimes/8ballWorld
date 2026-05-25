@@ -4176,6 +4176,14 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if t_boss:
         await send_group(update, f"⚔️ *{d['username']}* is in a boss fight  -  can't be targeted!", delay=9); return
 
+    # Block friendly fire within the same Hall
+    if a.get("guild_id") and str(a.get("guild_id")) == str(d.get("guild_id")):
+        g = get_guild(a["guild_id"])
+        gname = g["name"] if g else "your Hall"
+        await send_group(update,
+            f"🏰 *{d['username']}* is in *{gname}* — you can't attack your own Hall members!",
+            delay=9); return
+
     # Block attack if target has been offline for 30+ minutes
     target_last_seen = d.get("last_seen")
     if target_last_seen:
@@ -8582,6 +8590,12 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         stype = sk.get("type", "damage")
         _support_types = {"self_heal", "self_heal_buff", "group_heal", "dmg_reduction_buff",
                           "revive_heal", "regen", "full_revive", "heal_shield", "mass_cleanse"}
+        # Block offensive skills on Hall members
+        if stype not in _support_types:
+            if p.get("guild_id") and str(p.get("guild_id")) == str(tp.get("guild_id")):
+                g_s = get_guild(p["guild_id"])
+                gname_s = g_s["name"] if g_s else "your Hall"
+                await send_result(f"🏰 {tp['username']} is in {gname_s} — can't use offensive skills on Hall members!"); return
         # Healing/support skills bypass invincibility and defeated checks
         if stype not in _support_types:
             if is_defeated(tp):
