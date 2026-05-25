@@ -5610,8 +5610,11 @@ def get_random_item_by_rarity(rarity):
     return random.choice(pool) if pool else None
 
 def roll_loot_table(loot_table, p=None):
+    _RARITY_CHANCE = {"common":0.50,"uncommon":0.30,"rare":0.15,"epic":0.07,"legendary":0.03}
     luk_bonus = (get_stat(p, "LUK") * 0.005) if p else 0
     for item_name, chance in loot_table:
+        if isinstance(chance, str):
+            chance = _RARITY_CHANCE.get(chance.lower(), 0.15)
         weapon_boost = 1.8 if item_name in WEAPONS else 1.0
         adjusted = min(chance * weapon_boost + luk_bonus, 0.95)
         if random.random() < adjusted:
