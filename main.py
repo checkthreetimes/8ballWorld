@@ -4033,7 +4033,8 @@ def init_db():
         logger.error(f"v21 item rename failed: {e}")
 
     # ── Pets table ───────────────────────────────────────────────────────────
-    conn.execute("""CREATE TABLE IF NOT EXISTS pets (
+    _pets_conn = sqlite3.connect(DB_PATH)
+    _pets_conn.execute("""CREATE TABLE IF NOT EXISTS pets (
         pet_id     INTEGER PRIMARY KEY AUTOINCREMENT,
         owner_id   INTEGER NOT NULL,
         species    TEXT NOT NULL,
@@ -4047,7 +4048,8 @@ def init_db():
         is_active  INTEGER DEFAULT 0,
         created_at TEXT
     )""")
-    conn.commit()
+    _pets_conn.commit()
+    _pets_conn.close()
     # Re-open connection for the v22 consumable rename migration
     try:
         migc = sqlite3.connect(DB_PATH); migc.row_factory = sqlite3.Row; cc = migc.cursor()
