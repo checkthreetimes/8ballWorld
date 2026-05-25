@@ -2428,7 +2428,8 @@ def _pet_list_markup(pets, page=0, page_size=5):
     if page > 0:    nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"petlist_{page-1}"))
     if start+page_size < len(pets): nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"petlist_{page+1}"))
     if nav: rows.append(nav)
-    rows.append([InlineKeyboardButton("🔙 Back", callback_data="petmain")])
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data="petmain"),
+                 InlineKeyboardButton("❌ Close", callback_data="close_msg")])
     return InlineKeyboardMarkup(rows)
 
 def _pet_view_markup(pet_id, is_active):
@@ -2444,6 +2445,7 @@ def _pet_view_markup(pet_id, is_active):
         InlineKeyboardButton("🔙 All Pets", callback_data="petlist_0"),
         InlineKeyboardButton("❌ Release",  callback_data=f"petrelease_{pet_id}"),
     ])
+    rows.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
     return InlineKeyboardMarkup(rows)
 
 def _pet_main_markup():
@@ -2451,6 +2453,7 @@ def _pet_main_markup():
         [InlineKeyboardButton("📋 My Pets",  callback_data="petlist_0"),
          InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")],
         [InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
+        [InlineKeyboardButton("❌ Close",     callback_data="close_msg")],
     ])
 
 # Items that can be found in game
@@ -5342,12 +5345,13 @@ def get_active_war(gid1, gid2=None):
 def save_guild(g):
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO guilds
-        (guild_id,name,leader_id,members,level,exp,bank,created_at)
-        VALUES(?,?,?,?,?,?,?,?)""",
+        (guild_id,name,leader_id,members,level,exp,bank,created_at,war_wins)
+        VALUES(?,?,?,?,?,?,?,?,?)""",
         (g.get("guild_id"),g["name"],g["leader_id"],g["members"],
          safe_int(g.get("level"),1),safe_int(g.get("exp")),
          safe_int(g.get("bank")),
-         g.get("created_at",datetime.now().isoformat())))
+         g.get("created_at",datetime.now().isoformat()),
+         safe_int(g.get("war_wins"))))
     conn.commit(); conn.close()
 
 def add_guild_exp(g, amount):
@@ -6652,15 +6656,17 @@ def _build_stats_pages(p, viewing_name=None):
     _active_pet = get_active_pet_record(p["user_id"])
     if _active_pet:
         _sp = PET_SPECIES.get(_active_pet.get("species"), {})
-        _pname = _pet_display_name(_active_pet)
-        _plvl  = _active_pet.get("level", 1)
+        _nick = _active_pet.get("nickname")
+        _species_name = _sp.get("name", "Pet")
+        _display_name = _nick if _nick else _species_name
+        _lv_label = f"Lv {_active_pet.get('level', 1)} {_species_name}" if _nick else f"Lv {_active_pet.get('level', 1)}"
         _phun  = _active_pet.get("hunger", 100)
         _pmood = _active_pet.get("mood", 100)
         _pemoji = _sp.get("emoji", "🐾")
         _hun_icon  = "🍗" if _phun >= 60 else ("😐" if _phun >= 30 else "😫")
         _mood_icon = "😊" if _pmood >= 60 else ("😐" if _pmood >= 30 else "😢")
-        pet_str = (f"{_pemoji} *{_pname}* (Lv {_plvl} {_sp.get('name','Pet')})  "
-                   f"{_hun_icon} {_phun} | {_mood_icon} {_pmood}")
+        pet_str = (f"{_pemoji} *{_display_name}* — {_lv_label}\n"
+                   f"  {_hun_icon} Hunger: {_phun} | {_mood_icon} Mood: {_pmood}")
 
     page1_lines = [
         f"🎱 *{name}*{defeated_str}{recovering}",
@@ -6756,7 +6762,8 @@ async def _send_stats_page(target, target_uid: int, page: int, edit: bool = Fals
     if page < total:
         label = PAGE_LABELS[page] if page < len(PAGE_LABELS) else str(page + 1)
         row.append(InlineKeyboardButton(f"{label} ▶", callback_data=f"stats_p_{target_uid}_{page+1}"))
-    markup = InlineKeyboardMarkup([row]) if row else None
+    close_row = [InlineKeyboardButton("❌ Close", callback_data="close_msg")]
+    markup = InlineKeyboardMarkup([row, close_row] if row else [close_row])
     if edit:
         await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
     else:
@@ -7391,7 +7398,9 @@ async def _send_class_browser(target, uid, page, edit=False):
     pick_btn = InlineKeyboardButton(
         f"✅ Pick {_CLASS_EMOJIS.get(cid,'')} {CLASS_TREE[cid]['name']}",
         callback_data=f"class_pick_{uid}_{cid}")
-    markup = InlineKeyboardMarkup([nav_btns, [pick_btn]] if nav_btns else [[pick_btn]])
+    close_btn = [InlineKeyboardButton("❌ Close", callback_data="close_msg")]
+    markup = InlineKeyboardMarkup(
+        [nav_btns, [pick_btn], close_btn] if nav_btns else [[pick_btn], close_btn])
 
     if edit:
         try: await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
@@ -7495,7 +7504,8 @@ async def _send_class_progression(target, uid, page, edit=False):
     if page < total - 1:
         pc_next = pages[page + 1].split("*")[1] if page + 1 < total else "Next"
         nav.append(InlineKeyboardButton(f"Next ▶", callback_data=f"clsprog_{uid}_{page+1}"))
-    markup = InlineKeyboardMarkup([nav]) if nav else None
+    close_row = [InlineKeyboardButton("❌ Close", callback_data="close_msg")]
+    markup = InlineKeyboardMarkup([nav, close_row] if nav else [close_row])
     text   = pages[page][:4096]
 
     if edit:
@@ -8308,6 +8318,7 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shop_buttons.append([InlineKeyboardButton(
                 f"Buy {i+1}: {entry['item']}", callback_data=f"shop_b_{user.id}_{i}")])
         lines.append(f"\n`/shop buy [1-{len(shop)}]` to purchase.")
+        shop_buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
         shop_markup = InlineKeyboardMarkup(shop_buttons)
         await send_group(update, "\n".join(lines), delay=30, reply_markup=shop_markup); return
 
@@ -8471,12 +8482,14 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False):
             sell_buttons.append([InlineKeyboardButton(
                 f"💰 Sell {it} ({price}g)",
                 callback_data=f"sll_{uid_p}_{it}")])
+    close_btn_row = [InlineKeyboardButton("❌ Close", callback_data="close_msg")]
     if sell_buttons:
-        if markup:
-            combined = sell_buttons + list(markup.inline_keyboard)
-        else:
-            combined = sell_buttons
-        markup = InlineKeyboardMarkup(combined)
+        nav_rows = list(markup.inline_keyboard) if markup else []
+        markup = InlineKeyboardMarkup(sell_buttons + nav_rows + [close_btn_row])
+    elif markup:
+        markup = InlineKeyboardMarkup(list(markup.inline_keyboard) + [close_btn_row])
+    else:
+        markup = InlineKeyboardMarkup([close_btn_row])
     text = "\n".join(lines)[:4096]
     if edit:
         await target.edit_message_text(text=text, parse_mode="Markdown", reply_markup=markup)
@@ -8571,10 +8584,11 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if equip_buttons:
             lines.append("\n_Select an item to equip:_")
+            equip_buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
             markup = InlineKeyboardMarkup(equip_buttons)
         else:
             lines.append("\n_No equippable items in bag. Visit /shop!_")
-            markup = None
+            markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_msg")]])
         await send_group(update, "\n".join(lines), delay=60, reply_markup=markup); return
     item_typed = " ".join(context.args)
     inv = sjl(p.get("inventory"), [])
@@ -10548,6 +10562,7 @@ def _build_skill_picker_keyboard(all_skills, uid, page, target_uid=None):
         nav.append(InlineKeyboardButton("Next ▶", callback_data=cb))
     if nav:
         keyboard.append(nav)
+    keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
     return InlineKeyboardMarkup(keyboard)
 
 async def skillpage_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -11765,7 +11780,8 @@ async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"• *{t}*{bonus_str}{active_marker}")
             if t != p.get("active_title"):
                 buttons.append([InlineKeyboardButton(f"🏅 Equip: {t}", callback_data=f"settitle_{uid}_{t}")])
-        markup = InlineKeyboardMarkup(buttons) if buttons else None
+        buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+        markup = InlineKeyboardMarkup(buttons)
         await send_group(update, "\n".join(lines), permanent=False, delay=90, reply_markup=markup); return
     chosen_typed = " ".join(context.args)
     chosen = resolve_item_ci(chosen_typed, titles)
@@ -12174,6 +12190,7 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 callback_data=f"enchant_{user.id}_{slot_id}")])
         if not buttons:
             await send_group(update, "✨ No gear equipped to enchant!", delay=9); return
+        buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
         markup = InlineKeyboardMarkup(buttons)
         await send_group(update, "\n".join(lines), delay=30, reply_markup=markup); return
 
@@ -12389,7 +12406,8 @@ async def _send_skill_tree(target, uid, page, edit=False):
         btns.append(InlineKeyboardButton(f"◀ {labels[page-1]}", callback_data=f"sktree_{uid}_{page-1}"))
     if page < total - 1:
         btns.append(InlineKeyboardButton(f"{labels[page+1]} ▶", callback_data=f"sktree_{uid}_{page+1}"))
-    markup = InlineKeyboardMarkup([btns]) if btns else None
+    close_row = [InlineKeyboardButton("❌ Close", callback_data="close_msg")]
+    markup = InlineKeyboardMarkup([btns, close_row] if btns else [close_row])
     text   = pages[page][:4096]
     if edit:
         try:
@@ -12694,6 +12712,7 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• 20 reinforces → Ascend for *+5 per ★*\n"
                 "_Collect duplicate drops from raids and bosses!_", delay=20)
             return
+        all_buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
         markup = InlineKeyboardMarkup(all_buttons)
         await send_group(update, "⚒️ *Reinforce — Choose an item:*", delay=60, reply_markup=markup)
         return
@@ -12938,6 +12957,15 @@ async def marry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Cost: 1,000 gold each (2,000 total)\n\n"
         f"_Proposal expires in 5 minutes._",
         permanent=False, delay=300, reply_markup=markup)
+
+
+async def close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
 
 
 async def marry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -15129,7 +15157,8 @@ async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
         row.append(InlineKeyboardButton(f"◀ {GUIDE_PAGE_LABELS[page-2]}", callback_data=f"guide_p_{page-1}"))
     if page < total:
         row.append(InlineKeyboardButton(f"{GUIDE_PAGE_LABELS[page]} ▶", callback_data=f"guide_p_{page+1}"))
-    markup = InlineKeyboardMarkup([row]) if row else None
+    close_row = [InlineKeyboardButton("❌ Close", callback_data="close_msg")]
+    markup = InlineKeyboardMarkup([row, close_row] if row else [close_row])
     if edit_msg:
         await edit_msg.edit_text(text, parse_mode="Markdown", reply_markup=markup)
     else:
@@ -15168,6 +15197,7 @@ async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📝 Rename",  callback_data=f"petrename_{pet['pet_id']}"),
              InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")],
             [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")],
+            [InlineKeyboardButton("❌ Close",    callback_data="close_msg")],
         ])
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
@@ -15200,7 +15230,8 @@ def _build_petshop_menu(p):
         [InlineKeyboardButton("🥚 Dragon Egg  2000g", callback_data="pbuy_Dragon Egg_2000"),
          InlineKeyboardButton("🥚 Mythic Egg  5000g", callback_data="pbuy_Mythic Egg_5000")],
         [InlineKeyboardButton("🍖 Pet Snack  25g",    callback_data="pbuy_Pet Snack_25")],
-        [InlineKeyboardButton("🔙 Back",              callback_data="petmain")],
+        [InlineKeyboardButton("🔙 Back",              callback_data="petmain"),
+         InlineKeyboardButton("❌ Close",             callback_data="close_msg")],
     ])
     return text, markup
 
@@ -17570,6 +17601,7 @@ def main():
     app.add_handler(CommandHandler("divorce", divorce_cmd))
     app.add_handler(CallbackQueryHandler(marry_callback,   pattern="^marry_(accept|decline)_"))
     app.add_handler(CallbackQueryHandler(divorce_callback, pattern="^divorce_(confirm|cancel)_"))
+    app.add_handler(CallbackQueryHandler(close_callback,   pattern="^close_msg$"))
 
     # Combat & Dungeons
     app.add_handler(CommandHandler("duel",       duel_cmd))
