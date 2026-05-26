@@ -2890,6 +2890,28 @@ def _has_starter(uid):
     c.execute("SELECT COUNT(*) FROM monster_squad WHERE user_id=?", (uid,))
     return c.fetchone()[0] > 0
 
+def _get_monster_box(uid):
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("SELECT id,monster_key,nickname,level,exp,hp,max_hp,caught_at FROM monster_box WHERE user_id=? ORDER BY id", (uid,))
+    rows = c.fetchall(); conn.close()
+    return [{"id":r[0],"key":r[1],"nickname":r[2],"level":r[3],"exp":r[4],"hp":r[5],"max_hp":r[6],"caught_at":r[7]} for r in rows]
+
+def _add_monster_to_box(uid, key, level=1, exp=0, hp=None, max_hp=None, nickname=None):
+    mdata = MONSTER_BY_KEY.get(key)
+    if not mdata: return
+    base_hp, _ = _mon_level_stats(mdata[4], mdata[5], level)
+    hp     = hp     if hp     is not None else base_hp
+    max_hp = max_hp if max_hp is not None else base_hp
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("INSERT INTO monster_box (user_id,monster_key,nickname,level,exp,hp,max_hp,caught_at) VALUES(?,?,?,?,?,?,?,?)",
+              (uid, key, nickname, level, exp, hp, max_hp, datetime.now().isoformat()))
+    conn.commit(); conn.close()
+
+def _remove_box_monster(uid, box_id):
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("DELETE FROM monster_box WHERE id=? AND user_id=?", (box_id, uid))
+    conn.commit(); conn.close()
+
 def _encounter_battle_card(enc):
     """Render the Pokemon-style battle card."""
     mode = enc["mode"]
@@ -5535,6 +5557,16 @@ def init_db():
             hp INTEGER DEFAULT 0,
             max_hp INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, slot))""")
+        conn_v23b.execute("""CREATE TABLE IF NOT EXISTS monster_box (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            monster_key TEXT NOT NULL,
+            nickname TEXT,
+            level INTEGER DEFAULT 1,
+            exp INTEGER DEFAULT 0,
+            hp INTEGER DEFAULT 0,
+            max_hp INTEGER DEFAULT 0,
+            caught_at TEXT)""")
         conn_v23b.commit(); conn_v23b.close()
     except Exception: pass
 
@@ -13819,6 +13851,88 @@ async def squad_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("")
     await send_group(update, "\n".join(lines), delay=20)
 
+async def box_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    uid = user.id
+    box = _get_monster_box(uid)
+    squad = _get_monster_squad(uid)
+    if not box and not squad:
+        await send_group(update, "📦 Your Box and squad are empty. Use /encounter → Hunt to catch monsters!", delay=12); return
+    lines = [f"📦 *Monster Box*  (Squad: {len(squad)}/3 | Box: {len(box)} stored)\n"]
+    if squad:
+        lines.append("*— Squad —*")
+        for m in squad:
+            mdata = MONSTER_BY_KEY.get(m["key"])
+            elem_e = ELEMENT_EMOJI.get(mdata[2], "") if mdata else ""
+            name = m.get("nickname") or (mdata[1] if mdata else m["key"])
+            bar = _enc_hp_bar(m["hp"], m["max_hp"])
+            lines.append(f"[S{m['slot']}] {elem_e} *{name}* Lv.{m['level']}  {m['hp']}/{m['max_hp']} [{bar}]")
+        lines.append("")
+    if box:
+        lines.append("*— Box —*")
+        for bm in box[:30]:
+            mdata = MONSTER_BY_KEY.get(bm["key"])
+            elem_e = ELEMENT_EMOJI.get(mdata[2], "") if mdata else ""
+            name = bm.get("nickname") or (mdata[1] if mdata else bm["key"])
+            lines.append(f"[#{bm['id']}] {elem_e} *{name}* Lv.{bm['level']}")
+        if len(box) > 30:
+            lines.append(f"_...and {len(box)-30} more_")
+    lines.append("")
+    lines.append("_Use /withdraw <#id> to move a Box monster to your squad._")
+    lines.append("_Use /deposit <slot> to move a squad member to the Box._")
+    await send_group(update, "\n".join(lines), delay=30)
+
+async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    uid = user.id
+    args = context.args
+    if not args or not args[0].isdigit():
+        await send_group(update, "Usage: `/withdraw <box_id>` — find the ID with /box", delay=10); return
+    box_id = int(args[0])
+    box = _get_monster_box(uid)
+    bm = next((b for b in box if b["id"] == box_id), None)
+    if not bm:
+        await send_group(update, f"❌ No Box monster with ID #{box_id}.", delay=8); return
+    squad = _get_monster_squad(uid)
+    if len(squad) >= 3:
+        await send_group(update, "❌ Your squad is full (3/3). Use `/deposit <slot>` to make room first.", delay=10); return
+    _remove_box_monster(uid, box_id)
+    slot = next(i for i in range(1, 4) if i not in {m["slot"] for m in squad})
+    _save_squad_monster(uid, {"slot":slot,"key":bm["key"],"nickname":bm.get("nickname"),
+                               "level":bm["level"],"exp":bm["exp"],"hp":bm["hp"],"max_hp":bm["max_hp"]})
+    mdata = MONSTER_BY_KEY.get(bm["key"])
+    elem_e = ELEMENT_EMOJI.get(mdata[2], "") if mdata else ""
+    name = bm.get("nickname") or (mdata[1] if mdata else bm["key"])
+    await send_group(update, f"✅ *{name}* {elem_e} (Lv.{bm['level']}) moved from Box to squad slot {slot}!", delay=12)
+
+async def deposit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    uid = user.id
+    args = context.args
+    if not args or not args[0].isdigit():
+        await send_group(update, "Usage: `/deposit <slot>` (slot 1, 2, or 3) — check /box", delay=10); return
+    slot = int(args[0])
+    squad = _get_monster_squad(uid)
+    sm = next((m for m in squad if m["slot"] == slot), None)
+    if not sm:
+        await send_group(update, f"❌ No monster in squad slot {slot}.", delay=8); return
+    _remove_squad_monster(uid, slot)
+    _add_monster_to_box(uid, sm["key"], level=sm["level"], exp=sm["exp"],
+                        hp=sm["hp"], max_hp=sm["max_hp"], nickname=sm.get("nickname"))
+    mdata = MONSTER_BY_KEY.get(sm["key"])
+    elem_e = ELEMENT_EMOJI.get(mdata[2], "") if mdata else ""
+    name = sm.get("nickname") or (mdata[1] if mdata else sm["key"])
+    await send_group(update, f"📦 *{name}* {elem_e} (Lv.{sm['level']}) moved to your Box.", delay=12)
+
 async def _start_encounter_battle(query, uid, p):
     npc = _pick_random_npc(p.get("level", 1))
     n_level = _enc_npc_level(npc, p.get("level", 1))
@@ -14093,23 +14207,18 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             catch_chance = min(0.95, base_rate * hp_mod * stone_mod)
             if random.random() < catch_chance:
                 squad = _get_monster_squad(uid)
-                if len(squad) >= 3:
-                    # Prompt release
-                    rows = []
-                    for sm in squad:
-                        mname = sm.get("nickname") or MONSTER_BY_KEY.get(sm["key"],["?"])[1]
-                        rows.append([InlineKeyboardButton(
-                            f"Release [{sm['slot']}] {mname} (Lv.{sm['level']})",
-                            callback_data=f"enc_release_{uid}_{sm['slot']}_{mon_key}_{enc['e_level']}")])
-                    rows.append([InlineKeyboardButton("❌ Cancel Catch", callback_data=f"enc_flee_{uid}")])
-                    await query.edit_message_text(
-                        f"🎯 Caught *{mdata[1]}*! But your squad is full (3/3).\n_Choose a monster to release:_",
-                        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
-                    return
-                ok, _ = _add_monster_to_squad(uid, mon_key, enc["e_level"])
                 elem_e = ELEMENT_EMOJI.get(mdata[2], "")
-                await _end_encounter(
-                    f"🎉 *Gotcha!* *{mdata[1]}* {elem_e} was caught and added to your squad!\n_(30s cooldown)_")
+                if len(squad) >= 3:
+                    # Squad full — send to box (like Pokemon PC)
+                    _add_monster_to_box(uid, mon_key, level=enc["e_level"])
+                    await _end_encounter(
+                        f"🎉 *Gotcha!* *{mdata[1]}* {elem_e} was caught!\n"
+                        f"📦 Your squad is full — *{mdata[1]}* was sent to your *Box*.\n"
+                        f"Use /box to manage your stored monsters.\n_(30s cooldown)_")
+                else:
+                    ok, _ = _add_monster_to_squad(uid, mon_key, enc["e_level"])
+                    await _end_encounter(
+                        f"🎉 *Gotcha!* *{mdata[1]}* {elem_e} was caught and added to your squad!\n_(30s cooldown)_")
             else:
                 # Monster breaks free and attacks
                 mon_act = _enc_monster_attack(enc)
@@ -14119,18 +14228,6 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     return
                 await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                               reply_markup=_encounter_battle_markup(enc))
-            return
-
-        # Release slot for catch
-        if data.startswith(f"enc_release_{uid}_"):
-            parts     = data.split("_")
-            slot      = int(parts[3]); new_key = parts[4]; new_lv = int(parts[5])
-            _remove_squad_monster(uid, slot)
-            _add_monster_to_squad(uid, new_key, new_lv)
-            mdata = MONSTER_BY_KEY.get(new_key)
-            elem_e = ELEMENT_EMOJI.get(mdata[2], "") if mdata else ""
-            await _end_encounter(
-                f"🔄 Released slot {slot}.\n🎉 *{mdata[1] if mdata else new_key}* {elem_e} joined your squad!\n_(30s cooldown)_")
             return
 
         # Switch squad monster
@@ -18922,6 +19019,9 @@ def main():
     # Encounter
     app.add_handler(CommandHandler("encounter",    encounter_cmd))
     app.add_handler(CommandHandler("squad",        squad_cmd))
+    app.add_handler(CommandHandler("box",          box_cmd))
+    app.add_handler(CommandHandler("withdraw",     withdraw_cmd))
+    app.add_handler(CommandHandler("deposit",      deposit_cmd))
     app.add_handler(CallbackQueryHandler(encounter_callback, pattern="^enc_"))
 
     # Marriage
