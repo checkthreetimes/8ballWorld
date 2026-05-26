@@ -2980,9 +2980,9 @@ def _pick_random_monster(p_level):
         eligible = ENCOUNTER_MONSTERS[:5]
     return random.choice(eligible)
 
-def _enc_monster_level(monster, p_level):
+def _enc_monster_level(monster, base_level):
     lo, hi = monster[3]
-    return max(lo, min(hi, random.randint(max(1, p_level - 3), p_level + 3)))
+    return max(lo, min(hi, random.randint(base_level, base_level + 4)))
 
 def _enc_npc_level(npc, p_level):
     lo, hi = npc[2], npc[3]
@@ -13954,8 +13954,10 @@ async def _start_encounter_battle(query, uid, p):
 
 async def _start_encounter_hunt(query, uid, p):
     squad = _get_monster_squad(uid)
-    monster = _pick_random_monster(p.get("level", 1))
-    m_level = _enc_monster_level(monster, p.get("level", 1))
+    # Scale to active squad fighter's level so difficulty tracks squad progression
+    fighter_level = next((sm["level"] for sm in squad if sm["hp"] > 0), p.get("level", 1))
+    monster = _pick_random_monster(fighter_level)
+    m_level = _enc_monster_level(monster, fighter_level)
     m_hp, m_atk = _mon_level_stats(monster[4], monster[5], m_level)
     # Active fighter: first squad monster with HP > 0
     fighter = None
@@ -14043,7 +14045,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await _end_encounter("🏃 *You fled safely!*\n_(30s cooldown)_")
         else:
             enc["last_action"] = "Failed to flee!"
-            npc_act = _enc_npc_attack(enc) if enc["mode"] == "battle" else _enc_monster_attack(enc)
+            npc_act = _enc_npc_attack(enc, p) if enc["mode"] == "battle" else _enc_monster_attack(enc)
             if enc["p_hp"] <= 0:
                 gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
@@ -14083,7 +14085,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             enc["heals_left"] = enc.get("heals_left", 1) - 1
             action_txt = f"💊 You healed *{heal}* HP! ({enc['heals_left']} heals left)"
             # No enemy turn on heal? Give NPC a free attack
-            npc_act = _enc_npc_attack(enc)
+            npc_act = _enc_npc_attack(enc, p)
             if enc["p_hp"] <= 0:
                 gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
@@ -14125,7 +14127,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
 
         # NPC attacks back
-        npc_act = _enc_npc_attack(enc)
+        npc_act = _enc_npc_attack(enc, p)
         # DOT tick
         dot_txt = _apply_dot_tick(enc)
         if dot_txt: npc_act += f"\n_{dot_txt}_"
