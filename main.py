@@ -6430,10 +6430,6 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             asyncio.create_task(announce(update.get_bot(), chat,
                 f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=60))
 
-        asyncio.create_task(announce(update.get_bot(), chat,
-            f"💀 *{d['username']}* was defeated by *{a['username']}*!\n"
-            f"Final HP: 0/{d.get('max_hp', calc_max_hp(d))} - "
-            f"Lost {exp_loss:,} EXP - Defeated 6hrs", delay=30))
 
     # PvP history for non-lethal hits
     if d["hp"] > 0:
@@ -8525,31 +8521,51 @@ async def inventory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
     await _send_inventory_section(update, p, section="Equipped", edit=False)
 
+
+def _build_equip_page_markup(p, uid, page, page_size=5):
+    """Return (has_items, InlineKeyboardMarkup) for the given equip page."""
+    inv = sjl(p.get("inventory"), [])
+    all_btns = []
+    for slot_emoji, slot_label, pool in [
+        ("⚔️", "Weapon",    WEAPONS),
+        ("🛡️", "Armor",     ARMORS),
+        ("🔰", "Shield",    SHIELDS),
+        ("💍", "Accessory", ACCESSORIES),
+    ]:
+        for it in sorted(set(k for k in inv if k in pool)):
+            d_it = pool[it]
+            rarity = RARITY_EMOJI.get(d_it.get("rarity", ""), "⚪")
+            enh = get_enhancement(p, it)
+            enh_str = f" +{enh}" if enh else ""
+            stat_val = d_it.get("atk") or d_it.get("def", 0)
+            stat_key = "ATK" if "atk" in d_it else "DEF"
+            all_btns.append(InlineKeyboardButton(
+                f"{slot_emoji} [{slot_label}] {rarity}{it}{enh_str} (+{stat_val} {stat_key})",
+                callback_data=f"eqp_{uid}_{it}"))
+    if not all_btns:
+        return False, InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_msg")]])
+    total = len(all_btns)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    rows = [[btn] for btn in all_btns[page * page_size:(page + 1) * page_size]]
+    if total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"eqpg_{uid}_{page - 1}"))
+        nav.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data=f"eqpg_{uid}_{page}"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"eqpg_{uid}_{page + 1}"))
+        rows.append(nav)
+    rows.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+    return True, InlineKeyboardMarkup(rows)
+
+
 async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if not context.args:
         uid = user.id
-        inv = sjl(p.get("inventory"), [])
-        equip_buttons = []
-        for slot_emoji, slot_label, pool in [
-            ("⚔️", "Weapon",    WEAPONS),
-            ("🛡️", "Armor",     ARMORS),
-            ("🔰", "Shield",    SHIELDS),
-            ("💍", "Accessory", ACCESSORIES),
-        ]:
-            slot_items = sorted(set(k for k in inv if k in pool))
-            for it in slot_items:
-                d_it = pool[it]
-                rarity = RARITY_EMOJI.get(d_it.get("rarity",""), "⚪")
-                enh = get_enhancement(p, it)
-                enh_str = f" +{enh}" if enh else ""
-                stat_val = d_it.get("atk") or d_it.get("def", 0)
-                stat_key = "ATK" if "atk" in d_it else "DEF"
-                equip_buttons.append([InlineKeyboardButton(
-                    f"{slot_emoji} [{slot_label}] {rarity}{it}{enh_str} (+{stat_val} {stat_key})",
-                    callback_data=f"eqp_{uid}_{it}")])
 
         weap = p.get("equipped_weapon") or "None"
         armr = p.get("equipped_armor")  or "None"
@@ -8581,13 +8597,8 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             lines.append("💍 Accessory: _None_")
 
-        if equip_buttons:
-            lines.append("\n_Select an item to equip:_")
-            equip_buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
-            markup = InlineKeyboardMarkup(equip_buttons)
-        else:
-            lines.append("\n_No equippable items in bag. Visit /shop!_")
-            markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_msg")]])
+        has_items, markup = _build_equip_page_markup(p, uid, 0)
+        lines.append("\n_Select an item to equip:_" if has_items else "\n_No equippable items in bag. Visit /shop!_")
         await send_group(update, "\n".join(lines), delay=60, reply_markup=markup); return
     item_typed = " ".join(context.args)
     inv = sjl(p.get("inventory"), [])
@@ -8862,6 +8873,28 @@ async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode="Markdown")
     else:
         await query.answer(f"{item_name} is not equippable!", show_alert=True)
+
+
+async def equip_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle equip pagination buttons: eqpg_{uid}_{page}"""
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try:
+        uid = int(parts[1]); page = int(parts[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your equip menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    _, markup = _build_equip_page_markup(p, uid, page)
+    try:
+        await query.edit_message_reply_markup(reply_markup=markup)
+    except Exception:
+        pass
+    await query.answer()
+
 
 async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -9553,6 +9586,7 @@ async def guildjoin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     p["guild_id"] = gid; save_player(p)
     asyncio.create_task(announce(context.bot, query.message.chat.id,
         f"🏰 *{user.first_name}* joined *{g['name']}*!"))
+    await query.answer()
     await query.edit_message_text(f"✅ You joined *{g['name']}*!", parse_mode="Markdown")
 
 
@@ -10784,11 +10818,38 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                         else:
                             out.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for *{edm}!* ({php}/{pmhp} HP)")
                         save_player(tp)
+        if boss_dict["hp"] <= 0:
+            data = boss_dict["data"]
+            is_secret_sk = chat_id in secret_boss_active
+            if is_secret_sk: secret_boss_active.pop(chat_id, None)
+            else: active_bosses.pop(chat_id, None)
+            out.append(f"\n🏆 *{data['name']} DEFEATED!*\n")
+            w_sk = get_weather()
+            for u in boss_dict["participants"]:
+                pp = get_player(u["id"])
+                if not pp: continue
+                pp["gold"] = pp.get("gold", 0) + data["gold"]
+                loot = roll_loot_table(data.get("loot_table", []))
+                if loot:
+                    add_item(pp, loot); r = ""
+                    for pool in [WEAPONS, ARMORS, ACCESSORIES]:
+                        if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), ""); break
+                    out.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
+                if award_title(pp, data["title"]):
+                    out.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
+                add_exp(pp, data["exp"], w_sk); save_player(pp)
+                out.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
+            save_player(p)
+            try:
+                await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown")
+            except Exception:
+                await context.bot.send_message(chat_id, "\n".join(out)[:4096], parse_mode="Markdown")
+            return
+
         save_player(p)
         summoner_id = boss_dict.get("summoner_id", uid)
-        markup = _build_boss_markup(summoner_id) if boss_dict["hp"] > 0 else None
         try:
-            await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown", reply_markup=markup)
+            await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown", reply_markup=_build_boss_markup(summoner_id))
         except Exception:
             await context.bot.send_message(chat_id, "\n".join(out)[:4096], parse_mode="Markdown")
         return
@@ -15259,7 +15320,8 @@ async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pet['pet_id']}")],
             [InlineKeyboardButton("📝 Rename",  callback_data=f"petrename_{pet['pet_id']}"),
              InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")],
-            [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")],
+            [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
+             InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
             [InlineKeyboardButton("❌ Close",    callback_data="close_msg")],
         ])
     msg = await context.bot.send_message(
@@ -15434,7 +15496,8 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pet['pet_id']}")],
                 [InlineKeyboardButton("📝 Rename",  callback_data=f"petrename_{pet['pet_id']}"),
                  InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")],
-                [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")],
+                [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
+                 InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
             ])
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
         await query.answer(); return
@@ -17798,6 +17861,7 @@ def main():
     app.add_handler(CallbackQueryHandler(skill_tree_callback,    pattern="^sktree_"))
     app.add_handler(CallbackQueryHandler(skill_pick_callback,   pattern="^skillpick_"))
     app.add_handler(CallbackQueryHandler(skillpage_callback,    pattern="^skillpage_"))
+    app.add_handler(CallbackQueryHandler(equip_page_callback,   pattern="^eqpg_"))
     app.add_handler(CallbackQueryHandler(equip_item_callback,   pattern="^eqp_"))
     app.add_handler(CallbackQueryHandler(unequip_slot_callback, pattern="^uneqp_"))
     app.add_handler(CallbackQueryHandler(use_item_callback,     pattern="^useitem_"))
