@@ -2888,7 +2888,9 @@ def _add_monster_to_squad(uid, key, level=1):
 def _has_starter(uid):
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM monster_squad WHERE user_id=?", (uid,))
-    return c.fetchone()[0] > 0
+    result = c.fetchone()[0] > 0
+    conn.close()
+    return result
 
 def _get_monster_box(uid):
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
@@ -13803,9 +13805,9 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = user.id
     if uid in active_encounters:
         await send_group(update, "⚠️ You're already in an encounter! Use the buttons to continue.", delay=10); return
-    ok, secs = check_cooldown(p.get("last_encounter"), 30)
-    if not ok:
-        await send_group(update, f"⏳ Encounter cooldown: {secs}s remaining.", delay=8); return
+    if not check_cooldown(p.get("last_encounter"), 30):
+        secs = time_remaining(p.get("last_encounter"), 30)
+        await send_group(update, f"⏳ Encounter cooldown: {secs} remaining.", delay=8); return
 
     # First-time hunt: pick a starter
     if not _has_starter(uid):
@@ -13994,8 +13996,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # ── starter pick ────────────────────────────────────────────────────────
     if data.startswith("enc_starter_"):
-        parts = data.split("_")
-        target_uid = int(parts[2]); mon_key = parts[3]
+        suffix = data[len("enc_starter_"):]
+        uid_str, mon_key = suffix.split("_", 1)
+        target_uid = int(uid_str)
         if uid != target_uid:
             await query.answer("Not your encounter!", show_alert=True); return
         if _has_starter(uid):
