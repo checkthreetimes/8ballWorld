@@ -116,6 +116,7 @@ explore_timers     = {}   # user_id -> asyncio task
 active_dungeons    = {}   # user_id -> asyncio task
 _wipe_confirm      = {}   # admin_id -> timestamp
 pending_marriages  = {}   # proposer_id -> {target_id, chat_id, expires}
+pending_holdhands  = {}   # proposer_id -> {target_id, chat_id, expires}
 
 # ── SEND HELPERS ──────────────────────────────────────────────────────────────
 async def _auto_delete(bot, chat_id, msg_id, delay):
@@ -334,7 +335,7 @@ CLASS_TREE = {
         "stat_bonus":{"STR":3},
         "skills":[
             {"tier":2,"unlock":10,"name":"Bloodlust",
-             "passive":"Each hit landed restores 5 HP.",
+             "passive":"Each hit landed restores 8% of damage dealt (min 5 HP).",
              "active":"Triple Strike","type":"multihit",
              "desc":"Hit three times. Second hit 70%, third hit 50%. Each has independent crit. If all three crit, Bloodlust heal triples.",
              "passive_key":"bloodlust","hits":3,"mults":[1.0, 0.70, 0.50]},
@@ -4500,7 +4501,7 @@ def apply_lifesteal(attacker, dmg):
     if pk == "soul_pact":
         healed = round(dmg * 0.20)
     if pk == "bloodlust":
-        healed = 5
+        healed = max(5, round(dmg * 0.08))
     # New class passives
     if pk == "verdant_renewal":  healed += round(dmg * 0.15)
     if pk == "eternal_bloom":    healed += round(dmg * 0.10)
@@ -4793,7 +4794,10 @@ def init_db():
     for _mc in [("married_to_id","INTEGER DEFAULT NULL"),
                 ("married_to_name","TEXT DEFAULT NULL"),
                 ("married_at","TEXT DEFAULT NULL"),
-                ("def_reflect_until","TEXT DEFAULT NULL")]:
+                ("def_reflect_until","TEXT DEFAULT NULL"),
+                ("holding_hands_with_id","INTEGER DEFAULT NULL"),
+                ("holding_hands_with_name","TEXT DEFAULT NULL"),
+                ("holding_hands_since","TEXT DEFAULT NULL")]:
         try:
             conn.execute(f"ALTER TABLE players ADD COLUMN {_mc[0]} {_mc[1]}")
             conn.commit()
@@ -5299,6 +5303,7 @@ def save_player(p):
         "kills_today","kills_today_date","last_claim","claim_streak","pvp_history",
         "married_to_id","married_to_name","married_at",
         "def_reflect_until",
+        "holding_hands_with_id","holding_hands_with_name","holding_hands_since",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -5700,7 +5705,10 @@ async def check_idle_reward(user, s, p, bot, chat_id):
                 f"📈 *{s['username']}* reached *Level {s['level']}*!",
                 delay=60))
 
-    await announce(bot, chat_id, msg, delay=8)
+    try:
+        await bot.send_message(chat_id=user.id, text=msg, parse_mode="Markdown")
+    except Exception:
+        pass  # DM blocked or bot never started — silently skip
 
 async def gear_cmd(update, context):
     user = update.effective_user
@@ -13012,8 +13020,8 @@ async def marry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if p.get("married_to_id") and p.get("married_to_name"):
             ma = p.get("married_at","unknown date")
             await send_group(update,
-                f"💍 *Married to {p['married_to_name']}*\n"
-                f"_Since {ma[:10] if ma else '?'}_\n\n"
+                f"💍 *{p['username']}* × *{p['married_to_name']}*\n"
+                f"_Together since {ma[:10] if ma else '?'}_\n\n"
                 f"Use /divorce to end the marriage.", delay=30); return
         await send_group(update,
             "💍 *Marriage*\n\n"
@@ -13170,6 +13178,167 @@ async def divorce_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💔 *{p['username']}* and *{spouse_name}* are now divorced.\n\n"
         f"_The Beloved title and EXP bonus have been removed._",
         parse_mode="Markdown")
+
+
+def _holdhands_duration(since_iso: str) -> str:
+    try:
+        delta = datetime.now() - datetime.fromisoformat(since_iso)
+        total = int(delta.total_seconds())
+        if total < 60:       return f"{total}s"
+        if total < 3600:     return f"{total // 60}m"
+        if total < 86400:    return f"{total // 3600}h {(total % 3600) // 60}m"
+        days = total // 86400; hours = (total % 86400) // 3600
+        return f"{days}d {hours}h"
+    except Exception:
+        return "a while"
+
+
+async def holdhands_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    if not update.message.reply_to_message and not context.args:
+        if p.get("holding_hands_with_id"):
+            dur = _holdhands_duration(p.get("holding_hands_since",""))
+            await send_group(update,
+                f"🤝 *{p['username']}* × *{p['holding_hands_with_name']}*\n"
+                f"_Holding hands for {dur}_\n\n"
+                f"Use /releasehands to let go.", delay=30); return
+        await send_group(update,
+            "🤝 *Hold Hands*\n\n"
+            "Reply to someone's message and type /holdhands to reach out!\n"
+            "_Both partners must agree._", delay=20); return
+
+    du = update.message.reply_to_message.from_user if update.message.reply_to_message else None
+    if not du:
+        await send_group(update, "Reply to the person you want to hold hands with!", delay=9); return
+    if du.id == user.id:
+        await send_group(update, "You can't hold your own hand!", delay=9); return
+
+    tp = get_player(du.id)
+    if not tp:
+        await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+    if p.get("holding_hands_with_id"):
+        await send_group(update, f"🤝 You're already holding hands with *{p.get('holding_hands_with_name')}*! Use /releasehands first.", delay=12); return
+    if tp.get("holding_hands_with_id"):
+        await send_group(update, f"🤝 {du.first_name} is already holding someone else's hand!", delay=12); return
+
+    pending_holdhands[user.id] = {
+        "target_id": du.id,
+        "chat_id": update.effective_chat.id,
+        "expires": (datetime.now() + timedelta(minutes=5)).isoformat(),
+    }
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🤝 Take Hand",   callback_data=f"hh_accept_{user.id}"),
+        InlineKeyboardButton("🙅 Pull Away",   callback_data=f"hh_decline_{user.id}"),
+    ]])
+    await send_group(update,
+        f"🤝 *{user.first_name}* reaches out to *{du.first_name}*...\n\n"
+        f"_{du.first_name}, will you take their hand?_\n"
+        f"_Expires in 5 minutes._",
+        permanent=False, delay=300, reply_markup=markup)
+
+
+async def holdhands_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    action = parts[1]
+    proposer_id = int(parts[2])
+
+    proposal = pending_holdhands.get(proposer_id)
+    if not proposal:
+        await query.edit_message_text("🤝 This invitation already expired.", parse_mode="Markdown"); return
+    if datetime.now() > datetime.fromisoformat(proposal["expires"]):
+        pending_holdhands.pop(proposer_id, None)
+        await query.edit_message_text("🤝 This invitation has expired.", parse_mode="Markdown"); return
+    if query.from_user.id != proposal["target_id"]:
+        await query.answer("This invitation isn't for you!", show_alert=True); return
+
+    pending_holdhands.pop(proposer_id, None)
+    proposer = get_player(proposer_id)
+    target   = get_player(proposal["target_id"])
+
+    if action == "decline":
+        await query.edit_message_text(
+            f"🙅 *{query.from_user.first_name}* pulls their hand away.",
+            parse_mode="Markdown"); return
+
+    if not proposer or not target:
+        await query.edit_message_text("❌ Player data not found.", parse_mode="Markdown"); return
+    if proposer.get("holding_hands_with_id") or target.get("holding_hands_with_id"):
+        await query.edit_message_text("🤝 One of you is already holding someone's hand.", parse_mode="Markdown"); return
+
+    now_str = datetime.now().isoformat()
+    proposer["holding_hands_with_id"]   = target["user_id"]
+    proposer["holding_hands_with_name"] = target["username"]
+    proposer["holding_hands_since"]     = now_str
+    target["holding_hands_with_id"]     = proposer["user_id"]
+    target["holding_hands_with_name"]   = proposer["username"]
+    target["holding_hands_since"]       = now_str
+    save_player(proposer); save_player(target)
+
+    await query.edit_message_text(
+        f"🤝 *{proposer['username']}* and *{target['username']}* are holding hands!\n\n"
+        f"_Use /holdhands to check the timer. Use /releasehands to let go._",
+        parse_mode="Markdown")
+
+
+async def releasehands_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if not p.get("holding_hands_with_id"):
+        await send_group(update, "🤝 You're not holding anyone's hand.", delay=9); return
+
+    partner = get_player(p["holding_hands_with_id"])
+    partner_name = p["holding_hands_with_name"]
+    dur = _holdhands_duration(p.get("holding_hands_since",""))
+
+    p["holding_hands_with_id"] = None; p["holding_hands_with_name"] = None; p["holding_hands_since"] = None
+    save_player(p)
+    if partner:
+        partner["holding_hands_with_id"] = None; partner["holding_hands_with_name"] = None; partner["holding_hands_since"] = None
+        save_player(partner)
+
+    await send_group(update,
+        f"🫱 *{p['username']}* lets go of *{partner_name}*'s hand.\n"
+        f"_They held on for {dur}._", delay=30)
+
+
+async def pat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    du = update.message.reply_to_message.from_user if update.message.reply_to_message else None
+    if not du:
+        await send_group(update, "Reply to someone to pat them!", delay=9); return
+    if du.id == user.id:
+        await send_group(update, "🫸 You pat yourself on the back. Weird but okay.", delay=9); return
+    pats = [
+        f"🫸 *{user.first_name}* gently pats *{du.first_name}* on the head.",
+        f"🫸 *{user.first_name}* gives *{du.first_name}* an encouraging pat.",
+        f"🫸 *{user.first_name}* pats *{du.first_name}* softly. There there.",
+        f"🫸 *{du.first_name}* receives a pat from *{user.first_name}*. Wholesome.",
+    ]
+    await send_group(update, random.choice(pats), delay=20)
+
+
+async def hug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    du = update.message.reply_to_message.from_user if update.message.reply_to_message else None
+    if not du:
+        await send_group(update, "Reply to someone to hug them!", delay=9); return
+    if du.id == user.id:
+        await send_group(update, "🫂 You hug yourself. You deserve it.", delay=9); return
+    hugs = [
+        f"🫂 *{user.first_name}* pulls *{du.first_name}* into a warm hug.",
+        f"🫂 *{user.first_name}* wraps their arms around *{du.first_name}*.",
+        f"🫂 *{du.first_name}* gets an unexpected hug from *{user.first_name}*.",
+        f"🫂 *{user.first_name}* and *{du.first_name}* share a moment. 🎱",
+    ]
+    await send_group(update, random.choice(hugs), delay=20)
 
 
 async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -14993,7 +15162,9 @@ GUIDE_PAGES = [
         "\n"
         "💡 /pool is your main source of rare weapons and accessories. The rarer the roll (epic, legendary), the better the potential drop. Keep rolling.\n"
         "\n"
-        "💡 /hustle runs all ready cooldowns at once — daily, train, quest, pool, claim, and explore. Use it every time you're in the group."
+        "💡 /hustle runs all ready cooldowns at once — daily, train, quest, pool, claim, and explore. Use it every time you're in the group.\n"
+        "\n"
+        "💡 *Idle Rewards* — When you come back after being away for an hour or more, the bot sends your return gold + EXP + possible item drop as a *private DM* so the group stays clean."
     ),
     # Page 4 - Combat & Raids
     (
@@ -15159,9 +15330,13 @@ GUIDE_PAGES = [
         "/guildwar  -  Declare war via guild picker (leader, 24hr)\n"
         "/gbank deposit/withdraw  -  Guild bank\n"
         "\n"
-        "*Marriage*\n"
-        "/marry  -  Propose (reply to target) or check marriage status\n"
-        "/divorce  -  End your marriage (button confirmation)"
+        "*Marriage & Social*\n"
+        "/marry  -  Propose (reply to target) or check status (shows both names)\n"
+        "/divorce  -  End your marriage (button confirmation)\n"
+        "/holdhands  -  Reach out to someone (reply to target) or check timer\n"
+        "/releasehands  -  Let go (shows how long you held on)\n"
+        "/pat  -  Reply to a player to give them a pat\n"
+        "/hug  -  Reply to a player to give them a hug"
     ),
     # Page 7 - Guilds & Advanced
     (
@@ -15242,35 +15417,46 @@ GUIDE_PAGES = [
         "/hatch — hatch an egg from your inventory\n"
         "/petrename [name] — rename your active pet\n"
     ),
-    # Page 9 - Marriage
+    # Page 9 - Marriage & Social
     (
-        "🎱 *8Ball World  -  Marriage* (9/9)\n"
+        "🎱 *8Ball World  -  Marriage & Social* (9/9)\n"
         "\n"
         "*Getting Married*\n"
         "Reply to any player's message and type /marry to propose.\n"
         "The proposal costs *1,000 gold from each partner* (2,000 total).\n"
         "Your partner gets Accept / Decline buttons. Proposal expires in 5 minutes.\n"
+        "Use /marry alone to check your status — shows both names and the date.\n"
         "\n"
         "*Marriage Benefits*\n"
-        "💍 Marriage is shown on your /stats profile\n"
+        "💍 Both names shown on your /stats profile\n"
         "🏅 Both partners receive the exclusive *Beloved* title\n"
         "✨ +3% EXP bonus on every EXP gain, forever\n"
         "\n"
-        "*Commands*\n"
-        "/marry — Propose (reply to partner) or check your own marriage status\n"
+        "*Marriage Commands*\n"
+        "/marry — Propose (reply to partner) or check status\n"
         "/divorce — End the marriage (confirmation button required)\n"
+        "\n"
+        "*Hold Hands*\n"
+        "Reply to any player and type /holdhands to reach out.\n"
+        "They get Take Hand / Pull Away buttons. No gold cost.\n"
+        "The timer starts the moment both accept — /holdhands shows the live duration.\n"
+        "/releasehands — Either partner can let go at any time; announces how long you held on.\n"
+        "\n"
+        "*Fun Commands*\n"
+        "/pat — Reply to a player to give them a pat on the head\n"
+        "/hug — Reply to a player to give them a hug\n"
+        "_(Both work on yourself too, if you're having that kind of day.)_\n"
         "\n"
         "*Notes*\n"
         "• You can only be married to one person at a time\n"
         "• Divorce removes the EXP bonus for both partners\n"
-        "• Marriage date shows on your /stats profile\n"
         "• The Beloved title remains earned even after divorce\n"
         "\n"
         "💍 _Love in a Telegram RPG. We're not judging._"
     ),
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands", "Guilds & Advanced", "Pets", "Marriage"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands", "Guilds & Advanced", "Pets", "Marriage & Social"]
 
 async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
     total = len(GUIDE_PAGES)
@@ -17774,10 +17960,15 @@ def main():
     app.add_handler(CommandHandler("gear",       gear_cmd))
 
     # Marriage
-    app.add_handler(CommandHandler("marry",   marry_cmd))
-    app.add_handler(CommandHandler("divorce", divorce_cmd))
-    app.add_handler(CallbackQueryHandler(marry_callback,   pattern="^marry_(accept|decline)_"))
-    app.add_handler(CallbackQueryHandler(divorce_callback, pattern="^divorce_(confirm|cancel)_"))
+    app.add_handler(CommandHandler("marry",        marry_cmd))
+    app.add_handler(CommandHandler("divorce",      divorce_cmd))
+    app.add_handler(CommandHandler("holdhands",    holdhands_cmd))
+    app.add_handler(CommandHandler("releasehands", releasehands_cmd))
+    app.add_handler(CommandHandler("pat",          pat_cmd))
+    app.add_handler(CommandHandler("hug",          hug_cmd))
+    app.add_handler(CallbackQueryHandler(marry_callback,     pattern="^marry_(accept|decline)_"))
+    app.add_handler(CallbackQueryHandler(divorce_callback,   pattern="^divorce_(confirm|cancel)_"))
+    app.add_handler(CallbackQueryHandler(holdhands_callback, pattern="^hh_(accept|decline)_"))
     app.add_handler(CallbackQueryHandler(close_callback,   pattern="^close_msg$"))
 
     # Combat & Dungeons
