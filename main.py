@@ -2414,7 +2414,7 @@ def _build_pet_card(pet):
         lines.append(f"🔒 *{ab_info.get('name','Ability')}* unlocks at Level 10")
     return "\n".join(lines)
 
-def _pet_list_markup(pets, page=0, page_size=5):
+def _pet_list_markup(pets, page=0, page_size=5, uid=0):
     start = page * page_size
     chunk = pets[start:start+page_size]
     rows = []
@@ -2430,11 +2430,12 @@ def _pet_list_markup(pets, page=0, page_size=5):
     if page > 0:    nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"petlist_{page-1}"))
     if start+page_size < len(pets): nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"petlist_{page+1}"))
     if nav: rows.append(nav)
+    close_cb = f"close_msg_{uid}" if uid else "close_msg"
     rows.append([InlineKeyboardButton("🔙 Back", callback_data="petmain"),
-                 InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+                 InlineKeyboardButton("❌ Close", callback_data=close_cb)])
     return InlineKeyboardMarkup(rows)
 
-def _pet_view_markup(pet_id, is_active):
+def _pet_view_markup(pet_id, is_active, uid=0):
     rows = []
     if not is_active:
         rows.append([InlineKeyboardButton("✅ Make Active", callback_data=f"petactivate_{pet_id}")])
@@ -2447,7 +2448,8 @@ def _pet_view_markup(pet_id, is_active):
         InlineKeyboardButton("🔙 All Pets", callback_data="petlist_0"),
         InlineKeyboardButton("❌ Release",  callback_data=f"petrelease_{pet_id}"),
     ])
-    rows.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+    close_cb = f"close_msg_{uid}" if uid else "close_msg"
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=close_cb)])
     return InlineKeyboardMarkup(rows)
 
 def _pet_main_markup():
@@ -2970,18 +2972,28 @@ def _encounter_battle_card(enc):
         lines.append(f"_{last}_")
     return "\n".join(lines)
 
-def _encounter_battle_markup(enc):
+def _encounter_battle_markup(enc, p=None):
     uid = enc["uid"]
     mode = enc["mode"]
     if mode == "battle":
         rows = [
             [InlineKeyboardButton("⚔️ Attack", callback_data=f"enc_atk_{uid}"),
-             InlineKeyboardButton("✨ Skill",  callback_data=f"enc_skl_{uid}")],
-            [InlineKeyboardButton("💊 Heal",   callback_data=f"enc_heal_{uid}"),
-             InlineKeyboardButton("🏃 Flee",   callback_data=f"enc_flee_{uid}")],
+             InlineKeyboardButton("💊 Heal",   callback_data=f"enc_heal_{uid}")],
         ]
+        if p:
+            cls = get_player_class(p)
+            p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
+                        if p.get("level", 1) >= sk.get("unlock", 5)]
+            skill_btns = [
+                InlineKeyboardButton(sk.get("active", sk.get("name","Skill")),
+                                     callback_data=f"enc_skl_{uid}_{i}")
+                for i, sk in enumerate(p_skills[:4])
+            ]
+            for i in range(0, len(skill_btns), 2):
+                rows.append(skill_btns[i:i+2])
+        rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"enc_flee_{uid}")])
     else:  # hunt
-        moves = enc.get("e_moves", ["tackle","tackle","tackle","tackle"])
+        moves = enc.get("p_moves", enc.get("e_moves", ["tackle","tackle","tackle","tackle"]))
         mdata = MONSTER_MOVES
         btns_moves = []
         for mk in moves[:4]:
@@ -6316,9 +6328,13 @@ async def check_idle_reward(user, s, p, bot, chat_id):
     flavor = IDLE_FLAVOR.get(line, IDLE_FLAVOR[None])
     hours_str = f"{int(away)}h" if away < 48 else f"{int(away/24)}d"
 
-    msg = (f"🎱 *{user.first_name}* returns after *{hours_str}* away\n"
-           f"💰 +{gold_reward} gold\n"
-           f"✨ +{exp_reward} EXP")
+    # Chat sees the return announcement only
+    chat_msg = f"🎱 *{user.first_name}* returns after *{hours_str}* away!"
+
+    # DM gets the full reward breakdown
+    dm_msg = (f"🎱 *Welcome back!* You were away for *{hours_str}*\n"
+              f"💰 +{gold_reward} gold\n"
+              f"✨ +{exp_reward} EXP")
     if item_found:
         rarity_tag = ""
         for pool in [WEAPONS, ARMORS, ACCESSORIES]:
@@ -6326,7 +6342,7 @@ async def check_idle_reward(user, s, p, bot, chat_id):
                 r = pool[item_found].get("rarity","")
                 rarity_tag = RARITY_EMOJI.get(r,"")
                 break
-        msg += f"\n🎒 +{rarity_tag} *{item_found}*"
+        dm_msg += f"\n🎒 +{rarity_tag} *{item_found}*"
 
     if p:
         p["gold"] = p.get("gold", 0) + gold_reward
@@ -6344,8 +6360,9 @@ async def check_idle_reward(user, s, p, bot, chat_id):
                 f"📈 *{s['username']}* reached *Level {s['level']}*!",
                 delay=60))
 
+    await announce(bot, chat_id, chat_msg, permanent=False, delay=30)
     try:
-        await bot.send_message(chat_id=user.id, text=msg, parse_mode="Markdown")
+        await bot.send_message(chat_id=user.id, text=dm_msg, parse_mode="Markdown")
     except Exception:
         pass  # DM blocked or bot never started — silently skip
 
@@ -6623,6 +6640,8 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
     if is_defeated(a):
         await send_group(update, _defeated_msg(a), delay=15); return
+    if is_invincible(a):
+        await send_group(update, "🛡️ You're *Still Recovering*  -  you can't attack while invincible.", delay=9); return
     if is_vanished(a):
         await send_group(update, "👻 You're vanished  -  you can't attack while hidden.", delay=9); return
     if cannot_attack(a):
@@ -8040,7 +8059,7 @@ async def _send_class_browser(target, uid, page, edit=False):
     pick_btn = InlineKeyboardButton(
         f"✅ Pick {_CLASS_EMOJIS.get(cid,'')} {CLASS_TREE[cid]['name']}",
         callback_data=f"class_pick_{uid}_{cid}")
-    close_btn = [InlineKeyboardButton("❌ Close", callback_data="close_msg")]
+    close_btn = [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
     markup = InlineKeyboardMarkup(
         [nav_btns, [pick_btn], close_btn] if nav_btns else [[pick_btn], close_btn])
 
@@ -8146,7 +8165,7 @@ async def _send_class_progression(target, uid, page, edit=False):
     if page < total - 1:
         pc_next = pages[page + 1].split("*")[1] if page + 1 < total else "Next"
         nav.append(InlineKeyboardButton(f"Next ▶", callback_data=f"clsprog_{uid}_{page+1}"))
-    close_row = [InlineKeyboardButton("❌ Close", callback_data="close_msg")]
+    close_row = [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
     markup = InlineKeyboardMarkup([nav, close_row] if nav else [close_row])
     text   = pages[page][:4096]
 
@@ -8960,7 +8979,7 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shop_buttons.append([InlineKeyboardButton(
                 f"Buy {i+1}: {entry['item']}", callback_data=f"shop_b_{user.id}_{i}")])
         lines.append(f"\n`/shop buy [1-{len(shop)}]` to purchase.")
-        shop_buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+        shop_buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")])
         shop_markup = InlineKeyboardMarkup(shop_buttons)
         await send_group(update, "\n".join(lines), delay=30, reply_markup=shop_markup); return
 
@@ -9124,7 +9143,7 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False):
             sell_buttons.append([InlineKeyboardButton(
                 f"💰 Sell {it} ({price}g)",
                 callback_data=f"sll_{uid_p}_{it}")])
-    close_btn_row = [InlineKeyboardButton("❌ Close", callback_data="close_msg")]
+    close_btn_row = [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{p['user_id']}")]
     if sell_buttons:
         nav_rows = list(markup.inline_keyboard) if markup else []
         markup = InlineKeyboardMarkup(sell_buttons + nav_rows + [close_btn_row])
@@ -9190,7 +9209,7 @@ def _build_equip_page_markup(p, uid, page, page_size=5):
                 f"{slot_emoji} [{slot_label}] {rarity}{it}{enh_str} (+{stat_val} {stat_key})",
                 callback_data=f"eqp_{uid}_{it}"))
     if not all_btns:
-        return False, InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="close_msg")]])
+        return False, InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]])
     total = len(all_btns)
     total_pages = max(1, (total + page_size - 1) // page_size)
     page = max(0, min(page, total_pages - 1))
@@ -9203,7 +9222,7 @@ def _build_equip_page_markup(p, uid, page, page_size=5):
         if page < total_pages - 1:
             nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"eqpg_{uid}_{page + 1}"))
         rows.append(nav)
-    rows.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return True, InlineKeyboardMarkup(rows)
 
 
@@ -11264,7 +11283,7 @@ def _build_skill_picker_keyboard(all_skills, uid, page, target_uid=None, show_cl
     if nav:
         keyboard.append(nav)
     if show_close:
-        keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+        keyboard.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return InlineKeyboardMarkup(keyboard)
 
 async def skillpage_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -11505,7 +11524,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if target_uid:
         tp = get_player(target_uid)
         if not tp:
-            await send_result("Target player not found!"); return
+            await send_result("That player hasn't ascended yet!"); return
         stype = sk.get("type", "damage")
         _support_types = {"self_heal", "self_heal_buff", "group_heal", "dmg_reduction_buff",
                           "revive_heal", "regen", "full_revive", "heal_shield", "mass_cleanse"}
@@ -11850,6 +11869,8 @@ async def _execute_skill(update, context, p, sk):
         await send_group(update, "\n".join(lines), delay=20); return
 
     # ── Offensive skills ──────────────────────────────────────────────────────
+    if is_invincible(p):
+        await send_group(update, "🛡️ You're *Still Recovering*  -  you can't use offensive skills while invincible.", delay=9); return
     if not update.message.reply_to_message:
         await send_group(update, f"Reply to your target's message then use /skill!", delay=9); return
     du = update.message.reply_to_message.from_user
@@ -12527,7 +12548,7 @@ async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"• *{t}*{bonus_str}{active_marker}")
             if t != p.get("active_title"):
                 buttons.append([InlineKeyboardButton(f"🏅 Equip: {t}", callback_data=f"settitle_{uid}_{t}")])
-        buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+        buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
         markup = InlineKeyboardMarkup(buttons)
         await send_group(update, "\n".join(lines), permanent=False, delay=90, reply_markup=markup); return
     chosen_typed = " ".join(context.args)
@@ -12937,7 +12958,7 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 callback_data=f"enchant_{user.id}_{slot_id}")])
         if not buttons:
             await send_group(update, "✨ No gear equipped to enchant!", delay=9); return
-        buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+        buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")])
         markup = InlineKeyboardMarkup(buttons)
         await send_group(update, "\n".join(lines), delay=30, reply_markup=markup); return
 
@@ -13153,7 +13174,7 @@ async def _send_skill_tree(target, uid, page, edit=False):
         btns.append(InlineKeyboardButton(f"◀ {labels[page-1]}", callback_data=f"sktree_{uid}_{page-1}"))
     if page < total - 1:
         btns.append(InlineKeyboardButton(f"{labels[page+1]} ▶", callback_data=f"sktree_{uid}_{page+1}"))
-    close_row = [InlineKeyboardButton("❌ Close", callback_data="close_msg")]
+    close_row = [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
     markup = InlineKeyboardMarkup([btns, close_row] if btns else [close_row])
     text   = pages[page][:4096]
     if edit:
@@ -13459,7 +13480,7 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• 20 reinforces → Ascend for *+5 per ★*\n"
                 "_Collect duplicate drops from raids and bosses!_", delay=20)
             return
-        all_buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+        all_buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
         markup = InlineKeyboardMarkup(all_buttons)
         await send_group(update, "⚒️ *Reinforce — Choose an item:*", delay=60, reply_markup=markup)
         return
@@ -13708,6 +13729,16 @@ async def marry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    data  = query.data
+    # close_msg_{uid} format → only the owner can close
+    if data.startswith("close_msg_"):
+        try:
+            owner_uid = int(data[len("close_msg_"):])
+            if query.from_user.id != owner_uid:
+                await query.answer("This isn't your menu!", show_alert=True)
+                return
+        except ValueError:
+            pass
     await query.answer()
     try:
         await query.message.delete()
@@ -13838,6 +13869,8 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
+    if is_defeated(p):
+        await send_group(update, _defeated_msg(p), delay=15); return
     uid = user.id
     if uid in active_encounters:
         await send_group(update, "⚠️ You're already in an encounter! Use the buttons to continue.", delay=10); return
@@ -13855,7 +13888,7 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rows.append([InlineKeyboardButton(
                 f"{elem_e} {mdata[1]} (Lv.1 {mdata[2].title()})",
                 callback_data=f"enc_starter_{uid}_{mdata[0]}")])
-        rows.append([InlineKeyboardButton("❌ Cancel", callback_data="close_msg")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
         txt = ("🌿 *First Encounter!*\n\nBefore you venture out you need a *starter monster*.\n"
                "Choose your companion:\n_(They will join your squad and help you catch more!)_")
         await send_group(update, txt, reply_markup=InlineKeyboardMarkup(rows), permanent=True)
@@ -13864,7 +13897,7 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⚔️ Battle — fight an NPC", callback_data=f"enc_mode_{uid}_battle")],
         [InlineKeyboardButton("🌿 Hunt — find wild monsters", callback_data=f"enc_mode_{uid}_hunt")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="close_msg")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")],
     ])
     await send_group(update, "🎱 *Encounter*\nChoose your mode:", reply_markup=markup, permanent=True)
 
@@ -13975,7 +14008,8 @@ async def _start_encounter_battle(query, uid, p):
     npc = _pick_random_npc(p.get("level", 1))
     n_level = _enc_npc_level(npc, p.get("level", 1))
     n_hp, n_atk = _npc_level_stats(npc[4], npc[5], n_level)
-    p_hp  = safe_int(p.get("hp"));  p_mhp = safe_int(p.get("max_hp")) or 100
+    p_mhp = safe_int(p.get("max_hp")) or calc_max_hp(p)
+    p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     cls_name = CLASS_TREE.get(npc[1], {}).get("name", npc[1].replace("_"," ").title())
     enc = {
         "uid": uid, "mode": "battle", "p_name": p.get("username", "You"),
@@ -13988,7 +14022,7 @@ async def _start_encounter_battle(query, uid, p):
     }
     active_encounters[uid] = enc
     card = _encounter_battle_card(enc)
-    markup = _encounter_battle_markup(enc)
+    markup = _encounter_battle_markup(enc, p)
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
 
 async def _start_encounter_hunt(query, uid, p):
@@ -14005,14 +14039,22 @@ async def _start_encounter_hunt(query, uid, p):
             fighter = dict(sm); fighter["type"] = "monster"; break
     if not fighter:
         # No healthy squad monster — player fights directly
-        fighter = {"type": "player", "hp": safe_int(p.get("hp")), "max_hp": safe_int(p.get("max_hp")) or 100}
+        p_mhp_f = safe_int(p.get("max_hp")) or calc_max_hp(p)
+        fighter = {"type": "player", "hp": min(p_mhp_f, max(1, safe_int(p.get("hp")) or p_mhp_f)), "max_hp": p_mhp_f}
 
     f_hp   = fighter["hp"]
     f_mhp  = fighter.get("max_hp", f_hp)
+    # p_moves: moves shown as player's battle buttons (fighter's species moves)
+    if fighter.get("type") == "monster":
+        fmdata = MONSTER_BY_KEY.get(fighter.get("key"), {})
+        p_moves = fmdata[7] if fmdata and len(fmdata) > 7 else ["tackle","tackle","tackle","tackle"]
+    else:
+        p_moves = ["tackle", "tackle", "tackle", "tackle"]
     enc = {
         "uid": uid, "mode": "hunt", "p_name": p.get("username", "You"),
         "p_hp": f_hp, "p_max_hp": f_mhp,
         "active_fighter": fighter,
+        "p_moves": p_moves,
         "e_name": monster[1], "e_key": monster[0], "element": monster[2],
         "e_hp": m_hp, "e_max_hp": m_hp, "e_atk": m_atk, "e_level": m_level,
         "e_moves": monster[7], "e_catch_rate": monster[6],
@@ -14093,7 +14135,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             else:
                 enc["last_action"] = f"Flee failed! {npc_act}"
                 await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
-                                              reply_markup=_encounter_battle_markup(enc))
+                                              reply_markup=_encounter_battle_markup(enc, p))
         return
 
     # ── BATTLE MODE ACTIONS ─────────────────────────────────────────────────
@@ -14113,20 +14155,23 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     action_txt = f"You attacked for *{dmg}* damage!"
                 enc["e_hp"] = max(0, enc["e_hp"] - dmg)
 
-        elif data == f"enc_skl_{uid}":
+        elif data.startswith(f"enc_skl_{uid}_"):
             cls      = get_player_class(p)
             p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
                         if p.get("level", 1) >= sk.get("unlock", 5)]
-            if not p_skills:
-                await query.answer("No skills unlocked yet!", show_alert=True); return
-            sk       = random.choice(p_skills)
+            try:
+                idx = int(data[len(f"enc_skl_{uid}_"):])
+                sk  = p_skills[idx]
+            except (ValueError, IndexError):
+                await query.answer("Skill not available!", show_alert=True); return
             primary  = cls.get("primary_stat", "STR") if cls else "STR"
             base_dmg = get_stat(p, primary)
             wep      = p.get("equipped_weapon")
             wep_atk  = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
             dmg      = max(1, int((base_dmg + wep_atk * 0.5) * 1.4 * random.uniform(0.9, 1.1)))
             enc["e_hp"]  = max(0, enc["e_hp"] - dmg)
-            action_txt   = f"You used *{sk['active']}* for *{dmg}* damage!"
+            sk_name      = sk.get("active", sk.get("name", "Skill"))
+            action_txt   = f"You used *{sk_name}* for *{dmg}* damage!"
 
         elif data == f"enc_heal_{uid}":
             if enc.get("heals_left", 0) <= 0:
@@ -14145,7 +14190,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
             enc["last_action"] = f"{action_txt}\n{npc_act}"
             await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
-                                          reply_markup=_encounter_battle_markup(enc))
+                                          reply_markup=_encounter_battle_markup(enc, p))
             return
         else:
             return
@@ -14191,7 +14236,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
         enc["last_action"] = f"{action_txt}\n{npc_act}"
         await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
-                                      reply_markup=_encounter_battle_markup(enc))
+                                      reply_markup=_encounter_battle_markup(enc, p))
         return
 
     # ── HUNT MODE ACTIONS ────────────────────────────────────────────────────
@@ -14244,7 +14289,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
             enc["last_action"] = f"{action_txt}\n{mon_act}"
             await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
-                                          reply_markup=_encounter_battle_markup(enc))
+                                          reply_markup=_encounter_battle_markup(enc, p))
             return
 
         # Catch button
@@ -14281,7 +14326,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     await _end_encounter(f"💀 *{enc['e_name']}* broke free and knocked you out! _(30s cooldown)_")
                     return
                 await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
-                                              reply_markup=_encounter_battle_markup(enc))
+                                              reply_markup=_encounter_battle_markup(enc, p))
             return
 
         # Switch squad monster
@@ -14299,9 +14344,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             enc["active_fighter"] = nxt
             enc["p_hp"]    = nxt["hp"]; enc["p_max_hp"] = nxt["max_hp"]
             mdata = MONSTER_BY_KEY.get(nxt["key"])
+            if mdata and len(mdata) > 7:
+                enc["p_moves"] = mdata[7]
             enc["last_action"] = f"Switched to *{nxt.get('nickname') or (mdata[1] if mdata else nxt['key'])}*!"
             await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
-                                          reply_markup=_encounter_battle_markup(enc))
+                                          reply_markup=_encounter_battle_markup(enc, p))
             return
 
 async def holdhands_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -14427,13 +14474,15 @@ async def pat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Reply to someone to pat them!", delay=9); return
     if du.id == user.id:
         await send_group(update, "🫸 You pat yourself on the back. Weird but okay.", delay=9); return
+    a_tag  = f" (@{user.username})" if user.username else ""
+    d_tag  = f" (@{du.username})"   if du.username   else ""
     pats = [
-        f"🫸 *{user.first_name}* gently pats *{du.first_name}* on the head.",
-        f"🫸 *{user.first_name}* gives *{du.first_name}* an encouraging pat.",
-        f"🫸 *{user.first_name}* pats *{du.first_name}* softly. There there.",
-        f"🫸 *{du.first_name}* receives a pat from *{user.first_name}*. Wholesome.",
+        f"🫸 *{user.first_name}*{a_tag} gently pats *{du.first_name}*{d_tag} on the head.",
+        f"🫸 *{user.first_name}*{a_tag} gives *{du.first_name}*{d_tag} an encouraging pat.",
+        f"🫸 *{user.first_name}*{a_tag} pats *{du.first_name}*{d_tag} softly. There there.",
+        f"🫸 *{du.first_name}*{d_tag} receives a pat from *{user.first_name}*{a_tag}. Wholesome.",
     ]
-    await send_group(update, random.choice(pats), delay=20)
+    await send_group(update, random.choice(pats), permanent=True)
 
 
 async def hug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -14443,13 +14492,15 @@ async def hug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Reply to someone to hug them!", delay=9); return
     if du.id == user.id:
         await send_group(update, "🫂 You hug yourself. You deserve it.", delay=9); return
+    a_tag  = f" (@{user.username})" if user.username else ""
+    d_tag  = f" (@{du.username})"   if du.username   else ""
     hugs = [
-        f"🫂 *{user.first_name}* pulls *{du.first_name}* into a warm hug.",
-        f"🫂 *{user.first_name}* wraps their arms around *{du.first_name}*.",
-        f"🫂 *{du.first_name}* gets an unexpected hug from *{user.first_name}*.",
-        f"🫂 *{user.first_name}* and *{du.first_name}* share a moment. 🎱",
+        f"🫂 *{user.first_name}*{a_tag} pulls *{du.first_name}*{d_tag} into a warm hug.",
+        f"🫂 *{user.first_name}*{a_tag} wraps their arms around *{du.first_name}*{d_tag}.",
+        f"🫂 *{du.first_name}*{d_tag} gets an unexpected hug from *{user.first_name}*{a_tag}.",
+        f"🫂 *{user.first_name}*{a_tag} and *{du.first_name}*{d_tag} share a moment. 🎱",
     ]
-    await send_group(update, random.choice(hugs), delay=20)
+    await send_group(update, random.choice(hugs), permanent=True)
 
 
 async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -14459,6 +14510,8 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
     if is_defeated(p):
         await send_group(update, "💀 You're defeated  -  can't duel!", delay=9); return
+    if is_invincible(p):
+        await send_group(update, "🛡️ You're *Still Recovering*  -  can't duel while invincible.", delay=9); return
 
     # Reply-to-message shortcut: replying to a challenge message counts as /duel accept
     if update.message.reply_to_message and (not context.args or context.args[0].lower() != "accept"):
@@ -14793,6 +14846,8 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if is_defeated(p): await send_group(update, _defeated_msg(p), delay=15); return
+    if is_invincible(p):
+        await send_group(update, "🛡️ You're *Still Recovering*  -  can't arena while invincible.", delay=9); return
 
     # Reply-to-message shortcut: replying to a challenge message counts as /arena accept
     if update.message.reply_to_message and (not context.args or context.args[0].lower() != "accept"):
@@ -16659,7 +16714,7 @@ async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")],
             [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
              InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
-            [InlineKeyboardButton("❌ Close",    callback_data="close_msg")],
+            [InlineKeyboardButton("❌ Close",    callback_data=f"close_msg_{user.id}")],
         ])
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
@@ -16671,7 +16726,8 @@ async def petshop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
     user = update.effective_user
     p = get_player(user.id)
-    if not p: return
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
     text, markup = _build_petshop_menu(p)
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
@@ -16693,7 +16749,7 @@ def _build_petshop_menu(p):
          InlineKeyboardButton("🥚 Mythic Egg  5000g", callback_data="pbuy_Mythic Egg_5000")],
         [InlineKeyboardButton("🍖 Pet Snack  25g",    callback_data="pbuy_Pet Snack_25")],
         [InlineKeyboardButton("🔙 Back",              callback_data="petmain"),
-         InlineKeyboardButton("❌ Close",             callback_data="close_msg")],
+         InlineKeyboardButton("❌ Close",             callback_data=f"close_msg_{p['user_id']}")],
     ])
     return text, markup
 
@@ -16847,7 +16903,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(); return
         await query.edit_message_text(
             f"🐾 *Your Pets* ({len(pets)} total)\nTap a pet to view or manage.",
-            parse_mode="Markdown", reply_markup=_pet_list_markup(pets, page))
+            parse_mode="Markdown", reply_markup=_pet_list_markup(pets, page, uid=user.id))
         await query.answer(); return
 
     if data.startswith("petview_"):
@@ -16858,7 +16914,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not row: await query.answer("Pet not found.", show_alert=True); return
         pet = dict(row); _decay_pet(pet)
         await query.edit_message_text(_build_pet_card(pet), parse_mode="Markdown",
-            reply_markup=_pet_view_markup(pid, bool(pet.get("is_active"))))
+            reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id))
         await query.answer(); return
 
     if data.startswith("petactivate_"):
@@ -16875,7 +16931,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sp = PET_SPECIES.get(pet["species"],{})
         await query.answer(f"✅ {sp.get('name','Pet')} is now your active companion!")
         await query.edit_message_text(_build_pet_card(pet), parse_mode="Markdown",
-            reply_markup=_pet_view_markup(pid, True)); return
+            reply_markup=_pet_view_markup(pid, True, uid=user.id)); return
 
     if data.startswith("petfeed_"):
         pid = int(data.split("_")[1])
@@ -16905,7 +16961,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(f"🍖 Fed {pname}!")
         await query.edit_message_text(
             f"🍖 *{pname}* {feed_msg}\n{cost_note}\n\n" + _build_pet_card(pet),
-            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")))); return
+            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id)); return
 
     if data.startswith("pettrain_"):
         pid = int(data.split("_")[1])
@@ -16944,7 +17000,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(f"🏋️ {pname} trained! +{gain} EXP")
         await query.edit_message_text(
             f"🏋️ *{pname}* {train_msg}\n+{gain} EXP gained!{lvl_note}\n\n" + _build_pet_card(pet),
-            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")))); return
+            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id)); return
 
     if data.startswith("petrelease_"):
         pid = int(data.split("_")[1])
@@ -19129,7 +19185,7 @@ def main():
     app.add_handler(CallbackQueryHandler(marry_callback,     pattern="^marry_(accept|decline)_"))
     app.add_handler(CallbackQueryHandler(divorce_callback,   pattern="^divorce_(confirm|cancel)_"))
     app.add_handler(CallbackQueryHandler(holdhands_callback, pattern="^hh_(accept|decline)_"))
-    app.add_handler(CallbackQueryHandler(close_callback,   pattern="^close_msg$"))
+    app.add_handler(CallbackQueryHandler(close_callback,   pattern="^close_msg"))
 
     # Combat & Dungeons
     app.add_handler(CommandHandler("duel",       duel_cmd))
