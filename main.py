@@ -104,6 +104,7 @@ last_bot_message   = {}   # (chat_id, user_id) -> msg_id
 active_bosses      = {}   # chat_id -> boss dict
 secret_boss_active = {}
 active_events      = {}   # chat_id -> event dict
+last_event_times   = {}   # chat_id -> datetime of last fired event
 active_raids       = {}   # chat_id -> raid dict
 active_soloraids   = {}   # user_id -> solo raid dict
 active_drakes      = {}   # chat_id -> drake dict
@@ -12578,6 +12579,7 @@ async def trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             label = f"📦 {item} {'x'+str(count) if count>1 else ''}"
             buttons.append([InlineKeyboardButton(label,
                 callback_data=f"trdi_{user.id}_{tu.id}_{item}")])
+        buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")])
         markup = InlineKeyboardMarkup(buttons)
         await send_group(update,
             f"📦 *Trade with {tu.first_name}*\n\nSelect an item to offer:",
@@ -14215,7 +14217,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             gold   = random.randint(*gold_r) if isinstance(gold_r, tuple) else random.randint(5, 30)
             exp_r  = enc.get("e_exp_range", (20,60))
             exp    = random.randint(*exp_r)  if isinstance(exp_r, tuple) else random.randint(20, 60)
-            add_exp(p, exp, p.get("username", ""))
+            add_exp(p, exp)
             p["gold"] = safe_int(p.get("gold", 0)) + gold
             # Loot
             loot_key  = enc.get("e_loot_key", "Encounter Token")
@@ -14281,7 +14283,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 mon_name = enc["e_name"]
                 exp_gain = enc["e_level"] * 12
                 gold_gain = enc["e_level"] * 5
-                add_exp(p, exp_gain, p.get("username", ""))
+                add_exp(p, exp_gain)
                 p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
                 # Give squad monster exp too
                 if fighter.get("type") == "monster":
@@ -14522,6 +14524,52 @@ async def hug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🫂 *{user.first_name}*{a_tag} and *{du.first_name}*{d_tag} share a moment. 🎱",
     ]
     await send_group(update, random.choice(hugs), permanent=True)
+
+
+async def bonds_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
+    try:
+        married = conn.execute(
+            "SELECT username, married_to_name, married_at FROM players "
+            "WHERE married_to_id IS NOT NULL AND CAST(user_id AS INTEGER) < CAST(married_to_id AS INTEGER)"
+        ).fetchall()
+        holding = conn.execute(
+            "SELECT username, holding_hands_with_name, holding_hands_since FROM players "
+            "WHERE holding_hands_with_id IS NOT NULL AND CAST(user_id AS INTEGER) < CAST(holding_hands_with_id AS INTEGER)"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    lines = ["💍 *Bonds Board*\n"]
+
+    if married:
+        lines.append("*Married Couples*")
+        for row in married:
+            when = ""
+            if row["married_at"]:
+                try:
+                    d = datetime.fromisoformat(row["married_at"])
+                    when = f"  _(since {d.strftime('%b %d, %Y')})_"
+                except Exception:
+                    pass
+            lines.append(f"💍 *{row['username']}* × *{row['married_to_name']}*{when}")
+    else:
+        lines.append("_No married couples yet._")
+
+    lines.append("")
+
+    if holding:
+        lines.append("*Holding Hands*")
+        for row in holding:
+            dur = _holdhands_duration(row["holding_hands_since"] or "")
+            lines.append(f"🤝 *{row['username']}* × *{row['holding_hands_with_name']}*  _({dur})_")
+    else:
+        lines.append("_Nobody is holding hands right now._")
+
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{update.effective_user.id}")
+    ]])
+    await send_group(update, "\n".join(lines), permanent=True, reply_markup=markup)
 
 
 async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -16267,7 +16315,7 @@ async def rankwins_cmd(update, context):
 GUIDE_PAGES = [
     # Page 1 - Getting Started
     (
-        "🎱 *8Ball World  -  Getting Started* (1/9)\n"
+        "🎱 *8Ball World  -  Getting Started* (1/10)\n"
         "\n"
         "Welcome to 8Ball World  -  a fantasy RPG built inside Telegram.\n"
         "\n"
@@ -16286,7 +16334,7 @@ GUIDE_PAGES = [
     ),
     # Page 2 - Character Building
     (
-        "🎱 *8Ball World  -  Building Your Character* (2/9)\n"
+        "🎱 *8Ball World  -  Building Your Character* (2/10)\n"
         "\n"
         "Use /class at Level 5 to pick your starting class. Browse with arrows to see each class's Path A and Path B.\n"
         "\n"
@@ -16332,7 +16380,7 @@ GUIDE_PAGES = [
     ),
     # Page 3 - Daily Activities
     (
-        "🎱 *8Ball World  -  Daily Activities* (3/9)\n"
+        "🎱 *8Ball World  -  Daily Activities* (3/10)\n"
         "\n"
         "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
         "\n"
@@ -16351,11 +16399,17 @@ GUIDE_PAGES = [
         "\n"
         "💡 /hustle runs all ready cooldowns at once — daily, train, quest, pool, claim, and explore. Use it every time you're in the group.\n"
         "\n"
-        "💡 *Idle Rewards* — When you come back after being away for an hour or more, the bot sends your return gold + EXP + possible item drop as a *private DM* so the group stays clean."
+        "💡 *Idle Rewards* — When you come back after being away for an hour or more, the bot sends your return gold + EXP + possible item drop as a *private DM* so the group stays clean.\n"
+        "\n"
+        "*Random Events*\n"
+        "As the group chats, random events appear automatically — travelers with tips, bandits to fight, merchants with discounts, legendary craftsmen, hidden caches, and more.\n"
+        "Common events: /greet, /fight, /shoot, /claim\n"
+        "Rare events: /pray, /purge, /shop legend\n"
+        "Group raids: *Drake* events let everyone /strike for shared loot based on damage dealt."
     ),
     # Page 4 - Combat & Raids
     (
-        "🎱 *8Ball World  -  Combat & Raids* (4/9)\n"
+        "🎱 *8Ball World  -  Combat & Raids* (4/10)\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
         "Reply to any player's message and use /attack to fight them. Winners steal gold and EXP. Losers are defeated for 6 hours and lose 10% EXP.\n"
@@ -16372,7 +16426,7 @@ GUIDE_PAGES = [
         "*/who Icons*\n"
         "❤️ Healthy (above 50% HP)  |  🟡 Injured (25–50%)  |  🔴 Critical (below 25%)\n"
         "💀 Defeated — out for 6 hours, cannot be attacked\n"
-        "🛡️ Invincible — immune to all damage (from revival items or Priest skills)\n"
+        "🛡️ Invincible — immune to all damage AND cannot initiate PvP (from revival items or Priest skills)\n"
         "🔥×N Kill streak  |  🔴 WANTED — 5+ kills today  |  💰 Active bounty on this player\n"
         "\n"
         "*Duels and Arena*\n"
@@ -16399,7 +16453,7 @@ GUIDE_PAGES = [
     ),
     # Page 5 - Gear & Economy
     (
-        "🎱 *8Ball World  -  Gear & Economy* (5/9)\n"
+        "🎱 *8Ball World  -  Gear & Economy* (5/10)\n"
         "\n"
         "*Gear Slots*\n"
         "Weapon, Armor, Shield, Accessory. Use /equip to browse your bag and tap to equip. Use /unequip to remove gear.\n"
@@ -16439,7 +16493,7 @@ GUIDE_PAGES = [
     ),
     # Page 6 - Command Reference
     (
-        "🎱 *8Ball World  -  Command Reference* (6/9)\n"
+        "🎱 *8Ball World  -  Command Reference* (6/10)\n"
         "\n"
         "*Character*\n"
         "/ascend  -  Create your RPG character (DM only)\n"
@@ -16522,12 +16576,13 @@ GUIDE_PAGES = [
         "/divorce  -  End your marriage (button confirmation)\n"
         "/holdhands  -  Reach out to someone (reply to target) or check timer\n"
         "/releasehands  -  Let go (shows how long you held on)\n"
+        "/bonds  -  View the full marriage and holding hands board\n"
         "/pat  -  Reply to a player to give them a pat\n"
         "/hug  -  Reply to a player to give them a hug"
     ),
     # Page 7 - Guilds & Advanced
     (
-        "🎱 *8Ball World  -  Guilds & Advanced Systems* (7/9)\n"
+        "🎱 *8Ball World  -  Guilds & Advanced Systems* (7/10)\n"
         "\n"
         "*Guilds*\n"
         "Guilds level up as members donate gold via /guilddonate, unlocking EXP bonuses, shop discounts, and more.\n"
@@ -16560,7 +16615,7 @@ GUIDE_PAGES = [
     ),
     # Page 8 - Pets
     (
-        "🎱 *8Ball World  -  Pets* (8/9)\n"
+        "🎱 *8Ball World  -  Pets* (8/10)\n"
         "\n"
         "*Getting a Pet*\n"
         "Buy eggs from the Pet Shop (/petshop) or find them in dungeons and quests.\n"
@@ -16622,6 +16677,7 @@ GUIDE_PAGES = [
         "*Marriage Commands*\n"
         "/marry — Propose (reply to partner) or check status\n"
         "/divorce — End the marriage (confirmation button required)\n"
+        "/bonds — See all married couples and holding-hands pairs in one board\n"
         "\n"
         "*Hold Hands*\n"
         "Reply to any player and type /holdhands to reach out.\n"
@@ -17873,6 +17929,7 @@ async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Clear memory state
     active_bosses.clear(); secret_boss_active.clear()
     active_events.clear(); active_raids.clear(); active_soloraids.clear()
+    last_event_times.clear()
     message_counters.clear()
     pending_trades.clear(); pending_guild_reqs.clear()
     pending_duels.clear(); active_arenas.clear()
@@ -17924,7 +17981,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _bounty_spot_cache[cache_key] = datetime.now().timestamp()
         except Exception: pass
 
-    # Random events  -  every 2500 messages
+    # Random events  -  every ~100 messages, minimum 30 min between events
     message_counters[chat_id] = message_counters.get(chat_id, 0) + 1
     cnt = message_counters[chat_id]
 
@@ -17941,7 +17998,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for cid in expired_raids:
             active_raids.pop(cid, None)
 
-    if cnt % 2500 == 0 and chat_id not in active_events:
+    _last_ev = last_event_times.get(chat_id)
+    _ev_ok = _last_ev is None or (datetime.now() - _last_ev).total_seconds() >= 1800
+    if cnt % 100 == 0 and chat_id not in active_events and _ev_ok:
         roll = random.random()
         if roll < 0.70:   freq = "common"
         elif roll < 0.90: freq = "uncommon"
@@ -17950,6 +18009,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if pool:
             event = random.choice(pool).copy()
             active_events[chat_id] = event
+            last_event_times[chat_id] = datetime.now()
             msg = await update.message.reply_text(event["msg"], parse_mode="Markdown")
             # Store drake message id for reply detection
             if event["key"] == "drake":
@@ -19203,6 +19263,7 @@ def main():
     app.add_handler(CommandHandler("releasehands", releasehands_cmd))
     app.add_handler(CommandHandler("pat",          pat_cmd))
     app.add_handler(CommandHandler("hug",          hug_cmd))
+    app.add_handler(CommandHandler("bonds",        bonds_cmd))
     app.add_handler(CallbackQueryHandler(marry_callback,     pattern="^marry_(accept|decline)_"))
     app.add_handler(CallbackQueryHandler(divorce_callback,   pattern="^divorce_(confirm|cancel)_"))
     app.add_handler(CallbackQueryHandler(holdhands_callback, pattern="^hh_(accept|decline)_"))
