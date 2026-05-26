@@ -13858,7 +13858,7 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows.append([InlineKeyboardButton("❌ Cancel", callback_data="close_msg")])
         txt = ("🌿 *First Encounter!*\n\nBefore you venture out you need a *starter monster*.\n"
                "Choose your companion:\n_(They will join your squad and help you catch more!)_")
-        await send_group(update, txt, reply_markup=InlineKeyboardMarkup(rows), delay=60)
+        await send_group(update, txt, reply_markup=InlineKeyboardMarkup(rows), permanent=True)
         return
 
     markup = InlineKeyboardMarkup([
@@ -13866,7 +13866,7 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🌿 Hunt — find wild monsters", callback_data=f"enc_mode_{uid}_hunt")],
         [InlineKeyboardButton("❌ Cancel", callback_data="close_msg")],
     ])
-    await send_group(update, "🎱 *Encounter*\nChoose your mode:", reply_markup=markup, delay=60)
+    await send_group(update, "🎱 *Encounter*\nChoose your mode:", reply_markup=markup, permanent=True)
 
 async def squad_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -14135,8 +14135,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
             enc["heals_left"] = enc.get("heals_left", 1) - 1
             action_txt = f"💊 You healed *{heal}* HP! ({enc['heals_left']} heals left)"
-            # No enemy turn on heal? Give NPC a free attack
             npc_act = _enc_npc_attack(enc, p)
+            dot_txt = _apply_dot_tick(enc)
+            if dot_txt: npc_act += f"\n_{dot_txt}_"
             if enc["p_hp"] <= 0:
                 gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
