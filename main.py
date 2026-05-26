@@ -117,6 +117,7 @@ active_dungeons    = {}   # user_id -> asyncio task
 _wipe_confirm      = {}   # admin_id -> timestamp
 pending_marriages  = {}   # proposer_id -> {target_id, chat_id, expires}
 pending_holdhands  = {}   # proposer_id -> {target_id, chat_id, expires}
+active_encounters  = {}   # user_id -> encounter state
 
 # ── SEND HELPERS ──────────────────────────────────────────────────────────────
 async def _auto_delete(bot, chat_id, msg_id, delay):
@@ -2535,6 +2536,550 @@ def get_daily_shop():
         random.seed()
         _shop_cache["date"] = today
     return _shop_cache["items"]
+
+# ── ENCOUNTER SYSTEM ──────────────────────────────────────────────────────────
+ENCOUNTER_LOOT = {
+    "Capture Stone":      {"type":"consumable","desc":"Doubles catch rate for one throw.","value":80,"rarity":"uncommon"},
+    "Monster Fang":       {"type":"material","desc":"Dropped by wild monsters.","value":30,"rarity":"common"},
+    "Monster Scale":      {"type":"material","desc":"Rare defensive scale.","value":55,"rarity":"uncommon"},
+    "Beast Core":         {"type":"material","desc":"Dense magical core.","value":120,"rarity":"rare"},
+    "Warrior's Crest":    {"type":"material","desc":"Proof of victory over an NPC warrior.","value":60,"rarity":"uncommon"},
+    "Scholar's Ink":      {"type":"material","desc":"Dropped by mage-type NPCs.","value":60,"rarity":"uncommon"},
+    "Shadow Essence":     {"type":"material","desc":"Distilled from rogue-type NPCs.","value":70,"rarity":"rare"},
+    "Holy Fragment":      {"type":"material","desc":"From cleric-type NPCs.","value":70,"rarity":"rare"},
+    "Void Shard":         {"type":"material","desc":"From void-class NPCs.","value":90,"rarity":"rare"},
+    "Nature Seed":        {"type":"material","desc":"From druid-type NPCs.","value":65,"rarity":"uncommon"},
+    "Iron Medal":         {"type":"material","desc":"Award from defeating high-rank NPCs.","value":150,"rarity":"epic"},
+    "Monster Gem":        {"type":"material","desc":"Crystallized monster essence.","value":200,"rarity":"epic"},
+    "Shattered Crown":    {"type":"material","desc":"From elite NPC commanders.","value":300,"rarity":"legendary"},
+    "Primal Orb":         {"type":"material","desc":"From ancient monster encounters.","value":250,"rarity":"legendary"},
+    "Encounter Token":    {"type":"currency","desc":"Redeemable for special gear.","value":40,"rarity":"common"},
+}
+
+# Monster moves: key -> {name, dmg_mult, effect, desc}
+MONSTER_MOVES = {
+    "tackle":         {"name":"Tackle",        "dmg_mult":1.0,  "effect":None,        "desc":"A basic rushing attack."},
+    "bite":           {"name":"Bite",           "dmg_mult":1.2,  "effect":"bleed",     "desc":"Tears flesh, causing bleeding."},
+    "scratch":        {"name":"Scratch",        "dmg_mult":0.9,  "effect":None,        "desc":"Quick claw swipe."},
+    "headbutt":       {"name":"Headbutt",       "dmg_mult":1.3,  "effect":"stun",      "desc":"Stuns the target briefly."},
+    "fire_breath":    {"name":"Fire Breath",    "dmg_mult":1.4,  "effect":"burn",      "desc":"Scorching flame from the throat."},
+    "water_jet":      {"name":"Water Jet",      "dmg_mult":1.1,  "effect":"slow",      "desc":"High-pressure water blast."},
+    "earth_slam":     {"name":"Earth Slam",     "dmg_mult":1.5,  "effect":"stun",      "desc":"Ground pound that stuns."},
+    "gust":           {"name":"Gust",           "dmg_mult":0.8,  "effect":"expose",    "desc":"Lowers target's defense."},
+    "thunder_claw":   {"name":"Thunder Claw",   "dmg_mult":1.3,  "effect":"paralyze",  "desc":"Electrified swipe."},
+    "dark_pulse":     {"name":"Dark Pulse",     "dmg_mult":1.4,  "effect":"weaken",    "desc":"Dark energy burst."},
+    "holy_beam":      {"name":"Holy Beam",      "dmg_mult":1.2,  "effect":"blind",     "desc":"Searing holy light."},
+    "void_rift":      {"name":"Void Rift",      "dmg_mult":1.6,  "effect":"hex",       "desc":"Tears open reality."},
+    "poison_spit":    {"name":"Poison Spit",    "dmg_mult":0.7,  "effect":"poison",    "desc":"Venomous saliva."},
+    "ice_fang":       {"name":"Ice Fang",       "dmg_mult":1.2,  "effect":"freeze",    "desc":"Numbing bite of ice."},
+    "wing_slash":     {"name":"Wing Slash",     "dmg_mult":1.1,  "effect":None,        "desc":"Sharp wing attack."},
+    "roar":           {"name":"Roar",           "dmg_mult":0.0,  "effect":"fear",      "desc":"Terrifying roar, skips foe's turn."},
+    "recover":        {"name":"Recover",        "dmg_mult":0.0,  "effect":"heal_self", "desc":"Restores 20% of max HP."},
+    "shell_crush":    {"name":"Shell Crush",    "dmg_mult":1.5,  "effect":"expose",    "desc":"Armour-breaking blow."},
+    "petal_storm":    {"name":"Petal Storm",    "dmg_mult":1.0,  "effect":"poison",    "desc":"Toxic pollen burst."},
+    "soul_drain":     {"name":"Soul Drain",     "dmg_mult":1.2,  "effect":"lifesteal", "desc":"Drains life from the target."},
+}
+
+# NPC class skills used in Battle mode (3 moves per class)
+NPC_CLASS_SKILLS = {
+    "fighter":       ["tackle","bite","headbutt"],
+    "warlord":       ["earth_slam","shell_crush","roar"],
+    "paladin":       ["holy_beam","recover","headbutt"],
+    "sage":          ["void_rift","dark_pulse","recover"],
+    "arcanist":      ["fire_breath","thunder_claw","gust"],
+    "void_mage":     ["void_rift","dark_pulse","soul_drain"],
+    "wraith":        ["soul_drain","dark_pulse","poison_spit"],
+    "specialist":    ["thunder_claw","water_jet","gust"],
+    "strider":       ["scratch","bite","gust"],
+    "deadeye":       ["scratch","headbutt","wing_slash"],
+    "saint":         ["holy_beam","recover","petal_storm"],
+    "zealot":        ["holy_beam","earth_slam","roar"],
+    "wildflower":    ["petal_storm","water_jet","recover"],
+    "nature_chosen": ["petal_storm","earth_slam","recover"],
+    "dread_empress": ["void_rift","soul_drain","dark_pulse"],
+    "grand_muse":    ["fire_breath","thunder_claw","dark_pulse"],
+    "iron_valkyrie": ["earth_slam","shell_crush","holy_beam"],
+    "divine_tempest":["thunder_claw","holy_beam","gust"],
+}
+
+# ── 100 NPCs (name, class_key, level_min, level_max, base_hp, base_dmg, gold_range, exp_range, loot_key) ──
+ENCOUNTER_NPCS = [
+    # Fighters
+    ("Street Brawler",      "fighter",    1,  10, 120, 18, (5,15),   (20,50),    "Warrior's Crest"),
+    ("Pit Fighter",         "fighter",    5,  15, 160, 24, (10,25),  (40,90),    "Warrior's Crest"),
+    ("Cage Champion",       "fighter",    10, 20, 220, 32, (20,40),  (70,140),   "Iron Medal"),
+    ("Iron Knuckle",        "fighter",    15, 25, 280, 40, (30,55),  (110,200),  "Warrior's Crest"),
+    ("Battle Veteran",      "fighter",    20, 35, 360, 50, (45,75),  (160,280),  "Iron Medal"),
+    # Warlords
+    ("Garrison Guard",      "warlord",    5,  15, 200, 30, (12,28),  (50,100),   "Warrior's Crest"),
+    ("Fort Sergeant",       "warlord",    10, 20, 260, 38, (22,42),  (80,150),   "Iron Medal"),
+    ("War Commander",       "warlord",    18, 30, 340, 50, (38,65),  (130,240),  "Shattered Crown"),
+    ("Siege Master",        "warlord",    25, 40, 440, 62, (55,90),  (200,360),  "Shattered Crown"),
+    ("Warlord Champion",    "warlord",    35, 50, 560, 76, (80,130), (300,500),  "Iron Medal"),
+    # Paladins
+    ("Temple Initiate",     "paladin",    3,  12, 170, 22, (8,20),   (30,70),    "Holy Fragment"),
+    ("Holy Knight",         "paladin",    10, 20, 240, 32, (20,38),  (70,140),   "Holy Fragment"),
+    ("Divine Crusader",     "paladin",    18, 30, 320, 44, (35,60),  (120,220),  "Holy Fragment"),
+    ("Sacred Champion",     "paladin",    28, 42, 420, 58, (60,95),  (200,360),  "Shattered Crown"),
+    ("Paladin Grandmaster", "paladin",    40, 55, 560, 74, (90,145), (320,560),  "Iron Medal"),
+    # Sages
+    ("Apprentice Sage",     "sage",       4,  14, 130, 26, (10,24),  (40,85),    "Scholar's Ink"),
+    ("Lore Keeper",         "sage",       10, 22, 180, 36, (22,42),  (80,160),   "Scholar's Ink"),
+    ("Elder Sage",          "sage",       20, 35, 250, 50, (40,70),  (140,260),  "Scholar's Ink"),
+    ("Sage Council Member", "sage",       32, 48, 340, 66, (65,105), (230,420),  "Iron Medal"),
+    ("Grand Sage",          "sage",       45, 60, 460, 84, (95,155), (360,620),  "Shattered Crown"),
+    # Arcanists
+    ("Novice Arcanist",     "arcanist",   3,  12, 110, 28, (8,20),   (35,80),    "Scholar's Ink"),
+    ("Flame Caster",        "arcanist",   8,  18, 150, 38, (18,35),  (65,130),   "Scholar's Ink"),
+    ("Storm Weaver",        "arcanist",   15, 28, 210, 52, (32,58),  (110,210),  "Scholar's Ink"),
+    ("Arc Mage",            "arcanist",   24, 38, 290, 68, (52,88),  (180,340),  "Iron Medal"),
+    ("Arcanist Sovereign",  "arcanist",   38, 55, 400, 88, (85,140), (300,540),  "Shattered Crown"),
+    # Void Mages
+    ("Void Seeker",         "void_mage",  5,  15, 125, 30, (12,26),  (45,95),    "Void Shard"),
+    ("Rift Walker",         "void_mage",  12, 25, 175, 44, (24,46),  (85,170),   "Void Shard"),
+    ("Nullmancer",          "void_mage",  22, 36, 250, 60, (42,75),  (150,280),  "Void Shard"),
+    ("Void Archon",         "void_mage",  34, 50, 350, 80, (68,110), (250,460),  "Iron Medal"),
+    ("Void Sovereign",      "void_mage",  48, 65, 480, 104,(100,165),(380,680),  "Shattered Crown"),
+    # Wraiths
+    ("Hollow Shade",        "wraith",     4,  14, 115, 29, (10,22),  (38,82),    "Shadow Essence"),
+    ("Soul Drifter",        "wraith",     10, 22, 160, 40, (20,40),  (72,145),   "Shadow Essence"),
+    ("Phantom Stalker",     "wraith",     18, 32, 225, 55, (36,65),  (125,235),  "Shadow Essence"),
+    ("Wraith Commander",    "wraith",     30, 46, 315, 74, (60,98),  (215,400),  "Iron Medal"),
+    ("Lich Wraith",         "wraith",     44, 62, 440, 98, (92,150), (340,620),  "Shattered Crown"),
+    # Specialists
+    ("Field Technician",    "specialist", 3,  13, 140, 25, (9,21),   (32,75),    "Encounter Token"),
+    ("Combat Engineer",     "specialist", 9,  20, 195, 36, (20,38),  (68,138),   "Encounter Token"),
+    ("Tactical Expert",     "specialist", 17, 30, 265, 50, (34,62),  (118,225),  "Encounter Token"),
+    ("Unit Commander",      "specialist", 27, 42, 355, 66, (55,92),  (195,365),  "Iron Medal"),
+    ("Elite Operator",      "specialist", 40, 58, 480, 86, (88,143), (310,570),  "Shattered Crown"),
+    # Striders
+    ("Wandering Scout",     "strider",    2,  12, 130, 22, (7,18),   (28,65),    "Encounter Token"),
+    ("Path Dancer",         "strider",    8,  18, 175, 32, (17,34),  (60,122),   "Encounter Token"),
+    ("Wind Runner",         "strider",    15, 27, 240, 44, (30,56),  (105,200),  "Encounter Token"),
+    ("Ghost Strider",       "strider",    25, 40, 325, 60, (50,85),  (175,335),  "Iron Medal"),
+    ("Strider Paragon",     "strider",    38, 55, 445, 78, (80,130), (280,520),  "Shattered Crown"),
+    # Deadeyes
+    ("Sharpshooter Recruit","deadeye",    3,  13, 120, 26, (9,22),   (35,78),    "Encounter Token"),
+    ("Crossbow Hunter",     "deadeye",    9,  20, 165, 36, (20,40),  (68,140),   "Encounter Token"),
+    ("Sniper Adept",        "deadeye",    17, 30, 225, 50, (34,63),  (118,228),  "Encounter Token"),
+    ("Eagle Eye",           "deadeye",    27, 42, 305, 66, (55,93),  (195,370),  "Iron Medal"),
+    ("Deadeye Legend",      "deadeye",    40, 58, 420, 86, (88,144), (310,580),  "Shattered Crown"),
+    # Saints
+    ("Novice Healer",       "saint",      2,  12, 145, 18, (7,18),   (25,60),    "Holy Fragment"),
+    ("Temple Monk",         "saint",      8,  18, 195, 26, (16,33),  (55,112),   "Holy Fragment"),
+    ("Ordained Priest",     "saint",      15, 26, 265, 36, (28,52),  (96,186),   "Holy Fragment"),
+    ("High Cleric",         "saint",      24, 38, 355, 48, (46,80),  (160,305),  "Iron Medal"),
+    ("Saint Ascendant",     "saint",      36, 52, 475, 62, (74,122), (255,480),  "Shattered Crown"),
+    # Zealots
+    ("Faithful Initiate",   "zealot",     4,  14, 155, 24, (9,22),   (33,75),    "Holy Fragment"),
+    ("Burning Zealot",      "zealot",     10, 22, 215, 34, (20,40),  (70,142),   "Holy Fragment"),
+    ("Purge Warrior",       "zealot",     18, 32, 290, 46, (35,64),  (122,234),  "Iron Medal"),
+    ("Crusader Zealot",     "zealot",     28, 44, 385, 60, (56,95),  (200,384),  "Iron Medal"),
+    ("Zealot Archon",       "zealot",     42, 60, 520, 78, (88,145), (325,600),  "Shattered Crown"),
+    # Wildflowers
+    ("Grove Wanderer",      "wildflower", 3,  13, 135, 20, (8,19),   (28,66),    "Nature Seed"),
+    ("Bloom Dancer",        "wildflower", 9,  20, 185, 28, (17,34),  (60,122),   "Nature Seed"),
+    ("Petal Warrior",       "wildflower", 16, 28, 250, 38, (30,56),  (104,200),  "Nature Seed"),
+    ("Forest Sentinel",     "wildflower", 26, 40, 335, 52, (50,86),  (175,338),  "Iron Medal"),
+    ("Wildflower Paragon",  "wildflower", 38, 56, 450, 68, (80,132), (280,530),  "Shattered Crown"),
+    # Nature Chosen
+    ("Seedling Caller",     "nature_chosen",4,  14,145,22, (8,20),   (30,70),    "Nature Seed"),
+    ("Root Speaker",        "nature_chosen",10, 22,200,32, (19,38),  (66,136),   "Nature Seed"),
+    ("Ancient Channeler",   "nature_chosen",20, 35,275,44, (36,66),  (118,228),  "Nature Seed"),
+    ("Earthbound Sage",     "nature_chosen",32, 48,370,60, (60,100), (200,388),  "Iron Medal"),
+    ("Nature's Champion",   "nature_chosen",45, 62,495,78, (92,152), (318,600),  "Shattered Crown"),
+    # Dread Empress variants
+    ("Dread Apprentice",    "dread_empress",8,  20,175,35, (20,40),  (72,148),   "Shadow Essence"),
+    ("Shadow Duchess",      "dread_empress",18, 32,255,52, (38,70),  (132,256),  "Shadow Essence"),
+    ("Dread Lieutenant",    "dread_empress",28, 45,355,72, (60,100), (220,428),  "Void Shard"),
+    ("Empress Guard",       "dread_empress",40, 58,480,96, (90,150), (355,660),  "Iron Medal"),
+    ("Dread Sovereign",     "dread_empress",55, 75,640,128,(130,215),(530,980),  "Shattered Crown"),
+    # Grand Muse variants
+    ("Muse Adept",          "grand_muse", 6,  16, 145, 30, (12,26),  (46,96),    "Scholar's Ink"),
+    ("Aria Caster",         "grand_muse", 14, 26, 200, 44, (24,46),  (86,172),   "Scholar's Ink"),
+    ("Resonance Mage",      "grand_muse", 24, 38, 280, 60, (42,76),  (152,296),  "Scholar's Ink"),
+    ("Grand Conductor",     "grand_muse", 36, 52, 380, 80, (68,112), (256,492),  "Iron Medal"),
+    ("Muse Archon",         "grand_muse", 50, 68, 510,104, (105,172),(400,760),  "Shattered Crown"),
+    # Iron Valkyrie variants
+    ("Shield Maiden",       "iron_valkyrie",5,15,180,28,  (11,24),  (40,90),    "Warrior's Crest"),
+    ("Valkyrie Recruit",    "iron_valkyrie",12,24,250,40, (23,44),  (82,164),   "Warrior's Crest"),
+    ("Iron Warmaiden",      "iron_valkyrie",22,36,340,54, (40,72),  (142,272),  "Iron Medal"),
+    ("Valkyr Champion",     "iron_valkyrie",34,50,460,72, (65,108), (240,460),  "Iron Medal"),
+    ("Iron Valkyrie",       "iron_valkyrie",48,66,620,96, (100,164),(380,720),  "Shattered Crown"),
+    # Divine Tempest variants
+    ("Storm Acolyte",       "divine_tempest",5,15,155,30, (12,26),  (44,94),    "Holy Fragment"),
+    ("Thunder Priest",      "divine_tempest",12,24,215,44,(23,44),  (84,168),   "Holy Fragment"),
+    ("Divine Lancer",       "divine_tempest",22,36,295,60,(40,72),  (145,278),  "Iron Medal"),
+    ("Tempest Herald",      "divine_tempest",34,50,400,80,(65,108), (244,468),  "Iron Medal"),
+    ("Divine Tempest",      "divine_tempest",50,70,545,108,(105,172),(395,750),  "Shattered Crown"),
+    # Elite/Boss-rank NPCs (high tier)
+    ("Undying Duelist",     "fighter",    50,70,700,120,  (120,200),(450,850),  "Shattered Crown"),
+    ("Void Warden",         "void_mage",  55,75,750,130,  (130,215),(490,920),  "Shattered Crown"),
+    ("Sunken Paladin",      "paladin",    55,75,720,115,  (125,208),(470,890),  "Shattered Crown"),
+    ("Chaos Strider",       "strider",    52,72,680,118,  (118,195),(440,840),  "Shattered Crown"),
+    ("Ashen Wraith",        "wraith",     58,80,790,135,  (138,228),(520,980),  "Primal Orb"),
+    ("Celestial Sage",      "sage",       60,80,810,138,  (142,234),(535,1000), "Primal Orb"),
+    ("Stormborn Arcanist",  "arcanist",   60,82,820,142,  (145,240),(545,1020), "Primal Orb"),
+    ("Battleborn Warlord",  "warlord",    62,85,860,148,  (152,252),(570,1080), "Primal Orb"),
+    ("Eclipse Knight",      "iron_valkyrie",65,90,920,158,(162,268),(610,1150), "Primal Orb"),
+    ("The Nameless One",    "dread_empress",70,95,1000,170,(180,298),(680,1280),"Primal Orb"),
+]
+
+# ── 100 monsters (key, name, element, level_range, base_hp, base_atk, catch_rate, moves[4]) ──
+ENCOUNTER_MONSTERS = [
+    # Fire element (11)
+    ("ember_pup",    "Ember Pup",      "fire",    (1,15),  80,  14, 0.45, ["tackle","fire_breath","scratch","roar"]),
+    ("flame_kit",    "Flame Kit",      "fire",    (5,20),  110, 20, 0.38, ["fire_breath","bite","roar","recover"]),
+    ("magma_crawler","Magma Crawler",  "fire",    (12,30), 155, 28, 0.32, ["fire_breath","earth_slam","shell_crush","roar"]),
+    ("cinder_hawk",  "Cinder Hawk",    "fire",    (18,38), 190, 36, 0.28, ["fire_breath","wing_slash","gust","roar"]),
+    ("inferno_boar", "Inferno Boar",   "fire",    (25,45), 240, 44, 0.24, ["fire_breath","headbutt","earth_slam","roar"]),
+    ("lava_drake",   "Lava Drake",     "fire",    (32,55), 310, 56, 0.20, ["fire_breath","wing_slash","earth_slam","roar"]),
+    ("blazing_lion", "Blazing Lion",   "fire",    (40,62), 390, 68, 0.16, ["fire_breath","bite","roar","recover"]),
+    ("fire_titan",   "Fire Titan",     "fire",    (50,72), 490, 82, 0.12, ["fire_breath","earth_slam","roar","shell_crush"]),
+    ("solar_wyrm",   "Solar Wyrm",     "fire",    (60,80), 600, 98, 0.08, ["fire_breath","wing_slash","roar","recover"]),
+    ("phoenix_spawn","Phoenix Spawn",  "fire",    (70,90), 720, 115,0.05, ["fire_breath","wing_slash","roar","recover"]),
+    ("ancient_ifrit","Ancient Ifrit",  "fire",    (80,100),880, 138,0.03, ["fire_breath","void_rift","roar","earth_slam"]),
+    # Water element (10)
+    ("puddle_slime", "Puddle Slime",   "water",   (1,15),  90,  12, 0.46, ["water_jet","tackle","scratch","recover"]),
+    ("river_eel",    "River Eel",      "water",   (6,20),  120, 18, 0.40, ["water_jet","bite","poison_spit","recover"]),
+    ("coral_crab",   "Coral Crab",     "water",   (13,28), 165, 26, 0.34, ["water_jet","shell_crush","headbutt","recover"]),
+    ("tide_serpent", "Tide Serpent",   "water",   (20,36), 215, 36, 0.28, ["water_jet","bite","poison_spit","roar"]),
+    ("storm_seal",   "Storm Seal",     "water",   (28,46), 275, 46, 0.22, ["water_jet","headbutt","roar","recover"]),
+    ("abyssal_ray",  "Abyssal Ray",    "water",   (38,58), 360, 60, 0.17, ["water_jet","soul_drain","dark_pulse","recover"]),
+    ("deep_leviathan","Deep Leviathan","water",   (50,72), 470, 78, 0.12, ["water_jet","earth_slam","roar","recover"]),
+    ("glacial_whale","Glacial Whale",  "water",   (62,82), 600, 96, 0.08, ["water_jet","ice_fang","roar","earth_slam"]),
+    ("sea_colossus", "Sea Colossus",   "water",   (74,92), 755, 118,0.05, ["water_jet","earth_slam","roar","shell_crush"]),
+    ("ocean_titan",  "Ocean Titan",    "water",   (84,100),920, 142,0.03, ["water_jet","earth_slam","roar","void_rift"]),
+    # Earth element (10)
+    ("clay_golem",   "Clay Golem",     "earth",   (2,16),  105, 16, 0.44, ["earth_slam","headbutt","tackle","recover"]),
+    ("stone_beetle", "Stone Beetle",   "earth",   (8,22),  145, 24, 0.37, ["earth_slam","shell_crush","headbutt","recover"]),
+    ("boulder_toad", "Boulder Toad",   "earth",   (15,30), 195, 32, 0.31, ["earth_slam","headbutt","poison_spit","recover"]),
+    ("rock_rhino",   "Rock Rhino",     "earth",   (22,38), 260, 44, 0.25, ["earth_slam","headbutt","roar","shell_crush"]),
+    ("crystal_bear", "Crystal Bear",   "earth",   (30,48), 330, 56, 0.20, ["earth_slam","shell_crush","roar","recover"]),
+    ("iron_tortoise","Iron Tortoise",  "earth",   (40,60), 430, 70, 0.15, ["earth_slam","shell_crush","headbutt","recover"]),
+    ("mountain_drake","Mountain Drake","earth",   (52,72), 550, 88, 0.11, ["earth_slam","wing_slash","roar","recover"]),
+    ("stone_colossus","Stone Colossus","earth",   (64,82), 700, 108,0.07, ["earth_slam","roar","shell_crush","recover"]),
+    ("terran_titan", "Terran Titan",   "earth",   (76,92), 870, 132,0.04, ["earth_slam","roar","void_rift","shell_crush"]),
+    ("world_breaker","World Breaker",  "earth",   (86,100),1060,158,0.02, ["earth_slam","roar","void_rift","shell_crush"]),
+    # Wind element (9)
+    ("dust_sprite",  "Dust Sprite",    "wind",    (1,14),  75,  13, 0.47, ["gust","wing_slash","scratch","recover"]),
+    ("gale_bird",    "Gale Bird",      "wind",    (6,20),  105, 20, 0.41, ["gust","wing_slash","roar","recover"]),
+    ("storm_lynx",   "Storm Lynx",     "wind",    (14,28), 145, 28, 0.34, ["gust","scratch","bite","recover"]),
+    ("cyclone_wolf", "Cyclone Wolf",   "wind",    (22,36), 195, 38, 0.27, ["gust","bite","roar","headbutt"]),
+    ("tempest_eagle","Tempest Eagle",  "wind",    (32,48), 260, 52, 0.21, ["gust","wing_slash","roar","thunder_claw"]),
+    ("zephyr_drake", "Zephyr Drake",   "wind",    (42,60), 345, 68, 0.15, ["gust","wing_slash","roar","thunder_claw"]),
+    ("storm_giant",  "Storm Giant",    "wind",    (55,74), 455, 88, 0.10, ["gust","earth_slam","roar","thunder_claw"]),
+    ("sky_leviathan","Sky Leviathan",  "wind",    (68,86), 590, 110,0.06, ["gust","wing_slash","roar","void_rift"]),
+    ("tempest_god",  "Tempest God",    "wind",    (82,100),760, 138,0.03, ["gust","thunder_claw","roar","void_rift"]),
+    # Lightning element (9)
+    ("spark_mouse",  "Spark Mouse",    "lightning",(1,14), 70,  15, 0.48, ["thunder_claw","tackle","scratch","recover"]),
+    ("volt_fox",     "Volt Fox",       "lightning",(6,18), 100, 22, 0.42, ["thunder_claw","bite","scratch","recover"]),
+    ("static_wolf",  "Static Wolf",    "lightning",(13,26),140, 32, 0.35, ["thunder_claw","bite","roar","recover"]),
+    ("bolt_panther", "Bolt Panther",   "lightning",(20,34),185, 42, 0.28, ["thunder_claw","bite","roar","headbutt"]),
+    ("plasma_hawk",  "Plasma Hawk",    "lightning",(28,44),245, 56, 0.22, ["thunder_claw","wing_slash","roar","gust"]),
+    ("storm_lion",   "Storm Lion",     "lightning",(38,56),325, 72, 0.16, ["thunder_claw","roar","headbutt","earth_slam"]),
+    ("thunder_drake","Thunder Drake",  "lightning",(50,68),430, 92, 0.11, ["thunder_claw","wing_slash","roar","earth_slam"]),
+    ("lightning_titan","Lightning Titan","lightning",(64,82),565,116,0.07,["thunder_claw","earth_slam","roar","void_rift"]),
+    ("storm_god",    "Storm God",      "lightning",(80,100),730,145,0.03, ["thunder_claw","void_rift","roar","earth_slam"]),
+    # Dark element (10)
+    ("shadow_bat",   "Shadow Bat",     "dark",    (2,16),  85,  14, 0.46, ["dark_pulse","bite","scratch","soul_drain"]),
+    ("void_rat",     "Void Rat",       "dark",    (7,20),  115, 20, 0.40, ["dark_pulse","bite","poison_spit","soul_drain"]),
+    ("gloom_panther","Gloom Panther",  "dark",    (14,28), 160, 30, 0.33, ["dark_pulse","bite","soul_drain","roar"]),
+    ("night_stalker","Night Stalker",  "dark",    (22,36), 215, 42, 0.26, ["dark_pulse","soul_drain","poison_spit","roar"]),
+    ("shade_wolf",   "Shade Wolf",     "dark",    (30,46), 280, 54, 0.21, ["dark_pulse","bite","roar","soul_drain"]),
+    ("umbra_serpent","Umbra Serpent",  "dark",    (40,58), 370, 70, 0.15, ["dark_pulse","poison_spit","soul_drain","roar"]),
+    ("void_hound",   "Void Hound",     "dark",    (52,70), 485, 90, 0.11, ["dark_pulse","soul_drain","roar","void_rift"]),
+    ("dark_phoenix", "Dark Phoenix",   "dark",    (64,82), 630, 114,0.07, ["dark_pulse","wing_slash","soul_drain","void_rift"]),
+    ("abyss_lord",   "Abyss Lord",     "dark",    (76,92), 800, 142,0.04, ["dark_pulse","void_rift","soul_drain","roar"]),
+    ("void_emperor", "Void Emperor",   "dark",    (88,100),990, 172,0.02, ["dark_pulse","void_rift","roar","earth_slam"]),
+    # Holy element (9)
+    ("radiant_fawn", "Radiant Fawn",   "holy",    (3,16),  95,  13, 0.45, ["holy_beam","tackle","recover","scratch"]),
+    ("light_sprite", "Light Sprite",   "holy",    (9,22),  130, 20, 0.38, ["holy_beam","petal_storm","recover","gust"]),
+    ("golden_wolf",  "Golden Wolf",    "holy",    (16,30), 175, 28, 0.32, ["holy_beam","bite","roar","recover"]),
+    ("sacred_eagle", "Sacred Eagle",   "holy",    (24,40), 235, 40, 0.25, ["holy_beam","wing_slash","roar","recover"]),
+    ("divine_tiger", "Divine Tiger",   "holy",    (34,52), 315, 54, 0.19, ["holy_beam","bite","roar","headbutt"]),
+    ("aureate_drake","Aureate Drake",  "holy",    (46,64), 420, 72, 0.13, ["holy_beam","wing_slash","roar","recover"]),
+    ("solar_guardian","Solar Guardian","holy",    (58,76), 555, 92, 0.09, ["holy_beam","earth_slam","roar","recover"]),
+    ("celestial_lion","Celestial Lion","holy",    (70,88), 715, 116,0.05, ["holy_beam","roar","void_rift","recover"]),
+    ("arch_seraph",  "Arch Seraph",    "holy",    (84,100),900, 145,0.02, ["holy_beam","void_rift","roar","recover"]),
+    # Void element (9)
+    ("rift_wisp",    "Rift Wisp",      "void",    (5,18),  95,  18, 0.43, ["void_rift","dark_pulse","scratch","recover"]),
+    ("null_sprite",  "Null Sprite",    "void",    (12,25), 140, 28, 0.36, ["void_rift","dark_pulse","soul_drain","recover"]),
+    ("fracture_imp", "Fracture Imp",   "void",    (20,35), 195, 40, 0.29, ["void_rift","dark_pulse","soul_drain","roar"]),
+    ("entropy_wolf", "Entropy Wolf",   "void",    (30,46), 265, 56, 0.22, ["void_rift","soul_drain","roar","dark_pulse"]),
+    ("void_stalker", "Void Stalker",   "void",    (40,58), 355, 74, 0.16, ["void_rift","soul_drain","roar","dark_pulse"]),
+    ("null_titan",   "Null Titan",     "void",    (52,70), 475, 96, 0.11, ["void_rift","earth_slam","roar","dark_pulse"]),
+    ("oblivion_drake","Oblivion Drake","void",    (64,82), 620, 120,0.07, ["void_rift","wing_slash","roar","earth_slam"]),
+    ("entropy_colossus","Entropy Colossus","void",(78,94), 800, 150,0.04, ["void_rift","earth_slam","roar","soul_drain"]),
+    ("void_god",     "Void God",       "void",    (90,100),990, 182,0.02, ["void_rift","roar","earth_slam","soul_drain"]),
+    # Physical element (10)
+    ("feral_boar",   "Feral Boar",     "physical",(1,14),  100, 16, 0.46, ["tackle","headbutt","bite","roar"]),
+    ("iron_bear",    "Iron Bear",      "physical",(7,20),  145, 24, 0.39, ["tackle","headbutt","roar","earth_slam"]),
+    ("battle_ox",    "Battle Ox",      "physical",(14,28), 195, 34, 0.32, ["tackle","headbutt","shell_crush","roar"]),
+    ("war_rhino",    "War Rhino",      "physical",(22,36), 260, 46, 0.25, ["tackle","headbutt","earth_slam","roar"]),
+    ("primal_gorilla","Primal Gorilla","physical",(30,46), 340, 58, 0.20, ["tackle","earth_slam","headbutt","roar"]),
+    ("siege_beast",  "Siege Beast",    "physical",(40,58), 440, 74, 0.15, ["tackle","earth_slam","shell_crush","roar"]),
+    ("titan_warlord","Titan Warlord",  "physical",(52,70), 575, 94, 0.10, ["tackle","earth_slam","headbutt","shell_crush"]),
+    ("primal_titan", "Primal Titan",   "physical",(65,82), 740, 118,0.06, ["tackle","earth_slam","roar","shell_crush"]),
+    ("apex_colossus","Apex Colossus",  "physical",(78,94), 930, 146,0.03, ["tackle","earth_slam","roar","void_rift"]),
+    ("world_eater",  "World Eater",    "physical",(90,100),1150,180,0.02, ["earth_slam","roar","void_rift","shell_crush"]),
+    # Ice element (5 bonus)
+    ("frost_cub",    "Frost Cub",      "ice",     (3,16),  90,  14, 0.45, ["ice_fang","tackle","scratch","recover"]),
+    ("blizzard_wolf","Blizzard Wolf",  "ice",     (14,30), 165, 28, 0.33, ["ice_fang","bite","roar","recover"]),
+    ("glacier_drake","Glacier Drake",  "ice",     (30,50), 300, 54, 0.21, ["ice_fang","wing_slash","earth_slam","roar"]),
+    ("permafrost_titan","Permafrost Titan","ice", (52,74), 500, 86, 0.11, ["ice_fang","earth_slam","roar","shell_crush"]),
+    ("absolute_zero","Absolute Zero",  "ice",     (80,100),820, 138,0.03, ["ice_fang","void_rift","roar","earth_slam"]),
+    # Poison element (4 bonus)
+    ("venom_asp",    "Venom Asp",      "poison",  (2,15),  85,  15, 0.46, ["poison_spit","bite","scratch","recover"]),
+    ("toxic_mantis", "Toxic Mantis",   "poison",  (15,32), 170, 30, 0.32, ["poison_spit","wing_slash","roar","bite"]),
+    ("plague_drake", "Plague Drake",   "poison",  (35,55), 345, 60, 0.18, ["poison_spit","wing_slash","dark_pulse","roar"]),
+    ("venomous_titan","Venomous Titan","poison",  (62,85), 660, 108,0.06, ["poison_spit","earth_slam","roar","dark_pulse"]),
+]
+# Build quick-lookup dicts
+MONSTER_BY_KEY   = {m[0]: m for m in ENCOUNTER_MONSTERS}
+MONSTER_STARTERS = [m for m in ENCOUNTER_MONSTERS if m[3][0] <= 5]  # starter-eligible
+
+ELEMENT_EMOJI = {
+    "fire":"🔥","water":"💧","earth":"🪨","wind":"🌪️","lightning":"⚡",
+    "dark":"🌑","holy":"✨","void":"🌀","physical":"💪","ice":"❄️","poison":"☠️",
+}
+
+def _enc_hp_bar(current, maximum, length=10):
+    filled = max(0, round((current / max(1, maximum)) * length))
+    return "█" * filled + "░" * (length - filled)
+
+def _mon_level_stats(base_hp, base_atk, level):
+    hp  = int(base_hp  * (1 + 0.06 * (level - 1)))
+    atk = int(base_atk * (1 + 0.05 * (level - 1)))
+    return hp, atk
+
+def _npc_level_stats(base_hp, base_dmg, level):
+    hp  = int(base_hp  * (1 + 0.05 * (level - 1)))
+    atk = int(base_dmg * (1 + 0.04 * (level - 1)))
+    return hp, atk
+
+def _get_monster_squad(uid):
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("SELECT slot,monster_key,nickname,level,exp,hp,max_hp FROM monster_squad WHERE user_id=? ORDER BY slot", (uid,))
+    rows = c.fetchall(); conn.close()
+    return [{"slot":r[0],"key":r[1],"nickname":r[2],"level":r[3],"exp":r[4],"hp":r[5],"max_hp":r[6]} for r in rows]
+
+def _save_squad_monster(uid, m):
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO monster_squad (user_id,slot,monster_key,nickname,level,exp,hp,max_hp) VALUES(?,?,?,?,?,?,?,?)",
+              (uid, m["slot"], m["key"], m.get("nickname"), m["level"], m["exp"], m["hp"], m["max_hp"]))
+    conn.commit(); conn.close()
+
+def _remove_squad_monster(uid, slot):
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("DELETE FROM monster_squad WHERE user_id=? AND slot=?", (uid, slot))
+    conn.commit(); conn.close()
+
+def _add_monster_to_squad(uid, key, level=1):
+    squad = _get_monster_squad(uid)
+    if len(squad) >= 3:
+        return False, squad
+    slot = next(i for i in range(1, 4) if i not in {m["slot"] for m in squad})
+    mdata = MONSTER_BY_KEY[key]
+    base_hp, base_atk = _mon_level_stats(mdata[4], mdata[5], level)
+    _save_squad_monster(uid, {"slot":slot,"key":key,"nickname":None,"level":level,"exp":0,"hp":base_hp,"max_hp":base_hp})
+    return True, _get_monster_squad(uid)
+
+def _has_starter(uid):
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM monster_squad WHERE user_id=?", (uid,))
+    return c.fetchone()[0] > 0
+
+def _encounter_battle_card(enc):
+    """Render the Pokemon-style battle card."""
+    mode = enc["mode"]
+    p_name = enc["p_name"]
+    p_hp   = enc["p_hp"]
+    p_mhp  = enc["p_max_hp"]
+    e_name = enc["e_name"]
+    e_hp   = enc["e_hp"]
+    e_mhp  = enc["e_max_hp"]
+    e_lv   = enc["e_level"]
+    elem   = enc.get("element","")
+    elem_e = ELEMENT_EMOJI.get(elem,"")
+    last   = enc.get("last_action","")
+    p_bar  = _enc_hp_bar(p_hp, p_mhp)
+    e_bar  = _enc_hp_bar(e_hp, e_mhp)
+    lines  = []
+    lines.append(f"{'⚔️ BATTLE' if mode=='battle' else '🌿 HUNT'} ENCOUNTER")
+    lines.append("")
+    lines.append(f"{elem_e} *{e_name}*  Lv.{e_lv}")
+    lines.append(f"HP: {e_hp}/{e_mhp}  [{e_bar}]")
+    lines.append("")
+    lines.append(f"*{p_name}*")
+    lines.append(f"HP: {p_hp}/{p_mhp}  [{p_bar}]")
+    if last:
+        lines.append("")
+        lines.append(f"_{last}_")
+    return "\n".join(lines)
+
+def _encounter_battle_markup(enc):
+    uid = enc["uid"]
+    mode = enc["mode"]
+    if mode == "battle":
+        rows = [
+            [InlineKeyboardButton("⚔️ Attack", callback_data=f"enc_atk_{uid}"),
+             InlineKeyboardButton("✨ Skill",  callback_data=f"enc_skl_{uid}")],
+            [InlineKeyboardButton("💊 Heal",   callback_data=f"enc_heal_{uid}"),
+             InlineKeyboardButton("🏃 Flee",   callback_data=f"enc_flee_{uid}")],
+        ]
+    else:  # hunt
+        moves = enc.get("e_moves", ["tackle","tackle","tackle","tackle"])
+        mdata = MONSTER_MOVES
+        btns_moves = []
+        for mk in moves[:4]:
+            mv = mdata.get(mk, {"name": mk.replace("_"," ").title()})
+            btns_moves.append(InlineKeyboardButton(mv["name"], callback_data=f"enc_mv_{uid}_{mk}"))
+        p_hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
+        catch_btn = []
+        if enc["e_hp"] / max(1, enc["e_max_hp"]) <= 0.5:
+            catch_btn = [InlineKeyboardButton("🎯 Catch", callback_data=f"enc_catch_{uid}")]
+        row1 = btns_moves[:2]
+        row2 = btns_moves[2:4]
+        row3 = catch_btn + [InlineKeyboardButton("🔄 Switch", callback_data=f"enc_switch_{uid}"),
+                            InlineKeyboardButton("🏃 Flee",   callback_data=f"enc_flee_{uid}")]
+        rows = [row1, row2, row3]
+    return InlineKeyboardMarkup(rows)
+
+def _pick_random_npc(p_level):
+    eligible = [n for n in ENCOUNTER_NPCS if n[2] <= p_level + 5]
+    if not eligible:
+        eligible = ENCOUNTER_NPCS[:5]
+    return random.choice(eligible)
+
+def _pick_random_monster(p_level):
+    eligible = [m for m in ENCOUNTER_MONSTERS if m[3][0] <= p_level + 6]
+    if not eligible:
+        eligible = ENCOUNTER_MONSTERS[:5]
+    return random.choice(eligible)
+
+def _enc_monster_level(monster, p_level):
+    lo, hi = monster[3]
+    return max(lo, min(hi, random.randint(max(1, p_level - 3), p_level + 3)))
+
+def _enc_npc_level(npc, p_level):
+    lo, hi = npc[2], npc[3]
+    return max(lo, min(hi, random.randint(max(1, p_level - 3), p_level + 3)))
+
+def _apply_move_effect(enc, move_key, target="player"):
+    """Apply a move effect to the encounter state; return flavour string."""
+    mv = MONSTER_MOVES.get(move_key, {})
+    effect = mv.get("effect")
+    flavour = ""
+    if effect == "bleed":
+        enc["p_bleed"] = enc.get("p_bleed", 0) + 1
+        flavour = " Target is bleeding!"
+    elif effect == "burn":
+        enc["p_burn"] = enc.get("p_burn", 0) + 1
+        flavour = " Target is burned!"
+    elif effect == "stun":
+        enc["p_stunned"] = True
+        flavour = " Target is stunned!"
+    elif effect == "poison":
+        enc["p_poison"] = enc.get("p_poison", 0) + 1
+        flavour = " Target is poisoned!"
+    elif effect == "weaken":
+        enc["p_weakened"] = True
+        flavour = " Target is weakened!"
+    elif effect == "expose":
+        enc["p_exposed"] = True
+        flavour = " Target's defense is lowered!"
+    elif effect == "fear":
+        enc["p_skip"] = True
+        flavour = " Target is terrified and skips their turn!"
+    elif effect == "heal_self":
+        heal = enc["e_max_hp"] // 5
+        enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + heal)
+        flavour = f" {enc['e_name']} recovered {heal} HP!"
+    elif effect == "hex":
+        enc["p_hexed"] = True
+        flavour = " Target is hexed!"
+    elif effect == "lifesteal":
+        ls = int(enc.get("last_dmg", 0) * 0.3)
+        enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + ls)
+        flavour = f" {enc['e_name']} drained {ls} HP!"
+    elif effect == "paralyze":
+        enc["p_skip"] = True
+        flavour = " Target is paralyzed and loses their turn!"
+    elif effect == "blind":
+        enc["p_blind"] = True
+        flavour = " Target is blinded, accuracy reduced!"
+    elif effect == "freeze":
+        enc["p_skip"] = True
+        flavour = " Target is frozen solid!"
+    elif effect == "slow":
+        enc["p_slow"] = True
+        flavour = " Target is slowed!"
+    return flavour
+
+def _apply_dot_tick(enc):
+    """Apply bleed/burn/poison ticks; return damage text."""
+    msgs = []
+    if enc.get("p_bleed", 0) > 0:
+        d = max(3, enc["p_max_hp"] // 20)
+        enc["p_hp"] = max(0, enc["p_hp"] - d)
+        msgs.append(f"Bleed: -{d} HP")
+    if enc.get("p_burn", 0) > 0:
+        d = max(3, enc["p_max_hp"] // 18)
+        enc["p_hp"] = max(0, enc["p_hp"] - d)
+        msgs.append(f"Burn: -{d} HP")
+    if enc.get("p_poison", 0) > 0:
+        d = max(2, enc["p_max_hp"] // 22)
+        enc["p_hp"] = max(0, enc["p_hp"] - d)
+        msgs.append(f"Poison: -{d} HP")
+    return ", ".join(msgs)
+
+def _enc_npc_attack(enc, p):
+    """NPC takes its turn; returns action description."""
+    skills = NPC_CLASS_SKILLS.get(enc.get("e_class","fighter"), ["tackle","bite","headbutt"])
+    move_key = random.choice(skills)
+    mv = MONSTER_MOVES.get(move_key, {"name":"Attack","dmg_mult":1.0,"effect":None})
+    dmg_mult = mv.get("dmg_mult", 1.0)
+    raw = int(enc["e_atk"] * dmg_mult * random.uniform(0.85, 1.15))
+    def_red = int(get_stat(p, "DEF") * 0.4)
+    dmg = max(1, raw - def_red)
+    if enc.get("p_exposed"):
+        dmg = int(dmg * 1.2)
+        enc["p_exposed"] = False
+    if enc.get("p_weakened"):
+        pass  # already factored into reduced offense
+    enc["p_hp"] = max(0, enc["p_hp"] - dmg)
+    enc["last_dmg"] = dmg
+    eff_txt = _apply_move_effect(enc, move_key) if mv.get("effect") in ("heal_self","lifesteal") else ""
+    if mv.get("effect") and mv["effect"] not in ("heal_self","lifesteal"):
+        _apply_move_effect(enc, move_key)
+    return f"*{enc['e_name']}* used *{mv['name']}* — {dmg} damage!{eff_txt}"
+
+def _enc_monster_attack(enc):
+    """Wild monster takes its turn; returns action description."""
+    moves = enc.get("e_moves", ["tackle"])
+    move_key = random.choice(moves)
+    mv = MONSTER_MOVES.get(move_key, {"name":"Attack","dmg_mult":1.0,"effect":None})
+    dmg_mult = mv.get("dmg_mult", 1.0)
+    if dmg_mult == 0.0:
+        _apply_move_effect(enc, move_key)
+        return f"*{enc['e_name']}* used *{mv['name']}*!{_apply_move_effect(enc, move_key) if mv.get('effect') in ('fear','heal_self') else ''}"
+    raw = int(enc["e_atk"] * dmg_mult * random.uniform(0.85, 1.15))
+    # Fighter in squad? use squad fighter's def
+    fighter = enc.get("active_fighter")
+    if fighter and fighter.get("type") == "monster":
+        f_hp = fighter["hp"]
+        f_mhp = fighter["max_hp"]
+        def_val = int(f_mhp * 0.1)
+        dmg = max(1, raw - def_val)
+        enc["p_hp"] = max(0, enc["p_hp"] - dmg)
+        eff = _apply_move_effect(enc, move_key) if mv.get("effect") else ""
+        return f"*{enc['e_name']}* used *{mv['name']}* on *{fighter.get('nickname') or enc['e_name']}* — {dmg} dmg!{eff}"
+    else:
+        dmg = max(1, raw)
+        enc["p_hp"] = max(0, enc["p_hp"] - dmg)
+        eff = _apply_move_effect(enc, move_key) if mv.get("effect") else ""
+        return f"*{enc['e_name']}* used *{mv['name']}* — {dmg} damage!{eff}"
 
 # ── BOSSES ────────────────────────────────────────────────────────────────────
 BOSSES = {
@@ -4970,6 +5515,29 @@ def init_db():
         if mc_count>0: logger.info(f"v22 consumable rename: updated {mc_count} player(s)")
     except Exception as e: logger.error(f"v22 consumable rename failed: {e}")
 
+    # ── v23 encounter columns ─────────────────────────────────────────────────
+    for _ec in [("last_encounter","TEXT DEFAULT NULL"), ("monster_squad","TEXT DEFAULT NULL")]:
+        try:
+            conn_v23 = sqlite3.connect(DB_PATH)
+            conn_v23.execute(f"ALTER TABLE players ADD COLUMN {_ec[0]} {_ec[1]}")
+            conn_v23.commit(); conn_v23.close()
+        except sqlite3.OperationalError:
+            pass
+    try:
+        conn_v23b = sqlite3.connect(DB_PATH)
+        conn_v23b.execute("""CREATE TABLE IF NOT EXISTS monster_squad (
+            user_id INTEGER NOT NULL,
+            slot INTEGER NOT NULL,
+            monster_key TEXT NOT NULL,
+            nickname TEXT,
+            level INTEGER DEFAULT 1,
+            exp INTEGER DEFAULT 0,
+            hp INTEGER DEFAULT 0,
+            max_hp INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, slot))""")
+        conn_v23b.commit(); conn_v23b.close()
+    except Exception: pass
+
     conn = sqlite3.connect(DB_PATH)  # reopen for remaining setup
 
     # Clear stale explore locks on startup
@@ -5304,6 +5872,7 @@ def save_player(p):
         "married_to_id","married_to_name","married_at",
         "def_reflect_until",
         "holding_hands_with_id","holding_hands_with_name","holding_hands_since",
+        "last_encounter","monster_squad",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -13193,6 +13762,397 @@ def _holdhands_duration(since_iso: str) -> str:
         return "a while"
 
 
+# ── ENCOUNTER SYSTEM ──────────────────────────────────────────────────────────
+async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    uid = user.id
+    if uid in active_encounters:
+        await send_group(update, "⚠️ You're already in an encounter! Use the buttons to continue.", delay=10); return
+    ok, secs = check_cooldown(p.get("last_encounter"), 30)
+    if not ok:
+        await send_group(update, f"⏳ Encounter cooldown: {secs}s remaining.", delay=8); return
+
+    # First-time hunt: pick a starter
+    if not _has_starter(uid):
+        starters = random.sample(MONSTER_STARTERS, min(3, len(MONSTER_STARTERS)))
+        rows = []
+        for m in starters:
+            mdata = m
+            elem_e = ELEMENT_EMOJI.get(mdata[2], "")
+            rows.append([InlineKeyboardButton(
+                f"{elem_e} {mdata[1]} (Lv.1 {mdata[2].title()})",
+                callback_data=f"enc_starter_{uid}_{mdata[0]}")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data="close_msg")])
+        txt = ("🌿 *First Encounter!*\n\nBefore you venture out you need a *starter monster*.\n"
+               "Choose your companion:\n_(They will join your squad and help you catch more!)_")
+        await send_group(update, txt, reply_markup=InlineKeyboardMarkup(rows), delay=60)
+        return
+
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚔️ Battle — fight an NPC", callback_data=f"enc_mode_{uid}_battle")],
+        [InlineKeyboardButton("🌿 Hunt — find wild monsters", callback_data=f"enc_mode_{uid}_hunt")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="close_msg")],
+    ])
+    await send_group(update, "🎱 *Encounter*\nChoose your mode:", reply_markup=markup, delay=60)
+
+async def squad_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    squad = _get_monster_squad(user.id)
+    if not squad:
+        await send_group(update, "🌿 Your monster squad is empty. Use /encounter and choose *Hunt* to catch monsters!", delay=12); return
+    lines = ["🐉 *Your Monster Squad*\n"]
+    for m in squad:
+        mdata = MONSTER_BY_KEY.get(m["key"])
+        if not mdata: continue
+        elem_e = ELEMENT_EMOJI.get(mdata[2], "")
+        name   = m.get("nickname") or mdata[1]
+        bar    = _enc_hp_bar(m["hp"], m["max_hp"])
+        lines.append(f"[{m['slot']}] {elem_e} *{name}* (Lv.{m['level']})")
+        lines.append(f"   HP: {m['hp']}/{m['max_hp']}  [{bar}]")
+        lines.append(f"   EXP: {m['exp']} | Species: {mdata[1]}")
+        lines.append("")
+    await send_group(update, "\n".join(lines), delay=20)
+
+async def _start_encounter_battle(query, uid, p):
+    npc = _pick_random_npc(p.get("level", 1))
+    n_level = _enc_npc_level(npc, p.get("level", 1))
+    n_hp, n_atk = _npc_level_stats(npc[4], npc[5], n_level)
+    p_hp  = safe_int(p.get("hp"));  p_mhp = safe_int(p.get("max_hp")) or 100
+    enc = {
+        "uid": uid, "mode": "battle", "p_name": p.get("username", "You"),
+        "p_hp": p_hp, "p_max_hp": p_mhp,
+        "e_name": npc[0], "e_class": npc[1],
+        "e_hp": n_hp, "e_max_hp": n_hp, "e_atk": n_atk, "e_level": n_level,
+        "e_gold_range": npc[5], "e_exp_range": npc[6], "e_loot_key": npc[7],
+        "last_action": f"A wild *{npc[0]}* (Lv.{n_level}) appears!",
+        "heals_left": 3,
+    }
+    active_encounters[uid] = enc
+    card = _encounter_battle_card(enc)
+    markup = _encounter_battle_markup(enc)
+    await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
+
+async def _start_encounter_hunt(query, uid, p):
+    squad = _get_monster_squad(uid)
+    monster = _pick_random_monster(p.get("level", 1))
+    m_level = _enc_monster_level(monster, p.get("level", 1))
+    m_hp, m_atk = _mon_level_stats(monster[4], monster[5], m_level)
+    # Active fighter: first squad monster with HP > 0
+    fighter = None
+    for sm in squad:
+        if sm["hp"] > 0:
+            fighter = dict(sm); fighter["type"] = "monster"; break
+    if not fighter:
+        # No healthy squad monster — player fights directly
+        fighter = {"type": "player", "hp": safe_int(p.get("hp")), "max_hp": safe_int(p.get("max_hp")) or 100}
+
+    f_hp   = fighter["hp"]
+    f_mhp  = fighter.get("max_hp", f_hp)
+    enc = {
+        "uid": uid, "mode": "hunt", "p_name": p.get("username", "You"),
+        "p_hp": f_hp, "p_max_hp": f_mhp,
+        "active_fighter": fighter,
+        "e_name": monster[1], "e_key": monster[0], "element": monster[2],
+        "e_hp": m_hp, "e_max_hp": m_hp, "e_atk": m_atk, "e_level": m_level,
+        "e_moves": monster[7], "e_catch_rate": monster[6],
+        "last_action": f"A wild *{monster[1]}* (Lv.{m_level}) appeared!",
+        "squad_slots": [sm["slot"] for sm in squad],
+        "squad_snap": squad,
+    }
+    active_encounters[uid] = enc
+    card = _encounter_battle_card(enc)
+    markup = _encounter_battle_markup(enc)
+    await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
+
+async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data  = query.data
+    uid   = update.effective_user.id
+
+    # ── starter pick ────────────────────────────────────────────────────────
+    if data.startswith("enc_starter_"):
+        parts = data.split("_")
+        target_uid = int(parts[2]); mon_key = parts[3]
+        if uid != target_uid:
+            await query.answer("Not your encounter!", show_alert=True); return
+        if _has_starter(uid):
+            await query.edit_message_text("You already have a starter!"); return
+        ok, squad = _add_monster_to_squad(uid, mon_key, level=1)
+        mdata = MONSTER_BY_KEY[mon_key]
+        elem_e = ELEMENT_EMOJI.get(mdata[2], "")
+        await query.edit_message_text(
+            f"🎉 *{mdata[1]}* {elem_e} joined your squad as your starter!\n"
+            f"Use /encounter again to begin your adventure.", parse_mode="Markdown")
+        return
+
+    # ── mode select ─────────────────────────────────────────────────────────
+    if data.startswith("enc_mode_"):
+        parts = data.split("_"); target_uid = int(parts[2]); mode = parts[3]
+        if uid != target_uid:
+            await query.answer("Not your encounter!", show_alert=True); return
+        p = get_player(uid)
+        if not p: return
+        if uid in active_encounters:
+            await query.answer("Already in an encounter!", show_alert=True); return
+        if mode == "battle":
+            await _start_encounter_battle(query, uid, p)
+        else:
+            await _start_encounter_hunt(query, uid, p)
+        return
+
+    # ── All in-combat actions require an active encounter ────────────────────
+    enc = active_encounters.get(uid)
+    if not enc:
+        await query.edit_message_text("No active encounter."); return
+
+    p = get_player(uid)
+    if not p: return
+
+    # Helper: end encounter (win/lose/flee)
+    async def _end_encounter(result_text, gave_rewards=False):
+        active_encounters.pop(uid, None)
+        p["last_encounter"] = datetime.now().isoformat()
+        save_player(p)
+        await query.edit_message_text(result_text, parse_mode="Markdown")
+
+    # ── FLEE ────────────────────────────────────────────────────────────────
+    if data == f"enc_flee_{uid}":
+        flee_chance = 0.6
+        if random.random() < flee_chance:
+            await _end_encounter("🏃 *You fled safely!*\n_(30s cooldown)_")
+        else:
+            enc["last_action"] = "Failed to flee!"
+            npc_act = _enc_npc_attack(enc) if enc["mode"] == "battle" else _enc_monster_attack(enc)
+            if enc["p_hp"] <= 0:
+                gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
+                await _end_encounter(f"💀 *You were knocked out trying to flee!*\nLost {gold_loss} gold.")
+            else:
+                enc["last_action"] = f"Flee failed! {npc_act}"
+                await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                              reply_markup=_encounter_battle_markup(enc))
+        return
+
+    # ── BATTLE MODE ACTIONS ─────────────────────────────────────────────────
+    if enc["mode"] == "battle":
+        if data == f"enc_atk_{uid}":
+            str_val = get_stat(p, "STR")
+            wep     = p.get("equipped_weapon")
+            wep_atk = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
+            dmg     = max(1, int((str_val + wep_atk) * random.uniform(0.85, 1.15)))
+            enc["e_hp"] = max(0, enc["e_hp"] - dmg)
+            action_txt = f"You attacked for *{dmg}* damage!"
+
+        elif data == f"enc_skl_{uid}":
+            class_id = p.get("class_id", "fighter")
+            skills   = NPC_CLASS_SKILLS.get(class_id, ["tackle"])
+            move_key = random.choice(skills)
+            mv       = MONSTER_MOVES.get(move_key, {"name":"Strike","dmg_mult":1.2,"effect":None})
+            int_val  = get_stat(p, "INT"); str_val = get_stat(p, "STR")
+            base_dmg = max(int_val, str_val)
+            dmg      = max(1, int(base_dmg * mv["dmg_mult"] * random.uniform(0.9, 1.1)))
+            enc["e_hp"] = max(0, enc["e_hp"] - dmg)
+            action_txt  = f"You used *{mv['name']}* for *{dmg}* damage!"
+
+        elif data == f"enc_heal_{uid}":
+            if enc.get("heals_left", 0) <= 0:
+                await query.answer("No heals left!", show_alert=True); return
+            heal = max(10, enc["p_max_hp"] // 6)
+            enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
+            enc["heals_left"] = enc.get("heals_left", 1) - 1
+            action_txt = f"💊 You healed *{heal}* HP! ({enc['heals_left']} heals left)"
+            # No enemy turn on heal? Give NPC a free attack
+            npc_act = _enc_npc_attack(enc)
+            if enc["p_hp"] <= 0:
+                gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
+                await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold. _(30s cooldown)_")
+                return
+            enc["last_action"] = f"{action_txt}\n{npc_act}"
+            await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                          reply_markup=_encounter_battle_markup(enc))
+            return
+        else:
+            return
+
+        # Check enemy dead
+        if enc["e_hp"] <= 0:
+            gold_r = enc.get("e_gold_range", (5,15))
+            gold   = random.randint(*gold_r) if isinstance(gold_r, tuple) else random.randint(5, 30)
+            exp_r  = enc.get("e_exp_range", (20,60))
+            exp    = random.randint(*exp_r)  if isinstance(exp_r, tuple) else random.randint(20, 60)
+            add_exp(p, exp, p.get("username", ""))
+            p["gold"] = safe_int(p.get("gold", 0)) + gold
+            # Loot
+            loot_key  = enc.get("e_loot_key", "Encounter Token")
+            loot_item = loot_key if random.random() < 0.30 else None
+            gear_drop = None
+            if random.random() < 0.15:
+                gear_pool = list(WEAPONS.keys()) + list(ARMORS.keys())
+                gear_drop = random.choice(gear_pool)
+                inv = sjl(p.get("inventory"), [])
+                inv.append(gear_drop); p["inventory"] = json.dumps(inv)
+            if loot_item:
+                inv = sjl(p.get("inventory"), [])
+                inv.append(loot_item); p["inventory"] = json.dumps(inv)
+            loot_line = ""
+            if gear_drop: loot_line += f"\n🎁 Found: *{gear_drop}*"
+            if loot_item: loot_line += f"\n📦 Loot: *{loot_item}*"
+            await _end_encounter(
+                f"✅ *Victory!*\n*{enc['e_name']}* was defeated!\n"
+                f"💰 +{gold} gold | ⭐ +{exp} EXP{loot_line}\n_(30s cooldown)_")
+            return
+
+        # NPC attacks back
+        npc_act = _enc_npc_attack(enc)
+        # DOT tick
+        dot_txt = _apply_dot_tick(enc)
+        if dot_txt: npc_act += f"\n_{dot_txt}_"
+        # Check player dead
+        if enc["p_hp"] <= 0:
+            gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+            p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
+            await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold. _(30s cooldown)_")
+            return
+        enc["last_action"] = f"{action_txt}\n{npc_act}"
+        await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                      reply_markup=_encounter_battle_markup(enc))
+        return
+
+    # ── HUNT MODE ACTIONS ────────────────────────────────────────────────────
+    if enc["mode"] == "hunt":
+        # Move buttons
+        if data.startswith(f"enc_mv_{uid}_"):
+            move_key = data[len(f"enc_mv_{uid}_"):]
+            mv = MONSTER_MOVES.get(move_key, {"name":"Attack","dmg_mult":1.0,"effect":None})
+            fighter = enc.get("active_fighter", {})
+            f_atk   = int(fighter.get("max_hp", 50) * 0.25)  # squad monster atk based on max_hp
+            dmg_mult = mv.get("dmg_mult", 1.0)
+            if dmg_mult == 0.0:
+                action_txt = f"Your *{fighter.get('nickname') or enc.get('e_name','fighter')}* used *{mv['name']}*!"
+            else:
+                dmg = max(1, int(f_atk * dmg_mult * random.uniform(0.85, 1.15)))
+                enc["e_hp"] = max(0, enc["e_hp"] - dmg)
+                action_txt = f"*{fighter.get('nickname') or 'Your monster'}* used *{mv['name']}* — {dmg} dmg!"
+
+            # Check caught monster dead
+            if enc["e_hp"] <= 0:
+                mon_name = enc["e_name"]
+                exp_gain = enc["e_level"] * 12
+                gold_gain = enc["e_level"] * 5
+                add_exp(p, exp_gain, p.get("username", ""))
+                p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
+                # Give squad monster exp too
+                if fighter.get("type") == "monster":
+                    squad = _get_monster_squad(uid)
+                    for sm in squad:
+                        if sm["slot"] == fighter["slot"]:
+                            sm["exp"] += exp_gain // 2
+                            new_lv = 1 + sm["exp"] // (sm["level"] * 80)
+                            if new_lv > sm["level"]:
+                                sm["level"] = min(100, new_lv)
+                                bh, _ = _mon_level_stats(MONSTER_BY_KEY[sm["key"]][4], MONSTER_BY_KEY[sm["key"]][5], sm["level"])
+                                sm["max_hp"] = bh; sm["hp"] = min(sm["hp"], bh)
+                            _save_squad_monster(uid, sm)
+                            break
+                await _end_encounter(
+                    f"⚔️ *Wild {mon_name}* fainted!\n💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP\n_(30s cooldown)_")
+                return
+
+            # Monster attacks back
+            mon_act = _enc_monster_attack(enc)
+            dot_txt = _apply_dot_tick(enc)
+            if dot_txt: mon_act += f"\n_{dot_txt}_"
+            if enc["p_hp"] <= 0:
+                fighter_name = fighter.get("nickname") or "Your monster"
+                await _end_encounter(f"💀 *{fighter_name}* fainted!\n_(30s cooldown — nurse your squad first)_")
+                return
+            enc["last_action"] = f"{action_txt}\n{mon_act}"
+            await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                          reply_markup=_encounter_battle_markup(enc))
+            return
+
+        # Catch button
+        if data == f"enc_catch_{uid}":
+            mon_key = enc["e_key"]
+            mdata   = MONSTER_BY_KEY.get(mon_key)
+            base_rate = enc.get("e_catch_rate", 0.20)
+            hp_pct    = enc["e_hp"] / max(1, enc["e_max_hp"])
+            hp_mod    = 1.8 - hp_pct   # lower HP = better chance (max ~1.8)
+            inv       = sjl(p.get("inventory"), [])
+            stone_mod = 2.0 if "Capture Stone" in inv else 1.0
+            if stone_mod == 2.0:
+                inv.remove("Capture Stone"); p["inventory"] = json.dumps(inv)
+            catch_chance = min(0.95, base_rate * hp_mod * stone_mod)
+            if random.random() < catch_chance:
+                squad = _get_monster_squad(uid)
+                if len(squad) >= 3:
+                    # Prompt release
+                    rows = []
+                    for sm in squad:
+                        mname = sm.get("nickname") or MONSTER_BY_KEY.get(sm["key"],["?"])[1]
+                        rows.append([InlineKeyboardButton(
+                            f"Release [{sm['slot']}] {mname} (Lv.{sm['level']})",
+                            callback_data=f"enc_release_{uid}_{sm['slot']}_{mon_key}_{enc['e_level']}")])
+                    rows.append([InlineKeyboardButton("❌ Cancel Catch", callback_data=f"enc_flee_{uid}")])
+                    await query.edit_message_text(
+                        f"🎯 Caught *{mdata[1]}*! But your squad is full (3/3).\n_Choose a monster to release:_",
+                        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+                    return
+                ok, _ = _add_monster_to_squad(uid, mon_key, enc["e_level"])
+                elem_e = ELEMENT_EMOJI.get(mdata[2], "")
+                await _end_encounter(
+                    f"🎉 *Gotcha!* *{mdata[1]}* {elem_e} was caught and added to your squad!\n_(30s cooldown)_")
+            else:
+                # Monster breaks free and attacks
+                mon_act = _enc_monster_attack(enc)
+                enc["last_action"] = f"Oh no! *{enc['e_name']}* broke free!\n{mon_act}"
+                if enc["p_hp"] <= 0:
+                    await _end_encounter(f"💀 *{enc['e_name']}* broke free and knocked you out! _(30s cooldown)_")
+                    return
+                await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                              reply_markup=_encounter_battle_markup(enc))
+            return
+
+        # Release slot for catch
+        if data.startswith(f"enc_release_{uid}_"):
+            parts     = data.split("_")
+            slot      = int(parts[3]); new_key = parts[4]; new_lv = int(parts[5])
+            _remove_squad_monster(uid, slot)
+            _add_monster_to_squad(uid, new_key, new_lv)
+            mdata = MONSTER_BY_KEY.get(new_key)
+            elem_e = ELEMENT_EMOJI.get(mdata[2], "") if mdata else ""
+            await _end_encounter(
+                f"🔄 Released slot {slot}.\n🎉 *{mdata[1] if mdata else new_key}* {elem_e} joined your squad!\n_(30s cooldown)_")
+            return
+
+        # Switch squad monster
+        if data == f"enc_switch_{uid}":
+            squad = _get_monster_squad(uid)
+            healthy = [sm for sm in squad if sm["hp"] > 0]
+            if not healthy:
+                await query.answer("No healthy squad monsters!", show_alert=True); return
+            fighter = enc.get("active_fighter", {})
+            cur_slot = fighter.get("slot", -1)
+            nxt = next((sm for sm in healthy if sm["slot"] != cur_slot), None)
+            if not nxt:
+                await query.answer("Only one healthy monster!", show_alert=True); return
+            nxt["type"] = "monster"
+            enc["active_fighter"] = nxt
+            enc["p_hp"]    = nxt["hp"]; enc["p_max_hp"] = nxt["max_hp"]
+            mdata = MONSTER_BY_KEY.get(nxt["key"])
+            enc["last_action"] = f"Switched to *{nxt.get('nickname') or (mdata[1] if mdata else nxt['key'])}*!"
+            await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                          reply_markup=_encounter_battle_markup(enc))
+            return
+
 async def holdhands_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     p = get_player(user.id)
@@ -17958,6 +18918,11 @@ def main():
     app.add_handler(CommandHandler("bounties",   bounties_cmd))
     app.add_handler(CommandHandler("changelog",  changelog_cmd))
     app.add_handler(CommandHandler("gear",       gear_cmd))
+
+    # Encounter
+    app.add_handler(CommandHandler("encounter",    encounter_cmd))
+    app.add_handler(CommandHandler("squad",        squad_cmd))
+    app.add_handler(CallbackQueryHandler(encounter_callback, pattern="^enc_"))
 
     # Marriage
     app.add_handler(CommandHandler("marry",        marry_cmd))
