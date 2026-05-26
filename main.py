@@ -2969,7 +2969,7 @@ def _encounter_battle_card(enc):
     lines.append(f"HP: {p_hp}/{p_mhp}  [{p_bar}]")
     if last:
         lines.append("")
-        lines.append(f"_{last}_")
+        lines.append(last)
     return "\n".join(lines)
 
 def _encounter_battle_markup(enc, p=None):
@@ -3111,18 +3111,18 @@ def _enc_npc_attack(enc, p):
     if effect == "heal_self" and random.random() < 0.25:
         heal = enc["e_max_hp"] // 8
         enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + heal)
-        extra = f" _(+{heal} HP restored)_"
+        extra = f" (+{heal} HP restored)"
         dmg = max(1, dmg // 2)
     elif effect == "stun" and random.random() < 0.20:
         enc["p_stunned"] = True
-        extra = " _You are stunned next turn!_"
+        extra = " ⚡ You are stunned next turn!"
     elif effect == "weaken" and random.random() < 0.20:
         enc["p_weakened"] = True
-        extra = " _Your attacks are weakened!_"
+        extra = " ⬇️ Your attacks are weakened!"
     elif effect == "lifesteal" and random.random() < 0.20:
         ls = int(dmg * 0.3)
         enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + ls)
-        extra = f" _(+{ls} HP drained)_"
+        extra = f" (+{ls} HP drained)"
     enc["p_hp"] = max(0, enc["p_hp"] - dmg)
     enc["last_dmg"] = dmg
     return f"*{enc['e_name']}* used *{atk_name}* — {dmg} dmg!{extra}"
@@ -14118,7 +14118,13 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         active_encounters.pop(uid, None)
         p["last_encounter"] = datetime.now().isoformat()
         save_player(p)
-        await query.edit_message_text(result_text, parse_mode="Markdown")
+        try:
+            await query.edit_message_text(result_text, parse_mode="Markdown")
+        except Exception:
+            try:
+                await context.bot.send_message(query.message.chat_id, result_text, parse_mode="Markdown")
+            except Exception:
+                pass
 
     # ── FLEE ────────────────────────────────────────────────────────────────
     if data == f"enc_flee_{uid}":
@@ -14134,8 +14140,12 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await _end_encounter(f"💀 *You were knocked out trying to flee!*\nLost {gold_loss} gold.")
             else:
                 enc["last_action"] = f"Flee failed! {npc_act}"
-                await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
-                                              reply_markup=_encounter_battle_markup(enc, p))
+                try:
+                    await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                                  reply_markup=_encounter_battle_markup(enc, p))
+                except Exception:
+                    await query.edit_message_text(_encounter_battle_card(enc),
+                                                  reply_markup=_encounter_battle_markup(enc, p))
         return
 
     # ── BATTLE MODE ACTIONS ─────────────────────────────────────────────────
@@ -14189,8 +14199,12 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold. _(30s cooldown)_")
                 return
             enc["last_action"] = f"{action_txt}\n{npc_act}"
-            await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
-                                          reply_markup=_encounter_battle_markup(enc, p))
+            try:
+                await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                              reply_markup=_encounter_battle_markup(enc, p))
+            except Exception:
+                await query.edit_message_text(_encounter_battle_card(enc),
+                                              reply_markup=_encounter_battle_markup(enc, p))
             return
         else:
             return
@@ -14235,8 +14249,15 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold. _(30s cooldown)_")
             return
         enc["last_action"] = f"{action_txt}\n{npc_act}"
-        await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
-                                      reply_markup=_encounter_battle_markup(enc, p))
+        try:
+            await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                          reply_markup=_encounter_battle_markup(enc, p))
+        except Exception:
+            try:
+                await query.edit_message_text(_encounter_battle_card(enc),
+                                              reply_markup=_encounter_battle_markup(enc, p))
+            except Exception:
+                pass
         return
 
     # ── HUNT MODE ACTIONS ────────────────────────────────────────────────────
