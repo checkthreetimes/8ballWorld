@@ -1851,6 +1851,94 @@ WEAPONS = {
     "Verdict Cross":             {"class":"priest","type":"cross","atk":26,"rarity":"epic",     "line":"priest"},
     "The Final Judgment":        {"class":"priest","type":"cross","atk":43,"rarity":"legendary","line":"priest"},
     "The Eternal Verdict":       {"class":"priest","type":"cross","atk":63,"rarity":"mythic",   "line":"priest"},
+    # ── BOTANIST WANDS ────────────────────────────────────────────────────────
+    "Seedling Wand":             {"class":"botanist","type":"wand","atk":3, "rarity":"common",   "line":"botanist"},
+    "Budding Rod":               {"class":"botanist","type":"wand","atk":3, "rarity":"common",   "line":"botanist"},
+    "Thornwood Wand":            {"class":"botanist","type":"wand","atk":8, "rarity":"uncommon", "line":"botanist"},
+    "Bloom Focus":               {"class":"botanist","type":"wand","atk":9, "rarity":"uncommon", "line":"botanist"},
+    "Nature's Grasp":            {"class":"botanist","type":"wand","atk":15,"rarity":"rare",     "line":"botanist"},
+    "Verdant Wand":              {"class":"botanist","type":"wand","atk":15,"rarity":"rare",     "line":"botanist"},
+    "Wildflower Scepter":        {"class":"botanist","type":"wand","atk":25,"rarity":"epic",     "line":"botanist"},
+    "Garden Conduit":            {"class":"botanist","type":"wand","atk":25,"rarity":"epic",     "line":"botanist"},
+    "Eden's Branch":             {"class":"botanist","type":"wand","atk":40,"rarity":"legendary","line":"botanist"},
+    "The Root of Worlds":        {"class":"botanist","type":"wand","atk":60,"rarity":"mythic",   "line":"botanist"},
+    # ── BOTANIST STAFFS ───────────────────────────────────────────────────────
+    "Briar Rod":                 {"class":"botanist","type":"staff","atk":4, "rarity":"common",   "line":"botanist"},
+    "Thorned Branch":            {"class":"botanist","type":"staff","atk":4, "rarity":"common",   "line":"botanist"},
+    "Poison Vine Staff":         {"class":"botanist","type":"staff","atk":9, "rarity":"uncommon", "line":"botanist"},
+    "Fern Staff":                {"class":"botanist","type":"staff","atk":9, "rarity":"uncommon", "line":"botanist"},
+    "Verdant Branch":            {"class":"botanist","type":"staff","atk":16,"rarity":"rare",     "line":"botanist"},
+    "Thorn Shard Staff":         {"class":"botanist","type":"staff","atk":16,"rarity":"rare",     "line":"botanist"},
+    "Nature's Wrath Staff":      {"class":"botanist","type":"staff","atk":27,"rarity":"epic",     "line":"botanist"},
+    "Blight Staff":              {"class":"botanist","type":"staff","atk":27,"rarity":"epic",     "line":"botanist"},
+    "Grove of Thorns":           {"class":"botanist","type":"staff","atk":43,"rarity":"legendary","line":"botanist"},
+    "The Primordial Root":       {"class":"botanist","type":"staff","atk":63,"rarity":"mythic",   "line":"botanist"},
+    # ── ENCHANTRESS WANDS ─────────────────────────────────────────────────────
+    "Charmed Birch Wand":        {"class":"enchantress","type":"wand","atk":3, "rarity":"common",   "line":"enchantress"},
+    "Flicker Wand":              {"class":"enchantress","type":"wand","atk":3, "rarity":"common",   "line":"enchantress"},
+    "Binding Wand":              {"class":"enchantress","type":"wand","atk":8, "rarity":"uncommon", "line":"enchantress"},
+    "Songbird's Focus":          {"class":"enchantress","type":"wand","atk":9, "rarity":"uncommon", "line":"enchantress"},
+    "Enchanter's Wand":          {"class":"enchantress","type":"wand","atk":15,"rarity":"rare",     "line":"enchantress"},
+    "Songbird's Wand":           {"class":"enchantress","type":"wand","atk":15,"rarity":"rare",     "line":"enchantress"},
+    "Grand Muse Scepter":        {"class":"enchantress","type":"wand","atk":25,"rarity":"epic",     "line":"enchantress"},
+    "Aria Conduit":              {"class":"enchantress","type":"wand","atk":25,"rarity":"epic",     "line":"enchantress"},
+    "Song of the Ancients":      {"class":"enchantress","type":"wand","atk":40,"rarity":"legendary","line":"enchantress"},
+    "Aria Eternal":              {"class":"enchantress","type":"wand","atk":60,"rarity":"mythic",   "line":"enchantress"},
+    # ── ENCHANTRESS STAFFS ────────────────────────────────────────────────────
+    "Hexmark Rod":               {"class":"enchantress","type":"staff","atk":4, "rarity":"common",   "line":"enchantress"},
+    "Cursed Twig":               {"class":"enchantress","type":"staff","atk":4, "rarity":"common",   "line":"enchantress"},
+    "Cursed Branch":             {"class":"enchantress","type":"staff","atk":9, "rarity":"uncommon", "line":"enchantress"},
+    "Vex Staff":                 {"class":"enchantress","type":"staff","atk":9, "rarity":"uncommon", "line":"enchantress"},
+    "Vexmark Staff":             {"class":"enchantress","type":"staff","atk":16,"rarity":"rare",     "line":"enchantress"},
+    "Hex Shard Staff":           {"class":"enchantress","type":"staff","atk":16,"rarity":"rare",     "line":"enchantress"},
+    "Dread Empress Staff":       {"class":"enchantress","type":"staff","atk":27,"rarity":"epic",     "line":"enchantress"},
+    "Doom Conduit":              {"class":"enchantress","type":"staff","atk":27,"rarity":"epic",     "line":"enchantress"},
+    "The Hex Throne":            {"class":"enchantress","type":"staff","atk":43,"rarity":"legendary","line":"enchantress"},
+    "Doom's Conduit":            {"class":"enchantress","type":"staff","atk":63,"rarity":"mythic",   "line":"enchantress"},
+    # ── VALKYRIE SWORDS 1H ────────────────────────────────────────────────────
+    "Runic Training Blade":      {"class":"valkyrie","type":"sword_1h","atk":4, "rarity":"common",   "line":"valkyrie"},
+    "Iron Rune Sword":           {"class":"valkyrie","type":"sword_1h","atk":4, "rarity":"common",   "line":"valkyrie"},
+    "Einherjar's Edge":          {"class":"valkyrie","type":"sword_1h","atk":9, "rarity":"uncommon", "line":"valkyrie"},
+    "Valhall Blade":             {"class":"valkyrie","type":"sword_1h","atk":10,"rarity":"uncommon", "line":"valkyrie"},
+    "Valiant Blade":             {"class":"valkyrie","type":"sword_1h","atk":16,"rarity":"rare",     "line":"valkyrie"},
+    "Runic Battle Sword":        {"class":"valkyrie","type":"sword_1h","atk":17,"rarity":"rare",     "line":"valkyrie"},
+    "Runeblade":                 {"class":"valkyrie","type":"sword_1h","atk":26,"rarity":"epic",     "line":"valkyrie"},
+    "Storm Rune Sword":          {"class":"valkyrie","type":"sword_1h","atk":28,"rarity":"epic",     "line":"valkyrie"},
+    "Bifrost's Edge":            {"class":"valkyrie","type":"sword_1h","atk":42,"rarity":"legendary","line":"valkyrie"},
+    "Odin's Chosen Blade":       {"class":"valkyrie","type":"sword_1h","atk":62,"rarity":"mythic",   "line":"valkyrie"},
+    # ── VALKYRIE SWORDS 2H ────────────────────────────────────────────────────
+    "Iron Rune Greatsword":      {"class":"valkyrie","type":"sword_2h","atk":5, "rarity":"common",   "line":"valkyrie"},
+    "Battle Rune Claymore":      {"class":"valkyrie","type":"sword_2h","atk":5, "rarity":"common",   "line":"valkyrie"},
+    "Storm Claymore":            {"class":"valkyrie","type":"sword_2h","atk":11,"rarity":"uncommon", "line":"valkyrie"},
+    "Rune Greatsword":           {"class":"valkyrie","type":"sword_2h","atk":11,"rarity":"uncommon", "line":"valkyrie"},
+    "Thunder Greatsword":        {"class":"valkyrie","type":"sword_2h","atk":18,"rarity":"rare",     "line":"valkyrie"},
+    "Valkyrie's Cleave":         {"class":"valkyrie","type":"sword_2h","atk":18,"rarity":"rare",     "line":"valkyrie"},
+    "Divine Tempest Blade":      {"class":"valkyrie","type":"sword_2h","atk":29,"rarity":"epic",     "line":"valkyrie"},
+    "Stormforge Greatsword":     {"class":"valkyrie","type":"sword_2h","atk":29,"rarity":"epic",     "line":"valkyrie"},
+    "Valhalla's Thunder":        {"class":"valkyrie","type":"sword_2h","atk":46,"rarity":"legendary","line":"valkyrie"},
+    "Mjolnir's Rage":            {"class":"valkyrie","type":"sword_2h","atk":66,"rarity":"mythic",   "line":"valkyrie"},
+    # ── PHANTOM DANCER DAGGERS ────────────────────────────────────────────────
+    "Dancing Blade":             {"class":"phantom_dancer","type":"dagger","atk":4, "rarity":"common",   "line":"phantom_dancer"},
+    "Quickstep Dagger":          {"class":"phantom_dancer","type":"dagger","atk":4, "rarity":"common",   "line":"phantom_dancer"},
+    "Silver Step Dagger":        {"class":"phantom_dancer","type":"dagger","atk":10,"rarity":"uncommon", "line":"phantom_dancer"},
+    "Moonwhirl Knife":           {"class":"phantom_dancer","type":"dagger","atk":10,"rarity":"uncommon", "line":"phantom_dancer"},
+    "Danse Blade":               {"class":"phantom_dancer","type":"dagger","atk":17,"rarity":"rare",     "line":"phantom_dancer"},
+    "Phantom Cutter":            {"class":"phantom_dancer","type":"dagger","atk":17,"rarity":"rare",     "line":"phantom_dancer"},
+    "Danse Macabre Blade":       {"class":"phantom_dancer","type":"dagger","atk":27,"rarity":"epic",     "line":"phantom_dancer"},
+    "Thousand-Cut Dagger":       {"class":"phantom_dancer","type":"dagger","atk":27,"rarity":"epic",     "line":"phantom_dancer"},
+    "The Last Dance":            {"class":"phantom_dancer","type":"dagger","atk":44,"rarity":"legendary","line":"phantom_dancer"},
+    "Eternal Waltz":             {"class":"phantom_dancer","type":"dagger","atk":62,"rarity":"mythic",   "line":"phantom_dancer"},
+    # ── PHANTOM DANCER THROWING STARS ─────────────────────────────────────────
+    "Featherlight Star":         {"class":"phantom_dancer","type":"throwing_star","atk":4, "rarity":"common",   "line":"phantom_dancer"},
+    "Dancer's Arc":              {"class":"phantom_dancer","type":"throwing_star","atk":4, "rarity":"common",   "line":"phantom_dancer"},
+    "Phantom Arc":               {"class":"phantom_dancer","type":"throwing_star","atk":9, "rarity":"uncommon", "line":"phantom_dancer"},
+    "Ghostwhirl Star":           {"class":"phantom_dancer","type":"throwing_star","atk":9, "rarity":"uncommon", "line":"phantom_dancer"},
+    "Ethereal Star":             {"class":"phantom_dancer","type":"throwing_star","atk":16,"rarity":"rare",     "line":"phantom_dancer"},
+    "Phase Cutter":              {"class":"phantom_dancer","type":"throwing_star","atk":16,"rarity":"rare",     "line":"phantom_dancer"},
+    "Ethereal Shuriken":         {"class":"phantom_dancer","type":"throwing_star","atk":26,"rarity":"epic",     "line":"phantom_dancer"},
+    "Void Dancer's Star":        {"class":"phantom_dancer","type":"throwing_star","atk":26,"rarity":"epic",     "line":"phantom_dancer"},
+    "The Phantom Step":          {"class":"phantom_dancer","type":"throwing_star","atk":42,"rarity":"legendary","line":"phantom_dancer"},
+    "Ethereal Sovereign":        {"class":"phantom_dancer","type":"throwing_star","atk":61,"rarity":"mythic",   "line":"phantom_dancer"},
 }
 
 ARMORS = {
@@ -1909,6 +1997,34 @@ ARMORS = {
     "Zealot's Holy Robe":        {"class":"priest","def":29,"rarity":"epic",     "line":"priest"},
     "The High Saint's Vestment": {"class":"priest","def":44,"rarity":"legendary","line":"priest"},
     "Heaven's Blessing Robe":    {"class":"priest","def":68,"rarity":"mythic",   "line":"priest"},
+    # ── BOTANIST ROBES ────────────────────────────────────────────────────────
+    "Woven Herb Robe":           {"class":"botanist","def":3, "rarity":"common",   "line":"botanist"},
+    "Druid's Leaf Vestment":     {"class":"botanist","def":8, "rarity":"uncommon", "line":"botanist"},
+    "Nature's Woven Robe":       {"class":"botanist","def":18,"rarity":"rare",     "line":"botanist"},
+    "Bloom Sage Vestment":       {"class":"botanist","def":30,"rarity":"epic",     "line":"botanist"},
+    "Eden's Weave":              {"class":"botanist","def":46,"rarity":"legendary","line":"botanist"},
+    "The Living Robe":           {"class":"botanist","def":70,"rarity":"mythic",   "line":"botanist"},
+    # ── ENCHANTRESS ROBES ─────────────────────────────────────────────────────
+    "Charmed Silk Robe":         {"class":"enchantress","def":3, "rarity":"common",   "line":"enchantress"},
+    "Beguiler's Mantle":         {"class":"enchantress","def":8, "rarity":"uncommon", "line":"enchantress"},
+    "Hex Dancer's Robe":         {"class":"enchantress","def":18,"rarity":"rare",     "line":"enchantress"},
+    "Empress's Vestment":        {"class":"enchantress","def":30,"rarity":"epic",     "line":"enchantress"},
+    "The Enchanted Gown":        {"class":"enchantress","def":46,"rarity":"legendary","line":"enchantress"},
+    "Grand Muse's Eternal Robe": {"class":"enchantress","def":70,"rarity":"mythic",   "line":"enchantress"},
+    # ── VALKYRIE ARMOR ────────────────────────────────────────────────────────
+    "Runic Iron Vest":           {"class":"valkyrie","def":4, "rarity":"common",   "line":"valkyrie"},
+    "Shieldmaiden's Mail":       {"class":"valkyrie","def":10,"rarity":"uncommon", "line":"valkyrie"},
+    "Valkyrior Plate":           {"class":"valkyrie","def":20,"rarity":"rare",     "line":"valkyrie"},
+    "Einherjar's Plate":         {"class":"valkyrie","def":33,"rarity":"epic",     "line":"valkyrie"},
+    "Odin's Battle Plate":       {"class":"valkyrie","def":52,"rarity":"legendary","line":"valkyrie"},
+    "The Chooser's Aegis":       {"class":"valkyrie","def":76,"rarity":"mythic",   "line":"valkyrie"},
+    # ── PHANTOM DANCER ARMOR ──────────────────────────────────────────────────
+    "Dancer's Silk Wrap":        {"class":"phantom_dancer","def":3, "rarity":"common",   "line":"phantom_dancer"},
+    "Phantom Dancer's Leathers": {"class":"phantom_dancer","def":9, "rarity":"uncommon", "line":"phantom_dancer"},
+    "Ghoststep Vest":            {"class":"phantom_dancer","def":19,"rarity":"rare",     "line":"phantom_dancer"},
+    "Danse Macabre Armor":       {"class":"phantom_dancer","def":31,"rarity":"epic",     "line":"phantom_dancer"},
+    "The Phantom Veil":          {"class":"phantom_dancer","def":48,"rarity":"legendary","line":"phantom_dancer"},
+    "Ethereal Dancer's Form":    {"class":"phantom_dancer","def":72,"rarity":"mythic",   "line":"phantom_dancer"},
 }
 
 # Shields: warrior knight path (A) + assassin claws (B, type="claw" uses "atk" not "def")
@@ -3935,8 +4051,8 @@ def can_equip_weapon(p, weapon_name):
     raw_line   = cls_data.get("line", "")
     gear_line  = _GEAR_LINE_MAP.get(raw_line, raw_line)
     weapon_class = w.get("class")
-    if weapon_class != gear_line:
-        return False, f"Only {weapon_class.capitalize()} classes can use this."
+    if weapon_class != gear_line and weapon_class != raw_line:
+        return False, f"Only {weapon_class.replace('_',' ').capitalize()} classes can use this."
     weapon_type = w.get("type")
     allowed = cls_data.get("weapon_types", [])
     if weapon_type not in allowed:
@@ -3953,8 +4069,9 @@ def can_equip_armor(p, armor_name):
     cls_data = CLASS_TREE.get(cls_id, {})
     raw_line  = cls_data.get("line", "")
     gear_line = _GEAR_LINE_MAP.get(raw_line, raw_line)
-    if a.get("class") and a["class"] != gear_line:
-        return False, f"Only {a['class'].capitalize()} classes can wear this."
+    armor_class = a.get("class")
+    if armor_class and armor_class != gear_line and armor_class != raw_line:
+        return False, f"Only {armor_class.replace('_',' ').capitalize()} classes can wear this."
     return True, ""
 
 def get_player_class_id(p):
@@ -5415,7 +5532,9 @@ def init_db():
                 ("def_reflect_until","TEXT DEFAULT NULL"),
                 ("holding_hands_with_id","INTEGER DEFAULT NULL"),
                 ("holding_hands_with_name","TEXT DEFAULT NULL"),
-                ("holding_hands_since","TEXT DEFAULT NULL")]:
+                ("holding_hands_since","TEXT DEFAULT NULL"),
+                ("marriages","TEXT DEFAULT NULL"),
+                ("holding_hands_list","TEXT DEFAULT NULL")]:
         try:
             conn.execute(f"ALTER TABLE players ADD COLUMN {_mc[0]} {_mc[1]}")
             conn.commit()
@@ -5953,8 +6072,10 @@ def save_player(p):
         "kill_streak","max_kill_streak","revenge_target","revenge_expires",
         "kills_today","kills_today_date","last_claim","claim_streak","pvp_history",
         "married_to_id","married_to_name","married_at",
+        "marriages",
         "def_reflect_until",
         "holding_hands_with_id","holding_hands_with_name","holding_hands_since",
+        "holding_hands_list",
         "last_encounter","monster_squad",
     ]
     vals = [p.get(f) for f in fields]
@@ -6139,9 +6260,10 @@ def add_exp(p, amount, weather=None):
         if g:
             bonus = GUILD_PERKS.get(safe_int(g.get("level"),1),{}).get("exp_bonus",0)
             amount = round(amount * (1 + bonus))
-    # Marriage bonus: +3% EXP
-    if p.get("married_to_id"):
-        amount = round(amount * 1.03)
+    # Marriage bonus: +3% EXP per spouse, capped at +15%
+    _m_count = len(sjl(p.get("marriages"), []) or ([p.get("married_to_id")] if p.get("married_to_id") else []))
+    if _m_count > 0:
+        amount = round(amount * (1 + min(0.15, _m_count * 0.03)))
     msgs = []; leveled_up = False
     p["exp"]      += max(0, amount)
     p["total_exp"] = safe_int(p.get("total_exp")) + max(0, amount)
@@ -7319,8 +7441,12 @@ def _build_stats_pages(p, viewing_name=None):
     )
 
     married_str = ""
-    if p.get("married_to_id") and p.get("married_to_name"):
-        married_str = f"\n💍 Married to *{p['married_to_name']}*"
+    _stats_marriages = sjl(p.get("marriages"), [])
+    if not _stats_marriages and p.get("married_to_id"):
+        _stats_marriages = [{"id": p["married_to_id"], "name": p["married_to_name"]}]
+    if _stats_marriages:
+        spouse_names = ", ".join(f"*{m['name']}*" for m in _stats_marriages)
+        married_str = f"\n💍 Married to {spouse_names}"
 
     pet_str = ""
     _active_pet = get_active_pet_record(p["user_id"])
@@ -9064,7 +9190,7 @@ def _render_bag_item(p, item, count):
     enc_str = f" ✨×{len(encs)}" if encs else ""
     return f"{rarity} *{item}*{enh_str}{enc_str} x{count}\n  {type_tag} - _{stat_str}_"
 
-async def _send_inventory_section(target, p, section="Equipped", edit=False):
+async def _send_inventory_section(target, p, section="Equipped", edit=False, uid=0):
     sections = _build_inv_sections(p)
     if section not in sections:
         section = sections[0]
@@ -9111,12 +9237,13 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False):
     # Navigation buttons — named like /stats
     idx = sections.index(section)
     btn_row = []
+    _inv_uid = uid or p.get("user_id", 0)
     if idx > 0:
         prev = sections[idx - 1]
-        btn_row.append(InlineKeyboardButton(f"◀ {prev}", callback_data=f"inv_s_{prev}"))
+        btn_row.append(InlineKeyboardButton(f"◀ {prev}", callback_data=f"inv_s_{_inv_uid}_{prev}"))
     if idx < len(sections) - 1:
         nxt = sections[idx + 1]
-        btn_row.append(InlineKeyboardButton(f"{nxt} ▶", callback_data=f"inv_s_{nxt}"))
+        btn_row.append(InlineKeyboardButton(f"{nxt} ▶", callback_data=f"inv_s_{_inv_uid}_{nxt}"))
     markup = InlineKeyboardMarkup([btn_row]) if btn_row else None
 
     # Add per-item sell buttons for bag sections
@@ -9174,19 +9301,26 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False):
 
 async def inventory_callback(update, context):
     query = update.callback_query
+    if not query.data.startswith("inv_s_"): await query.answer(); return
+    # format: inv_s_{uid}_{section}
+    parts = query.data[len("inv_s_"):].split("_", 1)
+    try:
+        uid     = int(parts[0])
+        section = parts[1]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your inventory!", show_alert=True); return
     await query.answer()
-    if not query.data.startswith("inv_s_"): return
-    section = query.data[len("inv_s_"):]
-    user = update.effective_user
-    p = get_player(user.id)
+    p = get_player(uid)
     if not p: return
-    await _send_inventory_section(query, p, section, edit=True)
+    await _send_inventory_section(query, p, section, edit=True, uid=uid)
 
 async def inventory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-    await _send_inventory_section(update, p, section="Equipped", edit=False)
+    await _send_inventory_section(update, p, section="Equipped", edit=False, uid=user.id)
 
 
 def _build_equip_page_markup(p, uid, page, page_size=5):
@@ -13670,29 +13804,76 @@ def calc_dungeon_cp(p):
             + get_armor_def(p) * 2
             + len(sjl(p.get("all_skills"),[])) * 30)
 
-# ── MARRIAGE ─────────────────────────────────────────────────────────────────
+# ── SOCIAL SYSTEM HELPERS ─────────────────────────────────────────────────────
+def _social_name(tg_user):
+    """'*Name* (@username)' if username available, else '*Name*'."""
+    n = tg_user.first_name or "?"
+    return f"*{n}* (@{tg_user.username})" if tg_user.username else f"*{n}*"
+
+def _get_marriages(p):
+    m = sjl(p.get("marriages"), [])
+    if not m and p.get("married_to_id"):
+        m = [{"id": int(p["married_to_id"]), "name": p.get("married_to_name","?"), "date": p.get("married_at","")}]
+    return m
+
+def _get_holding_hands(p):
+    h = sjl(p.get("holding_hands_list"), [])
+    if not h and p.get("holding_hands_with_id"):
+        h = [{"id": int(p["holding_hands_with_id"]), "name": p.get("holding_hands_with_name","?"), "since": p.get("holding_hands_since","")}]
+    return h
+
+def _save_marriages(p, m_list):
+    p["marriages"] = json.dumps(m_list)
+    if m_list:
+        p["married_to_id"]   = m_list[0]["id"]
+        p["married_to_name"] = m_list[0]["name"]
+        p["married_at"]      = m_list[0].get("date","")
+    else:
+        p["married_to_id"] = None; p["married_to_name"] = None; p["married_at"] = None
+
+def _save_holding_hands(p, h_list):
+    p["holding_hands_list"] = json.dumps(h_list)
+    if h_list:
+        p["holding_hands_with_id"]   = h_list[0]["id"]
+        p["holding_hands_with_name"] = h_list[0]["name"]
+        p["holding_hands_since"]     = h_list[0].get("since","")
+    else:
+        p["holding_hands_with_id"] = None; p["holding_hands_with_name"] = None; p["holding_hands_since"] = None
+
+def _marriage_fee(current_count):
+    fees = [1000, 5000, 15000, 50000]
+    return fees[min(current_count, len(fees) - 1)]
+
+
+# ── MARRIAGE ──────────────────────────────────────────────────────────────────
 async def marry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
 
-    # Show own marriage status if no target
     if not update.message.reply_to_message and not context.args:
-        if p.get("married_to_id") and p.get("married_to_name"):
-            ma = p.get("married_at","unknown date")
+        marriages = _get_marriages(p)
+        if marriages:
+            lines = [f"💍 *{p['username']}'s Marriages*\n"]
+            for m in marriages:
+                date_str = (m.get("date","")[:10]) if m.get("date") else "?"
+                lines.append(f"💍 *{m['name']}*  _(since {date_str})_")
+            lines.append(f"\n_{len(marriages)} marriage{'s' if len(marriages)>1 else ''} total_")
+            lines.append("Use /divorce to end a marriage.")
+            await send_group(update, "\n".join(lines), delay=30)
+        else:
             await send_group(update,
-                f"💍 *{p['username']}* × *{p['married_to_name']}*\n"
-                f"_Together since {ma[:10] if ma else '?'}_\n\n"
-                f"Use /divorce to end the marriage.", delay=30); return
-        await send_group(update,
-            "💍 *Marriage*\n\n"
-            "Reply to someone's message and type /marry to propose!\n"
-            "Costs *1,000 gold* each. Benefits:\n"
-            "• 💍 Shown on your /stats profile\n"
-            "• 🏅 Exclusive *Beloved* title\n"
-            "• ✨ +3% EXP bonus on all gains\n\n"
-            "_Both partners must agree._", delay=30); return
+                "💍 *Marriage*\n\n"
+                "Reply to someone's message and type /marry to propose!\n\n"
+                "*Benefits per spouse:*\n"
+                "• 💍 Shown on your /stats profile\n"
+                "• 🏅 *Beloved* title (first marriage)\n"
+                "• ✨ +3% EXP bonus (stacks per spouse, cap +15%)\n\n"
+                "*Costs:*  1st marriage: 1,000g each\n"
+                "2nd: 5,000g  ·  3rd: 15,000g  ·  4th+: 50,000g each\n\n"
+                "_Both partners must agree._", delay=30)
+        return
 
     du = update.message.reply_to_message.from_user if update.message.reply_to_message else None
     if not du:
@@ -13704,35 +13885,50 @@ async def marry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not tp:
         await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
 
-    if p.get("married_to_id"):
-        await send_group(update, f"💍 You're already married to *{p.get('married_to_name')}*! Use /divorce first.", delay=12); return
-    if tp.get("married_to_id"):
-        await send_group(update, f"💔 {du.first_name} is already married!", delay=12); return
-    if p.get("gold", 0) < 1000:
-        await send_group(update, "💰 You need at least *1,000 gold* to propose!", delay=9); return
+    proposer_marriages = _get_marriages(p)
+    target_marriages   = _get_marriages(tp)
 
-    # Send proposal
+    if any(m["id"] == du.id for m in proposer_marriages):
+        await send_group(update, f"💍 You're already married to *{du.first_name}*!", delay=9); return
+
+    proposer_fee = _marriage_fee(len(proposer_marriages))
+    target_fee   = _marriage_fee(len(target_marriages))
+
+    if p.get("gold", 0) < proposer_fee:
+        await send_group(update, f"💰 You need *{proposer_fee:,} gold* to propose!", delay=9); return
+
     pending_marriages[user.id] = {
-        "target_id": du.id,
-        "chat_id": update.effective_chat.id,
-        "expires": (datetime.now() + timedelta(minutes=5)).isoformat(),
+        "target_id":    du.id,
+        "chat_id":      update.effective_chat.id,
+        "expires":      (datetime.now() + timedelta(minutes=5)).isoformat(),
+        "proposer_fee": proposer_fee,
+        "target_fee":   target_fee,
     }
+
+    a_name = _social_name(user)
+    d_name = _social_name(du)
+    if proposer_fee == target_fee:
+        cost_line = f"Cost: *{proposer_fee:,}g* each"
+    else:
+        cost_line = f"Cost: *{proposer_fee:,}g* for you · *{target_fee:,}g* for {du.first_name}"
+
+    p_count_note = f"_(your {len(proposer_marriages)+1}{'st' if len(proposer_marriages)==0 else 'nd' if len(proposer_marriages)==1 else 'rd' if len(proposer_marriages)==2 else 'th'} marriage)_" if proposer_marriages else ""
+
     markup = InlineKeyboardMarkup([[
         InlineKeyboardButton("💍 Accept",  callback_data=f"marry_accept_{user.id}"),
         InlineKeyboardButton("💔 Decline", callback_data=f"marry_decline_{user.id}"),
     ]])
     await send_group(update,
-        f"💍 *{user.first_name}* proposes to *{du.first_name}*!\n\n"
+        f"💍 {a_name} proposes to {d_name}!\n\n"
+        f"{cost_line}  {p_count_note}\n\n"
         f"_{du.first_name}, will you accept?_\n"
-        f"Cost: 1,000 gold each (2,000 total)\n\n"
-        f"_Proposal expires in 5 minutes._",
+        f"_Expires in 5 minutes._",
         permanent=False, delay=300, reply_markup=markup)
 
 
 async def close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data  = query.data
-    # close_msg_{uid} format → only the owner can close
     if data.startswith("close_msg_"):
         try:
             owner_uid = int(data[len("close_msg_"):])
@@ -13752,7 +13948,7 @@ async def marry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     parts = query.data.split("_")
-    action = parts[1]          # accept or decline
+    action      = parts[1]
     proposer_id = int(parts[2])
 
     proposal = pending_marriages.get(proposer_id)
@@ -13773,32 +13969,45 @@ async def marry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💔 *{query.from_user.first_name}* declined the proposal.",
             parse_mode="Markdown"); return
 
-    # Accept — validate
     if not proposer or not target:
         await query.edit_message_text("❌ Player data not found.", parse_mode="Markdown"); return
-    if proposer.get("married_to_id") or target.get("married_to_id"):
-        await query.edit_message_text("💔 One of you is already married.", parse_mode="Markdown"); return
-    if proposer.get("gold", 0) < 1000:
-        await query.edit_message_text("💰 The proposer no longer has enough gold!", parse_mode="Markdown"); return
-    if target.get("gold", 0) < 1000:
-        await query.edit_message_text("💰 You don't have enough gold (need 1,000)!", parse_mode="Markdown"); return
+
+    proposer_fee = proposal.get("proposer_fee", 1000)
+    target_fee   = proposal.get("target_fee",   1000)
+
+    proposer_marriages = _get_marriages(proposer)
+    target_marriages   = _get_marriages(target)
+
+    if any(m["id"] == target["user_id"] for m in proposer_marriages):
+        await query.edit_message_text("💔 You're already married to each other.", parse_mode="Markdown"); return
+    if proposer.get("gold", 0) < proposer_fee:
+        await query.edit_message_text(f"💰 The proposer no longer has enough gold (need {proposer_fee:,}g)!", parse_mode="Markdown"); return
+    if target.get("gold", 0) < target_fee:
+        await query.edit_message_text(f"💰 You don't have enough gold (need {target_fee:,}g)!", parse_mode="Markdown"); return
 
     now_str = datetime.now().isoformat()
-    # Deduct gold, link records
-    proposer["gold"] -= 1000;  target["gold"] -= 1000
-    proposer["married_to_id"]   = target["user_id"]
-    proposer["married_to_name"] = target["username"]
-    proposer["married_at"]      = now_str
-    target["married_to_id"]     = proposer["user_id"]
-    target["married_to_name"]   = proposer["username"]
-    target["married_at"]        = now_str
-    award_title(proposer, "Beloved"); award_title(target, "Beloved")
+    proposer["gold"] -= proposer_fee
+    target["gold"]   -= target_fee
+
+    proposer_marriages.append({"id": target["user_id"],   "name": target["username"],   "date": now_str})
+    target_marriages.append(  {"id": proposer["user_id"], "name": proposer["username"], "date": now_str})
+    _save_marriages(proposer, proposer_marriages)
+    _save_marriages(target,   target_marriages)
+
+    if len(proposer_marriages) == 1: award_title(proposer, "Beloved")
+    if len(target_marriages)   == 1: award_title(target,   "Beloved")
     save_player(proposer); save_player(target)
+
+    ordinal = lambda n: f"{n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'}"
+    p_ord = ordinal(len(proposer_marriages))
+    t_ord = ordinal(len(target_marriages))
+    ord_note = f"_{proposer['username']}'s {p_ord} marriage · {target['username']}'s {t_ord} marriage_\n\n" if (len(proposer_marriages)>1 or len(target_marriages)>1) else ""
 
     await query.edit_message_text(
         f"💍 *{proposer['username']}* and *{target['username']}* are now married!\n\n"
-        f"🏅 Both received the *Beloved* title.\n"
-        f"✨ +3% EXP bonus active for both.\n\n"
+        f"{ord_note}"
+        f"🏅 *Beloved* title awarded _(first-timers)_\n"
+        f"✨ +3% EXP bonus per spouse, stacks up to +15%\n\n"
         f"_Congratulations!_ 🎉",
         parse_mode="Markdown")
 
@@ -13808,24 +14017,35 @@ async def divorce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-    if not p.get("married_to_id"):
+
+    marriages = _get_marriages(p)
+    if not marriages:
         await send_group(update, "💔 You're not married.", delay=9); return
 
-    markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Confirm Divorce", callback_data=f"divorce_confirm_{user.id}"),
-        InlineKeyboardButton("❌ Cancel",          callback_data=f"divorce_cancel_{user.id}"),
-    ]])
-    await send_group(update,
-        f"💔 Are you sure you want to divorce *{p['married_to_name']}*?\n\n"
-        f"_This removes the Beloved title and EXP bonus for both of you._",
-        permanent=False, delay=60, reply_markup=markup)
+    if len(marriages) == 1:
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Confirm Divorce", callback_data=f"divorce_confirm_{user.id}_{marriages[0]['id']}"),
+            InlineKeyboardButton("❌ Cancel",          callback_data=f"divorce_cancel_{user.id}"),
+        ]])
+        await send_group(update,
+            f"💔 Are you sure you want to divorce *{marriages[0]['name']}*?\n\n"
+            f"_This removes the EXP bonus for that marriage (Beloved title remains)._",
+            permanent=False, delay=60, reply_markup=markup)
+    else:
+        rows = []
+        for m in marriages:
+            rows.append([InlineKeyboardButton(f"💔 Divorce {m['name']}", callback_data=f"divorce_confirm_{user.id}_{m['id']}")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"divorce_cancel_{user.id}")])
+        await send_group(update,
+            f"💔 *Divorce*\n\nYou have {len(marriages)} marriages. Who do you want to divorce?",
+            permanent=False, delay=60, reply_markup=InlineKeyboardMarkup(rows))
 
 
 async def divorce_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    parts = query.data.split("_")
-    action = parts[1]  # confirm or cancel
+    parts  = query.data.split("_")
+    action = parts[1]
     uid    = int(parts[2])
     if query.from_user.id != uid:
         await query.answer("This isn't your divorce!", show_alert=True); return
@@ -13833,22 +14053,30 @@ async def divorce_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "cancel":
         await query.edit_message_text("_Divorce cancelled._", parse_mode="Markdown"); return
 
+    spouse_id = int(parts[3]) if len(parts) > 3 else None
     p = get_player(uid)
-    if not p or not p.get("married_to_id"):
-        await query.edit_message_text("💔 You are not currently married.", parse_mode="Markdown"); return
+    marriages = _get_marriages(p) if p else []
+    marriage  = next((m for m in marriages if m["id"] == spouse_id), None) if spouse_id else (marriages[0] if marriages else None)
 
-    spouse = get_player(p["married_to_id"])
-    spouse_name = p["married_to_name"]
+    if not p or not marriage:
+        await query.edit_message_text("💔 That marriage record was not found.", parse_mode="Markdown"); return
 
-    p["married_to_id"] = None; p["married_to_name"] = None; p["married_at"] = None
+    spouse_name = marriage["name"]
+    new_marriages = [m for m in marriages if m["id"] != marriage["id"]]
+    _save_marriages(p, new_marriages)
     save_player(p)
+
+    spouse = get_player(marriage["id"])
     if spouse:
-        spouse["married_to_id"] = None; spouse["married_to_name"] = None; spouse["married_at"] = None
+        s_marriages = _get_marriages(spouse)
+        _save_marriages(spouse, [m for m in s_marriages if m["id"] != uid])
         save_player(spouse)
 
+    remaining = len(new_marriages)
+    note = f"_You now have {remaining} remaining marriage{'s' if remaining!=1 else ''}._" if remaining else "_You are now single._"
     await query.edit_message_text(
         f"💔 *{p['username']}* and *{spouse_name}* are now divorced.\n\n"
-        f"_The Beloved title and EXP bonus have been removed._",
+        f"_The +3% EXP bonus for this marriage has been removed._\n{note}",
         parse_mode="Markdown")
 
 
@@ -14106,6 +14334,16 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else:
             await _start_encounter_hunt(query, uid, p)
         return
+
+    # ── All in-combat actions: parse owner uid from callback data ───────────
+    # All combat buttons embed the owner's uid: enc_atk_{uid}, enc_flee_{uid}, etc.
+    # Validate ownership first so random clickers can't corrupt the battle card.
+    _enc_combat_match = re.match(r"enc_(?:atk|skl|heal|flee|mv|catch|switch)_(\d+)", data)
+    if _enc_combat_match:
+        owner_uid = int(_enc_combat_match.group(1))
+        if query.from_user.id != owner_uid:
+            await query.answer("Not your encounter!", show_alert=True); return
+        uid = owner_uid  # use owner's uid for enc lookup and button comparisons
 
     # ── All in-combat actions require an active encounter ────────────────────
     enc = active_encounters.get(uid)
@@ -14374,6 +14612,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                                           reply_markup=_encounter_battle_markup(enc, p))
             return
 
+# ── HOLD HANDS ────────────────────────────────────────────────────────────────
 async def holdhands_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     p = get_player(user.id)
@@ -14381,16 +14620,20 @@ async def holdhands_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
 
     if not update.message.reply_to_message and not context.args:
-        if p.get("holding_hands_with_id"):
-            dur = _holdhands_duration(p.get("holding_hands_since",""))
+        hands = _get_holding_hands(p)
+        if hands:
+            lines = [f"🤝 *{p['username']}* is holding hands with:\n"]
+            for h in hands:
+                dur = _holdhands_duration(h.get("since",""))
+                lines.append(f"🤝 *{h['name']}*  _({dur})_")
+            lines.append("\nUse /releasehands to let go of someone.")
+            await send_group(update, "\n".join(lines), delay=30)
+        else:
             await send_group(update,
-                f"🤝 *{p['username']}* × *{p['holding_hands_with_name']}*\n"
-                f"_Holding hands for {dur}_\n\n"
-                f"Use /releasehands to let go.", delay=30); return
-        await send_group(update,
-            "🤝 *Hold Hands*\n\n"
-            "Reply to someone's message and type /holdhands to reach out!\n"
-            "_Both partners must agree._", delay=20); return
+                "🤝 *Hold Hands*\n\n"
+                "Reply to someone's message and type /holdhands to reach out!\n"
+                "_No limit, no fee. Both partners must agree._", delay=20)
+        return
 
     du = update.message.reply_to_message.from_user if update.message.reply_to_message else None
     if not du:
@@ -14401,22 +14644,28 @@ async def holdhands_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tp = get_player(du.id)
     if not tp:
         await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
-    if p.get("holding_hands_with_id"):
-        await send_group(update, f"🤝 You're already holding hands with *{p.get('holding_hands_with_name')}*! Use /releasehands first.", delay=12); return
-    if tp.get("holding_hands_with_id"):
-        await send_group(update, f"🤝 {du.first_name} is already holding someone else's hand!", delay=12); return
+
+    p_hands  = _get_holding_hands(p)
+    tp_hands = _get_holding_hands(tp)
+
+    if any(h["id"] == du.id for h in p_hands):
+        await send_group(update, f"🤝 You're already holding hands with *{du.first_name}*!", delay=9); return
+    if any(h["id"] == user.id for h in tp_hands):
+        await send_group(update, f"🤝 *{du.first_name}* is already holding your hand!", delay=9); return
 
     pending_holdhands[user.id] = {
         "target_id": du.id,
-        "chat_id": update.effective_chat.id,
-        "expires": (datetime.now() + timedelta(minutes=5)).isoformat(),
+        "chat_id":   update.effective_chat.id,
+        "expires":   (datetime.now() + timedelta(minutes=5)).isoformat(),
     }
+    a_name = _social_name(user)
+    d_name = _social_name(du)
     markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🤝 Take Hand",   callback_data=f"hh_accept_{user.id}"),
-        InlineKeyboardButton("🙅 Pull Away",   callback_data=f"hh_decline_{user.id}"),
+        InlineKeyboardButton("🤝 Take Hand", callback_data=f"hh_accept_{user.id}"),
+        InlineKeyboardButton("🙅 Pull Away", callback_data=f"hh_decline_{user.id}"),
     ]])
     await send_group(update,
-        f"🤝 *{user.first_name}* reaches out to *{du.first_name}*...\n\n"
+        f"🤝 {a_name} reaches out to {d_name}...\n\n"
         f"_{du.first_name}, will you take their hand?_\n"
         f"_Expires in 5 minutes._",
         permanent=False, delay=300, reply_markup=markup)
@@ -14426,7 +14675,7 @@ async def holdhands_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     parts = query.data.split("_")
-    action = parts[1]
+    action      = parts[1]
     proposer_id = int(parts[2])
 
     proposal = pending_holdhands.get(proposer_id)
@@ -14449,21 +14698,29 @@ async def holdhands_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if not proposer or not target:
         await query.edit_message_text("❌ Player data not found.", parse_mode="Markdown"); return
-    if proposer.get("holding_hands_with_id") or target.get("holding_hands_with_id"):
-        await query.edit_message_text("🤝 One of you is already holding someone's hand.", parse_mode="Markdown"); return
+
+    p_hands  = _get_holding_hands(proposer)
+    tp_hands = _get_holding_hands(target)
+
+    if any(h["id"] == target["user_id"] for h in p_hands):
+        await query.edit_message_text("🤝 You're already holding hands!", parse_mode="Markdown"); return
 
     now_str = datetime.now().isoformat()
-    proposer["holding_hands_with_id"]   = target["user_id"]
-    proposer["holding_hands_with_name"] = target["username"]
-    proposer["holding_hands_since"]     = now_str
-    target["holding_hands_with_id"]     = proposer["user_id"]
-    target["holding_hands_with_name"]   = proposer["username"]
-    target["holding_hands_since"]       = now_str
+    p_hands.append( {"id": target["user_id"],   "name": target["username"],   "since": now_str})
+    tp_hands.append({"id": proposer["user_id"], "name": proposer["username"], "since": now_str})
+    _save_holding_hands(proposer, p_hands)
+    _save_holding_hands(target,   tp_hands)
     save_player(proposer); save_player(target)
 
+    p_total  = len(p_hands)
+    tp_total = len(tp_hands)
+    multi_note = ""
+    if p_total > 1 or tp_total > 1:
+        multi_note = f"\n_{proposer['username']} holds {p_total} hand{'s' if p_total>1 else ''} · {target['username']} holds {tp_total} hand{'s' if tp_total>1 else ''}_"
+
     await query.edit_message_text(
-        f"🤝 *{proposer['username']}* and *{target['username']}* are holding hands!\n\n"
-        f"_Use /holdhands to check the timer. Use /releasehands to let go._",
+        f"🤝 *{proposer['username']}* and *{target['username']}* are holding hands!{multi_note}\n\n"
+        f"_Use /holdhands to check · /releasehands to let go._",
         parse_mode="Markdown")
 
 
@@ -14472,39 +14729,102 @@ async def releasehands_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-    if not p.get("holding_hands_with_id"):
+
+    hands = _get_holding_hands(p)
+    if not hands:
         await send_group(update, "🤝 You're not holding anyone's hand.", delay=9); return
 
-    partner = get_player(p["holding_hands_with_id"])
-    partner_name = p["holding_hands_with_name"]
-    dur = _holdhands_duration(p.get("holding_hands_since",""))
+    # Reply-to: release that specific person's hand
+    if update.message.reply_to_message:
+        target_uid = update.message.reply_to_message.from_user.id
+        match = next((h for h in hands if h["id"] == target_uid), None)
+        if not match:
+            await send_group(update, "🤝 You're not holding that person's hand.", delay=9); return
+        await _do_release_hands(update, p, user, match)
+        return
 
-    p["holding_hands_with_id"] = None; p["holding_hands_with_name"] = None; p["holding_hands_since"] = None
+    if len(hands) == 1:
+        await _do_release_hands(update, p, user, hands[0])
+        return
+
+    # Multiple — show picker
+    rows = []
+    for h in hands:
+        dur = _holdhands_duration(h.get("since",""))
+        rows.append([InlineKeyboardButton(f"🫱 Let go of {h['name']} ({dur})", callback_data=f"rh_pick_{user.id}_{h['id']}")])
+    rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{user.id}")])
+    await send_group(update,
+        f"🤝 You're holding *{len(hands)}* hands. Who do you want to let go of?",
+        permanent=False, delay=60, reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def _do_release_hands(update_or_query, p, user, hand_entry):
+    """Shared helper: releases hand_entry from p and their partner."""
+    partner_id   = hand_entry["id"]
+    partner_name = hand_entry["name"]
+    dur = _holdhands_duration(hand_entry.get("since",""))
+
+    new_hands = [h for h in _get_holding_hands(p) if h["id"] != partner_id]
+    _save_holding_hands(p, new_hands)
     save_player(p)
+
+    partner = get_player(partner_id)
     if partner:
-        partner["holding_hands_with_id"] = None; partner["holding_hands_with_name"] = None; partner["holding_hands_since"] = None
+        _save_holding_hands(partner, [h for h in _get_holding_hands(partner) if h["id"] != p["user_id"]])
         save_player(partner)
 
-    await send_group(update,
-        f"🫱 *{p['username']}* lets go of *{partner_name}*'s hand.\n"
-        f"_They held on for {dur}._", delay=30)
+    text = (f"🫱 *{p['username']}* lets go of *{partner_name}*'s hand.\n"
+            f"_They held on for {dur}._")
+    if hasattr(update_or_query, "message"):
+        await send_group(update_or_query, text, delay=30)
+    else:
+        await update_or_query.edit_message_text(text, parse_mode="Markdown")
 
 
+async def releasehands_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    uid        = int(parts[2])
+    partner_id = int(parts[3])
+    if query.from_user.id != uid:
+        await query.answer("Not your hands!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.edit_message_text("Player not found.", parse_mode="Markdown"); return
+    hands = _get_holding_hands(p)
+    hand_entry = next((h for h in hands if h["id"] == partner_id), None)
+    if not hand_entry:
+        await query.edit_message_text("🤝 You're not holding that person's hand anymore.", parse_mode="Markdown"); return
+    await _do_release_hands(query, p, query.from_user, hand_entry)
+
+
+# ── FUN SOCIAL COMMANDS ───────────────────────────────────────────────────────
 async def pat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     du = update.message.reply_to_message.from_user if update.message.reply_to_message else None
     if not du:
         await send_group(update, "Reply to someone to pat them!", delay=9); return
     if du.id == user.id:
-        await send_group(update, "🫸 You pat yourself on the back. Weird but okay.", delay=9); return
-    a_tag  = f" (@{user.username})" if user.username else ""
-    d_tag  = f" (@{du.username})"   if du.username   else ""
+        await send_group(update, "🫸 You pat yourself on the back. It helps a little.", permanent=True); return
+    a = _social_name(user); d = _social_name(du)
     pats = [
-        f"🫸 *{user.first_name}*{a_tag} gently pats *{du.first_name}*{d_tag} on the head.",
-        f"🫸 *{user.first_name}*{a_tag} gives *{du.first_name}*{d_tag} an encouraging pat.",
-        f"🫸 *{user.first_name}*{a_tag} pats *{du.first_name}*{d_tag} softly. There there.",
-        f"🫸 *{du.first_name}*{d_tag} receives a pat from *{user.first_name}*{a_tag}. Wholesome.",
+        f"🫸 {a} gently pats {d} on the head.",
+        f"🫸 {a} gives {d} an encouraging pat. You've got this.",
+        f"🫸 {a} pats {d} softly. There there.",
+        f"🫸 {d} receives a surprise pat from {a}. Wholesome.",
+        f"🫸 {a} offers {d} a gentle head pat. The highest honor.",
+        f"🫸 {a} delivers a firm but loving pat to the top of {d}'s head.",
     ]
+    # Special message if married or holding hands
+    p = get_player(user.id)
+    if p:
+        if any(m["id"] == du.id for m in _get_marriages(p)):
+            pats = [f"🫸 {a} gives their beloved {d} an affectionate pat. 💍",
+                    f"🫸 {a} pats {d} on the head like the devoted spouse they are. 💍"]
+        elif any(h["id"] == du.id for h in _get_holding_hands(p)):
+            pats = [f"🤝 {a} gently pats {d}'s hand. They're still holding it.",
+                    f"🫸 {a} pats {d} with their free hand. The other one's occupied. 🤝"]
     await send_group(update, random.choice(pats), permanent=True)
 
 
@@ -14514,55 +14834,195 @@ async def hug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not du:
         await send_group(update, "Reply to someone to hug them!", delay=9); return
     if du.id == user.id:
-        await send_group(update, "🫂 You hug yourself. You deserve it.", delay=9); return
-    a_tag  = f" (@{user.username})" if user.username else ""
-    d_tag  = f" (@{du.username})"   if du.username   else ""
+        await send_group(update, "🫂 You hug yourself. You deserve it.", permanent=True); return
+    a = _social_name(user); d = _social_name(du)
     hugs = [
-        f"🫂 *{user.first_name}*{a_tag} pulls *{du.first_name}*{d_tag} into a warm hug.",
-        f"🫂 *{user.first_name}*{a_tag} wraps their arms around *{du.first_name}*{d_tag}.",
-        f"🫂 *{du.first_name}*{d_tag} gets an unexpected hug from *{user.first_name}*{a_tag}.",
-        f"🫂 *{user.first_name}*{a_tag} and *{du.first_name}*{d_tag} share a moment. 🎱",
+        f"🫂 {a} pulls {d} into a warm hug.",
+        f"🫂 {a} wraps their arms around {d}.",
+        f"🫂 {d} gets an unexpected hug from {a}.",
+        f"🫂 {a} and {d} share a moment. 🎱",
+        f"🫂 {a} squeezes {d} tight. They needed that.",
+        f"🫂 {d} didn't ask for a hug but {a} didn't ask for permission.",
     ]
+    p = get_player(user.id)
+    if p:
+        if any(m["id"] == du.id for m in _get_marriages(p)):
+            hugs = [f"🫂 {a} sweeps their spouse {d} into a long, warm hug. 💍",
+                    f"💍 {a} and {d} share a tender hug. The gold was worth it.",
+                    f"🫂 {d} gets a hug from their beloved {a}. 💍"]
+        elif any(h["id"] == du.id for h in _get_holding_hands(p)):
+            hugs = [f"🤝 {a} hugs {d} without letting go of their hand. Impressive.",
+                    f"🫂 {a} pulls {d} close. They're already holding hands — this tracks. 🤝"]
     await send_group(update, random.choice(hugs), permanent=True)
 
 
+async def slap_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    du = update.message.reply_to_message.from_user if update.message.reply_to_message else None
+    if not du:
+        await send_group(update, "Reply to someone to slap them!", delay=9); return
+    if du.id == user.id:
+        selfs = [
+            "👋 You slap yourself. No comment.",
+            "👋 You wind up and slap yourself in the face. Iconic.",
+            "👋 You slap yourself so hard you see stars. Respect.",
+        ]
+        await send_group(update, random.choice(selfs), permanent=True); return
+    a = _social_name(user); d = _social_name(du)
+    p = get_player(user.id)
+    cls_id = p.get("class_id","") if p else ""
+    if "warrior" in cls_id or "warlord" in cls_id or "paladin" in cls_id:
+        weapon_slaps = [f"⚔️ {a} slaps {d} with the flat of their sword. Tactical.",
+                        f"🛡️ {a} shield-bashes {d} across the face. That's one way to do it."]
+    elif "mage" in cls_id or "sage" in cls_id or "void" in cls_id:
+        weapon_slaps = [f"🔮 {a} channels arcane energy into a slap. {d} felt that spiritually.",
+                        f"✨ {a} slaps {d} with a scroll. The enchants make it worse."]
+    elif "thief" in cls_id or "wraith" in cls_id:
+        weapon_slaps = [f"🗡️ {a} slaps {d} with a dagger handle. Still counts.",
+                        f"🌑 {a} materializes from the shadows just to slap {d}. Then vanishes."]
+    elif "archer" in cls_id or "deadeye" in cls_id or "strider" in cls_id:
+        weapon_slaps = [f"🏹 {a} slaps {d} with a bow. It twangs dramatically.",
+                        f"🎯 {a} doesn't miss — {d} takes a direct slap to the cheek."]
+    else:
+        weapon_slaps = []
+    slaps = [
+        f"👋 {a} slaps {d} across the face.",
+        f"👋 {a} delivers a thunderous slap to {d}. The whole group heard it.",
+        f"👋 {a} winds up and absolutely lays one on {d}.",
+        f"💥 {a} slaps {d} so hard their hat flies off.",
+        f"👋 {d} gets slapped by {a}. No warning. No mercy.",
+        f"🎭 {a} open-palm slaps {d} with flair. Dramatic.",
+    ] + weapon_slaps
+    await send_group(update, random.choice(slaps), permanent=True)
+
+
+async def poke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    du = update.message.reply_to_message.from_user if update.message.reply_to_message else None
+    if not du:
+        await send_group(update, "Reply to someone to poke them!", delay=9); return
+    if du.id == user.id:
+        await send_group(update, "👉 You poke yourself. Are you okay?", permanent=True); return
+    a = _social_name(user); d = _social_name(du)
+    pokes = [
+        f"👉 {a} pokes {d}. Annoying but effective.",
+        f"👉 {a} jabs {d} in the side. Hey. Hey. Hey.",
+        f"👉 {d} gets poked by {a}. Just that. Just a poke.",
+        f"👆 {a} pokes {d} on the forehead. Bold choice.",
+        f"👉 {a} pokes {d} three times in rapid succession.",
+        f"👉 {d} did not consent to this poke but {a} did it anyway.",
+    ]
+    await send_group(update, random.choice(pokes), permanent=True)
+
+
+async def wave_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    a = _social_name(user)
+    du = update.message.reply_to_message.from_user if update.message.reply_to_message else None
+    if du and du.id != user.id:
+        d = _social_name(du)
+        waves = [
+            f"👋 {a} waves at {d}.",
+            f"👋 {a} gives {d} a friendly wave.",
+            f"🙋 {a} waves enthusiastically at {d}.",
+            f"👋 {d} gets waved at by {a}. Wave back!",
+        ]
+    else:
+        waves = [
+            f"👋 {a} waves at the group.",
+            f"🙋 {a} waves hello!",
+            f"👋 {a} gives everyone a big wave.",
+        ]
+    await send_group(update, random.choice(waves), permanent=True)
+
+
+async def kiss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    du = update.message.reply_to_message.from_user if update.message.reply_to_message else None
+    if not du:
+        await send_group(update, "Reply to someone to send a kiss!", delay=9); return
+    if du.id == user.id:
+        await send_group(update, "💋 You blow yourself a kiss in a mirror. Keep your confidence up.", permanent=True); return
+    a = _social_name(user); d = _social_name(du)
+    p = get_player(user.id)
+    if p and any(m["id"] == du.id for m in _get_marriages(p)):
+        kisses = [
+            f"💍 {a} kisses their beloved {d}. The crowd goes wild.",
+            f"💋 {a} plants a kiss on {d}'s cheek. A perk of being married.",
+            f"💍 {a} and {d} share a kiss. Worth every gold piece.",
+            f"💋 {a} sneaks a kiss on {d}. Marriage has its privileges. 💍",
+        ]
+    elif p and any(h["id"] == du.id for h in _get_holding_hands(p)):
+        kisses = [
+            f"🤝 {a} steals a quick kiss from {d} while holding their hand.",
+            f"💋 {a} leans in for a kiss. {d}'s hand is still very much held. 🤝",
+        ]
+    else:
+        rejects = [
+            f"💋 {a} tries to kiss {d}... {d} steps back. Awkward.",
+            f"😶 {a} leans in toward {d}. {d} turns away. Bold attempt though.",
+            f"🚫 {d} dodges {a}'s kiss attempt. Not today.",
+        ]
+        await send_group(update, random.choice(rejects), permanent=True); return
+    await send_group(update, random.choice(kisses), permanent=True)
+
+
+# ── BONDS BOARD ───────────────────────────────────────────────────────────────
 async def bonds_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
     try:
-        married = conn.execute(
-            "SELECT username, married_to_name, married_at FROM players "
-            "WHERE married_to_id IS NOT NULL AND CAST(user_id AS INTEGER) < CAST(married_to_id AS INTEGER)"
-        ).fetchall()
-        holding = conn.execute(
-            "SELECT username, holding_hands_with_name, holding_hands_since FROM players "
-            "WHERE holding_hands_with_id IS NOT NULL AND CAST(user_id AS INTEGER) < CAST(holding_hands_with_id AS INTEGER)"
+        rows = conn.execute(
+            "SELECT user_id, username, marriages, holding_hands_list, "
+            "married_to_id, married_to_name, married_at, "
+            "holding_hands_with_id, holding_hands_with_name, holding_hands_since "
+            "FROM players"
         ).fetchall()
     finally:
         conn.close()
 
-    lines = ["💍 *Bonds Board*\n"]
-
-    if married:
-        lines.append("*Married Couples*")
-        for row in married:
+    seen_marriages = set()
+    married_lines  = []
+    for row in rows:
+        marriages = sjl(row["marriages"], [])
+        if not marriages and row["married_to_id"]:
+            marriages = [{"id": row["married_to_id"], "name": row["married_to_name"], "date": row["married_at"]}]
+        for m in marriages:
+            pair = tuple(sorted([row["user_id"], m["id"]]))
+            if pair in seen_marriages:
+                continue
+            seen_marriages.add(pair)
             when = ""
-            if row["married_at"]:
+            if m.get("date"):
                 try:
-                    d = datetime.fromisoformat(row["married_at"])
-                    when = f"  _(since {d.strftime('%b %d, %Y')})_"
+                    when = f"  _(since {datetime.fromisoformat(m['date']).strftime('%b %d, %Y')})_"
                 except Exception:
                     pass
-            lines.append(f"💍 *{row['username']}* × *{row['married_to_name']}*{when}")
+            married_lines.append(f"💍 *{row['username']}* × *{m['name']}*{when}")
+
+    seen_hands   = set()
+    holding_lines = []
+    for row in rows:
+        h_list = sjl(row["holding_hands_list"], [])
+        if not h_list and row["holding_hands_with_id"]:
+            h_list = [{"id": row["holding_hands_with_id"], "name": row["holding_hands_with_name"], "since": row["holding_hands_since"]}]
+        for h in h_list:
+            pair = tuple(sorted([row["user_id"], h["id"]]))
+            if pair in seen_hands:
+                continue
+            seen_hands.add(pair)
+            dur = _holdhands_duration(h.get("since",""))
+            holding_lines.append(f"🤝 *{row['username']}* × *{h['name']}*  _({dur})_")
+
+    lines = ["💍 *Bonds Board*\n"]
+    if married_lines:
+        lines.append("*Married Couples*")
+        lines += married_lines
     else:
         lines.append("_No married couples yet._")
-
     lines.append("")
-
-    if holding:
+    if holding_lines:
         lines.append("*Holding Hands*")
-        for row in holding:
-            dur = _holdhands_duration(row["holding_hands_since"] or "")
-            lines.append(f"🤝 *{row['username']}* × *{row['holding_hands_with_name']}*  _({dur})_")
+        lines += holding_lines
     else:
         lines.append("_Nobody is holding hands right now._")
 
@@ -16572,13 +17032,17 @@ GUIDE_PAGES = [
         "/gbank deposit/withdraw  -  Guild bank\n"
         "\n"
         "*Marriage & Social*\n"
-        "/marry  -  Propose (reply to target) or check status (shows both names)\n"
-        "/divorce  -  End your marriage (button confirmation)\n"
-        "/holdhands  -  Reach out to someone (reply to target) or check timer\n"
-        "/releasehands  -  Let go (shows how long you held on)\n"
+        "/marry  -  Propose (reply to target) or check status. Multiple marriages allowed.\n"
+        "/divorce  -  End a marriage (button picker if multiple spouses)\n"
+        "/holdhands  -  Reach out to someone (reply to target) or check timer. No limit.\n"
+        "/releasehands  -  Let go (button picker if holding multiple hands)\n"
         "/bonds  -  View the full marriage and holding hands board\n"
         "/pat  -  Reply to a player to give them a pat\n"
-        "/hug  -  Reply to a player to give them a hug"
+        "/hug  -  Reply to a player to give them a hug\n"
+        "/kiss  -  Reply to a player for a kiss (relationship-aware)\n"
+        "/slap  -  Reply to a player to slap them (uses your weapon name if equipped)\n"
+        "/poke  -  Reply to a player for a poke\n"
+        "/wave  -  Wave at someone"
     ),
     # Page 7 - Guilds & Advanced
     (
@@ -16665,34 +17129,41 @@ GUIDE_PAGES = [
         "\n"
         "*Getting Married*\n"
         "Reply to any player's message and type /marry to propose.\n"
-        "The proposal costs *1,000 gold from each partner* (2,000 total).\n"
         "Your partner gets Accept / Decline buttons. Proposal expires in 5 minutes.\n"
-        "Use /marry alone to check your status — shows both names and the date.\n"
+        "Use /marry alone to check your status — shows all spouses and dates.\n"
+        "\n"
+        "*Marriage Fees (per marriage)*\n"
+        "1st marriage — 1,000g each  |  2nd — 5,000g each\n"
+        "3rd — 15,000g each  |  4th and beyond — 50,000g each\n"
+        "_(Each player pays their own fee based on how many marriages they already have.)_\n"
         "\n"
         "*Marriage Benefits*\n"
-        "💍 Both names shown on your /stats profile\n"
+        "💍 All spouses shown on your /stats profile\n"
         "🏅 Both partners receive the exclusive *Beloved* title\n"
-        "✨ +3% EXP bonus on every EXP gain, forever\n"
+        "✨ +3% EXP per spouse, stacking up to +15% total\n"
         "\n"
         "*Marriage Commands*\n"
         "/marry — Propose (reply to partner) or check status\n"
-        "/divorce — End the marriage (confirmation button required)\n"
+        "/divorce — End a marriage — button picker if you have multiple spouses\n"
         "/bonds — See all married couples and holding-hands pairs in one board\n"
         "\n"
         "*Hold Hands*\n"
         "Reply to any player and type /holdhands to reach out.\n"
-        "They get Take Hand / Pull Away buttons. No gold cost.\n"
+        "They get Take Hand / Pull Away buttons. No gold cost. No limit on how many pairs.\n"
         "The timer starts the moment both accept — /holdhands shows the live duration.\n"
-        "/releasehands — Either partner can let go at any time; announces how long you held on.\n"
+        "/releasehands — Let go of one or all hands; button picker if holding multiple.\n"
         "\n"
         "*Fun Commands*\n"
         "/pat — Reply to a player to give them a pat on the head\n"
         "/hug — Reply to a player to give them a hug\n"
-        "_(Both work on yourself too, if you're having that kind of day.)_\n"
+        "/kiss — Reply to a player for a sweet gesture (relationship-aware 💋)\n"
+        "/slap — Reply to a player to slap them  _(class weapon used if equipped)_\n"
+        "/poke — Reply to a player for a little poke\n"
+        "/wave — Wave at someone across the room\n"
+        "_(Pat and hug work on yourself too, if you're having that kind of day.)_\n"
         "\n"
         "*Notes*\n"
-        "• You can only be married to one person at a time\n"
-        "• Divorce removes the EXP bonus for both partners\n"
+        "• Divorce removes that spouse's EXP bonus — others unaffected\n"
         "• The Beloved title remains earned even after divorce\n"
         "\n"
         "💍 _Love in a Telegram RPG. We're not judging._"
@@ -19263,10 +19734,15 @@ def main():
     app.add_handler(CommandHandler("releasehands", releasehands_cmd))
     app.add_handler(CommandHandler("pat",          pat_cmd))
     app.add_handler(CommandHandler("hug",          hug_cmd))
+    app.add_handler(CommandHandler("slap",         slap_cmd))
+    app.add_handler(CommandHandler("poke",         poke_cmd))
+    app.add_handler(CommandHandler("wave",         wave_cmd))
+    app.add_handler(CommandHandler("kiss",         kiss_cmd))
     app.add_handler(CommandHandler("bonds",        bonds_cmd))
-    app.add_handler(CallbackQueryHandler(marry_callback,     pattern="^marry_(accept|decline)_"))
-    app.add_handler(CallbackQueryHandler(divorce_callback,   pattern="^divorce_(confirm|cancel)_"))
-    app.add_handler(CallbackQueryHandler(holdhands_callback, pattern="^hh_(accept|decline)_"))
+    app.add_handler(CallbackQueryHandler(marry_callback,       pattern="^marry_(accept|decline)_"))
+    app.add_handler(CallbackQueryHandler(divorce_callback,     pattern="^divorce_(confirm|cancel)_"))
+    app.add_handler(CallbackQueryHandler(holdhands_callback,   pattern="^hh_(accept|decline)_"))
+    app.add_handler(CallbackQueryHandler(releasehands_callback, pattern="^rh_pick_"))
     app.add_handler(CallbackQueryHandler(close_callback,   pattern="^close_msg"))
 
     # Combat & Dungeons
