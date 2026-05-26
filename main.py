@@ -2602,6 +2602,30 @@ NPC_CLASS_SKILLS = {
     "divine_tempest":["thunder_claw","holy_beam","gust"],
 }
 
+# RPG-style NPC attacks for battle mode: (name, dmg_mult, effect)
+# effect: None | "stun" | "weaken" | "heal_self" | "lifesteal"
+NPC_CLASS_ATTACKS = {
+    "fighter":        [("Power Strike",1.0,None),("Body Slam",1.2,"stun"),("Pummel",1.35,None)],
+    "warlord":        [("War Cry Slash",1.0,"weaken"),("Cleave",1.2,None),("Brutal Strike",1.35,None)],
+    "paladin":        [("Holy Smite",1.0,None),("Sacred Blow",1.2,None),("Divine Judgment",1.35,"heal_self")],
+    "sage":           [("Arcane Bolt",1.0,None),("Mind Crush",1.2,"weaken"),("Elder's Wrath",1.35,None)],
+    "arcanist":       [("Spell Bolt",1.0,None),("Mana Burst",1.2,None),("Arcane Surge",1.35,"stun")],
+    "void_mage":      [("Void Lance",1.0,None),("Null Strike",1.2,"weaken"),("Rift Blast",1.35,None)],
+    "wraith":         [("Shadow Strike",1.0,None),("Soul Drain",1.2,"lifesteal"),("Phantom Slash",1.35,None)],
+    "specialist":     [("Tactical Strike",1.0,None),("Focused Shot",1.2,None),("Combat Technique",1.35,None)],
+    "strider":        [("Quick Jab",1.0,None),("Rapid Strike",1.2,None),("Blinding Speed",1.35,"stun")],
+    "deadeye":        [("Aimed Shot",1.0,None),("Piercing Arrow",1.2,None),("Eagle Eye Shot",1.35,"weaken")],
+    "saint":          [("Holy Lash",1.0,None),("Blessed Strike",1.2,"heal_self"),("Radiant Blow",1.35,None)],
+    "zealot":         [("Fervent Strike",1.0,None),("Zealot's Wrath",1.2,None),("Purge Blow",1.35,"weaken")],
+    "wildflower":     [("Thorn Strike",1.0,None),("Petal Slash",1.2,None),("Nature's Fury",1.35,None)],
+    "nature_chosen":  [("Root Strike",1.0,None),("Earthen Blow",1.2,None),("Ancient Force",1.35,None)],
+    "dread_empress":  [("Shadow Lash",1.0,None),("Dark Command",1.2,"weaken"),("Dread Execution",1.35,None)],
+    "grand_muse":     [("Resonance Strike",1.0,None),("Harmonic Blast",1.2,None),("Aria of Ruin",1.35,None)],
+    "iron_valkyrie":  [("Shield Bash",1.0,"stun"),("Spear Thrust",1.2,None),("Valkyrie's Charge",1.35,None)],
+    "divine_tempest": [("Storm Strike",1.0,None),("Thunder Slash",1.2,None),("Divine Tempest",1.35,None)],
+}
+_NPC_DEFAULT_ATTACKS = [("Strike",1.0,None),("Heavy Blow",1.2,None),("Fierce Attack",1.35,None)]
+
 # ── 100 NPCs (name, class_key, level_min, level_max, base_hp, base_dmg, gold_range, exp_range, loot_key) ──
 ENCOUNTER_NPCS = [
     # Fighters
@@ -2932,7 +2956,11 @@ def _encounter_battle_card(enc):
     lines  = []
     lines.append(f"{'⚔️ BATTLE' if mode=='battle' else '🌿 HUNT'} ENCOUNTER")
     lines.append("")
-    lines.append(f"{elem_e} *{e_name}*  Lv.{e_lv}")
+    if mode == "battle":
+        cls_name = CLASS_TREE.get(enc.get("e_class",""), {}).get("name", enc.get("e_class","NPC").replace("_"," ").title())
+        lines.append(f"👤 *{e_name}*  [{cls_name}]  Lv.{e_lv}")
+    else:
+        lines.append(f"{elem_e} *{e_name}*  Lv.{e_lv}")
     lines.append(f"HP: {e_hp}/{e_mhp}  [{e_bar}]")
     lines.append("")
     lines.append(f"*{p_name}*")
@@ -3059,25 +3087,33 @@ def _apply_dot_tick(enc):
     return ", ".join(msgs)
 
 def _enc_npc_attack(enc, p):
-    """NPC takes its turn; returns action description."""
-    skills = NPC_CLASS_SKILLS.get(enc.get("e_class","fighter"), ["tackle","bite","headbutt"])
-    move_key = random.choice(skills)
-    mv = MONSTER_MOVES.get(move_key, {"name":"Attack","dmg_mult":1.0,"effect":None})
-    dmg_mult = mv.get("dmg_mult", 1.0)
+    """NPC takes their RPG combat turn; returns action description."""
+    attacks = NPC_CLASS_ATTACKS.get(enc.get("e_class", "fighter"), _NPC_DEFAULT_ATTACKS)
+    atk_name, dmg_mult, effect = random.choice(attacks)
     raw = int(enc["e_atk"] * dmg_mult * random.uniform(0.85, 1.15))
     def_red = int(get_stat(p, "DEF") * 0.4)
     dmg = max(1, raw - def_red)
     if enc.get("p_exposed"):
-        dmg = int(dmg * 1.2)
-        enc["p_exposed"] = False
-    if enc.get("p_weakened"):
-        pass  # already factored into reduced offense
+        dmg = int(dmg * 1.2); enc["p_exposed"] = False
+    extra = ""
+    if effect == "heal_self" and random.random() < 0.25:
+        heal = enc["e_max_hp"] // 8
+        enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + heal)
+        extra = f" _(+{heal} HP restored)_"
+        dmg = max(1, dmg // 2)
+    elif effect == "stun" and random.random() < 0.20:
+        enc["p_stunned"] = True
+        extra = " _You are stunned next turn!_"
+    elif effect == "weaken" and random.random() < 0.20:
+        enc["p_weakened"] = True
+        extra = " _Your attacks are weakened!_"
+    elif effect == "lifesteal" and random.random() < 0.20:
+        ls = int(dmg * 0.3)
+        enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + ls)
+        extra = f" _(+{ls} HP drained)_"
     enc["p_hp"] = max(0, enc["p_hp"] - dmg)
     enc["last_dmg"] = dmg
-    eff_txt = _apply_move_effect(enc, move_key) if mv.get("effect") in ("heal_self","lifesteal") else ""
-    if mv.get("effect") and mv["effect"] not in ("heal_self","lifesteal"):
-        _apply_move_effect(enc, move_key)
-    return f"*{enc['e_name']}* used *{mv['name']}* — {dmg} damage!{eff_txt}"
+    return f"*{enc['e_name']}* used *{atk_name}* — {dmg} dmg!{extra}"
 
 def _enc_monster_attack(enc):
     """Wild monster takes its turn; returns action description."""
@@ -13940,13 +13976,14 @@ async def _start_encounter_battle(query, uid, p):
     n_level = _enc_npc_level(npc, p.get("level", 1))
     n_hp, n_atk = _npc_level_stats(npc[4], npc[5], n_level)
     p_hp  = safe_int(p.get("hp"));  p_mhp = safe_int(p.get("max_hp")) or 100
+    cls_name = CLASS_TREE.get(npc[1], {}).get("name", npc[1].replace("_"," ").title())
     enc = {
         "uid": uid, "mode": "battle", "p_name": p.get("username", "You"),
         "p_hp": p_hp, "p_max_hp": p_mhp,
         "e_name": npc[0], "e_class": npc[1],
         "e_hp": n_hp, "e_max_hp": n_hp, "e_atk": n_atk, "e_level": n_level,
-        "e_gold_range": npc[5], "e_exp_range": npc[6], "e_loot_key": npc[7],
-        "last_action": f"A wild *{npc[0]}* (Lv.{n_level}) appears!",
+        "e_gold_range": npc[6], "e_exp_range": npc[7], "e_loot_key": npc[8],
+        "last_action": f"*{npc[0]}* [{cls_name}] Lv.{n_level} steps forward!",
         "heals_left": 3,
     }
     active_encounters[uid] = enc
@@ -14062,23 +14099,34 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # ── BATTLE MODE ACTIONS ─────────────────────────────────────────────────
     if enc["mode"] == "battle":
         if data == f"enc_atk_{uid}":
-            str_val = get_stat(p, "STR")
-            wep     = p.get("equipped_weapon")
-            wep_atk = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
-            dmg     = max(1, int((str_val + wep_atk) * random.uniform(0.85, 1.15)))
-            enc["e_hp"] = max(0, enc["e_hp"] - dmg)
-            action_txt = f"You attacked for *{dmg}* damage!"
+            if enc.pop("p_stunned", False):
+                action_txt = "⚡ You're stunned and lose your turn!"
+            else:
+                str_val = get_stat(p, "STR")
+                wep     = p.get("equipped_weapon")
+                wep_atk = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
+                dmg     = max(1, int((str_val + wep_atk) * random.uniform(0.85, 1.15)))
+                if enc.pop("p_weakened", False):
+                    dmg = max(1, int(dmg * 0.75))
+                    action_txt = f"You attacked for *{dmg}* damage! _(weakened)_"
+                else:
+                    action_txt = f"You attacked for *{dmg}* damage!"
+                enc["e_hp"] = max(0, enc["e_hp"] - dmg)
 
         elif data == f"enc_skl_{uid}":
-            class_id = p.get("class_id", "fighter")
-            skills   = NPC_CLASS_SKILLS.get(class_id, ["tackle"])
-            move_key = random.choice(skills)
-            mv       = MONSTER_MOVES.get(move_key, {"name":"Strike","dmg_mult":1.2,"effect":None})
-            int_val  = get_stat(p, "INT"); str_val = get_stat(p, "STR")
-            base_dmg = max(int_val, str_val)
-            dmg      = max(1, int(base_dmg * mv["dmg_mult"] * random.uniform(0.9, 1.1)))
-            enc["e_hp"] = max(0, enc["e_hp"] - dmg)
-            action_txt  = f"You used *{mv['name']}* for *{dmg}* damage!"
+            cls      = get_player_class(p)
+            p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
+                        if p.get("level", 1) >= sk.get("unlock", 5)]
+            if not p_skills:
+                await query.answer("No skills unlocked yet!", show_alert=True); return
+            sk       = random.choice(p_skills)
+            primary  = cls.get("primary_stat", "STR") if cls else "STR"
+            base_dmg = get_stat(p, primary)
+            wep      = p.get("equipped_weapon")
+            wep_atk  = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
+            dmg      = max(1, int((base_dmg + wep_atk * 0.5) * 1.4 * random.uniform(0.9, 1.1)))
+            enc["e_hp"]  = max(0, enc["e_hp"] - dmg)
+            action_txt   = f"You used *{sk['active']}* for *{dmg}* damage!"
 
         elif data == f"enc_heal_{uid}":
             if enc.get("heals_left", 0) <= 0:
