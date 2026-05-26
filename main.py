@@ -17833,15 +17833,31 @@ POOL_SHOTS = [
 POOL_ITEM_TABLE = [
     # ── Common weapons ──
     ("Iron Broadsword",0.018),("Rusty Shiv",0.018),("Steel Knight Sword",0.012),
+    # ── Common weapons — new classes ──
+    ("Seedling Wand",0.018),("Briar Rod",0.018),
+    ("Charmed Birch Wand",0.018),("Hexmark Rod",0.018),
+    ("Runic Training Blade",0.018),("Iron Rune Greatsword",0.018),
+    ("Dancing Blade",0.018),("Featherlight Star",0.018),
     # ── Common armors ──
     ("Rusty Iron Vest",0.018),("Rustic Cloth Vest",0.018),("Reinforced Hide Coat",0.012),
+    # ── Common armors — new classes ──
+    ("Woven Herb Robe",0.018),("Charmed Silk Robe",0.018),
+    ("Runic Iron Vest",0.018),("Dancer's Silk Wrap",0.018),
     # ── Common accessories ──
     ("Iron Shard Ring",0.020),("Worn Leather Band",0.020),("Scout's Pendant",0.018),
     ("Brass Ring",0.016),("Traveler's Coin",0.016),
     # ── Uncommon weapons ──
     ("Crystal Core Wand",0.008),("Warlock's Dread Staff",0.007),("Bloodsteel Shuriken",0.007),
+    # ── Uncommon weapons — new classes ──
+    ("Thornwood Wand",0.007),("Poison Vine Staff",0.007),
+    ("Binding Wand",0.007),("Cursed Branch",0.007),
+    ("Einherjar's Edge",0.007),("Storm Claymore",0.007),
+    ("Silver Step Dagger",0.007),("Phantom Arc",0.007),
     # ── Uncommon armors ──
     ("Iron Scale Vest",0.008),("Shadow Leather Coat",0.007),("Toughened Leather Coat",0.007),
+    # ── Uncommon armors — new classes ──
+    ("Druid's Leaf Vestment",0.007),("Beguiler's Mantle",0.007),
+    ("Shieldmaiden's Mail",0.007),("Phantom Dancer's Leathers",0.007),
     # ── Uncommon accessories ──
     ("Silk Band",0.008),("Rune Ring",0.008),("Obsidian Stud",0.007),
     ("Bloodstone Band",0.007),("Shadowmark Signet",0.006),("Hunter's Fang",0.006),
@@ -17849,8 +17865,16 @@ POOL_ITEM_TABLE = [
     # ── Rare weapons ──
     ("Warlord's Edge",0.003),("Void Channel Staff",0.003),("Gnarled Twig Wand",0.002),
     ("The Mind's Eye",0.002),
+    # ── Rare weapons — new classes ──
+    ("Nature's Grasp",0.002),("Verdant Branch",0.002),
+    ("Enchanter's Wand",0.002),("Vexmark Staff",0.002),
+    ("Valiant Blade",0.002),("Thunder Greatsword",0.002),
+    ("Danse Blade",0.002),("Ethereal Star",0.002),
     # ── Rare armors ──
     ("Warlord's Plate",0.003),("Champion's Coat",0.003),("Shadowweave Armor",0.002),
+    # ── Rare armors — new classes ──
+    ("Nature's Woven Robe",0.002),("Hex Dancer's Robe",0.002),
+    ("Valkyrior Plate",0.002),("Ghoststep Vest",0.002),
     # ── Rare accessories ──
     ("Fortune Coin",0.003),("War Master's Clasp",0.003),("Hawk Eye Medallion",0.003),
     ("Phantom Loop",0.002),("Warrior's Band",0.002),("Mage's Coil",0.002),
@@ -17860,8 +17884,16 @@ POOL_ITEM_TABLE = [
     ("Iron Wall Shield",0.002),("The Stone Wall",0.002),
     # ── Epic weapons ──
     ("Ruinblade",0.0005),("Shadow Death Star",0.0005),
+    # ── Epic weapons — new classes ──
+    ("Wildflower Scepter",0.0004),("Nature's Wrath Staff",0.0004),
+    ("Grand Muse Scepter",0.0004),("Dread Empress Staff",0.0004),
+    ("Runeblade",0.0004),("Divine Tempest Blade",0.0004),
+    ("Danse Macabre Blade",0.0004),("Ethereal Shuriken",0.0004),
     # ── Epic armors ──
     ("Void-Touched Armor",0.0005),("Sentinel's Plate",0.0005),
+    # ── Epic armors — new classes ──
+    ("Bloom Sage Vestment",0.0004),("Empress's Vestment",0.0004),
+    ("Einherjar's Plate",0.0004),("Danse Macabre Armor",0.0004),
     # ── Epic accessories ──
     ("Twin Strike Ring",0.0005),("Eye of the Void",0.0005),("Void Circle",0.0004),
     ("War Knuckle",0.0004),("Cleric's Band",0.0004),("Runed Heart",0.0004),
@@ -17871,8 +17903,16 @@ POOL_ITEM_TABLE = [
     ("The Crystal Barrier",0.0003),
     # ── Legendary weapons ──
     ("Grand Inquisitor's Cross",0.00008),("The Final Judgment",0.00008),
+    # ── Legendary weapons — new classes ──
+    ("Eden's Branch",0.00006),("Grove of Thorns",0.00006),
+    ("Song of the Ancients",0.00006),("The Hex Throne",0.00006),
+    ("Bifrost's Edge",0.00006),("Valhalla's Thunder",0.00006),
+    ("The Last Dance",0.00006),("The Phantom Step",0.00006),
     # ── Legendary armors ──
     ("Legendary Runecoat",0.00008),
+    # ── Legendary armors — new classes ──
+    ("Eden's Weave",0.00006),("The Enchanted Gown",0.00006),
+    ("Odin's Battle Plate",0.00006),("The Phantom Veil",0.00006),
     # ── Legendary accessories ──
     ("Shard of the Void",0.00006),("Ring of the Endless",0.00006),
     ("The Warlord's Ring",0.00005),("The Eternal Ring",0.00005),
