@@ -16476,7 +16476,7 @@ GUIDE_PAGES = [
     ),
     # Page 9 - Marriage & Social
     (
-        "🎱 *8Ball World  -  Marriage & Social* (9/9)\n"
+        "🎱 *8Ball World  -  Marriage & Social* (9/10)\n"
         "\n"
         "*Getting Married*\n"
         "Reply to any player's message and type /marry to propose.\n"
@@ -16511,9 +16511,49 @@ GUIDE_PAGES = [
         "\n"
         "💍 _Love in a Telegram RPG. We're not judging._"
     ),
+
+    # Page 10 - Encounters & Monsters
+    (
+        "🎱 *8Ball World  -  Encounters & Monsters* (10/10)\n"
+        "\n"
+        "*Starting Out*\n"
+        "Use /encounter to begin. The very first time you choose *Hunt*, you'll pick a\n"
+        "*starter monster* from 3 random options — this is your first squad member.\n"
+        "\n"
+        "*Battle Mode* ⚔️\n"
+        "Fight a random NPC from 100 different types, scaled near your level.\n"
+        "NPCs have classes (Fighter, Sage, Void Mage, etc.) and use their class skills.\n"
+        "Buttons: *Attack* | *Skill* | *Heal* (3 uses) | *Flee*\n"
+        "Win: EXP + Gold + chance at gear and unique loot drops\n"
+        "Lose: Small gold penalty (~5%). 30-second cooldown after each encounter.\n"
+        "\n"
+        "*Hunt Mode* 🌿\n"
+        "A wild monster appears (100 species across Fire/Water/Earth/Wind/Lightning/\n"
+        "Dark/Holy/Void/Physical/Ice/Poison elements, levels 1–100).\n"
+        "Your squad's first healthy monster fights for you.\n"
+        "Buttons: *4 species moves* | *🎯 Catch* | *🔄 Switch* | *🏃 Flee*\n"
+        "The *Catch* button appears once the wild monster's HP is at 50% or below.\n"
+        "\n"
+        "*Catching*\n"
+        "Catch chance = base rate × HP modifier (lower HP = better odds) × 2 if you\n"
+        "use a *Capture Stone* (find them as loot from NPC battles).\n"
+        "Squad full (3/3)? The caught monster goes straight to your *Box* — no loss!\n"
+        "\n"
+        "*Squad & Box Commands*\n"
+        "/squad — View your active squad (up to 3 monsters) with HP bars and EXP\n"
+        "/box — View your full roster: squad + all stored Box monsters with their #IDs\n"
+        "/withdraw <id> — Pull a Box monster into your squad (needs an open slot)\n"
+        "/deposit <slot> — Send a squad member (slot 1/2/3) to the Box\n"
+        "\n"
+        "*Monster Growth*\n"
+        "Squad monsters earn EXP every fight and level up automatically — all the way\n"
+        "to *Level 100*. Higher level = more HP and attack power.\n"
+        "\n"
+        "🐉 _Catch 'em all. Box the rest. Build the perfect squad._"
+    ),
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands", "Guilds & Advanced", "Pets", "Marriage & Social"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters"]
 
 async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
     total = len(GUIDE_PAGES)
@@ -18965,6 +19005,7 @@ def main():
     app.add_handler(CommandHandler("rankwins",     rankwins_cmd))
     app.add_handler(CommandHandler("stats",        stats_cmd))
     app.add_handler(CommandHandler("guide",        guide_cmd))
+    app.add_handler(CommandHandler("guides",       guide_cmd))
     app.add_handler(CommandHandler("help",         guide_cmd))
     # ── Pets ──────────────────────────────────────────────────────────────────
     app.add_handler(CommandHandler("pet",          pet_cmd))
