@@ -3077,10 +3077,10 @@ def _npc_level_stats(base_hp, base_dmg, level, player_max_hp=0):
     hp  = int(base_hp  * (1 + 0.10 * (level - 1)))
     atk = int(base_dmg * (1 + 0.10 * (level - 1)))
     if player_max_hp > 0:
-        # HP: between 85% and 160% of player max HP — some fights easy, some tough
-        hp  = max(int(player_max_hp * 0.85), min(hp, int(player_max_hp * 1.60)))
-        # ATK: floor 11%, ceiling 25% of player max HP (raw before DEF mitigation)
-        atk = max(int(player_max_hp * 0.11), min(atk, int(player_max_hp * 0.25)))
+        # HP: between 100% and 190% of player max HP
+        hp  = max(int(player_max_hp * 1.00), min(hp, int(player_max_hp * 1.90)))
+        # ATK: floor 14%, ceiling 30% of player max HP (raw before DEF mitigation)
+        atk = max(int(player_max_hp * 0.14), min(atk, int(player_max_hp * 0.30)))
     return hp, atk
 
 def _get_monster_squad(uid):
@@ -7528,7 +7528,7 @@ def _build_stats_pages(p, viewing_name=None):
     cls          = get_player_class(p)
     cls_name     = cls["name"] if cls else ("Choose at Lv 5  -  /class" if p["level"] >= 5 else "Unlocks at Lv 5")
     path_str     = f"  -  Path {p.get('class_path','?')}" if p.get("class_path") else ""
-    eff          = {st: get_stat(p, st) for st in ["STR","AGI","INT","WIS","DEX","LUK"]}
+    eff          = {st: get_stat(p, st) for st in ["STR","DEF","AGI","INT","WIS","DEX","LUK"]}
     sp           = safe_int(p.get("stat_points"))
     tier         = get_tier(p["level"])
     w            = get_weather()
@@ -7643,7 +7643,8 @@ def _build_stats_pages(p, viewing_name=None):
         f"WIS: {eff['WIS']}",
         f"DEX: {eff['DEX']}",
         f"LUK: {eff['LUK']}",
-        f"🛡️ DEF: {get_armor_def(p)} (from gear)",
+        f"DEF: {eff['DEF']}  _(stat — reduces damage taken)_",
+        f"🛡️ Armor DEF: {get_armor_def(p)} (from gear)",
     ]
     if cp > 0:
         page2_lines += ["", f"⚡ Combat Power: *{cp:,}*"]
@@ -14718,8 +14719,8 @@ async def _start_encounter_hunt(query, uid, p):
     p_mhp = safe_int(p.get("max_hp")) or calc_max_hp(p)
     m_hp, m_atk = _mon_level_stats(monster[4], monster[5], m_level)
     # Scale monster to player HP range like NPC battles
-    m_hp  = max(int(p_mhp * 0.70), min(m_hp, int(p_mhp * 1.40)))
-    m_atk = max(int(p_mhp * 0.08), min(m_atk, int(p_mhp * 0.22)))
+    m_hp  = max(int(p_mhp * 0.85), min(m_hp, int(p_mhp * 1.60)))
+    m_atk = max(int(p_mhp * 0.11), min(m_atk, int(p_mhp * 0.26)))
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     elem_e = ELEMENT_EMOJI.get(monster[2], "")
     enc = {
@@ -15025,8 +15026,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             mdata    = MONSTER_BY_KEY.get(mon_key)
             base_rate = enc.get("e_catch_rate", 0.20)
             hp_pct    = enc["e_hp"] / max(1, enc["e_max_hp"])
-            hp_mod    = 1.8 - hp_pct  # lower HP = better catch rate
-            catch_chance = min(0.90, base_rate * hp_mod)
+            hp_mod    = 1.3 - hp_pct  # lower HP = better catch rate
+            catch_chance = min(0.55, base_rate * hp_mod)
             if random.random() < catch_chance:
                 elem    = enc.get("element", "")
                 elem_e  = ELEMENT_EMOJI.get(elem, "")
@@ -18457,7 +18458,7 @@ POOL_ITEM_TABLE = [
     ("Runic Training Blade",0.018),("Iron Rune Greatsword",0.018),
     ("Dancing Blade",0.018),("Featherlight Star",0.018),
     # ── Common armors ──
-    ("Rusty Iron Vest",0.018),("Rustic Cloth Vest",0.018),("Reinforced Hide Coat",0.012),
+    ("Rusty Iron Vest",0.018),("Padded Cloth Armor",0.018),("Studded Leather Plate",0.012),
     # ── Common armors — new classes ──
     ("Woven Herb Robe",0.018),("Charmed Silk Robe",0.018),
     ("Runic Iron Vest",0.018),("Dancer's Silk Wrap",0.018),
@@ -18472,7 +18473,7 @@ POOL_ITEM_TABLE = [
     ("Einherjar's Edge",0.007),("Storm Claymore",0.007),
     ("Silver Step Dagger",0.007),("Phantom Arc",0.007),
     # ── Uncommon armors ──
-    ("Iron Scale Vest",0.008),("Shadow Leather Coat",0.007),("Toughened Leather Coat",0.007),
+    ("Iron Chain Mail",0.008),("Shadow Leathers",0.007),("Soldier's Plating",0.007),
     # ── Uncommon armors — new classes ──
     ("Druid's Leaf Vestment",0.007),("Beguiler's Mantle",0.007),
     ("Shieldmaiden's Mail",0.007),("Phantom Dancer's Leathers",0.007),
@@ -18489,7 +18490,7 @@ POOL_ITEM_TABLE = [
     ("Valiant Blade",0.002),("Thunder Greatsword",0.002),
     ("Danse Blade",0.002),("Ethereal Star",0.002),
     # ── Rare armors ──
-    ("Warlord's Plate",0.003),("Champion's Coat",0.003),("Shadowweave Armor",0.002),
+    ("Steel Breastplate",0.003),("Knight's Plate Armor",0.003),("Nightstalker's Vest",0.002),
     # ── Rare armors — new classes ──
     ("Nature's Woven Robe",0.002),("Hex Dancer's Robe",0.002),
     ("Valkyrior Plate",0.002),("Ghoststep Vest",0.002),
@@ -18499,7 +18500,7 @@ POOL_ITEM_TABLE = [
     ("Stone Heart",0.002),("Beast Fang Chain",0.002),("Traveler's Compass",0.002),
     ("The Storm Torc",0.002),
     # ── Rare shields ──
-    ("Iron Wall Shield",0.002),("The Stone Wall",0.002),
+    ("Soldier's Kite Shield",0.002),("Knight's Bulwark",0.002),
     # ── Epic weapons ──
     ("Ruinblade",0.0005),("Shadow Death Star",0.0005),
     # ── Epic weapons — new classes ──
@@ -18508,7 +18509,7 @@ POOL_ITEM_TABLE = [
     ("Runeblade",0.0004),("Divine Tempest Blade",0.0004),
     ("Danse Macabre Blade",0.0004),("Ethereal Shuriken",0.0004),
     # ── Epic armors ──
-    ("Void-Touched Armor",0.0005),("Sentinel's Plate",0.0005),
+    ("Void-Touched Robe",0.0005),("Indomitable Plate",0.0005),
     # ── Epic armors — new classes ──
     ("Bloom Sage Vestment",0.0004),("Empress's Vestment",0.0004),
     ("Einherjar's Plate",0.0004),("Danse Macabre Armor",0.0004),
@@ -18518,7 +18519,7 @@ POOL_ITEM_TABLE = [
     ("The Shadow Whisper",0.0004),("Guardian's Talisman",0.0004),
     ("The Crossed Blades Pendant",0.0003),("The Iron and Flame Pendant",0.0003),
     # ── Epic shields ──
-    ("The Crystal Barrier",0.0003),
+    ("Holy Pavise",0.0003),
     # ── Legendary weapons ──
     ("Grand Inquisitor's Cross",0.00008),("The Final Judgment",0.00008),
     # ── Legendary weapons — new classes ──
@@ -18527,7 +18528,7 @@ POOL_ITEM_TABLE = [
     ("Bifrost's Edge",0.00006),("Valhalla's Thunder",0.00006),
     ("The Last Dance",0.00006),("The Phantom Step",0.00006),
     # ── Legendary armors ──
-    ("Legendary Runecoat",0.00008),
+    ("Dragonscale Plate",0.00008),
     # ── Legendary armors — new classes ──
     ("Eden's Weave",0.00006),("The Enchanted Gown",0.00006),
     ("Odin's Battle Plate",0.00006),("The Phantom Veil",0.00006),
@@ -18732,7 +18733,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             add_item(p, bonus_item)
             save_player(p)
             bi_rarity = ""
-            for pool_check in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS]:
+            for pool_check in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS, HATS, GLOVES, BOOTS, MASKS]:
                 if bonus_item in pool_check:
                     bi_rarity = RARITY_EMOJI.get(pool_check[bonus_item].get("rarity",""), "")
                     break
