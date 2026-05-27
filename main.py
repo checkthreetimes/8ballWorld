@@ -6879,6 +6879,10 @@ async def check_idle_reward(user, s, p, bot, chat_id, announce_group=True):
         return
     if away < 1: return
 
+    # Stamp last_seen immediately so rapid messages don't fire this twice
+    s["last_seen"] = datetime.now().isoformat()
+    save_shadow(s)
+
     tier = None
     for t in IDLE_TIERS:
         if t["min_hours"] <= away < t["max_hours"]:
