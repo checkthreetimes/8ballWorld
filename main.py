@@ -9,7 +9,8 @@ from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, ContextTypes,
-    MessageHandler, filters, CallbackQueryHandler
+    MessageHandler, filters, CallbackQueryHandler,
+    ApplicationHandlerStop,
 )
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
@@ -123,6 +124,32 @@ pending_alliance_inv    = {}   # inviter_id  -> {target_id, alliance_id, expires
 pending_guild_inv       = {}   # inviter_id  -> {target_id, guild_id, expires}
 pending_holdhands  = {}   # proposer_id -> {target_id, chat_id, expires}
 active_encounters  = {}   # user_id -> encounter state
+
+# ── RATE LIMITER ──────────────────────────────────────────────────────────────
+_cmd_timestamps    = {}   # user_id -> [float timestamps]
+_processing_users  = set()  # user_ids currently inside a state-changing callback
+
+def _rate_ok(uid: int, max_cmds: int = 8, window: float = 6.0) -> bool:
+    """Return True if the user is within the rate limit, False if they're spamming."""
+    now = time.time()
+    times = _cmd_timestamps.get(uid, [])
+    times = [t for t in times if now - t < window]
+    if len(uid_times := times) >= max_cmds:
+        _cmd_timestamps[uid] = uid_times
+        return False
+    times.append(now)
+    _cmd_timestamps[uid] = times
+    return True
+
+def _cb_lock(uid: int) -> bool:
+    """Acquire a processing lock for a callback. Returns False if already held."""
+    if uid in _processing_users:
+        return False
+    _processing_users.add(uid)
+    return True
+
+def _cb_unlock(uid: int):
+    _processing_users.discard(uid)
 
 # ── SEND HELPERS ──────────────────────────────────────────────────────────────
 async def _auto_delete(bot, chat_id, msg_id, delay):
@@ -8998,63 +9025,62 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def class_pick_callback(update, context):
     """Handle class picker buttons."""
     query = update.callback_query
-    await query.answer()
-    data = query.data  # class_pick_{uid}_{class_id}
-    parts = data.split("_")
-    # Format: class_pick_{uid}_{class_id}
-    # parts: ['class','pick',uid,class_id]
-    if len(parts) < 4:
-        return
+    caller_id = query.from_user.id
+    if not _cb_lock(caller_id):
+        await query.answer("Processing — please wait.", show_alert=False); return
     try:
-        uid = int(parts[2])
-    except (ValueError, IndexError):
-        return
-    class_id = "_".join(parts[3:])
-
-    if query.from_user.id != uid:
-        await query.answer("This class picker isn't for you!", show_alert=True)
-        return
-
-    p = get_player(uid)
-    if not p:
-        await query.answer("Player not found!", show_alert=True)
-        return
-    if p.get("class_id"):
-        await query.answer("You already have a class!", show_alert=True)
-        return
-    if class_id not in BASE_CLASSES:
-        await query.answer("Invalid class!", show_alert=True)
-        return
-
-    cls = CLASS_TREE[class_id]
-    p["class_id"] = class_id
-    sd = safe_stats(p)
-    for stat, bonus in cls.get("stat_bonus", {}).items():
-        sd[stat] = sd.get(stat, 5) + bonus
-    p["stats"] = json.dumps(sd)
-    all_tier1 = [sk for sk in cls.get("skills", []) if sk.get("tier", 1) == 1]
-    if not all_tier1:
-        all_tier1 = cls["skills"][:1]
-    p["all_skills"] = json.dumps(all_tier1)
-    save_player(p)
-    sk = all_tier1[0]
-    skill_lines = "\n".join(f"🔸 *{s['name']}*  -  {s['desc']}" for s in all_tier1)
-    result = (f"⚔️ *You are now a {cls['name']}!*\n\n"
-              f"_{cls['desc']}_\n\n"
-              f"🔹 Passive: {sk['passive']}\n"
-              f"{skill_lines}\n\n"
-              f"At *Level 10*, use /prestige to choose your path (A or B).")
-    try:
-        await query.edit_message_text(result, parse_mode="Markdown")
-    except Exception:
-        pass
-    try:
-        await query.get_bot().send_message(
-            chat_id=query.message.chat.id,
-            text=f"⚔️ *{p['username']}* has chosen *{cls['name']}*!",
-            parse_mode="Markdown")
-    except Exception:
-        pass
+        await query.answer()
+        data = query.data  # class_pick_{uid}_{class_id}
+        parts = data.split("_")
+        # Format: class_pick_{uid}_{class_id}
+        # parts: ['class','pick',uid,class_id]
+        if len(parts) < 4:
+            return
+        try:
+            uid = int(parts[2])
+        except (ValueError, IndexError):
+            return
+        class_id = "_".join(parts[3:])
+        if caller_id != uid:
+            await query.answer("This class picker isn't for you!", show_alert=True); return
+        p = get_player(uid)
+        if not p:
+            await query.answer("Player not found!", show_alert=True); return
+        if p.get("class_id"):
+            await query.answer("You already have a class!", show_alert=True); return
+        if class_id not in BASE_CLASSES:
+            await query.answer("Invalid class!", show_alert=True); return
+        cls = CLASS_TREE[class_id]
+        p["class_id"] = class_id
+        sd = safe_stats(p)
+        for stat, bonus in cls.get("stat_bonus", {}).items():
+            sd[stat] = sd.get(stat, 5) + bonus
+        p["stats"] = json.dumps(sd)
+        all_tier1 = [sk for sk in cls.get("skills", []) if sk.get("tier", 1) == 1]
+        if not all_tier1:
+            all_tier1 = cls["skills"][:1]
+        p["all_skills"] = json.dumps(all_tier1)
+        save_player(p)
+        sk = all_tier1[0]
+        skill_lines = "\n".join(f"🔸 *{s['name']}*  -  {s['desc']}" for s in all_tier1)
+        result = (f"⚔️ *You are now a {cls['name']}!*\n\n"
+                  f"_{cls['desc']}_\n\n"
+                  f"🔹 Passive: {sk['passive']}\n"
+                  f"{skill_lines}\n\n"
+                  f"At *Level 10*, use /prestige to choose your path (A or B).")
+        try:
+            await query.edit_message_text(result, parse_mode="Markdown")
+        except Exception:
+            pass
+        try:
+            await query.get_bot().send_message(
+                chat_id=query.message.chat.id,
+                text=f"⚔️ *{p['username']}* has chosen *{cls['name']}*!",
+                parse_mode="Markdown")
+        except Exception:
+            pass
+    finally:
+        _cb_unlock(caller_id)
 
 # ── CLASS RESET ───────────────────────────────────────────────────────────────
 def _calc_applied_class_bonuses(p):
@@ -9170,57 +9196,57 @@ async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def resetclass_callback(update, context):
     """Handle resetclass confirm/cancel buttons."""
     query = update.callback_query
-    await query.answer()
-    data = query.data  # rscls_confirm_{uid} or rscls_cancel_{uid}
-    parts = data.split("_")
-    if len(parts) < 3:
-        return
-    action = parts[1]  # 'confirm' or 'cancel'
+    caller_id = query.from_user.id
+    if not _cb_lock(caller_id):
+        await query.answer("Processing — please wait.", show_alert=False); return
     try:
-        uid = int(parts[2])
-    except (ValueError, IndexError):
-        return
-    if query.from_user.id != uid:
-        await query.answer("This isn't your reset button!", show_alert=True)
-        return
-
-    if action == "cancel":
+        await query.answer()
+        data = query.data  # rscls_confirm_{uid} or rscls_cancel_{uid}
+        parts = data.split("_")
+        if len(parts) < 3:
+            return
+        action = parts[1]
         try:
-            await query.edit_message_text("❌ Class reset cancelled.", parse_mode="Markdown")
+            uid = int(parts[2])
+        except (ValueError, IndexError):
+            return
+        if caller_id != uid:
+            await query.answer("This isn't your reset button!", show_alert=True); return
+        if action == "cancel":
+            try:
+                await query.edit_message_text("❌ Class reset cancelled.", parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+        p = get_player(uid)
+        if not p or not p.get("class_id"):
+            await query.answer("No class to reset!", show_alert=True); return
+        cost = 300
+        if safe_int(p.get("gold")) < cost:
+            await query.answer(f"Not enough gold! Need {cost}g.", show_alert=True); return
+        cls = get_player_class(p)
+        cls_name = cls["name"] if cls else "Unknown"
+        bonuses = _calc_applied_class_bonuses(p)
+        sd = safe_stats(p)
+        for stat, val in bonuses.items():
+            sd[stat] = max(0, sd.get(stat, 0) - val)
+        p["stats"]      = json.dumps(sd)
+        p["class_id"]   = None
+        p["class_path"] = None
+        p["all_skills"] = json.dumps([])
+        p["gold"]       = safe_int(p.get("gold")) - cost
+        unequipped = _unequip_class_gear(p)
+        save_player(p)
+        gear_note = f"\n⚠️ Class gear unequipped: {', '.join(unequipped)}" if unequipped else ""
+        result = (f"🔄 *Class reset complete!*\n\n"
+                  f"Class bonuses from *{cls_name}* have been reversed.{gear_note}\n"
+                  f"Use /class to choose a new class.")
+        try:
+            await query.edit_message_text(result, parse_mode="Markdown")
         except Exception:
             pass
-        return
-
-    # action == "confirm"
-    p = get_player(uid)
-    if not p or not p.get("class_id"):
-        await query.answer("No class to reset!", show_alert=True)
-        return
-    cost = 300
-    if safe_int(p.get("gold")) < cost:
-        await query.answer(f"Not enough gold! Need {cost}g.", show_alert=True)
-        return
-    cls = get_player_class(p)
-    cls_name = cls["name"] if cls else "Unknown"
-    bonuses = _calc_applied_class_bonuses(p)
-    sd = safe_stats(p)
-    for stat, val in bonuses.items():
-        sd[stat] = max(0, sd.get(stat, 0) - val)
-    p["stats"]      = json.dumps(sd)
-    p["class_id"]   = None
-    p["class_path"] = None
-    p["all_skills"] = json.dumps([])
-    p["gold"]       = safe_int(p.get("gold")) - cost
-    unequipped = _unequip_class_gear(p)
-    save_player(p)
-    gear_note = f"\n⚠️ Class gear unequipped: {', '.join(unequipped)}" if unequipped else ""
-    result = (f"🔄 *Class reset complete!*\n\n"
-              f"Class bonuses from *{cls_name}* have been reversed.{gear_note}\n"
-              f"Use /class to choose a new class.")
-    try:
-        await query.edit_message_text(result, parse_mode="Markdown")
-    except Exception:
-        pass
+    finally:
+        _cb_unlock(caller_id)
 
 
 # ── PRESTIGE (path selection at Lv 10, auto-advance after) ───────────────────
@@ -20556,46 +20582,47 @@ async def resetstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def resetstats_callback(update, context):
     """Handle resetstats confirm/cancel buttons."""
     query = update.callback_query
-    await query.answer()
-    data = query.data  # rsstat_confirm_{uid} or rsstat_cancel_{uid}
-    parts = data.split("_")
-    if len(parts) < 3:
-        return
-    action = parts[1]  # 'confirm' or 'cancel'
+    caller_id = query.from_user.id
+    if not _cb_lock(caller_id):
+        await query.answer("Processing — please wait.", show_alert=False); return
     try:
-        uid = int(parts[2])
-    except (ValueError, IndexError):
-        return
-    if query.from_user.id != uid:
-        await query.answer("This isn't your reset button!", show_alert=True)
-        return
-
-    if action == "cancel":
+        await query.answer()
+        data = query.data
+        parts = data.split("_")
+        if len(parts) < 3:
+            return
+        action = parts[1]
         try:
-            await query.edit_message_text("❌ Stat reset cancelled.", parse_mode="Markdown")
+            uid = int(parts[2])
+        except (ValueError, IndexError):
+            return
+        if caller_id != uid:
+            await query.answer("This isn't your reset button!", show_alert=True); return
+        if action == "cancel":
+            try:
+                await query.edit_message_text("❌ Stat reset cancelled.", parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+        p = get_player(uid)
+        if not p:
+            await query.answer("Player not found!", show_alert=True); return
+        new_stats, refunded = _do_resetstats(p)
+        result = (f"🔄 *Stat Reset Complete!*\n\n"
+                  f"All allocated stat points have been refunded.\n"
+                  f"💡 *{refunded} points* returned to your pool.\n\n"
+                  f"DEF is now gear-only  -  armor and shields provide your defense.\n\n"
+                  f"Use `/allocate` to redistribute your points.\n"
+                  f"Current stats after class bonuses:\n"
+                  f"STR:{new_stats['STR']} AGI:{new_stats['AGI']} "
+                  f"INT:{new_stats['INT']} WIS:{new_stats['WIS']} "
+                  f"DEX:{new_stats['DEX']} LUK:{new_stats['LUK']}")
+        try:
+            await query.edit_message_text(result, parse_mode="Markdown")
         except Exception:
             pass
-        return
-
-    # action == "confirm"
-    p = get_player(uid)
-    if not p:
-        await query.answer("Player not found!", show_alert=True)
-        return
-    new_stats, refunded = _do_resetstats(p)
-    result = (f"🔄 *Stat Reset Complete!*\n\n"
-              f"All allocated stat points have been refunded.\n"
-              f"💡 *{refunded} points* returned to your pool.\n\n"
-              f"DEF is now gear-only  -  armor and shields provide your defense.\n\n"
-              f"Use `/allocate` to redistribute your points.\n"
-              f"Current stats after class bonuses:\n"
-              f"STR:{new_stats['STR']} AGI:{new_stats['AGI']} "
-              f"INT:{new_stats['INT']} WIS:{new_stats['WIS']} "
-              f"DEX:{new_stats['DEX']} LUK:{new_stats['LUK']}")
-    try:
-        await query.edit_message_text(result, parse_mode="Markdown")
-    except Exception:
-        pass
+    finally:
+        _cb_unlock(caller_id)
 
 # ── WIPE (admin only) ─────────────────────────────────────────────────────────
 async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -20830,6 +20857,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
     user = update.effective_user
     if not user or user.is_bot: return
+    if not _rate_ok(user.id):
+        return  # silently drop — no response, no feedback loop
     chat_id = update.effective_chat.id
     text    = (update.message.text or "").lower()
 
@@ -22358,16 +22387,20 @@ def main():
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
     # Commands bypass handle_message entirely (filtered out above), so they never update
     # last_seen. This group-1 handler fires for commands only and keeps the timer accurate.
-    async def _cmd_last_seen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def _cmd_pre_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Runs before all command handlers (group=-1).
+        Stamps last_seen and enforces rate limit — raises ApplicationHandlerStop
+        if the user is spamming so no group=0 handler fires."""
         if not update.message or not update.effective_user or update.effective_user.is_bot: return
         u = update.effective_user
-        # Lightweight: just stamp last_seen without loading the full shadow object
+        if u.id != ADMIN_ID and not _rate_ok(u.id):
+            raise ApplicationHandlerStop  # silently drop — no reply, no exploit loop
         try:
             _lc = sqlite3.connect(DB_PATH); _lc.execute(
                 "UPDATE shadow_profiles SET last_seen=? WHERE user_id=?",
                 (datetime.now().isoformat(), u.id)); _lc.commit(); _lc.close()
         except Exception: pass
-    app.add_handler(MessageHandler(filters.COMMAND, _cmd_last_seen), group=1)
+    app.add_handler(MessageHandler(filters.COMMAND, _cmd_pre_filter), group=-1)
 
     explore_timers.clear()
     print(f"🎱 {WORLD_NAME} {CURRENT_VERSION} is running...")
