@@ -226,6 +226,8 @@ def exp_for_level(level):
 
 def max_hp_for_level(level): return 250 + (level - 1) * 50
 
+PERM_HP_BONUS = 200  # permanent flat HP boost applied to all players
+
 # HP multiplier per class line — warrior = tank, mage = glass cannon
 _CLASS_LINE_HP_MULT = {
     "warrior":        1.30,
@@ -3389,22 +3391,33 @@ def _enc_monster_attack(enc):
 BOSSES = {
     "1 ball": {"name":"The 1 Ball","hp":1200,"max_hp":1200,"dmg_min":68,"dmg_max":120,
                "exp":2000,"gold":150,"title":"1-Ball Slayer","desc":"Every warrior left it standing. It has grown tired of waiting.",
-               "loot_table":[("Greater Health Potion","uncommon"),("Iron Shard","uncommon"),("Soldier's Plating","uncommon")]},
+               "loot_table":[("Greater Health Potion","uncommon"),("Iron Shard","uncommon"),("Soldier's Plating","uncommon"),
+                             ("Chain Coif","uncommon"),("Chain Gauntlets","uncommon"),("Chain Boots","uncommon"),("Shadow Mask","uncommon"),
+                             ("Shadow Hood","uncommon"),("Rogue's Wraps","uncommon"),("Shadow Treads","uncommon"),("War Paint Mask","uncommon")]},
     "3 ball": {"name":"The 3 Ball","hp":2000,"max_hp":2000,"dmg_min":105,"dmg_max":165,
                "exp":4000,"gold":300,"title":"3-Ball Slayer","desc":"Lurks in the shadows and waits. When it strikes, things shatter.",
-               "loot_table":[("Grand Restorative Flask","rare"),("Iron Shard","uncommon"),("Ranger's Marked Bow","rare")]},
+               "loot_table":[("Grand Restorative Flask","rare"),("Iron Shard","uncommon"),("Ranger's Marked Bow","rare"),
+                             ("Templar's Helm","rare"),("Templar's Gauntlets","rare"),("Templar's Sabatons","rare"),("Templar's Visor","rare"),
+                             ("Void Cowl","rare"),("Shadow Wraps","rare"),("Void Walkers","rare"),("Assassin's Veil","rare")]},
     "5 ball": {"name":"The 5 Ball","hp":3000,"max_hp":3000,"dmg_min":143,"dmg_max":210,
                "exp":7000,"gold":500,"title":"5-Ball Slayer","desc":"The heart of the dungeon. The middle cannot be ignored.",
-               "loot_table":[("Scroll of Revival","rare"),("Warlock's Dread Staff","rare"),("Fortune Coin","rare")]},
+               "loot_table":[("Scroll of Revival","rare"),("Warlock's Dread Staff","rare"),("Fortune Coin","rare"),
+                             ("Templar's Helm","rare"),("Templar's Gauntlets","rare"),("Templar's Sabatons","rare"),("Templar's Visor","rare"),
+                             ("Void Cowl","rare"),("Shadow Wraps","rare"),("Void Walkers","rare"),("Assassin's Veil","rare")]},
     "7 ball": {"name":"The 7 Ball","hp":4500,"max_hp":4500,"dmg_min":180,"dmg_max":270,
                "exp":12000,"gold":800,"title":"7-Ball Slayer","desc":"The last guardian before the final boss. It knows what it protects.",
-               "loot_table":[("Warlord's Edge","epic"),("Void-Touched Robe","epic"),("Twin Strike Ring","epic")]},
+               "loot_table":[("Warlord's Edge","epic"),("Void-Touched Robe","epic"),("Twin Strike Ring","epic"),
+                             ("Battleborn Crown","epic"),("Battleborn Gauntlets","epic"),("Battleborn Treads","epic"),("Phantom Mask","epic"),
+                             ("Phantom Visage","epic"),("Void Gloves","epic"),("Phantom Boots","epic"),("Void Visor","epic")]},
     "8 ball": {"name":"The 8 Ball","hp":8000,"max_hp":8000,"dmg_min":225,"dmg_max":375,
                "exp":20000,"gold":2000,"title":"8-Ball Champion","desc":"The final boss. The only one that matters in the end.",
-               "loot_table":[("Ruinblade","legendary"),("Archmage's Sanctum Robe","legendary"),("Ring of the Endless","legendary")]},
+               "loot_table":[("Ruinblade","legendary"),("Archmage's Sanctum Robe","legendary"),("Ring of the Endless","legendary"),
+                             ("Helm of the Eternal","legendary"),("Gauntlets of the Eternal","legendary"),("Boots of the Eternal","legendary"),("Mask of the Eternal","legendary")]},
     "void":   {"name":"The Void Ball","hp":15000,"max_hp":15000,"dmg_min":375,"dmg_max":600,
                "exp":50000,"gold":5000,"title":"Blackball Slayer","desc":"It was never part of this realm. It came from somewhere else.","secret":True,
-               "loot_table":[("Shard of the Void","legendary"),("The Last Stand Locket","legendary"),("The Void Mark","legendary")]},
+               "loot_table":[("Shard of the Void","legendary"),("The Last Stand Locket","legendary"),("The Void Mark","legendary"),
+                             ("Crown of the Void","mythic"),("Hands of the Void","mythic"),("Steps of the Void","mythic"),("Face of the Void","mythic"),
+                             ("Helm of the Eternal","legendary"),("Gauntlets of the Eternal","legendary"),("Boots of the Eternal","legendary"),("Mask of the Eternal","legendary")]},
 }
 
 RAID_TIERS = [
@@ -3417,6 +3430,10 @@ RAID_TIERS = [
          ("Worn Leather Band",0.30),("Scout's Pendant",0.25),("Brass Ring",0.20),
          ("Traveler's Coin",0.15),("Silk Band",0.10),("Obsidian Stud",0.08),
          ("Iron Shard",0.12),("Health Potion",0.20),
+         ("Chain Coif",0.18),("Shadow Hood",0.18),
+         ("Chain Gauntlets",0.18),("Rogue's Wraps",0.18),
+         ("Chain Boots",0.18),("Shadow Treads",0.18),
+         ("Shadow Mask",0.18),("War Paint Mask",0.18),
      ]},
     {"name":"The Fortress Assault","min_level":5,"waves":3,"wave_boss_key":"3 ball",
      "wave_enemies":[{"name":"Stone Golem","hp":400,"dmg_min":35,"dmg_max":60},
@@ -3429,6 +3446,10 @@ RAID_TIERS = [
          ("Crystal Bead Necklace",0.18),("Iron Scale Vest",0.15),("Shadow Leather Coat",0.12),
          ("Iron Shard",0.25),("Fortune Coin",0.10),("Hawk Eye Medallion",0.08),
          ("Enchanting Scroll",0.10),
+         ("Templar's Helm",0.15),("Void Cowl",0.15),
+         ("Templar's Gauntlets",0.15),("Shadow Wraps",0.15),
+         ("Templar's Sabatons",0.15),("Void Walkers",0.15),
+         ("Templar's Visor",0.15),("Assassin's Veil",0.15),
      ]},
     {"name":"The Citadel Siege","min_level":10,"waves":3,"wave_boss_key":"5 ball",
      "wave_enemies":[{"name":"Ashen Wraith","hp":1000,"dmg_min":65,"dmg_max":100},
@@ -3441,6 +3462,10 @@ RAID_TIERS = [
          ("Mage's Coil",0.15),("Stone Heart",0.18),("Beast Fang Chain",0.15),
          ("Traveler's Compass",0.12),("The Storm Torc",0.12),
          ("Iron Shard",0.35),("Enchanting Scroll",0.20),("Scroll of Revival",0.08),
+         ("Battleborn Crown",0.12),("Phantom Visage",0.12),
+         ("Battleborn Gauntlets",0.12),("Void Gloves",0.12),
+         ("Battleborn Treads",0.12),("Phantom Boots",0.12),
+         ("Phantom Mask",0.12),("Void Visor",0.12),
      ]},
     {"name":"The Final Sanctum  -  Endgame","min_level":15,"waves":4,"wave_boss_key":"8 ball",
      "wave_enemies":[{"name":"Shadow Knight","hp":2500,"dmg_min":100,"dmg_max":160},
@@ -3456,6 +3481,10 @@ RAID_TIERS = [
          ("Shard of the Void",0.06),("Ring of the Endless",0.05),("The Warlord's Ring",0.04),
          ("The Eternal Ring",0.04),("Iron Shard",0.50),("Enchanting Scroll",0.35),
          ("Scroll of Revival",0.15),
+         ("Helm of the Eternal",0.06),("Crown of the Void",0.02),
+         ("Gauntlets of the Eternal",0.06),("Hands of the Void",0.02),
+         ("Boots of the Eternal",0.06),("Steps of the Void",0.02),
+         ("Mask of the Eternal",0.06),("Face of the Void",0.02),
      ]},
 ]
 
@@ -3471,6 +3500,10 @@ SOLO_RAID_TIERS = [
          ("Worn Leather Band",0.28),("Scout's Pendant",0.25),("Brass Ring",0.22),
          ("Traveler's Coin",0.18),("Silk Band",0.12),("Obsidian Stud",0.10),
          ("Iron Shard",0.15),("Health Potion",0.25),
+         ("Chain Coif",0.18),("Shadow Hood",0.18),
+         ("Chain Gauntlets",0.18),("Rogue's Wraps",0.18),
+         ("Chain Boots",0.18),("Shadow Treads",0.18),
+         ("Shadow Mask",0.18),("War Paint Mask",0.18),
      ]},
     {"name":"The Side Pocket Run","min_level":5,"wave_boss_key":"3 ball",
      "wave_enemies":[
@@ -3485,6 +3518,10 @@ SOLO_RAID_TIERS = [
          ("Crystal Bead Necklace",0.16),("Iron Shard",0.28),
          ("Fortune Coin",0.10),("Hawk Eye Medallion",0.07),
          ("Enchanting Scroll",0.08),
+         ("Templar's Helm",0.15),("Void Cowl",0.15),
+         ("Templar's Gauntlets",0.15),("Shadow Wraps",0.15),
+         ("Templar's Sabatons",0.15),("Void Walkers",0.15),
+         ("Templar's Visor",0.15),("Assassin's Veil",0.15),
      ]},
     {"name":"The One-Man Break","min_level":10,"wave_boss_key":"5 ball",
      "wave_enemies":[
@@ -3498,6 +3535,10 @@ SOLO_RAID_TIERS = [
          ("War Master's Clasp",0.20),("Phantom Loop",0.16),("Warrior's Band",0.14),
          ("Mage's Coil",0.14),("Stone Heart",0.16),("Beast Fang Chain",0.14),
          ("Iron Shard",0.35),("Enchanting Scroll",0.18),("Scroll of Revival",0.07),
+         ("Battleborn Crown",0.12),("Phantom Visage",0.12),
+         ("Battleborn Gauntlets",0.12),("Void Gloves",0.12),
+         ("Battleborn Treads",0.12),("Phantom Boots",0.12),
+         ("Phantom Mask",0.12),("Void Visor",0.12),
      ]},
     {"name":"The Ghost Run","min_level":15,"wave_boss_key":"8 ball",
      "wave_enemies":[
@@ -3514,6 +3555,10 @@ SOLO_RAID_TIERS = [
          ("Shard of the Void",0.05),("Ring of the Endless",0.04),("The Warlord's Ring",0.03),
          ("The Eternal Ring",0.03),("Iron Shard",0.50),("Enchanting Scroll",0.30),
          ("Scroll of Revival",0.12),
+         ("Helm of the Eternal",0.06),("Crown of the Void",0.02),
+         ("Gauntlets of the Eternal",0.06),("Hands of the Void",0.02),
+         ("Boots of the Eternal",0.06),("Steps of the Void",0.02),
+         ("Mask of the Eternal",0.06),("Face of the Void",0.02),
      ]},
 ]
 
@@ -4259,7 +4304,7 @@ def calc_max_hp(p):
     temp   = safe_int(p.get("temp_hp_bonus")) if _ts_active(p, "temp_hp_until") else 0
     set_bonuses, _ = get_active_set_bonuses(p)
     set_hp = set_bonuses.get("hp", 0)
-    return base + acc_hp + enc_hp + temp + set_hp
+    return base + acc_hp + enc_hp + temp + set_hp + PERM_HP_BONUS
 
 TIER_THRESHOLDS = {1: 5, 2: 10, 3: 30, 4: 60, 5: 100}
  
@@ -6567,14 +6612,16 @@ def get_random_item_by_rarity(rarity):
         if data["rarity"] == rarity: pool.append(name)
     return random.choice(pool) if pool else None
 
-def roll_loot_table(loot_table, p=None):
+def roll_loot_table(loot_table, p=None, boss=False):
     _RARITY_CHANCE = {"common":0.50,"uncommon":0.30,"rare":0.15,"epic":0.07,"legendary":0.03}
     luk_bonus = (get_stat(p, "LUK") * 0.005) if p else 0
+    _all_gear = {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}
     for item_name, chance in loot_table:
         if isinstance(chance, str):
             chance = _RARITY_CHANCE.get(chance.lower(), 0.15)
-        weapon_boost = 1.8 if item_name in WEAPONS else 1.0
-        adjusted = min(chance * weapon_boost + luk_bonus, 0.95)
+        gear_boost = 1.8 if item_name in _all_gear else 1.0
+        boss_boost = 1.5 if boss else 1.0
+        adjusted = min(chance * gear_boost * boss_boost + luk_bonus, 0.95)
         if random.random() < adjusted:
             return item_name
     return None
@@ -7697,7 +7744,7 @@ def _build_stats_pages(p, viewing_name=None):
         page1_lines.append(pet_str)
     page1_lines += [
         "",
-        f"❤️ HP: {p['hp']}/{real_max}",
+        f"❤️ HP: {p['hp']}/{real_max}  _(+{PERM_HP_BONUS} permanent)_",
         f"✨ {exp_cur:,}/{exp_need:,} EXP ({exp_pct}%)",
         f"🏆 Lifetime EXP: {safe_int(p.get('total_exp')):,}",
         f"💬 Messages: {msg_count:,}",
@@ -7717,6 +7764,7 @@ def _build_stats_pages(p, viewing_name=None):
     page2_lines = [
         f"🧙 *{cls_name}*{path_str}",
         "",
+        f"❤️ Max HP: {real_max}  _(+{PERM_HP_BONUS} permanent)_",
         f"STR: {eff['STR']}",
         f"AGI: {eff['AGI']}",
         f"INT: {eff['INT']}",
@@ -8921,10 +8969,12 @@ async def allocate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     STAT_NAMES = ["STR","AGI","INT","WIS","DEX","LUK"]
     cls = get_player_class(p)
     rec = cls["primary_stat"] + " recommended" if cls else "Free to allocate"
+    max_hp = calc_max_hp(p)
     if not context.args or len(context.args) < 2:
         alloc_text = (f"📊 *Stat Allocation*  -  *{sp}* points available\n\n"
-            f"STR:{sd.get('STR',5)} AGI:{sd.get('AGI',5)} INT:{sd.get('INT',5)} "
-            f"WIS:{sd.get('WIS',5)} DEX:{sd.get('DEX',5)} LUK:{sd.get('LUK',5)}\n\n"
+            f"❤️ Max HP: {max_hp}  _(+{PERM_HP_BONUS} permanent)_\n"
+            f"STR:{get_stat(p,'STR')} AGI:{get_stat(p,'AGI')} INT:{get_stat(p,'INT')} "
+            f"WIS:{get_stat(p,'WIS')} DEX:{get_stat(p,'DEX')} LUK:{get_stat(p,'LUK')}\n\n"
             f"📌 STR  -  Attack damage (Warrior)\n"
             f"📌 AGI  -  Dodge & crit\n"
             f"📌 INT  -  Spell damage (Mage)\n"
@@ -10668,7 +10718,7 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
             if inst_hp is not None and not is_defeated(pp):
                 pp["hp"] = max(1, inst_hp)
             pp["gold"] = pp.get("gold", 0) + data["gold"]
-            loot = roll_loot_table(data.get("loot_table", []))
+            loot = roll_loot_table(data.get("loot_table", []), boss=True)
             if loot:
                 add_item(pp, loot); r = ""
                 for pool in [WEAPONS, ARMORS, ACCESSORIES]:
@@ -10681,10 +10731,21 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
             save_player(pp)
             lines.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
 
-    save_player(p)
+    # Delete the /attack command message, then edit the boss card in place
     try: await update.message.delete()
     except Exception: pass
-    await announce(update.get_bot(), chat_id, "\n".join(lines), delay=30)
+    boss_dead = boss_dict["hp"] <= 0
+    card_msg_id = boss_dict.get("card_msg_id")
+    if card_msg_id:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=card_msg_id,
+                text="\n".join(lines)[:4096], parse_mode="Markdown",
+                reply_markup=None if boss_dead else _build_boss_markup(boss_dict.get("summoner_id", user.id)))
+        except Exception:
+            await announce(update.get_bot(), chat_id, "\n".join(lines), delay=60)
+    else:
+        await announce(update.get_bot(), chat_id, "\n".join(lines), delay=60)
 
 
 
@@ -12178,7 +12239,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pp = get_player(u["id"])
                 if not pp: continue
                 pp["gold"] = pp.get("gold", 0) + data["gold"]
-                loot = roll_loot_table(data.get("loot_table", []))
+                loot = roll_loot_table(data.get("loot_table", []), boss=True)
                 if loot:
                     add_item(pp, loot)
                     r = ""
@@ -12197,7 +12258,6 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"🎉 *{pp['username']}* reached *Level {pp['level']}*! 🏆",
                         delay=60))
 
-        save_player(p)
         await send_group(update, "\n".join(lines), delay=30)
         return
 
@@ -12468,7 +12528,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 if inst_hp is not None and not is_defeated(pp):
                     pp["hp"] = max(1, inst_hp)
                 pp["gold"] = pp.get("gold", 0) + data["gold"]
-                loot = roll_loot_table(data.get("loot_table", []))
+                loot = roll_loot_table(data.get("loot_table", []), boss=True)
                 if loot:
                     add_item(pp, loot); r = ""
                     for pool in [WEAPONS, ARMORS, ACCESSORIES]:
@@ -12478,7 +12538,6 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     out.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
                 add_exp(pp, data["exp"], w_sk); save_player(pp)
                 out.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
-            save_player(p)
             try:
                 await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown")
             except Exception:
@@ -20570,7 +20629,7 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pp = get_player(u["id"])
                 if not pp: continue
                 pp["gold"] = pp.get("gold", 0) + data["gold"]
-                loot = roll_loot_table(data.get("loot_table", []))
+                loot = roll_loot_table(data.get("loot_table", []), boss=True)
                 if loot:
                     add_item(pp, loot)
                     r = ""
@@ -20582,7 +20641,6 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lmsgs, leveled = add_exp(pp, data["exp"], w2)
                 save_player(pp)
                 lines.append(f"✅ *{pp['username']}*  -  +{data['exp']:,} EXP | +{data['gold']} Gold")
-            save_player(p)
             try:
                 await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
             except Exception: pass
@@ -20709,7 +20767,7 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pp = get_player(u["id"])
             if not pp: continue
             pp["gold"] = pp.get("gold", 0) + data["gold"]
-            loot = roll_loot_table(data.get("loot_table", []))
+            loot = roll_loot_table(data.get("loot_table", []), boss=True)
             if loot:
                 add_item(pp, loot); r = ""
                 for pool in [WEAPONS, ARMORS, ACCESSORIES]:
@@ -20719,7 +20777,6 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
             add_exp(pp, data["exp"], w2); save_player(pp)
             lines.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
-        save_player(p)
         try:
             await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
         except Exception: pass
@@ -21030,9 +21087,11 @@ async def allocate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Rebuild the allocate message with updated stats and buttons
     cls = get_player_class(p)
     rec = cls["primary_stat"] + " recommended" if cls else "Free to allocate"
+    max_hp = calc_max_hp(p)
     text = (f"📊 *Stat Allocation*  -  *{sp}* points available\n\n"
-            f"STR:{sd.get('STR',5)} AGI:{sd.get('AGI',5)} INT:{sd.get('INT',5)} "
-            f"WIS:{sd.get('WIS',5)} DEX:{sd.get('DEX',5)} LUK:{sd.get('LUK',5)}\n\n"
+            f"❤️ Max HP: {max_hp}  _(+{PERM_HP_BONUS} permanent)_\n"
+            f"STR:{get_stat(p,'STR')} AGI:{get_stat(p,'AGI')} INT:{get_stat(p,'INT')} "
+            f"WIS:{get_stat(p,'WIS')} DEX:{get_stat(p,'DEX')} LUK:{get_stat(p,'LUK')}\n\n"
             f"📌 STR  -  Attack damage (Warrior)\n"
             f"📌 AGI  -  Dodge & crit\n"
             f"📌 INT  -  Spell damage (Mage)\n"
