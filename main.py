@@ -2611,6 +2611,59 @@ CONSUMABLES = {
     "Mythic Egg":             {"desc":"A shimmering egg. Epic to mythic pet inside.","sell":3000},
 }
 
+# ── DEF GEAR SLOTS ────────────────────────────────────────────────────────────
+HATS = {
+    "Leather Cap":              {"def":5,  "rarity":"common"},
+    "Iron Skullcap":            {"def":6,  "rarity":"common"},
+    "Chain Coif":               {"def":11, "rarity":"uncommon"},
+    "Shadow Hood":              {"def":12, "rarity":"uncommon"},
+    "Templar's Helm":           {"def":19, "rarity":"rare"},
+    "Void Cowl":                {"def":21, "rarity":"rare"},
+    "Battleborn Crown":         {"def":32, "rarity":"epic"},
+    "Phantom Visage":           {"def":30, "rarity":"epic"},
+    "Helm of the Eternal":      {"def":46, "rarity":"legendary"},
+    "Crown of the Void":        {"def":65, "rarity":"mythic"},
+}
+
+GLOVES = {
+    "Worn Leather Gloves":      {"def":4,  "rarity":"common"},
+    "Iron Knuckle Guards":      {"def":5,  "rarity":"common"},
+    "Chain Gauntlets":          {"def":10, "rarity":"uncommon"},
+    "Rogue's Wraps":            {"def":11, "rarity":"uncommon"},
+    "Templar's Gauntlets":      {"def":17, "rarity":"rare"},
+    "Shadow Wraps":             {"def":18, "rarity":"rare"},
+    "Battleborn Gauntlets":     {"def":28, "rarity":"epic"},
+    "Void Gloves":              {"def":26, "rarity":"epic"},
+    "Gauntlets of the Eternal": {"def":42, "rarity":"legendary"},
+    "Hands of the Void":        {"def":60, "rarity":"mythic"},
+}
+
+BOOTS = {
+    "Worn Leather Boots":       {"def":4,  "rarity":"common"},
+    "Iron Sabatons":            {"def":5,  "rarity":"common"},
+    "Chain Boots":              {"def":10, "rarity":"uncommon"},
+    "Shadow Treads":            {"def":11, "rarity":"uncommon"},
+    "Templar's Sabatons":       {"def":17, "rarity":"rare"},
+    "Void Walkers":             {"def":19, "rarity":"rare"},
+    "Battleborn Treads":        {"def":28, "rarity":"epic"},
+    "Phantom Boots":            {"def":26, "rarity":"epic"},
+    "Boots of the Eternal":     {"def":42, "rarity":"legendary"},
+    "Steps of the Void":        {"def":60, "rarity":"mythic"},
+}
+
+MASKS = {
+    "Cloth Face Wrap":          {"def":3,  "rarity":"common"},
+    "Iron Visor":               {"def":4,  "rarity":"common"},
+    "Shadow Mask":              {"def":9,  "rarity":"uncommon"},
+    "War Paint Mask":           {"def":10, "rarity":"uncommon"},
+    "Templar's Visor":          {"def":15, "rarity":"rare"},
+    "Assassin's Veil":          {"def":17, "rarity":"rare"},
+    "Phantom Mask":             {"def":25, "rarity":"epic"},
+    "Void Visor":               {"def":26, "rarity":"epic"},
+    "Mask of the Eternal":      {"def":38, "rarity":"legendary"},
+    "Face of the Void":         {"def":55, "rarity":"mythic"},
+}
+
 # ── CRAFTING RECIPES ──────────────────────────────────────────────────────────
 RECIPES = {
     "Iron Compound":  {"mats": {"Iron Shard": 4},                "result": "Steel Knight Sword"},
@@ -3900,8 +3953,8 @@ def set_enchant(p, item_name, effect):
 
 def get_enchant_bonus(p, stat):
     total = 0
-    for slot_key in ["equipped_weapon","equipped_armor",
-                      "equipped_shield","equipped_accessory"]:
+    for slot_key in ["equipped_weapon","equipped_armor","equipped_shield","equipped_accessory",
+                     "equipped_hat","equipped_gloves","equipped_boots","equipped_mask"]:
         name = p.get(slot_key)
         if not name: continue
         for enchant in get_enchant(p, name):
@@ -3942,7 +3995,9 @@ def reinforce_atk_bonus(p, item_name):
 # ── ITEM SET HELPERS ───────────────────────────────────────────────────────────
 def get_active_set_bonuses(p):
     equipped = {p.get("equipped_weapon"), p.get("equipped_armor"),
-                p.get("equipped_shield"), p.get("equipped_accessory")}
+                p.get("equipped_shield"), p.get("equipped_accessory"),
+                p.get("equipped_hat"), p.get("equipped_gloves"),
+                p.get("equipped_boots"), p.get("equipped_mask")}
     equipped.discard(None)
     bonuses = {}; active_sets = []
     for set_name, data in ITEM_SETS.items():
@@ -4011,7 +4066,18 @@ def get_armor_def(p):
         if enc.get("type") == "armor_def": a_val += enc["val"]
     for enc in (get_enchant(p, s_name) if s_name else []):
         if enc.get("type") == "armor_def": s_val += enc["val"]
-    return a_val + s_val
+    bonus = 0
+    for slot_key, pool in [("equipped_hat", HATS), ("equipped_gloves", GLOVES),
+                            ("equipped_boots", BOOTS), ("equipped_mask", MASKS)]:
+        name = p.get(slot_key)
+        if not name: continue
+        item = pool.get(name)
+        if not item: continue
+        val = item["def"] + get_enhance_bonus(p, name) + reinforce_atk_bonus(p, name)
+        for enc in get_enchant(p, name):
+            if enc.get("type") == "armor_def": val += enc["val"]
+        bonus += val
+    return a_val + s_val + bonus
 
 def gear_line(p, slot_key):
     """Return a display string for an equipped item slot with reinforce, +enh and ✨enchant tags."""
@@ -5355,6 +5421,10 @@ def init_db():
         equipped_armor TEXT DEFAULT NULL,
         equipped_shield TEXT DEFAULT NULL,
         equipped_accessory TEXT DEFAULT NULL,
+        equipped_hat TEXT DEFAULT NULL,
+        equipped_gloves TEXT DEFAULT NULL,
+        equipped_boots TEXT DEFAULT NULL,
+        equipped_mask TEXT DEFAULT NULL,
         defeated_until TEXT DEFAULT NULL,
         invincible_until TEXT DEFAULT NULL,
         distracted_until TEXT DEFAULT NULL,
@@ -5547,6 +5617,15 @@ def init_db():
         conn.commit()
     except sqlite3.OperationalError:
         pass
+
+    # ── v24 DEF gear slots ────────────────────────────────────────────────────
+    for _dc in [("equipped_hat","TEXT DEFAULT NULL"),("equipped_gloves","TEXT DEFAULT NULL"),
+                ("equipped_boots","TEXT DEFAULT NULL"),("equipped_mask","TEXT DEFAULT NULL")]:
+        try:
+            conn.execute(f"ALTER TABLE players ADD COLUMN {_dc[0]} {_dc[1]}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     # ── Marriage + new status columns ────────────────────────────────────────
     for _mc in [("married_to_id","INTEGER DEFAULT NULL"),
@@ -6055,7 +6134,8 @@ def save_player(p):
     inv = sjl(p.get("inventory"), [])
     inv = [_ITEM_RENAME.get(i, i) for i in inv]
     p["inventory"] = json.dumps(inv)
-    for slot in ("equipped_weapon", "equipped_armor", "equipped_shield", "equipped_accessory"):
+    for slot in ("equipped_weapon", "equipped_armor", "equipped_shield", "equipped_accessory",
+                 "equipped_hat", "equipped_gloves", "equipped_boots", "equipped_mask"):
         if p.get(slot) in _ITEM_RENAME:
             p[slot] = _ITEM_RENAME[p[slot]]
     enh = sjl(p.get("enhancements"), {})
@@ -6072,6 +6152,7 @@ def save_player(p):
         "class_id","class_path","all_skills","stat_points","stats",
         "inventory","passive_cooldowns",
         "equipped_weapon","equipped_armor","equipped_shield","equipped_accessory",
+        "equipped_hat","equipped_gloves","equipped_boots","equipped_mask",
         "defeated_until","invincible_until","distracted_until","entangled_until",
         "frozen_until","stunned_until","vanish_until",
         "poison_until","poison_damage","poison_last_tick",
@@ -6633,6 +6714,26 @@ async def gear_cmd(update, context):
             lines.append(f"✨ *{e['id'].capitalize()}*  -  _{e['desc']}_")
     else:
         lines.append(f"💍 *Accessory*  -  None")
+
+    lines.append("")
+
+    # Hat / Gloves / Boots / Mask
+    for slot_key, emoji, label, pool in [
+            ("equipped_hat","🎩","Hat",HATS),("equipped_gloves","🧤","Gloves",GLOVES),
+            ("equipped_boots","👢","Boots",BOOTS),("equipped_mask","🎭","Mask",MASKS)]:
+        name = p.get(slot_key)
+        if name and name in pool:
+            d = pool[name]; enh = get_enhancement(p, name)
+            enh_b = enh * 2; base = d["def"]
+            rarity = RARITY_EMOJI.get(d.get("rarity",""), "")
+            lines.append(f"{emoji} *{label}*")
+            lines.append(f"{rarity} {name}")
+            lines.append(f"DEF: {base} base + {enh_b} enh = *{base+enh_b} total*")
+            encs = get_enchant(p, name)
+            for e in encs:
+                lines.append(f"✨ *{e['id'].capitalize()}*  -  _{e['desc']}_")
+        else:
+            lines.append(f"{emoji} *{label}*  -  None")
 
     lines.append("")
     lines.append(f"Total Weapon ATK: *{get_weapon_atk(p)}*")
@@ -9160,21 +9261,27 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ Bought *{entry['item']}* for {price}g!\n💰 Remaining: {p['gold']}g", delay=15)
 
 # ── INVENTORY / EQUIP / USE / SELL ────────────────────────────────────────────
-INV_SECTIONS = ["Equipped", "Weapons", "Armors", "Shields", "Accessories", "Consumables", "Materials"]
+INV_SECTIONS = ["Equipped", "Weapons", "Armors", "Shields", "Accessories", "Hats", "Gloves", "Boots", "Masks", "Consumables", "Materials"]
 
 def _build_inv_sections(p):
     """Return ordered list of section names that have content for this player."""
     inv = Counter(sjl(p.get("inventory"), []))
     present = []
-    has_equipped = any(p.get(k) for k in ["equipped_weapon","equipped_armor","equipped_shield","equipped_accessory"])
+    has_equipped = any(p.get(k) for k in ["equipped_weapon","equipped_armor","equipped_shield","equipped_accessory",
+                                           "equipped_hat","equipped_gloves","equipped_boots","equipped_mask"])
     if has_equipped:
         present.append("Equipped")
     if any(k in WEAPONS for k in inv) or p.get("equipped_weapon"):         present.append("Weapons")
     if any(k in ARMORS for k in inv) or p.get("equipped_armor"):           present.append("Armors")
     if any(k in SHIELDS for k in inv) or p.get("equipped_shield"):         present.append("Shields")
     if any(k in ACCESSORIES for k in inv) or p.get("equipped_accessory"): present.append("Accessories")
+    if any(k in HATS for k in inv) or p.get("equipped_hat"):               present.append("Hats")
+    if any(k in GLOVES for k in inv) or p.get("equipped_gloves"):          present.append("Gloves")
+    if any(k in BOOTS for k in inv) or p.get("equipped_boots"):            present.append("Boots")
+    if any(k in MASKS for k in inv) or p.get("equipped_mask"):             present.append("Masks")
     if any(k in CONSUMABLES for k in inv): present.append("Consumables")
-    if any(k not in {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**CONSUMABLES} for k in inv):
+    _all_gear = {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**HATS,**GLOVES,**BOOTS,**MASKS,**CONSUMABLES}
+    if any(k not in _all_gear for k in inv):
         present.append("Materials")
     if not present:
         present.append("Equipped")
@@ -9210,6 +9317,18 @@ def _render_bag_item(p, item, count):
         type_tag = "💍 Accessory"
         rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪")
         stat_str = d.get("desc","")[:40]
+    elif item in HATS:
+        d = HATS[item]; type_tag = "🎩 Hat"
+        rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪"); stat_str = f"+{d['def']} DEF"
+    elif item in GLOVES:
+        d = GLOVES[item]; type_tag = "🧤 Gloves"
+        rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪"); stat_str = f"+{d['def']} DEF"
+    elif item in BOOTS:
+        d = BOOTS[item]; type_tag = "👢 Boots"
+        rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪"); stat_str = f"+{d['def']} DEF"
+    elif item in MASKS:
+        d = MASKS[item]; type_tag = "🎭 Mask"
+        rarity = RARITY_EMOJI.get(d.get("rarity",""), "⚪"); stat_str = f"+{d['def']} DEF"
     elif item in CONSUMABLES:
         d = CONSUMABLES[item]
         type_tag = "🧪 Consumable"
@@ -9218,7 +9337,8 @@ def _render_bag_item(p, item, count):
     else:
         type_tag = "📦 Material"; rarity = "⚪"; stat_str = ""
     enh = get_enhancement(p, item)
-    encs = get_enchant(p, item) if item in {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES} else []
+    _all_enchantable = {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**HATS,**GLOVES,**BOOTS,**MASKS}
+    encs = get_enchant(p, item) if item in _all_enchantable else []
     enh_str = f" *+{enh}*" if enh > 0 else ""
     enc_str = f" ✨×{len(encs)}" if encs else ""
     return f"{rarity} *{item}*{enh_str}{enc_str} x{count}\n  {type_tag} - _{stat_str}_"
@@ -9234,7 +9354,9 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False, uid
     if section == "Equipped":
         has_any = False
         for slot_key, emoji in [("equipped_weapon","⚔️"),("equipped_armor","🛡️"),
-                                  ("equipped_shield","🔰"),("equipped_accessory","💍")]:
+                                  ("equipped_shield","🔰"),("equipped_accessory","💍"),
+                                  ("equipped_hat","🎩"),("equipped_gloves","🧤"),
+                                  ("equipped_boots","👢"),("equipped_mask","🎭")]:
             name = p.get(slot_key)
             if not name: continue
             has_any = True
@@ -9249,15 +9371,20 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False, uid
         if not has_any:
             lines.append("_Nothing equipped._")
     else:
+        _all_gear_inv = {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**HATS,**GLOVES,**BOOTS,**MASKS,**CONSUMABLES}
         pool_map = {
             "Weapons":     (WEAPONS,     lambda k: k in WEAPONS),
             "Armors":      (ARMORS,      lambda k: k in ARMORS),
             "Shields":     (SHIELDS,     lambda k: k in SHIELDS),
             "Accessories": (ACCESSORIES, lambda k: k in ACCESSORIES),
+            "Hats":        (HATS,        lambda k: k in HATS),
+            "Gloves":      (GLOVES,      lambda k: k in GLOVES),
+            "Boots":       (BOOTS,       lambda k: k in BOOTS),
+            "Masks":       (MASKS,       lambda k: k in MASKS),
             "Consumables": (CONSUMABLES, lambda k: k in CONSUMABLES),
-            "Materials":   ({},          lambda k: k not in {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**CONSUMABLES}),
+            "Materials":   ({},          lambda k: k not in _all_gear_inv),
         }
-        _, pred = pool_map[section]
+        _, pred = pool_map.get(section, ({}, lambda k: False))
         bucket = [(k, v) for k, v in inv.items() if pred(k)]
         if bucket:
             for item, count in sorted(bucket, key=lambda kv: kv[0]):
@@ -9338,6 +9465,10 @@ def _build_equip_page_markup(p, uid, page, page_size=5):
         ("🛡️", "Armor",     ARMORS),
         ("🔰", "Shield",    SHIELDS),
         ("💍", "Accessory", ACCESSORIES),
+        ("🎩", "Hat",       HATS),
+        ("🧤", "Gloves",    GLOVES),
+        ("👢", "Boots",     BOOTS),
+        ("🎭", "Mask",      MASKS),
     ]:
         for it in sorted(set(k for k in inv if k in pool)):
             d_it = pool[it]
@@ -9403,6 +9534,10 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"💍 Accessory: {rarity} *{acc_e}*{enc_str}  -  _{acc_data.get('desc','')}_")
         else:
             lines.append("💍 Accessory: _None_")
+        for slot_emoji, slot_label, slot_key, pool in [
+                ("🎩","Hat","equipped_hat",HATS),("🧤","Gloves","equipped_gloves",GLOVES),
+                ("👢","Boots","equipped_boots",BOOTS),("🎭","Mask","equipped_mask",MASKS)]:
+            lines.append(_gear_summary_line(f"{slot_emoji} {slot_label}", p.get(slot_key) or "None", pool))
 
         has_items, markup = _build_equip_page_markup(p, uid, 0)
         lines.append("\n_Select an item to equip:_" if has_items else "\n_No equippable items in bag. Visit /shop!_")
@@ -9414,7 +9549,7 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, f"You don't have *{item_typed}* in your inventory!", delay=9); return
 
     # Safety check  -  unknown items are never silently deleted
-    all_known = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES)
+    all_known = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES) | set(HATS) | set(GLOVES) | set(BOOTS) | set(MASKS)
     if item_name not in all_known:
         await send_group(update,
             f"⚠️ *{item_name}* is a legacy item from before the reskin.\n"
@@ -9502,6 +9637,27 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update,
             f"💍 Equipped *{item_name}*\n_{acc['desc']}_\n"
             + (f"_Unequipped {old}_" if old else ""), delay=15)
+    elif item_name in HATS or item_name in GLOVES or item_name in BOOTS or item_name in MASKS:
+        if item_name in HATS:
+            slot_key, emoji, pool = "equipped_hat", "🎩", HATS
+        elif item_name in GLOVES:
+            slot_key, emoji, pool = "equipped_gloves", "🧤", GLOVES
+        elif item_name in BOOTS:
+            slot_key, emoji, pool = "equipped_boots", "👢", BOOTS
+        else:
+            slot_key, emoji, pool = "equipped_mask", "🎭", MASKS
+        old_def = get_armor_def(p)
+        old = p.get(slot_key)
+        p[slot_key] = item_name
+        inv.remove(item_name)
+        if old: inv.append(old)
+        p["inventory"] = json.dumps(inv); save_player(p)
+        new_def = get_armor_def(p)
+        item_data = pool[item_name]
+        compare = f"*{old}* -> *{item_name}*" if old else f"DEF: {old_def} -> {new_def}"
+        await send_group(update,
+            f"{emoji} Equipped *{item_name}*! (+{item_data['def']} DEF)\n{compare}\n"
+            + (f"_Unequipped {old}_" if old else ""), delay=15)
     else:
         await send_group(update,
             f"*{item_name}* is not equippable. Use /use for consumables.", delay=9)
@@ -9512,7 +9668,9 @@ async def unequip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
     uid = user.id
     slots = [("⚔️ Weapon", "equipped_weapon"), ("🛡️ Armor", "equipped_armor"),
-             ("🔰 Shield", "equipped_shield"), ("💍 Accessory", "equipped_accessory")]
+             ("🔰 Shield", "equipped_shield"), ("💍 Accessory", "equipped_accessory"),
+             ("🎩 Hat", "equipped_hat"), ("🧤 Gloves", "equipped_gloves"),
+             ("👢 Boots", "equipped_boots"), ("🎭 Mask", "equipped_mask")]
     buttons = []
     for label, key in slots:
         name = p.get(key)
@@ -9678,6 +9836,24 @@ async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(
             f"💍 *Equipped {item_name}!*\n_{acc['desc']}_" + (f"\n_Unequipped {old}_" if old else ""),
             parse_mode="Markdown")
+    elif item_name in HATS or item_name in GLOVES or item_name in BOOTS or item_name in MASKS:
+        if item_name in HATS:
+            slot_key, emoji, pool = "equipped_hat", "🎩", HATS
+        elif item_name in GLOVES:
+            slot_key, emoji, pool = "equipped_gloves", "🧤", GLOVES
+        elif item_name in BOOTS:
+            slot_key, emoji, pool = "equipped_boots", "👢", BOOTS
+        else:
+            slot_key, emoji, pool = "equipped_mask", "🎭", MASKS
+        old = p.get(slot_key)
+        p[slot_key] = item_name; inv.remove(item_name)
+        if old: inv.append(old)
+        p["inventory"] = json.dumps(inv); save_player(p)
+        new_def = get_armor_def(p)
+        await query.edit_message_text(
+            f"{emoji} *Equipped {item_name}!*\n"
+            f"Total DEF is now *{new_def}*" + (f"\n_Unequipped {old}_" if old else ""),
+            parse_mode="Markdown")
     else:
         await query.answer(f"{item_name} is not equippable!", show_alert=True)
 
@@ -9730,7 +9906,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Safety check  -  never silently delete unknown items
     all_known_consumables = set(CONSUMABLES)
-    all_known_gear = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES)
+    all_known_gear = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES) | set(HATS) | set(GLOVES) | set(BOOTS) | set(MASKS)
     if item not in all_known_consumables and item not in all_known_gear:
         inv.append(item)
         p["inventory"] = json.dumps(inv)
@@ -9794,7 +9970,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update, msg, delay=15)
 
 _SELL_PAGE_SIZE = 8
-_SELL_RARITY_VALUES = {"common": 20, "uncommon": 60, "rare": 200, "epic": 600, "legendary": 2000}
+_SELL_RARITY_VALUES = {"common": 20, "uncommon": 60, "rare": 200, "epic": 600, "legendary": 2000, "mythic": 8000}
 _SELL_PROTECTED = {
     "Iron Shard", "Enchanting Scroll", "Scroll of Revival",
     "Holy Water Vial", "Common Egg", "Rare Egg", "Dragon Egg",
@@ -9805,19 +9981,21 @@ def _sellable_items(p):
     """Return sorted list of (item_name, price, rarity, count) for all sellable unequipped gear."""
     inv = sjl(p.get("inventory"), [])
     equipped = {p.get("equipped_weapon"), p.get("equipped_armor"),
-                p.get("equipped_shield"), p.get("equipped_accessory")}
+                p.get("equipped_shield"), p.get("equipped_accessory"),
+                p.get("equipped_hat"), p.get("equipped_gloves"),
+                p.get("equipped_boots"), p.get("equipped_mask")}
     counts = Counter(inv)
     seen = set(); result = []
     for item in inv:
         if item in seen or item in equipped or item in _SELL_PROTECTED:
             continue
         seen.add(item)
-        for pool in [WEAPONS, ARMORS, SHIELDS, ACCESSORIES]:
+        for pool in [WEAPONS, ARMORS, SHIELDS, ACCESSORIES, HATS, GLOVES, BOOTS, MASKS]:
             if item in pool:
                 rar = pool[item].get("rarity", "common")
                 result.append((item, _SELL_RARITY_VALUES.get(rar, 20), rar, counts[item]))
                 break
-    rar_order = {"common": 0, "uncommon": 1, "rare": 2, "epic": 3, "legendary": 4}
+    rar_order = {"common": 0, "uncommon": 1, "rare": 2, "epic": 3, "legendary": 4, "mythic": 5}
     result.sort(key=lambda x: (rar_order.get(x[2], 0), x[0]))
     return result
 
@@ -9948,13 +10126,15 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rarity_filter = rf
         sold_items = []; total_gold = 0; remaining_inv = []
         equipped = [p.get("equipped_weapon"), p.get("equipped_armor"),
-                    p.get("equipped_shield"), p.get("equipped_accessory")]
+                    p.get("equipped_shield"), p.get("equipped_accessory"),
+                    p.get("equipped_hat"), p.get("equipped_gloves"),
+                    p.get("equipped_boots"), p.get("equipped_mask")]
         for item_s in inv:
             if item_s in BULK_SELL_PROTECTED:
                 remaining_inv.append(item_s)
                 continue
             item_rarity = None; item_price = 0
-            for pool_s in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS]:
+            for pool_s in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS, HATS, GLOVES, BOOTS, MASKS]:
                 if item_s in pool_s:
                     item_rarity = pool_s[item_s].get("rarity","common")
                     rarity_prices = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
@@ -9995,13 +10175,15 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sold_items = []; gold_earned = 0
         remaining = []
         equipped_slots = {p.get("equipped_weapon"), p.get("equipped_armor"),
-                          p.get("equipped_shield"), p.get("equipped_accessory")}
+                          p.get("equipped_shield"), p.get("equipped_accessory"),
+                          p.get("equipped_hat"), p.get("equipped_gloves"),
+                          p.get("equipped_boots"), p.get("equipped_mask")}
         RARITY_SELL_VALUES = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
         for item_r_entry in inv:
             if item_r_entry in BULK_SELL_PROTECTED or item_r_entry in equipped_slots:
                 remaining.append(item_r_entry); continue
             item_r = ""; item_val = 0
-            for pool_r in [WEAPONS, ARMORS, SHIELDS, ACCESSORIES, CONSUMABLES]:
+            for pool_r in [WEAPONS, ARMORS, SHIELDS, ACCESSORIES, HATS, GLOVES, BOOTS, MASKS, CONSUMABLES]:
                 if item_r_entry in pool_r:
                     item_r = pool_r[item_r_entry].get("rarity","common")
                     item_val = RARITY_SELL_VALUES.get(item_r, 5)
@@ -10034,7 +10216,9 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if item is equipped
     equipped_slots = {p.get("equipped_weapon"), p.get("equipped_armor"),
-                      p.get("equipped_shield"), p.get("equipped_accessory")}
+                      p.get("equipped_shield"), p.get("equipped_accessory"),
+                      p.get("equipped_hat"), p.get("equipped_gloves"),
+                      p.get("equipped_boots"), p.get("equipped_mask")}
     if item_name in equipped_slots and not confirmed:
         await send_group(update,
             f"⚠️ *{item_name}* is currently equipped!\n"
@@ -10090,7 +10274,9 @@ async def sell_rarity_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     rarity_prices = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
     inv = sjl(p.get("inventory"), [])
     equipped = {p.get("equipped_weapon"), p.get("equipped_armor"),
-                p.get("equipped_shield"), p.get("equipped_accessory")}
+                p.get("equipped_shield"), p.get("equipped_accessory"),
+                p.get("equipped_hat"), p.get("equipped_gloves"),
+                p.get("equipped_boots"), p.get("equipped_mask")}
     sold_items = []; total_gold = 0; remaining_inv = []
     for item_s in inv:
         if item_s in BULK_SELL_PROTECTED or item_s in equipped:
@@ -13130,7 +13316,11 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for slot_label, slot_key, slot_id in [
                 ("⚔️ Weapon", "equipped_weapon", "weapon"),
                 ("🛡️ Armor",  "equipped_armor",  "armor"),
-                ("🔰 Shield", "equipped_shield", "shield")]:
+                ("🔰 Shield", "equipped_shield", "shield"),
+                ("🎩 Hat",    "equipped_hat",    "hat"),
+                ("🧤 Gloves", "equipped_gloves", "gloves"),
+                ("👢 Boots",  "equipped_boots",  "boots"),
+                ("🎭 Mask",   "equipped_mask",   "mask")]:
             name = p.get(slot_key)
             if not name: continue
             lv    = get_enhancement(p, name)
@@ -13150,9 +13340,13 @@ async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "weapon": ("equipped_weapon", "ATK"),
         "armor":  ("equipped_armor",  "DEF"),
         "shield": ("equipped_shield", "DEF"),
+        "hat":    ("equipped_hat",    "DEF"),
+        "gloves": ("equipped_gloves", "DEF"),
+        "boots":  ("equipped_boots",  "DEF"),
+        "mask":   ("equipped_mask",   "DEF"),
     }
     if slot not in slot_map:
-        await send_group(update, "Usage: /enhance weapon | armor | shield", delay=9); return
+        await send_group(update, "Usage: /enhance weapon | armor | shield | hat | gloves | boots | mask", delay=9); return
 
     slot_key, stat_label = slot_map[slot]
     item_name = p.get(slot_key)
@@ -13215,7 +13409,12 @@ async def enhance_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
     p = get_player(uid)
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
-    slot_map = {"weapon": ("equipped_weapon", "ATK"), "armor": ("equipped_armor", "DEF"), "shield": ("equipped_shield", "DEF")}
+    slot_map = {
+        "weapon": ("equipped_weapon", "ATK"), "armor": ("equipped_armor", "DEF"),
+        "shield": ("equipped_shield", "DEF"), "hat": ("equipped_hat", "DEF"),
+        "gloves": ("equipped_gloves", "DEF"), "boots": ("equipped_boots", "DEF"),
+        "mask":   ("equipped_mask", "DEF"),
+    }
     if slot not in slot_map:
         await query.answer(); return
     slot_key, stat_label = slot_map[slot]
@@ -13269,7 +13468,11 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ("⚔️ Weapon",    "equipped_weapon",    "weapon"),
                 ("🛡️ Armor",     "equipped_armor",     "armor"),
                 ("🔰 Shield",    "equipped_shield",    "shield"),
-                ("💍 Accessory", "equipped_accessory", "accessory")]:
+                ("💍 Accessory", "equipped_accessory", "accessory"),
+                ("🎩 Hat",       "equipped_hat",       "hat"),
+                ("🧤 Gloves",    "equipped_gloves",    "gloves"),
+                ("👢 Boots",     "equipped_boots",     "boots"),
+                ("🎭 Mask",      "equipped_mask",      "mask")]:
             name = p.get(slot_key)
             if not name: continue
             encs = get_enchant(p, name)
@@ -13291,10 +13494,14 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "armor":     ("equipped_armor",     "armor"),
         "shield":    ("equipped_shield",    "armor"),
         "accessory": ("equipped_accessory", "accessory"),
+        "hat":       ("equipped_hat",       "armor"),
+        "gloves":    ("equipped_gloves",    "armor"),
+        "boots":     ("equipped_boots",     "armor"),
+        "mask":      ("equipped_mask",      "armor"),
     }
     if slot not in slot_map:
         await send_group(update,
-            "Usage: /enchant weapon | armor | shield | accessory", delay=9); return
+            "Usage: /enchant weapon | armor | shield | accessory | hat | gloves | boots | mask", delay=9); return
 
     slot_key, effect_pool_key = slot_map[slot]
     item_name = p.get(slot_key)
@@ -13345,6 +13552,10 @@ async def enchant_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
         "armor":     ("equipped_armor",     "armor"),
         "shield":    ("equipped_shield",    "armor"),
         "accessory": ("equipped_accessory", "accessory"),
+        "hat":       ("equipped_hat",       "armor"),
+        "gloves":    ("equipped_gloves",    "armor"),
+        "boots":     ("equipped_boots",     "armor"),
+        "mask":      ("equipped_mask",      "armor"),
     }
     if slot not in slot_map:
         await query.answer(); return
@@ -13734,7 +13945,9 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         inv = json.loads(p.get("inventory") or "[]")
         equipped_slots = [p.get("equipped_weapon"), p.get("equipped_armor"),
-                          p.get("equipped_shield"), p.get("equipped_accessory")]
+                          p.get("equipped_shield"), p.get("equipped_accessory"),
+                          p.get("equipped_hat"), p.get("equipped_gloves"),
+                          p.get("equipped_boots"), p.get("equipped_mask")]
         item_name = resolve_item_ci(item_typed, inv) or resolve_item_ci(item_typed, [s for s in equipped_slots if s])
         if not item_name:
             await send_group(update, f"❌ *{item_typed}* not found in your inventory or equipped slots.", delay=10)
@@ -13777,10 +13990,17 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asc_buttons = []
 
         for item, count in inv_ctr.items():
-            if item not in WEAPONS and item not in ARMORS and item not in SHIELDS:
+            if item not in WEAPONS and item not in ARMORS and item not in SHIELDS and \
+               item not in HATS and item not in GLOVES and item not in BOOTS and item not in MASKS:
                 continue
             entry = rd.get(item, {"r": 0, "s": 0})
-            pool = WEAPONS if item in WEAPONS else (ARMORS if item in ARMORS else SHIELDS)
+            if item in WEAPONS: pool = WEAPONS
+            elif item in ARMORS: pool = ARMORS
+            elif item in SHIELDS: pool = SHIELDS
+            elif item in HATS: pool = HATS
+            elif item in GLOVES: pool = GLOVES
+            elif item in BOOTS: pool = BOOTS
+            else: pool = MASKS
             rarity = RARITY_EMOJI.get(pool[item].get("rarity",""), "⚪")
             stars = star_str(entry["s"]) if entry["s"] else ""
             if entry["r"] >= 20:
@@ -13809,13 +14029,15 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     item_typed = " ".join(args).strip()
     inv = json.loads(p.get("inventory") or "[]")
-    item_name = resolve_item_ci(item_typed, list(WEAPONS) + list(ARMORS) + list(SHIELDS)) or item_typed
+    _all_reinforceable = list(WEAPONS) + list(ARMORS) + list(SHIELDS) + list(HATS) + list(GLOVES) + list(BOOTS) + list(MASKS)
+    item_name = resolve_item_ci(item_typed, _all_reinforceable) or item_typed
     count = inv.count(item_name)
 
     # Check if it's a valid reinforceable item
-    if item_name not in WEAPONS and item_name not in ARMORS and item_name not in SHIELDS:
+    _rf_pools = (WEAPONS, ARMORS, SHIELDS, HATS, GLOVES, BOOTS, MASKS)
+    if not any(item_name in pool for pool in _rf_pools):
         await send_group(update,
-            f"❌ *{item_name}* cannot be reinforced. Only weapons, armors, and shields can be reinforced.", delay=12)
+            f"❌ *{item_name}* cannot be reinforced. Only weapons, armors, shields, hats, gloves, boots, and masks can be reinforced.", delay=12)
         return
 
     if count < 2:
@@ -17215,10 +17437,12 @@ GUIDE_PAGES = [
         "🎱 *8Ball World  -  Gear & Economy* (5/10)\n"
         "\n"
         "*Gear Slots*\n"
-        "Weapon, Armor, Shield, Accessory. Use /equip to browse your bag and tap to equip. Use /unequip to remove gear.\n"
+        "⚔️ Weapon, 🛡️ Armor, 🔰 Shield, 💍 Accessory, 🎩 Hat, 🧤 Gloves, 👢 Boots, 🎭 Mask.\n"
+        "Use /equip to browse your bag and tap to equip. Use /unequip to remove gear.\n"
+        "Hats, Gloves, Boots, and Masks are pure DEF items — equip all four to stack serious defense. All can be enhanced, enchanted, and reinforced.\n"
         "/enhance  -  Upgrade gear with Iron Shards. Tap the slot button. +1 to +10 max. Fails are possible at high levels.\n"
         "/enchant  -  Add random enchants via Enchanting Scrolls (up to 3 per item). Tap slot to enchant.\n"
-        "/reinforce  -  Sacrifice a duplicate weapon or armor to permanently raise its base stats (+1 ATK/DEF per reinforce, max 20). Tap to select.\n"
+        "/reinforce  -  Sacrifice a duplicate to permanently raise its base stats (+1 DEF per reinforce, max 20). Tap to select.\n"
         "/reinforce ascend  -  After 20 reinforces, Ascend the item to ★ tier (+5 flat bonus, resets to 0/20). Up to ★★★.\n"
         "\n"
         "*Consumable Items*\n"
@@ -17291,13 +17515,13 @@ GUIDE_PAGES = [
         "*Gear & Economy*\n"
         "/equip  -  Browse bag and tap to equip\n"
         "/unequip  -  Tap a slot to unequip gear back to bag\n"
-        "/enhance  -  Upgrade gear with Iron Shards (button menu)\n"
-        "/enchant  -  Add enchants via Enchanting Scrolls (button menu)\n"
-        "/reinforce  -  Tap to sacrifice duplicate gear for +1 ATK/DEF\n"
+        "/enhance  -  Upgrade gear with Iron Shards (button menu) — supports hat/gloves/boots/mask\n"
+        "/enchant  -  Add enchants via Enchanting Scrolls (button menu) — supports hat/gloves/boots/mask\n"
+        "/reinforce  -  Tap to sacrifice duplicate gear for +1 ATK/DEF — supports hat/gloves/boots/mask\n"
         "/use  -  Use a consumable (button menu)\n"
         "/title  -  View and equip your earned titles\n"
         "/objectives  -  View daily objectives\n"
-        "/sell [rarity]  -  Bulk sell by rarity (common/uncommon/rare/epic/legendary)\n"
+        "/sell [rarity]  -  Bulk sell by rarity (common/uncommon/rare/epic/legendary/mythic)\n"
         "/forge  -  Craft items from materials\n"
         "/claim  -  Daily streak reward (gold + materials)\n"
         "/trade @user [item] [price]  -  Trade with a player\n"
@@ -18126,6 +18350,36 @@ POOL_SHOTS = [
      "exp":750,"gold":300,"loot":[("Iron Shard",0.72),("Enchanting Scroll",0.48),
                                     ("Scroll of Revival",0.22),("Eye of the Storm",0.05),
                                     ("Aegis Talisman",0.04)]},
+
+    # ── Mythic ───────────────────────────────────────────────────────────────
+    {"id":"absolute_mastery","weight":1,"rarity":"mythic",
+     "text":"The table does not simply yield — it surrenders. "
+            "Every ball traces a perfect arc, as if physics itself conceded. "
+            "The pocket doesn't just receive — it accepts what was always meant to be. "
+            "You weren't playing pool. You were declaring law.",
+     "exp":3000,"gold":1000,
+     "loot":[("Oath of the First Knight",0.02),("Eternal Arcanum",0.02),
+             ("The Final Cut",0.02),("The Infinity Quiver",0.02),
+             ("The Divine Rosary",0.02),("The Root of Worlds",0.02),
+             ("Aria Eternal",0.02),("Odin's Chosen Blade",0.02),
+             ("Eternal Waltz",0.02),("Enchanting Scroll",0.80),
+             ("Iron Shard",0.90),("Scroll of Revival",0.40),
+             ("Crown of the Void",0.005),("Hands of the Void",0.005),
+             ("Steps of the Void",0.005),("Face of the Void",0.005)]},
+    {"id":"the_final_game","weight":1,"rarity":"mythic",
+     "text":"You broke the last rack. Not in a tournament, not for a prize. "
+            "In a room that shouldn't exist, with a table that was always waiting for you. "
+            "The balls dropped in silence. The silence lasted longer than it should have. "
+            "Something in the dark nodded.",
+     "exp":4000,"gold":1500,
+     "loot":[("The Titan's Aegis Armor",0.02),("The Eternal Weave",0.02),
+             ("The Void Walker's Cloak",0.02),("The Ghost Walker Vest",0.02),
+             ("Heaven's Blessing Robe",0.02),("The Living Robe",0.02),
+             ("Grand Muse's Eternal Robe",0.02),("The Chooser's Aegis",0.02),
+             ("Ethereal Dancer's Form",0.02),("Enchanting Scroll",0.90),
+             ("Iron Shard",0.95),("Scroll of Revival",0.50),
+             ("Helm of the Eternal",0.01),("Gauntlets of the Eternal",0.01),
+             ("Boots of the Eternal",0.01),("Mask of the Eternal",0.01)]},
 ]
 
 # Rolled on every /pool use as a secondary item chance
@@ -18217,6 +18471,48 @@ POOL_ITEM_TABLE = [
     ("The Warlord's Ring",0.00005),("The Eternal Ring",0.00005),
     # ── Legendary shields ──
     ("The Dead Reckoning",0.00004),
+    # ── Common DEF gear ──
+    ("Leather Cap",0.015),("Iron Skullcap",0.015),
+    ("Worn Leather Gloves",0.015),("Iron Knuckle Guards",0.015),
+    ("Worn Leather Boots",0.015),("Iron Sabatons",0.015),
+    ("Cloth Face Wrap",0.015),("Iron Visor",0.015),
+    # ── Uncommon DEF gear ──
+    ("Chain Coif",0.007),("Shadow Hood",0.007),
+    ("Chain Gauntlets",0.007),("Rogue's Wraps",0.007),
+    ("Chain Boots",0.007),("Shadow Treads",0.007),
+    ("Shadow Mask",0.007),("War Paint Mask",0.007),
+    # ── Rare DEF gear ──
+    ("Templar's Helm",0.002),("Void Cowl",0.002),
+    ("Templar's Gauntlets",0.002),("Shadow Wraps",0.002),
+    ("Templar's Sabatons",0.002),("Void Walkers",0.002),
+    ("Templar's Visor",0.002),("Assassin's Veil",0.002),
+    # ── Epic DEF gear ──
+    ("Battleborn Crown",0.0004),("Phantom Visage",0.0004),
+    ("Battleborn Gauntlets",0.0004),("Void Gloves",0.0004),
+    ("Battleborn Treads",0.0004),("Phantom Boots",0.0004),
+    ("Phantom Mask",0.0004),("Void Visor",0.0004),
+    # ── Legendary DEF gear ──
+    ("Helm of the Eternal",0.00004),("Gauntlets of the Eternal",0.00004),
+    ("Boots of the Eternal",0.00004),("Mask of the Eternal",0.00004),
+    # ── Mythic weapons ──
+    ("Oath of the First Knight",0.000005),("The World Splitter",0.000005),
+    ("Eternal Arcanum",0.000005),("The Void Throne",0.000005),
+    ("The Final Cut",0.000005),("Black Orbit",0.000005),
+    ("The Infinity Quiver",0.000005),("The Endless Bolt",0.000005),
+    ("The Divine Rosary",0.000005),("The Eternal Verdict",0.000005),
+    ("The Root of Worlds",0.000005),("The Primordial Root",0.000005),
+    ("Aria Eternal",0.000005),("Doom's Conduit",0.000005),
+    ("Odin's Chosen Blade",0.000005),("Mjolnir's Rage",0.000005),
+    ("Eternal Waltz",0.000005),("Ethereal Sovereign",0.000005),
+    # ── Mythic armors ──
+    ("The Titan's Aegis Armor",0.000005),("The Eternal Weave",0.000005),
+    ("The Void Walker's Cloak",0.000005),("The Ghost Walker Vest",0.000005),
+    ("Heaven's Blessing Robe",0.000005),("The Living Robe",0.000005),
+    ("Grand Muse's Eternal Robe",0.000005),("The Chooser's Aegis",0.000005),
+    ("Ethereal Dancer's Form",0.000005),
+    # ── Mythic DEF gear ──
+    ("Crown of the Void",0.000003),("Hands of the Void",0.000003),
+    ("Steps of the Void",0.000003),("Face of the Void",0.000003),
     # ── Crafting/consumables ──
     ("Iron Shard",0.025),("Enchanting Scroll",0.008),("Scroll of Revival",0.003),
 ]
@@ -18284,7 +18580,7 @@ def roll_pool_shot_with_luk(p):
     luk = get_stat(p, "LUK")
     upgrade_chance = luk * 0.003
     if random.random() < upgrade_chance:
-        tier_order = ["common","uncommon","rare","epic","legendary"]
+        tier_order = ["common","uncommon","rare","epic","legendary","mythic"]
         current_idx = tier_order.index(shot["rarity"])
         if current_idx < len(tier_order) - 1:
             next_rarity = tier_order[current_idx + 1]
@@ -18320,7 +18616,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             flavor = " " + random.choice(options)
 
     rarity_prefix = {
-        "common":"🎱","uncommon":"🎯","rare":"🔵","epic":"🟣","legendary":"🟡",
+        "common":"🎱","uncommon":"🎯","rare":"🔵","epic":"🟣","legendary":"🟡","mythic":"🔴",
     }.get(shot["rarity"], "🎱")
 
     item_found = None
@@ -18333,6 +18629,8 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gold_gain = shot["gold"]
 
     if p:
+        lvl_bonus = max(1.0, 1.0 + (p["level"] - 1) * 0.06)
+        exp_gain = int(exp_gain * lvl_bonus)
         p["gold"] = p.get("gold", 0) + gold_gain
         p["last_pool"] = datetime.now().isoformat()
         lmsgs, leveled = add_exp(p, exp_gain)
@@ -18483,6 +18781,7 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p["last_pool"] = now.isoformat()
         shot      = roll_pool_shot_with_luk(p)
         exp_gain  = shot["exp"]; gold_gain = shot["gold"]
+        exp_gain = int(exp_gain * max(1.0, 1.0 + (p["level"] - 1) * 0.06))
         p["gold"] = p.get("gold",0) + gold_gain
         item_found = None
         if shot.get("loot"):
@@ -18491,7 +18790,7 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bonus_item = roll_loot_table(POOL_ITEM_TABLE, p)
         if bonus_item: add_item(p, bonus_item)
         lmsgs, _ = add_exp(p, exp_gain)
-        rarity_prefix = {"common":"🎱","uncommon":"🎯","rare":"🔵","epic":"🟣","legendary":"🟡"}.get(shot["rarity"],"🎱")
+        rarity_prefix = {"common":"🎱","uncommon":"🎯","rare":"🔵","epic":"🟣","legendary":"🟡","mythic":"🔴"}.get(shot["rarity"],"🎱")
         entry = f"{rarity_prefix} *Pool:* +{exp_gain} EXP"
         if gold_gain: entry += f", +{gold_gain}g"
         if item_found: entry += f", *{item_found}*!"
