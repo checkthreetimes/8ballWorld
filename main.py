@@ -4270,6 +4270,8 @@ def get_weapon_atk(p):
     w = get_equipped_weapon(p)
     if not w: return 0
     name = p.get("equipped_weapon")
+    ok, _ = can_equip_weapon(p, name)
+    if not ok: return 0
     base = w["atk"] + get_enhance_bonus(p, name) + reinforce_atk_bonus(p, name)
     for enchant in get_enchant(p, name):
         if enchant.get("type") == "flat_dmg":
@@ -4281,8 +4283,17 @@ def get_weapon_atk(p):
 def get_armor_def(p):
     a = get_equipped_armor(p); s = get_equipped_shield(p)
     a_name = p.get("equipped_armor"); s_name = p.get("equipped_shield")
-    a_val = (a["def"] + get_enhance_bonus(p, a_name) + reinforce_atk_bonus(p, a_name)) if a else 0
-    s_val = (s["def"] + get_enhance_bonus(p, s_name) + reinforce_atk_bonus(p, s_name)) if s else 0
+    a_ok, _ = can_equip_armor(p, a_name) if a_name else (True, "")
+    s_ok = True
+    if s_name:
+        s_data = SHIELDS.get(s_name, {})
+        cls_line = get_class_line(p); path = p.get("class_path")
+        if s_data.get("type") == "claw":
+            s_ok = cls_line == "thief" and path == "B"
+        else:
+            s_ok = cls_line == "warrior" and path == "A"
+    a_val = (a["def"] + get_enhance_bonus(p, a_name) + reinforce_atk_bonus(p, a_name)) if (a and a_ok) else 0
+    s_val = (s["def"] + get_enhance_bonus(p, s_name) + reinforce_atk_bonus(p, s_name)) if (s and s_ok) else 0
     for enc in (get_enchant(p, a_name) if a_name else []):
         if enc.get("type") == "armor_def": a_val += enc["val"]
     for enc in (get_enchant(p, s_name) if s_name else []):
@@ -8234,6 +8245,11 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p["stats"] = json.dumps(sd_check)
         p["stat_points"] = safe_int(p.get("stat_points")) + refund_def
         save_player(p)
+
+    if not viewing_other:
+        _stripped = _unequip_class_gear(p)
+        if _stripped:
+            save_player(p)
 
     real_max = calc_max_hp(p)
     if real_max != p["max_hp"] and not viewing_other:
@@ -20631,19 +20647,23 @@ async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id != ADMIN_ID:
         await send_group(update, "❌ Admin only.", delay=9); return
 
+    def _player_excess(p):
+        max_pts = _calc_max_stat_points(p)
+        class_bonuses = _calc_applied_class_bonuses(p)  # needs class_id + class_path + level
+        sd = safe_stats(p)
+        base = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
+        allocated = sum(max(0, sd.get(s, b) - b - class_bonuses.get(s, 0)) for s, b in base.items())
+        total = allocated + safe_int(p.get("stat_points"))
+        return total, max_pts, allocated, safe_int(p.get("stat_points"))
+
     if not context.args:
-        # Scan all players
+        # Scan all players — must include class_path for accurate bonus calculation
         conn_s = sqlite3.connect(DB_PATH); conn_s.row_factory = sqlite3.Row; c_s = conn_s.cursor()
-        c_s.execute("SELECT user_id, username, level, stat_points, stats, class_id FROM players")
+        c_s.execute("SELECT user_id, username, level, stat_points, stats, class_id, class_path FROM players")
         rows = [dict(r) for r in c_s.fetchall()]; conn_s.close()
         flagged = []
         for row in rows:
-            max_pts = _calc_max_stat_points(row)
-            class_bonuses = _calc_applied_class_bonuses(row)
-            sd = safe_stats(row)
-            base = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
-            allocated = sum(max(0, sd.get(s,b) - b - class_bonuses.get(s,0)) for s,b in base.items())
-            total = allocated + safe_int(row.get("stat_points"))
+            total, max_pts, _, _ = _player_excess(row)
             if total > max_pts + 5:
                 flagged.append(f"• *{row['username']}* (id `{row['user_id']}`) lv{row['level']}: "
                                f"total={total} max={max_pts} excess={total-max_pts}")
@@ -20657,15 +20677,14 @@ async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query_str = context.args[0]
     do_fix = len(context.args) > 1 and context.args[1].lower() == "fix"
 
-    p = None
+    target_id = None
     try:
         target_id = int(query_str)
-        p = get_player(target_id)
     except ValueError:
         # Name search — case-insensitive, partial match
         search = query_str.lower()
         conn_n = sqlite3.connect(DB_PATH); conn_n.row_factory = sqlite3.Row; c_n = conn_n.cursor()
-        c_n.execute("SELECT * FROM players WHERE LOWER(username) LIKE ?", (f"%{search}%",))
+        c_n.execute("SELECT user_id, username FROM players WHERE LOWER(username) LIKE ?", (f"%{search}%",))
         matches = [dict(r) for r in c_n.fetchall()]; conn_n.close()
         if not matches:
             await send_group(update, f"No player found matching '{query_str}'.", delay=9); return
@@ -20673,19 +20692,14 @@ async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             names = "\n".join(f"• *{m['username']}* — id `{m['user_id']}`" for m in matches[:10])
             await send_group(update,
                 f"Multiple matches for '{query_str}':\n\n{names}\n\nUse the id to be specific.", delay=20); return
-        p = matches[0]
+        target_id = matches[0]["user_id"]
 
+    # Always load via get_player so we have all fields (including class_path)
+    p = get_player(target_id)
     if not p:
         await send_group(update, f"Player '{query_str}' not found.", delay=9); return
 
-    target_id = p["user_id"]
-    max_pts = _calc_max_stat_points(p)
-    class_bonuses = _calc_applied_class_bonuses(p)
-    sd = safe_stats(p)
-    base = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
-    allocated = sum(max(0, sd.get(s,b) - b - class_bonuses.get(s,0)) for s,b in base.items())
-    current_pool = safe_int(p.get("stat_points"))
-    total = allocated + current_pool
+    total, max_pts, allocated, current_pool = _player_excess(p)
 
     if not do_fix:
         await send_group(update,
@@ -20697,15 +20711,95 @@ async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Use `/fixstats {target_id} fix` to correct.", delay=30); return
 
     if total <= max_pts:
-        await send_group(update, f"✅ @{p['username']} is within bounds (total={total}, max={max_pts}). No fix needed.", delay=15); return
+        await send_group(update, f"✅ {p['username']} is within bounds (total={total}, max={max_pts}). No fix needed.", delay=15); return
 
     excess = total - max_pts
     new_pool = max(0, current_pool - excess)
     p["stat_points"] = new_pool
     save_player(p)
+    # Verify the write landed
+    p2 = get_player(target_id)
+    saved_pool = safe_int(p2.get("stat_points")) if p2 else new_pool
     await send_group(update,
-        f"✅ Fixed *@{p['username']}*\n"
-        f"Pool: {current_pool} → {new_pool} (removed {excess} excess points)", delay=15)
+        f"✅ Fixed *{p['username']}*\n"
+        f"Pool: {current_pool} → {saved_pool} (removed {excess} excess points)", delay=15)
+
+
+async def fixgear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: strip class-restricted gear from a player (or scan all).
+    Usage: /fixgear               — list all players wearing invalid gear
+           /fixgear <name or id>  — strip invalid gear for that player"""
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        await send_group(update, "❌ Admin only.", delay=9); return
+
+    def _invalid_gear(p):
+        cls_line = get_class_line(p)
+        path = p.get("class_path")
+        bad = []
+        for slot, pool in [("equipped_weapon", WEAPONS), ("equipped_armor", ARMORS),
+                            ("equipped_hat", HATS), ("equipped_gloves", GLOVES),
+                            ("equipped_boots", BOOTS), ("equipped_mask", MASKS)]:
+            name = p.get(slot)
+            if not name: continue
+            d = pool.get(name, {})
+            item_class = d.get("class") or d.get("line")
+            if item_class and (not cls_line or item_class != cls_line):
+                bad.append(name)
+        s_name = p.get("equipped_shield")
+        if s_name:
+            s_data = SHIELDS.get(s_name, {})
+            if s_data.get("type") == "claw":
+                if cls_line != "thief" or path != "B": bad.append(s_name)
+            else:
+                if cls_line != "warrior" or path != "A": bad.append(s_name)
+        return bad
+
+    if not context.args:
+        conn_fg = sqlite3.connect(DB_PATH); conn_fg.row_factory = sqlite3.Row; c_fg = conn_fg.cursor()
+        c_fg.execute("SELECT user_id, username, class_id, class_path, equipped_weapon, equipped_armor, "
+                     "equipped_shield, equipped_hat, equipped_gloves, equipped_boots, equipped_mask FROM players")
+        rows = [dict(r) for r in c_fg.fetchall()]; conn_fg.close()
+        flagged = []
+        for row in rows:
+            bad = _invalid_gear(row)
+            if bad:
+                flagged.append(f"• *{row['username']}* (id `{row['user_id']}`): {', '.join(bad)}")
+        if not flagged:
+            await send_group(update, "✅ No invalid gear found.", delay=15); return
+        await send_group(update,
+            f"⚠️ *Invalid Gear Found ({len(flagged)}):*\n\n" + "\n".join(flagged[:20]) +
+            f"\n\nUse `/fixgear <name or id>` to strip.", delay=60); return
+
+    query_str = context.args[0]
+    target_id = None
+    try:
+        target_id = int(query_str)
+    except ValueError:
+        conn_fg2 = sqlite3.connect(DB_PATH); conn_fg2.row_factory = sqlite3.Row; c_fg2 = conn_fg2.cursor()
+        c_fg2.execute("SELECT user_id, username FROM players WHERE LOWER(username) LIKE ?",
+                      (f"%{query_str.lower()}%",))
+        matches = [dict(r) for r in c_fg2.fetchall()]; conn_fg2.close()
+        if not matches:
+            await send_group(update, f"No player found matching '{query_str}'.", delay=9); return
+        if len(matches) > 1:
+            names = "\n".join(f"• *{m['username']}* — id `{m['user_id']}`" for m in matches[:10])
+            await send_group(update,
+                f"Multiple matches:\n\n{names}\n\nUse the id.", delay=20); return
+        target_id = matches[0]["user_id"]
+
+    p = get_player(target_id)
+    if not p:
+        await send_group(update, f"Player not found.", delay=9); return
+
+    unequipped = _unequip_class_gear(p)
+    if not unequipped:
+        await send_group(update, f"✅ *{p['username']}* has no invalid gear equipped.", delay=15); return
+    save_player(p)
+    await send_group(update,
+        f"✅ Stripped *{p['username']}*'s invalid gear:\n" +
+        "\n".join(f"• {item}" for item in unequipped) +
+        "\n\nItems returned to their inventory.", delay=15)
 
 
 # ── PASSIVE MESSAGE HANDLER ───────────────────────────────────────────────────
@@ -22161,6 +22255,7 @@ def main():
     # Admin
     app.add_handler(CommandHandler("wipe",      wipe_cmd))
     app.add_handler(CommandHandler("fixstats",  fixstats_cmd))
+    app.add_handler(CommandHandler("fixgear",   fixgear_cmd))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(rank_callback,         pattern="^rank_p_"))
