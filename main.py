@@ -20624,9 +20624,9 @@ def _calc_max_stat_points(p):
 
 async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: correct a player's stat_points to remove exploit gains.
-    Usage: /fixstats <user_id>
-    Without args: checks all players and reports issues (does not fix).
-    /fixstats <user_id> fix  — actually corrects that player."""
+    Usage: /fixstats                    — scan all players
+           /fixstats <name or id>       — inspect one player
+           /fixstats <name or id> fix   — actually correct them"""
     user = update.effective_user
     if user.id != ADMIN_ID:
         await send_group(update, "❌ Admin only.", delay=9); return
@@ -20645,25 +20645,40 @@ async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             allocated = sum(max(0, sd.get(s,b) - b - class_bonuses.get(s,0)) for s,b in base.items())
             total = allocated + safe_int(row.get("stat_points"))
             if total > max_pts + 5:
-                flagged.append(f"• @{row['username']} (id {row['user_id']}) lvl {row['level']}: "
-                               f"total={total} expected≤{max_pts} (excess {total-max_pts})")
+                flagged.append(f"• *{row['username']}* (id `{row['user_id']}`) lv{row['level']}: "
+                               f"total={total} max={max_pts} excess={total-max_pts}")
         if not flagged:
             await send_group(update, "✅ No stat point anomalies found.", delay=15); return
         await send_group(update,
-            f"⚠️ *Stat Anomalies Found ({len(flagged)}):*\n\n" + "\n".join(flagged[:20]) +
-            f"\n\nUse `/fixstats <user_id> fix` to correct.", delay=60); return
+            f"⚠️ *Stat Anomalies ({len(flagged)}):*\n\n" + "\n".join(flagged[:20]) +
+            f"\n\nUse `/fixstats <name or id> fix` to correct.", delay=60); return
 
-    uid_str = context.args[0]
+    # Resolve target by id or display name
+    query_str = context.args[0]
     do_fix = len(context.args) > 1 and context.args[1].lower() == "fix"
+
+    p = None
     try:
-        target_id = int(uid_str)
+        target_id = int(query_str)
+        p = get_player(target_id)
     except ValueError:
-        await send_group(update, "Usage: /fixstats <user_id> [fix]", delay=9); return
+        # Name search — case-insensitive, partial match
+        search = query_str.lower()
+        conn_n = sqlite3.connect(DB_PATH); conn_n.row_factory = sqlite3.Row; c_n = conn_n.cursor()
+        c_n.execute("SELECT * FROM players WHERE LOWER(username) LIKE ?", (f"%{search}%",))
+        matches = [dict(r) for r in c_n.fetchall()]; conn_n.close()
+        if not matches:
+            await send_group(update, f"No player found matching '{query_str}'.", delay=9); return
+        if len(matches) > 1:
+            names = "\n".join(f"• *{m['username']}* — id `{m['user_id']}`" for m in matches[:10])
+            await send_group(update,
+                f"Multiple matches for '{query_str}':\n\n{names}\n\nUse the id to be specific.", delay=20); return
+        p = matches[0]
 
-    p = get_player(target_id)
     if not p:
-        await send_group(update, f"Player {target_id} not found.", delay=9); return
+        await send_group(update, f"Player '{query_str}' not found.", delay=9); return
 
+    target_id = p["user_id"]
     max_pts = _calc_max_stat_points(p)
     class_bonuses = _calc_applied_class_bonuses(p)
     sd = safe_stats(p)
@@ -20674,10 +20689,10 @@ async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not do_fix:
         await send_group(update,
-            f"🔍 *@{p['username']}* (lv {p['level']})\n"
+            f"🔍 *{p['username']}* (lv {p['level']}) — id `{target_id}`\n"
             f"Allocated in stats: {allocated}\n"
             f"Pool (unspent): {current_pool}\n"
-            f"Total: {total} | Expected max: {max_pts}\n"
+            f"Total: {total}  |  Expected max: {max_pts}\n"
             f"Excess: {max(0, total-max_pts)}\n\n"
             f"Use `/fixstats {target_id} fix` to correct.", delay=30); return
 
