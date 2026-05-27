@@ -6014,6 +6014,7 @@ def init_db():
         "ALTER TABLE players ADD COLUMN active_quest TEXT DEFAULT NULL",
         "ALTER TABLE players ADD COLUMN last_quest_ts INTEGER DEFAULT 0",
         "ALTER TABLE players ADD COLUMN oracle_last_used INTEGER DEFAULT 0",
+        "ALTER TABLE players ADD COLUMN tg_username TEXT DEFAULT NULL",
     ]:
         try: conn.execute(_col_sql)
         except: pass
@@ -7344,6 +7345,7 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
         reply_markup=markup)
 
+
 # ── PVP COMBAT HELPERS ────────────────────────────────────────────────────────
 
 def _build_pvp_card_markup(def_id, atk_id, defender_p):
@@ -7370,7 +7372,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     """
     lvl_msgs = []
 
-    # ── Charged killshot ──────────────────────────────────────────────────────
+    # Charged killshot
     if safe_int(a.get("charging_killshot")):
         a["charging_killshot"] = 0
         dmg_after_def = get_stat(a, "AGI") * 4
@@ -7397,8 +7399,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             if a.get("kills_today_date") != today_str:
                 a["kills_today"] = 0; a["kills_today_date"] = today_str
             a["kills_today"] = safe_int(a.get("kills_today")) + 1
-            if a["kills_today"] >= 5:
-                a["is_wanted"] = 1
+            if a["kills_today"] >= 5: a["is_wanted"] = 1
             hist_ks = sjl(d.get("pvp_history"), [])
             hist_ks.insert(0, {"attacker": a["username"], "dmg": "KO",
                                "ts": datetime.now().strftime("%m/%d %H:%M")})
@@ -7417,11 +7418,10 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             hp_pct = d["hp"] / max(1, d["max_hp"])
             bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
             action += f"\n❤️ {d['username']}: *{d['hp']}/{d['max_hp']}* [{bar}]"
-        if lvl_msgs:
-            action += "\n\n" + "\n".join(lvl_msgs)
+        if lvl_msgs: action += "\n\n" + "\n".join(lvl_msgs)
         return action, lvl_msgs, "defeat" if d["hp"] <= 0 else "hit"
 
-    # ── Miss check ────────────────────────────────────────────────────────────
+    # Miss check
     if check_miss(a, d):
         d["dodges"] = d.get("dodges", 0) + 1
         check_titles(d)
@@ -7436,21 +7436,19 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         save_player(d); save_player(a)
         return f"🌀 *{a['username']}* swings at *{d['username']}*  -  *MISS!*", [], "miss"
 
-    # ── Damage ────────────────────────────────────────────────────────────────
+    # Damage
     dmg = calc_attack_damage(a, w)
     extra_notes = []
 
     _a_weap = a.get("equipped_weapon", "")
     _a_weap_type = WEAPONS.get(_a_weap, {}).get("type", "")
     if _a_weap_type == "throwing_star":
-        _a_shld = a.get("equipped_shield", "")
-        if SHIELDS.get(_a_shld, {}).get("type", "") != "claw":
+        if SHIELDS.get(a.get("equipped_shield", ""), {}).get("type", "") != "claw":
             dmg = round(dmg * 0.75)
             extra_notes.append("⚠️ _Missing claw  -  75% damage_")
 
     crit_forced = safe_cds(a).pop("next_crit_skill", None)
-    if crit_forced:
-        a["passive_cooldowns"] = json.dumps(safe_cds(a))
+    if crit_forced: a["passive_cooldowns"] = json.dumps(safe_cds(a))
     if crit_forced or check_crit(a):
         dmg = apply_crit(a, dmg); crit_note = " 💥 CRIT!"
     else:
@@ -7466,27 +7464,24 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     if cls_a:
         pk_a = cls_a.get("passive_key", "")
         if pk_a == "execute":
-            hp_pct = d["hp"] / max(1, d["max_hp"])
-            if hp_pct < 0.25:
+            if d["hp"] / max(1, d["max_hp"]) < 0.25:
                 dmg *= 2; extra_notes.append("💀 *Execute!* Double damage below 25% HP!")
         if pk_a == "devotion":
             charge = safe_int(a.get("devotion_charge"))
             if charge > 0:
                 dmg += 5; a["devotion_charge"] = 0
                 extra_notes.append("✨ *Devotion charge!* +5 bonus damage!")
-        if pk_a == "battle_cry":
-            set_status(a, "battle_cry_str_until", 900)
+        if pk_a == "battle_cry": set_status(a, "battle_cry_str_until", 900)
         if pk_a == "warcry":
             if len(get_recent_attackers(a)) > 1:
-                dmg = round(dmg * 1.20); extra_notes.append("😤 *Warcry!* +20% damage!")
+                dmg = round(dmg * 1.20); extra_notes.append("😣 *Warcry!* +20% damage!")
         if pk_a == "flurry" and random.random() < 0.20:
             dmg *= 2; extra_notes.append("⚡ *Flurry!* Double hit!")
         if pk_a == "one_shot" and random.random() < 0.10:
             dmg *= 5; extra_notes.append("🎯 *ONE-SHOT!* 5x damage!")
-        if pk_a == "mark_first_hit":
-            if safe_int(a.get("mark_first_hit")):
-                dmg = round(dmg * 1.25); a["mark_first_hit"] = 0
-                extra_notes.append("🎯 *First strike bonus!* +25%!")
+        if pk_a == "mark_first_hit" and safe_int(a.get("mark_first_hit")):
+            dmg = round(dmg * 1.25); a["mark_first_hit"] = 0
+            extra_notes.append("🎯 *First strike bonus!* +25%!")
         if pk_a == "trailblazer":
             today = datetime.now().strftime("%Y-%m-%d")
             cds_tb = safe_cds(a)
@@ -7507,11 +7502,9 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             dmg = round(dmg * 1.15); revenge_bonus_note = " 🔥 *Revenge!* +15% dmg"
             a["revenge_target"] = None; a["revenge_expires"] = None
 
-    # Distracted miss
-    if is_distracted(a):
-        if random.random() < 0.30:
-            save_player(a); save_player(d)
-            return f"😵 *{a['username']}* was *Distracted* and missed *{d['username']}*!", [], "miss"
+    if is_distracted(a) and random.random() < 0.30:
+        save_player(a); save_player(d)
+        return f"😵 *{a['username']}* was *Distracted* and missed *{d['username']}*!", [], "miss"
 
     cls_d = get_player_class(d)
     if cls_d:
@@ -7519,15 +7512,13 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         if pk_d == "bulwark" and random.random() < 0.15:
             extra_notes.append("🛡️ *Bulwark!* Attack completely blocked!"); dmg = 0
         if pk_d == "defensive_stance":
-            hp_pct_d = d.get("hp", 1) / max(1, d.get("max_hp", 1))
-            if hp_pct_d > 0.50:
+            if d.get("hp", 1) / max(1, d.get("max_hp", 1)) > 0.50:
                 dmg = max(1, dmg - 30)
-        if pk_d == "devotion":
-            d["devotion_charge"] = safe_int(d.get("devotion_charge")) + 1
+        if pk_d == "devotion": d["devotion_charge"] = safe_int(d.get("devotion_charge")) + 1
         if pk_d == "nettleskin" and random.random() < 0.10:
             a["poison_damage"] = max(a.get("poison_damage", 0), 15)
             set_status(a, "poison_until", 120)
-            extra_notes.append("🌿 *Nettleskin!* Attacker poisoned (15 dmg/30s for 2 min)!")
+            extra_notes.append("🌿 *Nettleskin!* Attacker poisoned!")
         if pk_d == "judgement" and random.random() < 0.30:
             wis_dmg = max(1, round(safe_stats(d).get("WIS", 5) * 0.50))
             a["hp"] = max(1, a["hp"] - wis_dmg)
@@ -7561,11 +7552,10 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     def_pet_rec = get_active_pet_record(du_id)
     if def_pet_rec:
         dmg_after_def, pet_status_type, pet_status_val = apply_pet_defense(def_pet_rec, a, dmg_after_def, extra_notes)
-        if pet_status_type == "stun" and a:
-            set_status(a, "stunned_until", 30)
-        elif pet_status_type == "poison" and a and pet_status_val:
+        if pet_status_type == "stun": set_status(a, "stunned_until", 30)
+        elif pet_status_type == "poison" and pet_status_val:
             a["poison_damage"] = pet_status_val; set_status(a, "poison_until", 60)
-        elif pet_status_type == "lifesteal_to_owner" and d and pet_status_val:
+        elif pet_status_type == "lifesteal_to_owner" and pet_status_val:
             d["hp"] = min(calc_max_hp(d), d.get("hp", 0) + pet_status_val)
 
     d["hp"] = max(0, d["hp"] - dmg_after_def)
@@ -7575,25 +7565,21 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         pk_a = cls_a.get("passive_key", "")
         if pk_a == "feint" and random.random() < 0.05:
             set_status(a, "feint_proc_until", 60); set_status(d, "distracted_until", 60)
-        if pk_a == "throat_cut" and random.random() < 0.05:
-            set_status(d, "silenced_until", 10)
-        if pk_a == "cursed_blade":
-            set_status(d, "cursed_until", 120)
+        if pk_a == "throat_cut" and random.random() < 0.05: set_status(d, "silenced_until", 10)
+        if pk_a == "cursed_blade": set_status(d, "cursed_until", 120)
         if pk_a == "warning_shot":
             ws_key = f"warning_shot_hit_{a.get('user_id', '')}"
             if not _ts_active(d, ws_key):
                 set_status(d, ws_key, 60)
-                cur_agi = safe_stats(d).get("AGI", 5)
-                sd = safe_stats(d); sd["AGI"] = max(0, cur_agi - 2)
+                sd = safe_stats(d); sd["AGI"] = max(0, sd.get("AGI", 5) - 2)
                 d["stats"] = json.dumps(sd)
         if pk_a == "purge":
             for buf in ["blessed_until", "def_reflect_until", "battle_cry_str_until",
                         "invincible_until", "temp_hp_until"]:
-                if _ts_active(d, buf):
-                    d[buf] = None; break
+                if _ts_active(d, buf): d[buf] = None; break
         if pk_a == "curse_touch" and random.random() < 0.08:
             set_status(d, "weakened_until", 120)
-            extra_notes.append("💜 *Curse Touch!* Weakness applied  -  10% less damage for 2 min!")
+            extra_notes.append("💜 *Curse Touch!* Weakness applied!")
         if pk_a == "shadow_hex" and _ts_active(d, "hexed_until"):
             bonus_hex = round(dmg_after_def * 0.05)
             dmg_after_def += bonus_hex; d["hp"] = max(0, d["hp"] - bonus_hex)
@@ -7608,10 +7594,9 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     action = f"⚔️ *{a['username']}* → *{d['username']}* for *{dmg_after_def} dmg*{crit_note}{revenge_bonus_note}{reflect_note}"
     if extra_notes: action += "\n" + "\n".join(extra_notes)
-    if healed:      action += f" | 🩸 +{healed} HP"
+    if healed:      action += f" | 🦸 +{healed} HP"
     if proc_fired:  action += f"\n{proc_msg}"
 
-    # Pet auto-attack
     active_pet = get_active_pet_record(au_id)
     if active_pet:
         pet_atk = get_pet_atk_bonus(active_pet)
@@ -7628,7 +7613,6 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             battle_msg = PERSONALITY_BATTLE.get(pers, "attacks")
             action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*!"
 
-    # Defeat check
     if d["hp"] <= 0:
         d["hp"] = 0
         d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
@@ -7647,8 +7631,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         if a.get("kills_today_date") != today_str:
             a["kills_today"] = 0; a["kills_today_date"] = today_str
         a["kills_today"] = safe_int(a.get("kills_today")) + 1
-        if a["kills_today"] >= 5:
-            a["is_wanted"] = 1
+        if a["kills_today"] >= 5: a["is_wanted"] = 1
         hist = sjl(d.get("pvp_history"), [])
         hist.insert(0, {"attacker": a["username"], "dmg": "KO",
                         "ts": datetime.now().strftime("%m/%d %H:%M")})
@@ -7661,7 +7644,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 12 hours!"
             asyncio.create_task(announce(bot, chat_id,
                 f"🏹 *{a['username']}* took down *{d['username']}* with *Last Shot*! "
-                f"12-hour defeat. Triple rewards earned.", delay=60))
+                f"12-hour defeat.", delay=60))
             a["gold"] = a.get("gold", 0) + 150
         exp_gain = 60 + a["level"] * 8
         lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
@@ -7685,11 +7668,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         if cls_a and cls_a.get("passive_key") == "dead_or_alive":
             a["deadeye_kill_bonus"] = safe_int(a.get("deadeye_kill_bonus")) + 2
         if cls_a and cls_a.get("passive_key") == "marked_for_death":
-            mfd_gold = round(d.get("gold", 0) * 0.05 + 25)
-            mfd_bonus = round(mfd_gold * 0.25)
+            mfd_bonus = round((d.get("gold", 0) * 0.05 + 25) * 0.25)
             a["gold"] = a.get("gold", 0) + mfd_bonus
-            if mfd_bonus > 0:
-                extra_notes.append(f"💰 *Marked for Death!* +{mfd_bonus} bonus gold!")
         action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}."
         if leveled and a["level"] % 10 == 0:
             asyncio.create_task(announce(bot, chat_id,
@@ -7712,20 +7692,24 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         asyncio.create_task(_notify_attack(bot, d, a["username"], dmg_after_def))
 
     statuses = get_active_statuses(d)
-    if statuses:
-        action += "\n" + " | ".join(statuses)
-    if lvl_msgs:
-        action += "\n\n" + "\n".join(lvl_msgs)
+    if statuses: action += "\n" + " | ".join(statuses)
+    if lvl_msgs: action += "\n\n" + "\n".join(lvl_msgs)
 
     return action, lvl_msgs, "defeat" if d["hp"] <= 0 else "hit"
 
 
-def get_player_by_username(username):
+def get_player_by_username(name):
+    """Look up player by Telegram @handle or display name (case-insensitive)."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute("SELECT * FROM players WHERE LOWER(username)=?", (username.lower(),))
+    key = name.lower().lstrip("@")
+    # Try @handle first (tg_username column), then display name
+    c.execute("SELECT * FROM players WHERE LOWER(tg_username)=?", (key,))
     row = c.fetchone()
+    if not row:
+        c.execute("SELECT * FROM players WHERE LOWER(username)=?", (key,))
+        row = c.fetchone()
     conn.close()
     return dict(row) if row else None
 
@@ -7764,21 +7748,20 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── PvP below ──────────────────────────────────────────────────────────
     chat = chat_id
-    du_id = None
-    du_name = None
+    du_id = None; du_name = None
 
     if update.message.reply_to_message:
         _du = update.message.reply_to_message.from_user
         du_id = _du.id; du_name = _du.first_name
     elif context.args:
-        uname = context.args[0].lstrip("@")
-        found = get_player_by_username(uname)
+        found = get_player_by_username(context.args[0])
         if not found:
-            await send_group(update, f"❌ No player found with username *{uname}*.", delay=9); return
+            await send_group(update,
+                f"\u274c No player found. Try their display name or @handle.", delay=9); return
         du_id = found["user_id"]; du_name = found["username"]
     else:
         await send_group(update,
-            "Reply to someone's message with /attack, or use /attack @username to strike them!", delay=9)
+            "Reply to someone's message with /attack, or use /attack @handle or /attack Name.", delay=9)
         return
 
     if du_id == au.id:
@@ -7787,23 +7770,21 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not d:
         await send_group(update, f"{du_name} hasn't ascended yet!", delay=9); return
     if is_defeated(d):
-        await send_group(update, f"💀 {d['username']} is already defeated!", delay=9); return
+        await send_group(update, f"\U0001f480 {d['username']} is already defeated!", delay=9); return
     if is_invincible(d):
-        await send_group(update, f"🛡️ {d['username']} is *Still Recovering*  -  invincible for now.", delay=9); return
+        await send_group(update, f"\U0001f6e1\ufe0f {d['username']} is *Still Recovering*  -  invincible for now.", delay=9); return
     raid_d, kind_d = in_active_raid(du_id, chat)
     if raid_d:
-        await send_group(update, f"⚔️ *{d['username']}* is in a raid right now  -  can't be targeted!", delay=9); return
+        await send_group(update, f"\u2694\ufe0f *{d['username']}* is in a raid right now  -  can't be targeted!", delay=9); return
     t_boss, _ = in_active_boss(du_id, chat_id)
     if t_boss:
-        await send_group(update, f"⚔️ *{d['username']}* is in a boss fight  -  can't be targeted!", delay=9); return
-
+        await send_group(update, f"\u2694\ufe0f *{d['username']}* is in a boss fight  -  can't be targeted!", delay=9); return
     if a.get("guild_id") and str(a.get("guild_id")) == str(d.get("guild_id")):
         g = get_guild(a["guild_id"])
         gname = g["name"] if g else "your Guild"
         await send_group(update,
-            f"🏰 *{d['username']}* is in *{gname}* — you can't attack your own guild members!",
+            f"\U0001f3f0 *{d['username']}* is in *{gname}* \u2014 you can't attack your own guild members!",
             delay=9); return
-
     s_tgt = get_shadow(du_id)
     target_last_seen = s_tgt.get("last_seen") if s_tgt else None
     if target_last_seen:
@@ -7811,17 +7792,14 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             away_secs = (datetime.now() - datetime.fromisoformat(target_last_seen)).total_seconds()
             if away_secs > 3600:
                 away_str = f"{int(away_secs // 60)} min" if away_secs < 7200 else f"{int(away_secs // 3600)}h"
-                await send_group(update, f"💤 *{d['username']}* stepped away from the table *(last seen {away_str} ago)*  -  can't attack offline players.", delay=9)
+                await send_group(update, f"\U0001f4a4 *{d['username']}* stepped away *(last seen {away_str} ago)*  -  can't attack offline players.", delay=9)
                 try:
-                    await context.bot.send_message(
-                        chat_id=du_id,
-                        text=f"🎱 *{a['username']}* tried to attack you while you were away!\nHead back to the table before someone else takes their shot.",
+                    await context.bot.send_message(chat_id=du_id,
+                        text=f"\U0001f3b1 *{a['username']}* tried to attack you while you were away!\nHead back to the table.",
                         parse_mode="Markdown")
-                except Exception:
-                    pass
+                except Exception: pass
                 return
-        except Exception:
-            pass
+        except Exception: pass
 
     w    = get_weather()
     chat = update.effective_chat.id
@@ -7845,7 +7823,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=chat, text=action[:4096], parse_mode="Markdown", reply_markup=markup)
             asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 45))
         except Exception: pass
-    else:  # defeat
+    else:
         try:
             msg = await update.get_bot().send_message(
                 chat_id=chat, text=action[:4096], parse_mode="Markdown")
@@ -7868,47 +7846,37 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.from_user.id != uid:
-        await query.answer("These aren't your buttons!", show_alert=True)
-        return
+        await query.answer("These aren't your buttons!", show_alert=True); return
 
     if not _cb_lock(uid):
-        await query.answer("Still processing...", show_alert=True)
-        return
+        await query.answer("Still processing...", show_alert=True); return
 
     try:
         a = get_player(uid)
         d = get_player(target_id)
         chat_id = query.message.chat_id
-
         if not a or not d:
-            await query.edit_message_text("Player data not found.")
-            return
+            await query.edit_message_text("Player data not found."); return
 
-        # ── Skill picker ──────────────────────────────────────────────────────
         if action_type == "skl":
             page = int(parts[4]) if len(parts) > 4 else 0
             all_skills = sjl(a.get("all_skills"), [])
             if not all_skills:
-                await query.answer("No skills unlocked yet!", show_alert=True)
-                return
+                await query.answer("No skills unlocked yet!", show_alert=True); return
             if is_silenced(a):
-                await query.answer("\U0001f910 You are silenced — can't use skills!", show_alert=True)
-                return
+                await query.answer("You are silenced — can't use skills!", show_alert=True); return
             markup = _build_skill_picker_keyboard(all_skills, uid, page, target_id, show_close=False)
             try:
                 await query.edit_message_text(
-                    f"\u26a1 Choose a skill to use on *{d['username']}*:",
+                    f"⚡ Choose a skill to use on *{d['username']}*:",
                     parse_mode="Markdown", reply_markup=markup)
-            except Exception:
-                pass
+            except Exception: pass
             return
 
-        # ── Heal self ─────────────────────────────────────────────────────────
         if action_type == "heal":
             inv = sjl(a.get("inventory"), [])
             is_priest = get_class_line(a) == "priest"
-            potion = None
-            heal_amount = 0
+            potion = None; heal_amount = 0
             if is_priest:
                 heal_amount = safe_stats(a).get("WIS", 5) * 8
             else:
@@ -7918,46 +7886,35 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if pname in inv:
                         potion = pname; heal_amount = pamt; break
                 if not potion:
-                    await query.answer("No potions left!", show_alert=True)
-                    return
-                inv.remove(potion)
-                a["inventory"] = json.dumps(inv)
+                    await query.answer("No potions left!", show_alert=True); return
+                inv.remove(potion); a["inventory"] = json.dumps(inv)
             heal_amount += safe_stats(a).get("WIS", 5)
             old_hp = a["hp"]
             a["hp"] = min(a["max_hp"], a["hp"] + heal_amount)
             actual = a["hp"] - old_hp
             save_player(a)
             hp_pct = a["hp"] / max(1, a["max_hp"])
-            bar = "\u2588" * round(hp_pct * 10) + "\u2591" * (10 - round(hp_pct * 10))
-            heal_text = (f"\U0001f48a *{a['username']}* heals for *+{actual} HP*!\n"
-                         f"\u2764\ufe0f {a['username']}: *{a['hp']}/{a['max_hp']}* [{bar}]\n"
+            bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
+            heal_text = (f"💊 *{a['username']}* heals for *+{actual} HP*!\n"
+                         f"❤️ {a['username']}: *{a['hp']}/{a['max_hp']}* [{bar}]\n"
                          f"_({d['username']}'s turn to retaliate)_")
             markup = _build_pvp_card_markup(uid, target_id, a)
-            try:
-                await query.edit_message_text(heal_text, parse_mode="Markdown", reply_markup=markup)
-            except Exception:
-                pass
+            try: await query.edit_message_text(heal_text, parse_mode="Markdown", reply_markup=markup)
+            except Exception: pass
             return
 
-        # ── Retaliate ─────────────────────────────────────────────────────────
-        if action_type != "atk":
-            return
+        if action_type != "atk": return
 
         if is_defeated(a):
-            await query.answer("You're defeated — can't attack!", show_alert=True)
-            return
+            await query.answer("You're defeated — can't attack!", show_alert=True); return
         if is_invincible(a):
-            await query.answer("You're invincible — can't attack!", show_alert=True)
-            return
+            await query.answer("You're invincible — can't attack!", show_alert=True); return
         if is_vanished(a):
-            await query.answer("You're vanished — can't attack while hidden!", show_alert=True)
-            return
+            await query.answer("You're vanished — can't attack while hidden!", show_alert=True); return
         if cannot_attack(a):
-            await query.answer("You're stunned or rooted — can't attack!", show_alert=True)
-            return
+            await query.answer("You're stunned or rooted — can't attack!", show_alert=True); return
         if not _rate_ok(uid):
-            await query.answer("Slow down!", show_alert=True)
-            return
+            await query.answer("Slow down!", show_alert=True); return
 
         if is_defeated(d):
             await query.answer(f"{d['username']} is already defeated!", show_alert=True)
@@ -7965,21 +7922,17 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
             return
         if is_invincible(d):
-            await query.answer(f"{d['username']} is invincible right now!", show_alert=True)
-            return
+            await query.answer(f"{d['username']} is invincible right now!", show_alert=True); return
         if a.get("guild_id") and str(a.get("guild_id")) == str(d.get("guild_id")):
-            await query.answer("Can't attack your own guild member!", show_alert=True)
-            return
+            await query.answer("Can't attack your own guild member!", show_alert=True); return
 
         w = get_weather()
         result_text, lvl_msgs, result_type = await _execute_pvp_hit(
             a, d, uid, target_id, w, chat_id, context.bot)
 
         if result_type == "miss":
-            try:
-                await query.edit_message_text(result_text, parse_mode="Markdown")
-            except Exception:
-                pass
+            try: await query.edit_message_text(result_text, parse_mode="Markdown")
+            except Exception: pass
             return
 
         if result_type == "hit":
@@ -7991,13 +7944,13 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id, result_text[:4096],
                                                parse_mode="Markdown", reply_markup=markup)
         else:
-            try:
-                await query.edit_message_text(result_text[:4096], parse_mode="Markdown")
+            try: await query.edit_message_text(result_text[:4096], parse_mode="Markdown")
             except Exception:
                 await context.bot.send_message(chat_id, result_text[:4096], parse_mode="Markdown")
 
     finally:
         _cb_unlock(uid)
+
 
 # ── HEAL ──────────────────────────────────────────────────────────────────────
 async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -8365,6 +8318,8 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update,
             "No profile yet  -  just start chatting to build your level!", delay=9); return
     if p and not viewing_other: p["username"] = user.first_name
+    if p and not viewing_other and getattr(user, "username", None):
+        p["tg_username"] = user.username
     if s and not viewing_other: s["username"] = user.first_name
     if not p:
         tier = get_tier(s["level"])
