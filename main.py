@@ -18521,7 +18521,7 @@ async def rankwins_cmd(update, context):
 GUIDE_PAGES = [
     # Page 1 - Getting Started
     (
-        "🎱 *8Ball World  -  Getting Started* (1/12)\n"
+        "🎱 *8Ball World  -  Getting Started* (1/13)\n"
         "\n"
         "Welcome to 8Ball World  -  a fantasy RPG built inside Telegram.\n"
         "\n"
@@ -18540,7 +18540,7 @@ GUIDE_PAGES = [
     ),
     # Page 2 - Character Building
     (
-        "🎱 *8Ball World  -  Building Your Character* (2/12)\n"
+        "🎱 *8Ball World  -  Building Your Character* (2/13)\n"
         "\n"
         "Use /class at Level 5 to pick your starting class. Browse with arrows to see each class's Path A and Path B.\n"
         "\n"
@@ -18586,7 +18586,7 @@ GUIDE_PAGES = [
     ),
     # Page 3 - Daily Activities
     (
-        "🎱 *8Ball World  -  Daily Activities* (3/12)\n"
+        "🎱 *8Ball World  -  Daily Activities* (3/13)\n"
         "\n"
         "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
         "\n"
@@ -18615,7 +18615,7 @@ GUIDE_PAGES = [
     ),
     # Page 4 - Combat & Raids
     (
-        "🎱 *8Ball World  -  Combat & Raids* (4/12)\n"
+        "🎱 *8Ball World  -  Combat & Raids* (4/13)\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
         "Reply to any player's message and use /attack to fight them. Winners steal gold and EXP. Losers are defeated for 6 hours and lose 10% EXP.\n"
@@ -18662,7 +18662,7 @@ GUIDE_PAGES = [
     ),
     # Page 5 - Gear & Economy
     (
-        "🎱 *8Ball World  -  Gear & Economy* (5/12)\n"
+        "🎱 *8Ball World  -  Gear & Economy* (5/13)\n"
         "\n"
         "*Gear Slots*\n"
         "⚔️ Weapon, 🛡️ Armor, 🔰 Shield, 💍 Accessory, 🎩 Hat, 🧤 Gloves, 👢 Boots, 🎭 Mask.\n"
@@ -18703,9 +18703,9 @@ GUIDE_PAGES = [
         "*Set Bonuses*\n"
         "Equip matching legendary pieces to unlock set bonuses shown in /stats Gear page."
     ),
-    # Page 6 - Command Reference
+    # Page 6 - Command Reference (Core)
     (
-        "🎱 *8Ball World  -  Command Reference* (6/12)\n"
+        "🎱 *8Ball World  -  Commands: Core* (6/13)\n"
         "\n"
         "*Character*\n"
         "/ascend  -  Create your RPG character (DM only)\n"
@@ -18726,15 +18726,15 @@ GUIDE_PAGES = [
         "/explore  -  Big drops, big EXP (1hr, 2x/day)\n"
         "/pool  -  Roll for EXP, gold, items (8s)\n"
         "/dungeon  -  Solo boss run (daily)\n"
-        "/dungeonhard  -  Hard dungeon\n"
-        "/dungeonlegendary  -  Legendary dungeon\n"
+        "/dungeonhard  -  Hard dungeon (Lv 15+)\n"
+        "/dungeonlegendary  -  Legendary dungeon (Lv 40+)\n"
         "\n"
         "*Combat*\n"
         "/attack  -  Attack reply target or active boss\n"
         "/skill  -  Use your class skill in battle\n"
         "/duel  -  Reply to challenge. Wager buttons pop up.\n"
         "/arena  -  Reply for turn-based skill combat\n"
-        "/heal  -  Heal yourself (or reply to heal ally). Chalkers heal free + can self-revive.\n"
+        "/heal  -  Heal yourself or reply to heal ally\n"
         "/boss  -  Start a group boss (button menu)\n"
         "/raid  -  Create or join a raid party\n"
         "/raidstart  -  Start the raid\n"
@@ -18743,74 +18743,78 @@ GUIDE_PAGES = [
         "\n"
         "*Gear & Economy*\n"
         "/equip  -  Browse bag and tap to equip\n"
-        "/unequip  -  Tap a slot to unequip gear back to bag\n"
-        "/enhance  -  Upgrade gear with Iron Shards (button menu) — supports hat/gloves/boots/mask\n"
-        "/enchant  -  Add enchants via Enchanting Scrolls (button menu) — supports hat/gloves/boots/mask\n"
-        "/reinforce  -  Tap to sacrifice duplicate gear for +1 ATK/DEF — supports hat/gloves/boots/mask\n"
+        "/unequip  -  Tap a slot to unequip\n"
+        "/enhance  -  Upgrade gear with Iron Shards\n"
+        "/enchant  -  Add enchants via Enchanting Scrolls\n"
+        "/reinforce  -  Sacrifice duplicate gear for +1 ATK/DEF\n"
         "/use  -  Use a consumable (button menu)\n"
         "/title  -  View and equip your earned titles\n"
         "/objectives  -  View daily objectives\n"
-        "/sell [rarity]  -  Bulk sell by rarity (common/uncommon/rare/epic/legendary/mythic)\n"
+        "/sell [rarity]  -  Bulk sell by rarity\n"
         "/forge  -  Craft items from materials\n"
         "/claim  -  Daily streak reward (gold + materials)\n"
-        "/trade @user [item] [price]  -  Trade with a player\n"
-        "/shop  -  Daily rotating shop (tabbed by category, class labels on gear)\n"
-        "/shoplegend  -  Legendary craftsman shop (event-only, 10 min window)\n"
+        "/trade  -  Reply to player to open trade menu\n"
+        "/shop  -  Tabbed shop (class labels on gear)\n"
+        "/shoplegend  -  Legendary craftsman shop (event-only)\n"
         "\n"
         "*Leaderboards & Info*\n"
-        "/rank  -  Leaderboard\n"
-        "/rankme  -  Your rank\n"
+        "/rank  -  Leaderboard  |  /rankme  -  Your rank\n"
         "/rankwins  -  Wins leaderboard\n"
         "/who  -  Active players with HP/status\n"
         "/history  -  Your last 5 PvP hits\n"
-        "/war  -  Active bounties, guild wars, top killers\n"
-        "/world  -  Current world info\n"
-        "/changelog  -  Recent bot updates\n"
+        "/war  -  Bounties, guild wars, top killers\n"
+        "/world  -  Current world info  |  /changelog  -  Updates"
+    ),
+    # Page 7 - Command Reference (Social)
+    (
+        "🎱 *8Ball World  -  Commands: Social* (7/13)\n"
         "\n"
         "*Bounties*\n"
-        "/bounty  -  Reply to a player. Amount buttons pop up (100–5000g). Multiple players can stack bounties!\n"
+        "/bounty  -  Reply to a player. Amount buttons pop up (100–5000g). Stack with others!\n"
         "/bounties  -  View the active bounty board\n"
-        "_Thief classes: no fee + premium amounts (up to 10,000g), max 3 contracts. Bounty Hunter: no fee + Execution Order (2,000g bounty + Marked debuff via skill)._\n"
+        "_Thief: no fee, up to 10,000g, max 3 contracts. Bounty Hunter: Execution Order skill (2,000g + Marked)._\n"
         "\n"
-        "*Guilds*\n"
-        "/guild  -  Social hub — shows your guild + secret order together\n"
+        "*Guilds & Orders*\n"
+        "/guild  -  Social hub — your guild + secret order together\n"
         "/guildjoin  -  Browse + join a guild\n"
         "/guildcreate [name]  -  Create a guild (100g)\n"
-        "/guildinfo [Guild Name]  -  Your guild details (or look up any guild)\n"
+        "/guildinfo [name]  -  Guild details (any guild)\n"
         "/guildlist  -  All active guilds\n"
         "/guilddonate [amt]  -  Donate gold to guild\n"
-        "/guildrename [name]  -  Rename your guild (leader only)\n"
+        "/guildrename [name]  -  Rename your guild (leader)\n"
         "/guildkick @user  -  Kick member (leader)\n"
         "/guildleave  -  Leave your guild\n"
         "/guilddisband confirm  -  Disband your guild\n"
-        "/guildwar  -  Declare war via guild picker (leader, 24hr)\n"
+        "/guildwar  -  Declare war (leader, 24hr)\n"
         "/gbank deposit/withdraw  -  Guild bank\n"
+        "/alliance  -  Secret Orders menu (same as /guild)\n"
         "\n"
         "*Marriage & Social*\n"
-        "/marry  -  Propose (reply to target) or check status. Multiple marriages allowed.\n"
-        "/divorce  -  End a marriage (button picker if multiple spouses)\n"
-        "/holdhands  -  Reach out to someone (reply to target) or check timer. No limit.\n"
-        "/releasehands  -  Let go (button picker if holding multiple hands)\n"
-        "/bonds  -  View the full marriage and holding hands board\n"
-        "/pat  -  Reply to a player to give them a pat  _(+1 influence)_\n"
-        "/hug  -  Reply to a player to give them a hug  _(+2 influence)_\n"
-        "/kiss  -  Reply to a player for a kiss _(relationship-aware, +2 influence)_\n"
-        "/slap  -  Reply to a player to slap them  _(−1 influence for you)_\n"
-        "/poke  -  Reply to a player for a poke  _(+1 influence)_\n"
-        "/wave  -  Wave at someone\n"
+        "/marry  -  Propose (reply to target) or check status\n"
+        "/divorce  -  End a marriage (button picker)\n"
+        "/holdhands  -  Reach out to someone (reply to target)\n"
+        "/releasehands  -  Let go (button picker)\n"
+        "/bonds  -  Marriage and holding-hands board\n"
+        "/pat  -  Give a pat _(+1 inf)_  |  /hug  -  Give a hug _(+2 inf)_\n"
+        "/kiss  -  Relationship-aware kiss _(+2 inf)_\n"
+        "/slap  -  Slap someone _(−1 inf for you)_\n"
+        "/poke  -  Poke someone _(+1 inf)_  |  /wave  -  Wave\n"
         "\n"
         "*Influence & Orders*\n"
-        "/alliance  -  Open the Secret Orders menu (create, join, manage)\n"
-        "/rumor  -  Spread an anonymous rumor about a player _(costs 50 influence)_\n"
-        "/secrets  -  View hidden lore, unlocked by your fame tier\n"
-        "/oracle  -  Consult the Magic 8-Ball _(requires 8-Ball item, 20hr cooldown)_\n"
+        "/rumor  -  Spread an anonymous rumor _(50 influence)_\n"
+        "/secrets  -  Hidden lore, unlocked by fame tier\n"
+        "/oracle  -  Consult the 8-Ball _(item required, 20hr)_\n"
         "\n"
-        "*Encounters*\n"
-        "/encounter  -  Fight an NPC (Battle) or hunt a wild monster (Hunt)"
+        "*Encounters & Pets*\n"
+        "/encounter  -  Fight an NPC or hunt a wild monster\n"
+        "/pet  -  Manage your active pet\n"
+        "/petshop  -  Buy eggs and snacks\n"
+        "/hatch  -  Hatch an egg from your inventory\n"
+        "/petrename [name]  -  Rename your active pet"
     ),
     # Page 7 - Guilds & Advanced
     (
-        "🎱 *8Ball World  -  Guilds & Advanced Systems* (7/12)\n"
+        "🎱 *8Ball World  -  Guilds & Advanced Systems* (8/13)\n"
         "\n"
         "*Social Hub*\n"
         "/guild — Opens your combined Social Standing card showing your Guild and Secret Order in one view. Use this as your main social dashboard.\n"
@@ -18854,7 +18858,7 @@ GUIDE_PAGES = [
     ),
     # Page 8 - Pets
     (
-        "🎱 *8Ball World  -  Pets* (8/12)\n"
+        "🎱 *8Ball World  -  Pets* (9/13)\n"
         "\n"
         "*Getting a Pet*\n"
         "Buy eggs from the Pet Shop (/petshop) or find them in dungeons and quests.\n"
@@ -18906,7 +18910,7 @@ GUIDE_PAGES = [
     ),
     # Page 9 - Marriage & Social
     (
-        "🎱 *8Ball World  -  Marriage & Social* (9/12)\n"
+        "🎱 *8Ball World  -  Marriage & Social* (10/13)\n"
         "\n"
         "*Getting Married*\n"
         "Reply to any player's message and type /marry to propose.\n"
@@ -18952,7 +18956,7 @@ GUIDE_PAGES = [
 
     # Page 10 - Encounters & Monsters
     (
-        "🎱 *8Ball World  -  Encounters & Monsters* (10/12)\n"
+        "🎱 *8Ball World  -  Encounters & Monsters* (11/13)\n"
         "\n"
         "Use /encounter to begin. Choose *Battle* or *Hunt*.\n"
         "\n"
@@ -18987,7 +18991,7 @@ GUIDE_PAGES = [
     ),
     # Page 11 - Influence & Fame
     (
-        "🎱 *8Ball World  -  Influence & Fame* (11/12)\n"
+        "🎱 *8Ball World  -  Influence & Fame* (12/13)\n"
         "\n"
         "Influence is a silent measure of your standing in the order. It grows through kindness, shrinks through cruelty, and tells the world exactly how you carry yourself.\n"
         "\n"
@@ -19022,7 +19026,7 @@ GUIDE_PAGES = [
     ),
     # Page 12 - Secret Orders
     (
-        "🎱 *8Ball World  -  Secret Orders* (12/12)\n"
+        "🎱 *8Ball World  -  Secret Orders* (13/13)\n"
         "\n"
         "Orders are cross-guild alliances of up to 30 members — a tier above Guilds. They span multiple guilds, operate in the shadows, share an influence pool, and unlock perks that grow over time.\n"
         "\n"
@@ -19058,7 +19062,7 @@ GUIDE_PAGES = [
     ),
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands: Core", "Commands: Social", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders"]
 
 async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
     total = len(GUIDE_PAGES)
