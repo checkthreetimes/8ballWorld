@@ -14925,7 +14925,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     _rar = random.choice(["rare", "rare", "epic"])
                 else:
                     _rar = random.choice(["rare", "epic", "legendary"])
-                _gear_pool = [n for n, d in {**WEAPONS, **ARMORS}.items() if d.get("rarity") == _rar]
+                _gear_pool = [n for n, d in {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}.items() if d.get("rarity") == _rar]
                 gear_drop = random.choice(_gear_pool) if _gear_pool else None
             if gear_drop:
                 inv = sjl(p.get("inventory"), []); inv.append(gear_drop); p["inventory"] = json.dumps(inv)
