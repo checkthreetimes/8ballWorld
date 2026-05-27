@@ -11033,13 +11033,13 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
 # ─── Alliance DB ───────────────────────────────────────────
 def get_alliance(aid):
     if not aid: return None
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
     c.execute("SELECT * FROM alliances WHERE id = ?", (aid,))
     row = c.fetchone(); conn.close()
     return dict(row) if row else None
 
 def get_alliance_by_name(name):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
     c.execute("SELECT * FROM alliances WHERE LOWER(name) = LOWER(?)", (name,))
     row = c.fetchone(); conn.close()
     return dict(row) if row else None
@@ -11052,7 +11052,7 @@ def save_alliance(a):
     conn.commit(); conn.close()
 
 def get_all_alliances():
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
     c.execute("SELECT * FROM alliances ORDER BY influence_pool DESC")
     rows = c.fetchall(); conn.close()
     return [dict(r) for r in rows]
@@ -21724,9 +21724,12 @@ def main():
     async def _cmd_last_seen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message or not update.effective_user or update.effective_user.is_bot: return
         u = update.effective_user
-        _s = get_or_create_shadow(u.id, u.first_name)
-        _s["last_seen"] = datetime.now().isoformat()
-        save_shadow(_s)
+        # Lightweight: just stamp last_seen without loading the full shadow object
+        try:
+            _lc = sqlite3.connect(DB_PATH); _lc.execute(
+                "UPDATE shadow_profiles SET last_seen=? WHERE user_id=?",
+                (datetime.now().isoformat(), u.id)); _lc.commit(); _lc.close()
+        except Exception: pass
     app.add_handler(MessageHandler(filters.COMMAND, _cmd_last_seen), group=1)
 
     explore_timers.clear()
