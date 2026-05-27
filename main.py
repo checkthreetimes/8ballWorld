@@ -3521,32 +3521,32 @@ def _enc_monster_attack(enc):
 
 # ── BOSSES ────────────────────────────────────────────────────────────────────
 BOSSES = {
-    "1 ball": {"name":"The 1 Ball","hp":1200,"max_hp":1200,"dmg_min":68,"dmg_max":120,
-               "exp":2000,"gold":150,"title":"1-Ball Slayer","desc":"Every warrior left it standing. It has grown tired of waiting.",
+    "1 ball": {"name":"The 1 Ball","hp":1800,"max_hp":1800,"dmg_min":80,"dmg_max":140,
+               "exp":1600,"gold":130,"title":"1-Ball Slayer","desc":"Every warrior left it standing. It has grown tired of waiting.",
                "loot_table":[("Greater Health Potion","uncommon"),("Iron Shard","uncommon"),("Soldier's Plating","uncommon"),
                              ("Chain Coif","uncommon"),("Chain Gauntlets","uncommon"),("Chain Boots","uncommon"),("Shadow Mask","uncommon"),
                              ("Shadow Hood","uncommon"),("Rogue's Wraps","uncommon"),("Shadow Treads","uncommon"),("War Paint Mask","uncommon")]},
-    "3 ball": {"name":"The 3 Ball","hp":2000,"max_hp":2000,"dmg_min":105,"dmg_max":165,
-               "exp":4000,"gold":300,"title":"3-Ball Slayer","desc":"Lurks in the shadows and waits. When it strikes, things shatter.",
+    "3 ball": {"name":"The 3 Ball","hp":3200,"max_hp":3200,"dmg_min":120,"dmg_max":190,
+               "exp":3200,"gold":260,"title":"3-Ball Slayer","desc":"Lurks in the shadows and waits. When it strikes, things shatter.",
                "loot_table":[("Grand Restorative Flask","rare"),("Iron Shard","uncommon"),("Ranger's Marked Bow","rare"),
                              ("Templar's Helm","rare"),("Templar's Gauntlets","rare"),("Templar's Sabatons","rare"),("Templar's Visor","rare"),
                              ("Void Cowl","rare"),("Shadow Wraps","rare"),("Void Walkers","rare"),("Assassin's Veil","rare")]},
-    "5 ball": {"name":"The 5 Ball","hp":3000,"max_hp":3000,"dmg_min":143,"dmg_max":210,
-               "exp":7000,"gold":500,"title":"5-Ball Slayer","desc":"The heart of the dungeon. The middle cannot be ignored.",
+    "5 ball": {"name":"The 5 Ball","hp":4800,"max_hp":4800,"dmg_min":165,"dmg_max":245,
+               "exp":5600,"gold":440,"title":"5-Ball Slayer","desc":"The heart of the dungeon. The middle cannot be ignored.",
                "loot_table":[("Scroll of Revival","rare"),("Warlock's Dread Staff","rare"),("Fortune Coin","rare"),
                              ("Templar's Helm","rare"),("Templar's Gauntlets","rare"),("Templar's Sabatons","rare"),("Templar's Visor","rare"),
                              ("Void Cowl","rare"),("Shadow Wraps","rare"),("Void Walkers","rare"),("Assassin's Veil","rare")]},
-    "7 ball": {"name":"The 7 Ball","hp":4500,"max_hp":4500,"dmg_min":180,"dmg_max":270,
-               "exp":12000,"gold":800,"title":"7-Ball Slayer","desc":"The last guardian before the final boss. It knows what it protects.",
+    "7 ball": {"name":"The 7 Ball","hp":7000,"max_hp":7000,"dmg_min":210,"dmg_max":310,
+               "exp":9500,"gold":700,"title":"7-Ball Slayer","desc":"The last guardian before the final boss. It knows what it protects.",
                "loot_table":[("Warlord's Edge","epic"),("Void-Touched Robe","epic"),("Twin Strike Ring","epic"),
                              ("Battleborn Crown","epic"),("Battleborn Gauntlets","epic"),("Battleborn Treads","epic"),("Phantom Mask","epic"),
                              ("Phantom Visage","epic"),("Void Gloves","epic"),("Phantom Boots","epic"),("Void Visor","epic")]},
-    "8 ball": {"name":"The 8 Ball","hp":8000,"max_hp":8000,"dmg_min":225,"dmg_max":375,
-               "exp":20000,"gold":2000,"title":"8-Ball Champion","desc":"The final boss. The only one that matters in the end.",
+    "8 ball": {"name":"The 8 Ball","hp":13000,"max_hp":13000,"dmg_min":260,"dmg_max":420,
+               "exp":16000,"gold":1800,"title":"8-Ball Champion","desc":"The final boss. The only one that matters in the end.",
                "loot_table":[("Ruinblade","legendary"),("Archmage's Sanctum Robe","legendary"),("Ring of the Endless","legendary"),
                              ("Helm of the Eternal","legendary"),("Gauntlets of the Eternal","legendary"),("Boots of the Eternal","legendary"),("Mask of the Eternal","legendary")]},
-    "void":   {"name":"The Void Ball","hp":15000,"max_hp":15000,"dmg_min":375,"dmg_max":600,
-               "exp":50000,"gold":5000,"title":"Blackball Slayer","desc":"It was never part of this realm. It came from somewhere else.","secret":True,
+    "void":   {"name":"The Void Ball","hp":22000,"max_hp":22000,"dmg_min":420,"dmg_max":680,
+               "exp":40000,"gold":4500,"title":"Blackball Slayer","desc":"It was never part of this realm. It came from somewhere else.","secret":True,
                "loot_table":[("Shard of the Void","legendary"),("The Last Stand Locket","legendary"),("The Void Mark","legendary"),
                              ("Crown of the Void","mythic"),("Hands of the Void","mythic"),("Steps of the Void","mythic"),("Face of the Void","mythic"),
                              ("Helm of the Eternal","legendary"),("Gauntlets of the Eternal","legendary"),("Boots of the Eternal","legendary"),("Mask of the Eternal","legendary")]},
@@ -3623,10 +3623,10 @@ RAID_TIERS = [
 SOLO_RAID_TIERS = [
     {"name":"The Quiet Ruins","min_level":1,"wave_boss_key":"1 ball",
      "wave_enemies":[
-         {"name":"Young Raider","hp":80,"dmg_min":8,"dmg_max":18},
-         {"name":"Dungeon Brawler","hp":130,"dmg_min":12,"dmg_max":24},
+         {"name":"Young Raider","hp":140,"dmg_min":12,"dmg_max":26},
+         {"name":"Dungeon Brawler","hp":220,"dmg_min":18,"dmg_max":35},
      ],
-     "exp_reward":400,"gold_reward":80,
+     "exp_reward":280,"gold_reward":70,
      "loot_table":[
          ("Iron Broadsword",0.40),("Rusty Shiv",0.35),("Iron Shard Ring",0.30),
          ("Worn Leather Band",0.28),("Scout's Pendant",0.25),("Brass Ring",0.22),
@@ -3639,11 +3639,11 @@ SOLO_RAID_TIERS = [
      ]},
     {"name":"The Side Pocket Run","min_level":5,"wave_boss_key":"3 ball",
      "wave_enemies":[
-         {"name":"Stone Bruiser","hp":200,"dmg_min":20,"dmg_max":38},
-         {"name":"Rail Runner","hp":320,"dmg_min":28,"dmg_max":50},
-         {"name":"Dungeon Rogue","hp":450,"dmg_min":35,"dmg_max":62},
+         {"name":"Stone Bruiser","hp":340,"dmg_min":28,"dmg_max":52},
+         {"name":"Rail Runner","hp":540,"dmg_min":38,"dmg_max":68},
+         {"name":"Dungeon Rogue","hp":760,"dmg_min":48,"dmg_max":82},
      ],
-     "exp_reward":900,"gold_reward":200,
+     "exp_reward":620,"gold_reward":170,
      "loot_table":[
          ("Steel Knight Sword",0.32),("Crystal Core Wand",0.28),("Warlock's Dread Staff",0.22),
          ("Bloodstone Band",0.24),("Shadowmark Signet",0.20),("Hunter's Fang",0.16),
@@ -3657,11 +3657,11 @@ SOLO_RAID_TIERS = [
      ]},
     {"name":"The One-Man Break","min_level":10,"wave_boss_key":"5 ball",
      "wave_enemies":[
-         {"name":"Iron Enforcer","hp":500,"dmg_min":40,"dmg_max":65},
-         {"name":"Shadow Wraith","hp":750,"dmg_min":55,"dmg_max":85},
-         {"name":"The Closer's Shadow","hp":1000,"dmg_min":65,"dmg_max":100},
+         {"name":"Iron Enforcer","hp":850,"dmg_min":55,"dmg_max":85},
+         {"name":"Shadow Wraith","hp":1280,"dmg_min":72,"dmg_max":110},
+         {"name":"The Closer's Shadow","hp":1700,"dmg_min":88,"dmg_max":132},
      ],
-     "exp_reward":2000,"gold_reward":480,
+     "exp_reward":1350,"gold_reward":400,
      "loot_table":[
          ("Warlord's Edge",0.28),("Void Channel Staff",0.18),("Ferrule Dart",0.24),
          ("War Master's Clasp",0.20),("Phantom Loop",0.16),("Warrior's Band",0.14),
@@ -3674,12 +3674,12 @@ SOLO_RAID_TIERS = [
      ]},
     {"name":"The Ghost Run","min_level":15,"wave_boss_key":"8 ball",
      "wave_enemies":[
-         {"name":"Void Knight","hp":1200,"dmg_min":65,"dmg_max":110},
-         {"name":"8Ball Phantom","hp":1800,"dmg_min":85,"dmg_max":140},
-         {"name":"The Dead Stroke","hp":2400,"dmg_min":100,"dmg_max":165},
-         {"name":"Final Ghost","hp":3000,"dmg_min":115,"dmg_max":185},
+         {"name":"Void Knight","hp":2000,"dmg_min":88,"dmg_max":145},
+         {"name":"8Ball Phantom","hp":3000,"dmg_min":112,"dmg_max":180},
+         {"name":"The Dead Stroke","hp":4000,"dmg_min":132,"dmg_max":210},
+         {"name":"Final Ghost","hp":5000,"dmg_min":150,"dmg_max":240},
      ],
-     "exp_reward":5000,"gold_reward":1400,
+     "exp_reward":3400,"gold_reward":1200,
      "loot_table":[
          ("Runed Finger",0.14),("Twin Strike Ring",0.16),("Eye of the Void",0.14),
          ("Void Circle",0.12),("War Knuckle",0.12),("Cleric's Band",0.10),
@@ -9070,6 +9070,34 @@ def _calc_applied_class_bonuses(p):
     return total
 
 
+def _unequip_class_gear(p):
+    """Remove all class-restricted gear from equipped slots and return items to inventory.
+    Returns a list of unequipped item names."""
+    inv = sjl(p.get("inventory"), [])
+    unequipped = []
+    slot_pools = [
+        ("equipped_weapon",    WEAPONS),
+        ("equipped_armor",     ARMORS),
+        ("equipped_shield",    SHIELDS),
+        ("equipped_hat",       HATS),
+        ("equipped_gloves",    GLOVES),
+        ("equipped_boots",     BOOTS),
+        ("equipped_mask",      MASKS),
+    ]
+    for slot_key, pool in slot_pools:
+        item_name = p.get(slot_key)
+        if not item_name:
+            continue
+        item_data = pool.get(item_name, {})
+        if item_data.get("class") or item_data.get("line"):
+            inv.append(item_name)
+            p[slot_key] = None
+            unequipped.append(item_name)
+    # Accessories are classless; leave equipped_accessory alone
+    p["inventory"] = json.dumps(inv)
+    return unequipped
+
+
 async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
@@ -9113,11 +9141,13 @@ async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p["class_path"] = None
     p["all_skills"] = json.dumps([])
     p["gold"]       = safe_int(p.get("gold")) - cost
+    unequipped = _unequip_class_gear(p)
     save_player(p)
 
+    gear_note = f"\n⚠️ Class gear unequipped: {', '.join(unequipped)}" if unequipped else ""
     await send_group(update,
         f"🔄 *{user.first_name}* has reset their class.\n\n"
-        f"Class bonuses from *{cls_name}* have been reversed.\n"
+        f"Class bonuses from *{cls_name}* have been reversed.{gear_note}\n"
         f"Use /class to choose a new class.",
         delay=15)
 
@@ -9165,9 +9195,11 @@ async def resetclass_callback(update, context):
     p["class_path"] = None
     p["all_skills"] = json.dumps([])
     p["gold"]       = safe_int(p.get("gold")) - cost
+    unequipped = _unequip_class_gear(p)
     save_player(p)
+    gear_note = f"\n⚠️ Class gear unequipped: {', '.join(unequipped)}" if unequipped else ""
     result = (f"🔄 *Class reset complete!*\n\n"
-              f"Class bonuses from *{cls_name}* have been reversed.\n"
+              f"Class bonuses from *{cls_name}* have been reversed.{gear_note}\n"
               f"Use /class to choose a new class.")
     try:
         await query.edit_message_text(result, parse_mode="Markdown")
@@ -20452,27 +20484,19 @@ def _do_resetstats(p):
     """Execute the stat reset and return (new_stats, refunded)."""
     sd = safe_stats(p)
     base_defaults = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
+    # Get actual class bonuses so we don't count them as user-allocated points
+    class_bonuses = _calc_applied_class_bonuses(p)
     total_allocated = 0
     for stat, base in base_defaults.items():
+        bonus = class_bonuses.get(stat, 0)
         current = sd.get(stat, base)
-        if current > base:
-            total_allocated += (current - base)
-    def_points = sd.get("DEF", 0)
-    if def_points > 0:
-        total_allocated += def_points
+        user_pts = current - base - bonus
+        if user_pts > 0:
+            total_allocated += user_pts
     new_stats = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
-    cid = p.get("class_id")
-    if cid:
-        base_line = CLASS_TREE.get(cid, {}).get("line")
-        if base_line:
-            base_cls = CLASS_TREE.get(base_line, {})
-            for stat, bonus in base_cls.get("stat_bonus", {}).items():
-                if stat in new_stats:
-                    new_stats[stat] = new_stats.get(stat, 5) + bonus
-        current_cls = CLASS_TREE.get(cid, {})
-        for stat, bonus in current_cls.get("stat_bonus", {}).items():
-            if stat in new_stats:
-                new_stats[stat] = new_stats.get(stat, 5) + bonus
+    for stat, bonus in class_bonuses.items():
+        if stat in new_stats:
+            new_stats[stat] = new_stats.get(stat, 5 if stat != "DEF" else 0) + bonus
     refunded = total_allocated + safe_int(p.get("stat_points"))
     p["stats"] = json.dumps(new_stats)
     p["stat_points"] = refunded
@@ -20590,6 +20614,84 @@ async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🗑️ *Database wiped and reset.*\n"
         "All players, guilds, and data cleared.\n"
         "Fresh start!", delay=30)
+
+def _calc_max_stat_points(p):
+    """Compute the maximum legitimate total stat points (allocated + pool) for a player's level."""
+    lvl = safe_int(p.get("level", 1))
+    if lvl <= 20:
+        return lvl * 3
+    return 20 * 3 + (lvl - 20) * 6
+
+async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: correct a player's stat_points to remove exploit gains.
+    Usage: /fixstats <user_id>
+    Without args: checks all players and reports issues (does not fix).
+    /fixstats <user_id> fix  — actually corrects that player."""
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        await send_group(update, "❌ Admin only.", delay=9); return
+
+    if not context.args:
+        # Scan all players
+        conn_s = sqlite3.connect(DB_PATH); conn_s.row_factory = sqlite3.Row; c_s = conn_s.cursor()
+        c_s.execute("SELECT user_id, username, level, stat_points, stats, class_id FROM players")
+        rows = [dict(r) for r in c_s.fetchall()]; conn_s.close()
+        flagged = []
+        for row in rows:
+            max_pts = _calc_max_stat_points(row)
+            class_bonuses = _calc_applied_class_bonuses(row)
+            sd = safe_stats(row)
+            base = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
+            allocated = sum(max(0, sd.get(s,b) - b - class_bonuses.get(s,0)) for s,b in base.items())
+            total = allocated + safe_int(row.get("stat_points"))
+            if total > max_pts + 5:
+                flagged.append(f"• @{row['username']} (id {row['user_id']}) lvl {row['level']}: "
+                               f"total={total} expected≤{max_pts} (excess {total-max_pts})")
+        if not flagged:
+            await send_group(update, "✅ No stat point anomalies found.", delay=15); return
+        await send_group(update,
+            f"⚠️ *Stat Anomalies Found ({len(flagged)}):*\n\n" + "\n".join(flagged[:20]) +
+            f"\n\nUse `/fixstats <user_id> fix` to correct.", delay=60); return
+
+    uid_str = context.args[0]
+    do_fix = len(context.args) > 1 and context.args[1].lower() == "fix"
+    try:
+        target_id = int(uid_str)
+    except ValueError:
+        await send_group(update, "Usage: /fixstats <user_id> [fix]", delay=9); return
+
+    p = get_player(target_id)
+    if not p:
+        await send_group(update, f"Player {target_id} not found.", delay=9); return
+
+    max_pts = _calc_max_stat_points(p)
+    class_bonuses = _calc_applied_class_bonuses(p)
+    sd = safe_stats(p)
+    base = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
+    allocated = sum(max(0, sd.get(s,b) - b - class_bonuses.get(s,0)) for s,b in base.items())
+    current_pool = safe_int(p.get("stat_points"))
+    total = allocated + current_pool
+
+    if not do_fix:
+        await send_group(update,
+            f"🔍 *@{p['username']}* (lv {p['level']})\n"
+            f"Allocated in stats: {allocated}\n"
+            f"Pool (unspent): {current_pool}\n"
+            f"Total: {total} | Expected max: {max_pts}\n"
+            f"Excess: {max(0, total-max_pts)}\n\n"
+            f"Use `/fixstats {target_id} fix` to correct.", delay=30); return
+
+    if total <= max_pts:
+        await send_group(update, f"✅ @{p['username']} is within bounds (total={total}, max={max_pts}). No fix needed.", delay=15); return
+
+    excess = total - max_pts
+    new_pool = max(0, current_pool - excess)
+    p["stat_points"] = new_pool
+    save_player(p)
+    await send_group(update,
+        f"✅ Fixed *@{p['username']}*\n"
+        f"Pool: {current_pool} → {new_pool} (removed {excess} excess points)", delay=15)
+
 
 # ── PASSIVE MESSAGE HANDLER ───────────────────────────────────────────────────
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -22043,6 +22145,7 @@ def main():
 
     # Admin
     app.add_handler(CommandHandler("wipe",      wipe_cmd))
+    app.add_handler(CommandHandler("fixstats",  fixstats_cmd))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(rank_callback,         pattern="^rank_p_"))
