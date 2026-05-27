@@ -106,6 +106,7 @@ secret_boss_active = {}
 active_events      = {}   # chat_id -> event dict
 last_event_times   = {}   # chat_id -> datetime of last fired event
 legend_shop_expiry = {}   # chat_id -> datetime when legendary craftsman shop expires
+_pet_notify_ts     = {}   # owner_id -> {"hunger": datetime, "mood": datetime, "train": datetime}
 active_raids       = {}   # chat_id -> raid dict
 active_soloraids   = {}   # user_id -> solo raid dict
 active_drakes      = {}   # chat_id -> drake dict
@@ -6874,6 +6875,49 @@ def get_recent_attackers(p):
 # combat_cards removed in v14  -  using inline send+auto-delete instead
 
 # ── IDLE REWARDS ──────────────────────────────────────────────────────────────
+async def check_pet_notifications(p, bot):
+    """DM the owner if their active pet is hungry, sad, or ready to train. Rate-limited per condition."""
+    if not p: return
+    pet = get_active_pet_record(p["user_id"])
+    if not pet: return
+    uid      = p["user_id"]
+    name     = pet.get("nickname") or pet.get("species", "your pet")
+    now      = datetime.now()
+    cache    = _pet_notify_ts.setdefault(uid, {})
+    msgs     = []
+
+    def _due(key, hours):
+        last = cache.get(key)
+        return last is None or (now - last).total_seconds() >= hours * 3600
+
+    hunger = pet.get("hunger", 100)
+    mood   = pet.get("mood", 100)
+
+    if hunger < 25 and _due("hunger", 6):
+        msgs.append(f"🍖 *{name}* is hungry (hunger: {hunger}/100)! Use /pet to feed them.")
+        cache["hunger"] = now
+    if mood < 25 and _due("mood", 6):
+        msgs.append(f"😢 *{name}* is feeling down (mood: {mood}/100). Use /pet to cheer them up.")
+        cache["mood"] = now
+    last_trained = pet.get("last_trained")
+    if last_trained and _due("train", 12):
+        try:
+            hours_idle = (now - datetime.fromisoformat(last_trained)).total_seconds() / 3600
+            if hours_idle >= 8:
+                msgs.append(f"🏋️ *{name}* is eager to train! Use /pet to train them.")
+                cache["train"] = now
+        except Exception:
+            pass
+
+    if msgs:
+        try:
+            await bot.send_message(uid,
+                "🐾 *Pet Update*\n\n" + "\n".join(msgs),
+                parse_mode="Markdown")
+        except Exception:
+            pass
+
+
 async def check_idle_reward(user, s, p, bot, chat_id, announce_group=True):
     last_seen = s.get("last_seen")
     if not last_seen: return
@@ -11212,7 +11256,7 @@ async def _alliance_main_menu(update_or_none, p, query=None):
 async def alliance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(update.effective_user.id)
     if not p: await send_group(update, "Use /ascend first!", delay=9); return
-    await _alliance_main_menu(update, p)
+    await _social_hub(update, p)
 
 async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
@@ -11522,21 +11566,113 @@ async def oracle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update, f"🎱 *The Oracle Speaks...*\n\n\"{resp}\"\n\n{tone_icon} _{eff_desc}_", permanent=True)
 
 # ── GUILD ─────────────────────────────────────────────────────────────────────
+async def _social_hub(update_or_none, p, query=None):
+    """Combined Guild + Secret Order standing card."""
+    gid = p.get("guild_id")
+    g   = get_guild(gid) if gid and str(gid) not in ("None", "", "0") else None
+    aid = p.get("alliance_id")
+    a   = get_alliance(aid) if aid else None
+
+    lines = ["🏰 *Your Social Standing*\n"]
+    kb    = []
+
+    # ── Guild ──
+    if g:
+        glvl   = safe_int(g.get("level"), 1)
+        mcount = len(sjl(g.get("members", "[]"), []))
+        wins   = safe_int(g.get("war_wins", 0))
+        lines.append(f"🏰 *{g['name']}*  •  Lv {glvl} | {mcount} members | {wins}W")
+        kb.append([InlineKeyboardButton("🏰 Guild Info",  callback_data=f"ginfo_{g['guild_id']}"),
+                   InlineKeyboardButton("⚔️ Guild War",   callback_data="social_guildwar")])
+    else:
+        lines.append("🏰 *Guild:* _None_")
+        kb.append([InlineKeyboardButton("🏰 Join Guild",   callback_data="social_gjoin"),
+                   InlineKeyboardButton("+ Create Guild",  callback_data="social_gcreate")])
+
+    lines.append("")
+
+    # ── Secret Order ──
+    if a:
+        amcount  = len(sjl(a.get("members", "[]"), []))
+        pool     = a.get("influence_pool", 0)
+        is_lead  = a.get("leader_id") == p["user_id"]
+        role_tag = "👑 Leader" if is_lead else "⚔️ Member"
+        lines.append(f"⚔️ *{a['name']}*  •  {amcount}/30 | Pool: {pool:,}\n_{role_tag}_")
+        kb.append([InlineKeyboardButton("⚔️ Manage Order", callback_data="social_alliance")])
+    else:
+        lines.append("⚔️ *Secret Order:* _None_\n_Cross-guild alliances · up to 30 members_")
+        kb.append([InlineKeyboardButton("⚔️ Found an Order", callback_data="allianceFnd"),
+                   InlineKeyboardButton("🔍 Browse Orders",  callback_data="allianceBrw")])
+
+    kb.append([InlineKeyboardButton("❌ Close", callback_data="socialX")])
+    markup = InlineKeyboardMarkup(kb)
+    text   = "\n".join(lines)
+
+    if query:
+        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        except: pass
+    else:
+        await send_group(update_or_none, text, reply_markup=markup, permanent=True)
+
+
+async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    user  = query.from_user
+    p     = get_player(user.id)
+    data  = query.data
+
+    if data == "socialX":
+        try: await query.message.delete()
+        except: pass
+        return
+
+    if data == "social_hub":
+        if not p: await query.answer("Use /ascend first!", show_alert=True); return
+        await _social_hub(None, get_player(p["user_id"]), query=query); return
+
+    if not p: await query.answer("Use /ascend first!", show_alert=True); return
+
+    if data == "social_gjoin":
+        if p.get("guild_id") and str(p.get("guild_id")) not in ("None", ""):
+            await query.answer("Already in a guild.", show_alert=True); return
+        conn_sg = sqlite3.connect(DB_PATH); conn_sg.row_factory = sqlite3.Row; c_sg = conn_sg.cursor()
+        c_sg.execute("SELECT guild_id, name, level, members FROM guilds ORDER BY level DESC LIMIT 10")
+        rows = [dict(r) for r in c_sg.fetchall()]; conn_sg.close()
+        if not rows:
+            await query.answer("No guilds yet — use /guildcreate to found one!", show_alert=True); return
+        medals = ["🥇","🥈","🥉"] + ["🏰"]*7
+        lines = ["🏰 *Join a Guild:*\n"]
+        gj_kb = []
+        for i, row in enumerate(rows):
+            mcount = len(sjl(row["members"], []))
+            lines.append(f"{medals[i]} *{row['name']}*  Lv {safe_int(row['level'],1)} | {mcount} members")
+            gj_kb.append([InlineKeyboardButton(f"Join {row['name']}", callback_data=f"guildjoin_{row['guild_id']}")])
+        gj_kb.append([InlineKeyboardButton("🔙 Back", callback_data="social_hub")])
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                                      reply_markup=InlineKeyboardMarkup(gj_kb)); return
+
+    if data == "social_gcreate":
+        await query.edit_message_text(
+            "🏰 *Create a Guild*\n\nType in chat:\n`/guildcreate [name]`\n\n_Costs 100 gold._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="social_hub")]])); return
+
+    if data == "social_alliance":
+        await _alliance_main_menu(None, p, query=query); return
+
+    if data == "social_guildwar":
+        if not p.get("guild_id") or str(p.get("guild_id")) in ("None", ""):
+            await query.answer("You need a guild for guild wars.", show_alert=True); return
+        await query.edit_message_text(
+            "⚔️ Use `/guildwar` in chat to declare or check active wars.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="social_hub")]])); return
+
+
 async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(update.effective_user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    await send_group(update,
-        "🏰 *Guild Commands*\n\n"
-        "/guildcreate [name]  -  Found a hall (100g)\n"
-        "/guildjoin  -  Browse and join available halls\n"
-        "/guildinfo  -  Your hall info and perks\n"
-        "/guildlist  -  Top guilds leaderboard\n"
-        "/guilddonate [amount]  -  Donate gold to guild bank\n"
-        "/guildkick @user  -  Kick a member (leader only)\n"
-        "/guildleave  -  Leave your current guild\n"
-        "/guilddisband  -  Disband your guild (leader only)",
-        delay=15)
+    if not p: await send_group(update, "Use /ascend first!", delay=9); return
+    await _social_hub(update, p)
 
 
 async def guildcreate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -11613,7 +11749,7 @@ async def guildjoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update, "\n".join(lines), reply_markup=markup, delay=20)
 
 
-def _build_guildinfo_overview(g):
+def _build_guildinfo_overview(g, viewer_id=None):
     """Return (text, markup) for a guild overview card."""
     member_ids = sjl(g.get("members", "[]"), [])
     leader     = get_player(g["leader_id"])
@@ -11622,6 +11758,7 @@ def _build_guildinfo_overview(g):
     nxt        = guild_exp_for_level(glvl) if glvl < 10 else "MAX"
     wins       = safe_int(g.get("war_wins", 0))
     gid        = g["guild_id"]
+    is_leader  = viewer_id and g["leader_id"] == viewer_id
     text = (
         f"🏰 *{g['name']}*\n"
         f"👑 Leader: {leader['username'] if leader else '?'}\n"
@@ -11630,10 +11767,12 @@ def _build_guildinfo_overview(g):
         f"💰 Bank: {safe_int(g.get('bank'))}g\n"
         f"🎁 Perks: _{perk.get('desc', 'None')}_"
     )
-    markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"👥 Members ({len(member_ids)})", callback_data=f"ginfoM_{gid}")],
-        [InlineKeyboardButton("🔙 All Guilds", callback_data="ginfoList")],
-    ])
+    rows = [[InlineKeyboardButton(f"👥 Members ({len(member_ids)})", callback_data=f"ginfoM_{gid}")]]
+    if is_leader:
+        rows.append([InlineKeyboardButton("✏️ Rename Guild", callback_data=f"grename_{gid}")])
+    rows.append([InlineKeyboardButton("🔙 All Guilds", callback_data="ginfoList"),
+                 InlineKeyboardButton("🏠 Social Hub",  callback_data="social_hub")])
+    markup = InlineKeyboardMarkup(rows)
     return text, markup
 
 
@@ -11648,7 +11787,7 @@ async def guildinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         g = get_guild_by_name(target_name)
         if not g:
             await send_group(update, f"Guild *{target_name}* not found.", delay=9); return
-        text, markup = _build_guildinfo_overview(g)
+        text, markup = _build_guildinfo_overview(g, viewer_id=user.id)
         await send_group(update, text, reply_markup=markup, delay=25)
         return
 
@@ -11684,7 +11823,7 @@ async def guildinfo_view_callback(update: Update, context: ContextTypes.DEFAULT_
     g = get_guild(gid)
     if not g:
         await query.answer("Guild no longer exists.", show_alert=True); return
-    text, markup = _build_guildinfo_overview(g)
+    text, markup = _build_guildinfo_overview(g, viewer_id=query.from_user.id)
     await query.answer()
     await query.edit_message_text(text, reply_markup=markup, parse_mode="Markdown")
 
@@ -11746,6 +11885,24 @@ async def guildinfo_list_callback(update: Update, context: ContextTypes.DEFAULT_
 
     await query.answer()
     await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+
+
+async def guildrename_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Prompt leader to rename guild via /guildrename command."""
+    query = update.callback_query; await query.answer()
+    user = query.from_user; p = get_player(user.id)
+    if not p: await query.answer("Use /ascend first!", show_alert=True); return
+    try: gid = int(query.data.split("_", 1)[1])
+    except (ValueError, IndexError): return
+    g = get_guild(gid)
+    if not g or g["leader_id"] != user.id:
+        await query.answer("Leaders only.", show_alert=True); return
+    await query.edit_message_text(
+        f"✏️ *Rename {g['name']}*\n\nType in chat:\n`/guildrename [new name]`\n\n_(2–30 characters)_",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 Back", callback_data=f"ginfo_{gid}"),
+        ]]))
 
 
 async def guildlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -12002,6 +12159,33 @@ async def guilddisband_callback(update, context):
         await query.edit_message_text(f"🏚️ *{guild_name}* has been disbanded.", parse_mode="Markdown")
     except Exception:
         pass
+
+async def guildrename_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p: await send_group(update, "Use /ascend first!", delay=9); return
+    gid = p.get("guild_id")
+    if not gid or str(gid) in ("None", ""):
+        await send_group(update, "You're not in a guild.", delay=9); return
+    g = get_guild(gid)
+    if not g: await send_group(update, "Guild not found.", delay=9); return
+    if g["leader_id"] != user.id:
+        await send_group(update, "Only the guild leader can rename the guild.", delay=9); return
+    if not context.args:
+        await send_group(update, "Usage: `/guildrename [new name]`", delay=9); return
+    new_name = " ".join(context.args).strip()
+    if len(new_name) < 2 or len(new_name) > 30:
+        await send_group(update, "Guild name must be 2–30 characters.", delay=9); return
+    try:
+        conn_gr = sqlite3.connect(DB_PATH); c_gr = conn_gr.cursor()
+        c_gr.execute("UPDATE guilds SET name=? WHERE guild_id=?", (new_name, gid))
+        conn_gr.commit(); conn_gr.close()
+    except sqlite3.IntegrityError:
+        await send_group(update, f"A guild named *{new_name}* already exists.", delay=9); return
+    old_name = g["name"]
+    asyncio.create_task(announce(context.bot, update.effective_chat.id,
+        f"🏰 *{old_name}* has been renamed to *{new_name}*!"))
+    await send_group(update, f"✅ Guild renamed to *{new_name}*.", delay=15)
+
 
 async def resolve_expired_wars(bot=None, chat_id=None):
     """Resolve all expired guild wars: award EXP, mark inactive, return result strings."""
@@ -20341,6 +20525,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Idle reward check — fires in both group and DM; group announcement only in groups
     p = get_player(user.id) if s.get("ascended") else None
     await check_idle_reward(user, s, p, context.bot, chat_id, announce_group=_is_group)
+    asyncio.create_task(check_pet_notifications(p, context.bot))
 
     # Update last_seen regardless of context so DM-only players build and consume the timer
     s["message_count"] = s.get("message_count",0) + 1
@@ -21634,6 +21819,7 @@ def main():
     app.add_handler(CommandHandler("guildkick",      guildkick_cmd))
     app.add_handler(CommandHandler("guildleave",     guildleave_cmd))
     app.add_handler(CommandHandler("guilddisband",   guilddisband_cmd))
+    app.add_handler(CommandHandler("guildrename",    guildrename_cmd))
     app.add_handler(CommandHandler("guildwar",       guildwar_cmd))
     app.add_handler(CommandHandler("gbank",          gbank_cmd))
 
@@ -21656,9 +21842,11 @@ def main():
     app.add_handler(CallbackQueryHandler(guildwar_declare_callback, pattern="^gwdeclare_"))
     app.add_handler(CallbackQueryHandler(war_page_callback,        pattern="^war_p_"))
     app.add_handler(CallbackQueryHandler(guildkick_callback,        pattern="^gkick_"))
+    app.add_handler(CallbackQueryHandler(social_hub_callback,        pattern="^social"))
     app.add_handler(CallbackQueryHandler(guildinfo_view_callback,   pattern="^ginfo_"))
     app.add_handler(CallbackQueryHandler(guildinfo_members_callback,pattern="^ginfoM_"))
     app.add_handler(CallbackQueryHandler(guildinfo_list_callback,   pattern="^ginfoList$"))
+    app.add_handler(CallbackQueryHandler(guildrename_callback,      pattern="^grename_"))
     app.add_handler(CallbackQueryHandler(bounty_amount_callback,    pattern="^bountyamt_"))
     app.add_handler(CallbackQueryHandler(trade_cat_callback,        pattern="^trdcat_"))
     app.add_handler(CallbackQueryHandler(trade_item_callback,       pattern="^trdi_"))
