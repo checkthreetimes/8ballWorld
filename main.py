@@ -105,6 +105,7 @@ active_bosses      = {}   # chat_id -> boss dict
 secret_boss_active = {}
 active_events      = {}   # chat_id -> event dict
 last_event_times   = {}   # chat_id -> datetime of last fired event
+legend_shop_expiry = {}   # chat_id -> datetime when legendary craftsman shop expires
 active_raids       = {}   # chat_id -> raid dict
 active_soloraids   = {}   # user_id -> solo raid dict
 active_drakes      = {}   # chat_id -> drake dict
@@ -2787,6 +2788,28 @@ def _build_gear_shop_tab(pool, seed_key):
         result.append({"item":name,"price":price,"desc":desc,"rarity":rarity})
     return result
 
+_LEGEND_SHOP_PRICES = {"legendary": 18000, "mythic": 45000}
+
+def _build_legend_shop_tab():
+    all_pools = {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}
+    leg   = [(n,d) for n,d in all_pools.items() if d.get("rarity") == "legendary"]
+    myth  = [(n,d) for n,d in all_pools.items() if d.get("rarity") == "mythic"]
+    rng   = random.Random(datetime.now().strftime("%Y-%m-%d") + "legend")
+    picks = rng.sample(leg, min(4, len(leg))) + rng.sample(myth, min(2, len(myth)))
+    rng.shuffle(picks)
+    result = []
+    for name, data in picks:
+        rarity = data.get("rarity","legendary")
+        price  = _LEGEND_SHOP_PRICES.get(rarity, 18000)
+        if "atk" in data:   desc = f"+{data['atk']} ATK"
+        elif "def" in data: desc = f"+{data['def']} DEF"
+        else:               desc = data.get("desc","")[:45]
+        item_line = data.get("line") or data.get("class")
+        if item_line and item_line in LINE_ARCHETYPE:
+            desc = f"{desc} ({LINE_ARCHETYPE[item_line]})"
+        result.append({"item":name,"price":price,"desc":desc,"rarity":rarity})
+    return result
+
 def get_shop_tab(tab):
     today = datetime.now().strftime("%Y-%m-%d")
     if _shop_cache["date"] != today:
@@ -2801,6 +2824,8 @@ def get_shop_tab(tab):
             _shop_cache["tabs"][tab] = _SHOP_STATIC_TABS[tab]
         elif tab in _gear_pools:
             _shop_cache["tabs"][tab] = _build_gear_shop_tab(_gear_pools[tab], tab)
+        elif tab == "legend":
+            _shop_cache["tabs"][tab] = _build_legend_shop_tab()
         else:
             _shop_cache["tabs"][tab] = []
     return _shop_cache["tabs"][tab]
@@ -3744,7 +3769,7 @@ RANDOM_EVENTS = [
     {"key":"storm","freq":"uncommon",
      "msg":"🌩️ *Something disrupted the ley lines.* The air is different now. Conditions changed."},
     {"key":"legendary_merchant","freq":"rare",
-     "msg":"👑 *A legendary craftsman just arrived with rare wares.* 10 minutes only. Use /shop legend.","duration_min":10},
+     "msg":"👑 *A legendary craftsman just arrived with rare wares.* 10 minutes only. Use /shoplegend.","duration_min":10},
     {"key":"shrine","freq":"rare",
      "msg":"🔮 *An old trophy was found behind the wall.*\nFirst to /pray gets something from it."},
     {"key":"cursed","freq":"rare",
@@ -4651,6 +4676,12 @@ def calc_attack_damage(attacker, weather=None):
         # Phantom Dancer
         if pk == "whirlwind":
             if random.random() < 0.15: buff_mod += 0.30  # chance to deal bonus dmg
+        # Warrior — divine_judgment (Paladin): holy skills 25% more damage
+        if pk == "divine_judgment": buff_mod += 0.25
+        # Thief — shadowstep: after dodging, next attack +50%
+        if pk == "shadowstep" and attacker.get("shadowstep_ready"):
+            buff_mod += 0.50; attacker["shadowstep_ready"] = 0
+        # Mage/Enchantress — shadow_hex: dealt in apply_strike (needs defender context)
         # Cursed debuff on attacker: attacker has been cursed, deals 10% less
         if _ts_active(attacker, "cursed_until"):
             buff_mod -= 0.10
@@ -4746,6 +4777,10 @@ def calc_defense(defender, dmg):
         if pk == "throat_cut":     pass  # handled in apply_strike
         # Archer
         if pk == "warning_shot":   pass  # handled in apply_strike
+        # Valkyrie / Warrior — runic_ward: absorb first 20 flat damage per hit
+        if pk == "runic_ward":     dmg = max(0, dmg - 20)
+        # Enchantress — beguile: 8% chance to reflect hit entirely
+        if pk == "beguile" and random.random() < 0.08: return 0
     # def_reflect active status — extra damage reduction
     if _ts_active(defender, "def_reflect_until"):
         def_reduction += 0.40
@@ -5521,6 +5556,8 @@ def check_miss(attacker, defender):
         if pk == "rhythm":        dodge += 0.05
         if pk == "storm_instinct": dodge += 0.05
         if pk == "nimble":     dodge += min(0.20, get_stat(defender, "AGI") * 0.005)
+        # Enchantress — allure: 15% chance to fascinate attacker
+        if pk == "allure":     dodge += 0.15
 
     # Pet passive dodge bonus (defender)
     def_pet = get_active_pet_record(defender.get("user_id"))
@@ -5538,7 +5575,16 @@ def check_miss(attacker, defender):
             if get_stat(attacker, "AGI") > get_stat(defender, "DEF"):
                 return False  # never miss
 
-    return random.random() < dodge
+    did_dodge = random.random() < dodge
+    if did_dodge and cls_d:
+        pk = cls_d.get("passive_key","")
+        # deaths_shadow: every dodge restores 10 HP
+        if pk == "deaths_shadow":
+            defender["hp"] = min(defender.get("max_hp", defender["hp"]), defender["hp"] + 10)
+        # shadowstep: mark attacker's next strike for +50% bonus
+        if pk == "shadowstep":
+            defender["shadowstep_ready"] = 1
+    return did_dodge
 
 def check_crit(attacker):
     cls = get_player_class(attacker)
@@ -7487,6 +7533,16 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Devotion defender: gain charge when hit
         if pk_d == "devotion":
             d["devotion_charge"] = safe_int(d.get("devotion_charge")) + 1
+        # Nettleskin: 10% chance to poison attacker when hit
+        if pk_d == "nettleskin" and random.random() < 0.10:
+            a["poison_damage"] = max(a.get("poison_damage", 0), 15)
+            set_status(a, "poison_until", 120)
+            extra_notes.append("🌿 *Nettleskin!* Attacker poisoned (15 dmg/30s for 2 min)!")
+        # Judgement (Inquisitor): attackers take WIS-scaled holy damage back
+        if pk_d == "judgement" and random.random() < 0.30:
+            wis_dmg = max(1, round(safe_stats(d).get("WIS", 5) * 0.50))
+            a["hp"] = max(1, a["hp"] - wis_dmg)
+            extra_notes.append(f"⚖️ *Judgement!* {d['username']} retaliates for *{wis_dmg} holy dmg*!")
 
     # Reflect
     reflect = apply_reflect(d, a, dmg)
@@ -7570,6 +7626,15 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "invincible_until","temp_hp_until"]:
                 if _ts_active(d, buf):
                     d[buf] = None; break
+        # Curse Touch: 8% chance to apply Weakness to target
+        if pk_a == "curse_touch" and random.random() < 0.08:
+            set_status(d, "weakened_until", 120)
+            extra_notes.append("💜 *Curse Touch!* Weakness applied  -  10% less damage for 2 min!")
+        # Shadow Hex: if attacker has shadow_hex and target is hexed, +5% damage
+        if pk_a == "shadow_hex" and _ts_active(d, "hexed_until"):
+            bonus_hex = round(dmg_after_def * 0.05)
+            dmg_after_def += bonus_hex; d["hp"] = max(0, d["hp"] - bonus_hex)
+            extra_notes.append(f"🕸️ *Shadow Hex!* +{bonus_hex} on hexed target!")
         # Mana Overload reflect: if defender set the reflect flag, apply it back
         if d.get("mana_overload_reflect"):
             reflect_dmg = d.pop("mana_overload_reflect")
@@ -9596,6 +9661,23 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if arg in SHOP_TABS_ORDER:
             tab = arg
     text, markup = _build_shop_view(p, tab, user.id, discount)
+    await send_group(update, text, delay=60, reply_markup=markup)
+
+async def shoplegend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    chat_id = update.effective_chat.id
+    expiry  = legend_shop_expiry.get(chat_id)
+    if not expiry or datetime.now() > expiry:
+        await send_group(update,
+            "👑 No legendary craftsman here right now.\n"
+            "Watch for the event announcement!", delay=9)
+        return
+    discount = _shop_discount(p)
+    text, markup = _build_shop_view(p, "legend", user.id, discount)
+    mins_left = max(0, int((expiry - datetime.now()).total_seconds() // 60))
+    text = f"👑 *Legendary Craftsman's Wares* ⏳ {mins_left}m left\n\n" + text
     await send_group(update, text, delay=60, reply_markup=markup)
 
 # ── INVENTORY / EQUIP / USE / SELL ────────────────────────────────────────────
@@ -18306,7 +18388,7 @@ GUIDE_PAGES = [
         "*Random Events*\n"
         "As the group chats, random events appear automatically — travelers with tips, bandits to fight, merchants with discounts, legendary craftsmen, hidden caches, and more.\n"
         "Common events: /greet, /fight, /shoot, /claim\n"
-        "Rare events: /pray, /purge, /shop legend\n"
+        "Rare events: /pray, /purge, /shoplegend\n"
         "Group raids: *Drake* events let everyone /strike for shared loot based on damage dealt."
     ),
     # Page 4 - Combat & Raids
@@ -20155,6 +20237,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             event = random.choice(pool).copy()
             active_events[chat_id] = event
             last_event_times[chat_id] = datetime.now()
+            if event["key"] == "legendary_merchant":
+                from datetime import timedelta
+                legend_shop_expiry[chat_id] = datetime.now() + timedelta(minutes=event.get("duration_min", 10))
             msg = await update.message.reply_text(event["msg"], parse_mode="Markdown")
             # Store drake message id for reply detection
             if event["key"] == "drake":
@@ -21397,7 +21482,8 @@ def main():
     app.add_handler(CommandHandler("hustle",    hustle_cmd))
 
     # Economy
-    app.add_handler(CommandHandler("shop",      shop_cmd))
+    app.add_handler(CommandHandler("shop",        shop_cmd))
+    app.add_handler(CommandHandler("shoplegend", shoplegend_cmd))
     app.add_handler(CommandHandler("inventory", inventory_cmd))
     app.add_handler(CommandHandler("equip",     equip_cmd))
     app.add_handler(CommandHandler("unequip",   unequip_cmd))
