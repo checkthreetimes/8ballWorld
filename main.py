@@ -2781,6 +2781,9 @@ def _build_gear_shop_tab(pool, seed_key):
         if "atk" in data:   desc = f"+{data['atk']} ATK"
         elif "def" in data: desc = f"+{data['def']} DEF"
         else:               desc = data.get("desc","")[:45]
+        item_line = data.get("line") or data.get("class")
+        if item_line and item_line in LINE_ARCHETYPE:
+            desc = f"{desc} ({LINE_ARCHETYPE[item_line]})"
         result.append({"item":name,"price":price,"desc":desc,"rarity":rarity})
     return result
 
@@ -8871,7 +8874,7 @@ async def class_pick_callback(update, context):
         uid = int(parts[2])
     except (ValueError, IndexError):
         return
-    class_id = parts[3]
+    class_id = "_".join(parts[3:])
 
     if query.from_user.id != uid:
         await query.answer("This class picker isn't for you!", show_alert=True)
@@ -18365,9 +18368,9 @@ GUIDE_PAGES = [
         "\n"
         "*Consumable Items*\n"
         "Use /use to open your consumables and tap to use an item.\n"
-        "• Health Potion — +50 HP\n"
-        "• Greater Health Potion — +100 HP\n"
-        "• Grand Restorative Flask — +200 HP\n"
+        "• Health Potion — +100 HP\n"
+        "• Greater Health Potion — +200 HP\n"
+        "• Grand Restorative Flask — +500 HP\n"
         "• Scroll of Revival — Full self-revive from defeat (1 hour invincibility after)\n"
         "• Iron Shard — Used for /enhance and /forge\n"
         "• Enchanting Scroll — Used for /enchant\n"
