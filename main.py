@@ -9793,13 +9793,91 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_player(p)
     await send_group(update, msg, delay=15)
 
-async def sell_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle sell button from inventory: sll_{uid}_{item_name}"""
+_SELL_PAGE_SIZE = 8
+_SELL_RARITY_VALUES = {"common": 20, "uncommon": 60, "rare": 200, "epic": 600, "legendary": 2000}
+_SELL_PROTECTED = {
+    "Iron Shard", "Enchanting Scroll", "Scroll of Revival",
+    "Holy Water Vial", "Common Egg", "Rare Egg", "Dragon Egg",
+    "Mythic Egg", "Pet Snack",
+}
+
+def _sellable_items(p):
+    """Return sorted list of (item_name, price, rarity, count) for all sellable unequipped gear."""
+    inv = sjl(p.get("inventory"), [])
+    equipped = {p.get("equipped_weapon"), p.get("equipped_armor"),
+                p.get("equipped_shield"), p.get("equipped_accessory")}
+    counts = Counter(inv)
+    seen = set(); result = []
+    for item in inv:
+        if item in seen or item in equipped or item in _SELL_PROTECTED:
+            continue
+        seen.add(item)
+        for pool in [WEAPONS, ARMORS, SHIELDS, ACCESSORIES]:
+            if item in pool:
+                rar = pool[item].get("rarity", "common")
+                result.append((item, _SELL_RARITY_VALUES.get(rar, 20), rar, counts[item]))
+                break
+    rar_order = {"common": 0, "uncommon": 1, "rare": 2, "epic": 3, "legendary": 4}
+    result.sort(key=lambda x: (rar_order.get(x[2], 0), x[0]))
+    return result
+
+def _build_sell_browse(p, page=0):
+    uid = p["user_id"]
+    items = _sellable_items(p)
+    total = len(items)
+    max_page = max(0, (total - 1) // _SELL_PAGE_SIZE) if total else 0
+    page = max(0, min(page, max_page))
+    start = page * _SELL_PAGE_SIZE
+    chunk = items[start:start + _SELL_PAGE_SIZE]
+    lines = [f"💰 *Sell Items* — page {page+1}/{max_page+1}\n"]
+    rows = []
+    for item, price, rarity, count in chunk:
+        emoji = RARITY_EMOJI.get(rarity, "⚪")
+        qty = f" ×{count}" if count > 1 else ""
+        rows.append([InlineKeyboardButton(
+            f"{emoji} {item}{qty} — {price}g",
+            callback_data=f"sll_{uid}_{page}_{item}")])
+    if not chunk:
+        lines.append("_Nothing left to sell._")
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"sellbrowse_{uid}_{page-1}"))
+    if page < max_page:
+        nav.append(InlineKeyboardButton("Next ▶", callback_data=f"sellbrowse_{uid}_{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+async def sell_browse_callback(update, context):
     query = update.callback_query
-    parts = query.data.split("_", 2)
+    parts = query.data.split("_")
     try:
-        uid       = int(parts[1])
-        item_name = parts[2]
+        uid = int(parts[1]); page = int(parts[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your sell menu!", show_alert=True); return
+    await query.answer()
+    p = get_player(uid)
+    if not p: return
+    text, markup = _build_sell_browse(p, page)
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
+
+async def sell_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle sell button: sll_{uid}_{page}_{item_name}"""
+    query = update.callback_query
+    parts = query.data.split("_", 3)
+    try:
+        uid = int(parts[1])
+        # Support both old format (no page) and new format (with page)
+        if len(parts) == 4:
+            page = int(parts[2]); item_name = parts[3]
+        else:
+            page = 0; item_name = parts[2]
     except (IndexError, ValueError):
         await query.answer(); return
     if query.from_user.id != uid:
@@ -9810,22 +9888,26 @@ async def sell_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     inv = sjl(p.get("inventory"), [])
     if item_name not in inv:
         await query.answer(f"{item_name} not in inventory!", show_alert=True); return
-    RARITY_SELL_VALUES = {"common": 20, "uncommon": 60, "rare": 200, "epic": 600, "legendary": 2000}
     price = 0
     for pool_c in [WEAPONS, ARMORS, SHIELDS, ACCESSORIES]:
         if item_name in pool_c:
-            price = RARITY_SELL_VALUES.get(pool_c[item_name].get("rarity","common"), 20)
+            price = _SELL_RARITY_VALUES.get(pool_c[item_name].get("rarity","common"), 20)
             break
     if price == 0:
-        await query.answer(f"{item_name} cannot be sold for gold.", show_alert=True); return
+        await query.answer(f"{item_name} cannot be sold.", show_alert=True); return
     await query.answer(f"Sold {item_name} for {price}g!")
     inv.remove(item_name)
     p["inventory"] = json.dumps(inv)
     p["gold"] = p.get("gold", 0) + price
     save_player(p)
-    await query.edit_message_text(
-        f"💰 *Sold {item_name}* for *{price}g*!\nBalance: *{p['gold']}g*",
-        parse_mode="Markdown")
+    # Refresh the browse menu so player can keep selling
+    text, markup = _build_sell_browse(p, page)
+    try:
+        await query.edit_message_text(
+            f"✅ *Sold {item_name}* for *{price}g!*  Balance: *{p['gold']}g*\n\n" + text,
+            parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
 
 async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -9842,10 +9924,11 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Sell All Rare",      callback_data=f"sellr_{uid}_rare"),
              InlineKeyboardButton("Sell All Epic",      callback_data=f"sellr_{uid}_epic")],
             [InlineKeyboardButton("💰 Sell Everything (non-key)", callback_data=f"sellr_{uid}_all")],
+            [InlineKeyboardButton("🔍 Browse & Sell Individual Items", callback_data=f"sellbrowse_{uid}_0")],
         ]
         await send_group(update,
-            "💰 *Sell Items*\n\nPick a rarity to bulk-sell. Key materials and equipped gear are always protected.",
-            reply_markup=InlineKeyboardMarkup(buttons), delay=30)
+            "💰 *Sell Items*\n\nBulk sell by rarity, or browse to sell individual items. Equipped gear and key materials are always protected.",
+            reply_markup=InlineKeyboardMarkup(buttons), delay=45)
         return
 
     BULK_SELL_PROTECTED = {
@@ -20113,6 +20196,7 @@ def main():
     app.add_handler(CallbackQueryHandler(reinforce_asc_callback,  pattern="^rfasc_"))
     app.add_handler(CallbackQueryHandler(sell_item_callback,    pattern="^sll_"))
     app.add_handler(CallbackQueryHandler(sell_rarity_callback,  pattern="^sellr_"))
+    app.add_handler(CallbackQueryHandler(sell_browse_callback,  pattern="^sellbrowse_"))
     app.add_handler(CallbackQueryHandler(forge_craft_callback,  pattern="^forge_"))
     app.add_handler(CallbackQueryHandler(explore_zone_callback, pattern="^explore_"))
     app.add_handler(CallbackQueryHandler(guilddonate_callback,  pattern="^gdonate_"))
