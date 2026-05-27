@@ -20632,97 +20632,120 @@ async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Fresh start!", delay=30)
 
 def _calc_max_stat_points(p):
-    """Compute the maximum legitimate total stat points (allocated + pool) for a player's level."""
     lvl = safe_int(p.get("level", 1))
-    if lvl <= 20:
-        return lvl * 3
-    return 20 * 3 + (lvl - 20) * 6
+    prestige = safe_int(p.get("prestige_count", 0))
+    base_pts = (lvl * 3 + lvl // 5) if lvl <= 20 else (20 * 3 + 20 // 5 + (lvl - 20) * 6)
+    return base_pts + prestige * 10
 
 async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: correct a player's stat_points to remove exploit gains.
-    Usage: /fixstats                    — scan all players
-           /fixstats <name or id>       — inspect one player
-           /fixstats <name or id> fix   — actually correct them"""
+    """Admin: inspect and correct stat points.
+    /fixstats                       — scan all, list high pools
+    /fixstats <name or id>          — full inspection
+    /fixstats <name or id> setpool <n> — set pool directly to n
+    /fixstats <name or id> fix      — auto-reduce pool by formula"""
     user = update.effective_user
     if user.id != ADMIN_ID:
         await send_group(update, "❌ Admin only.", delay=9); return
 
-    def _player_excess(p):
-        max_pts = _calc_max_stat_points(p)
-        class_bonuses = _calc_applied_class_bonuses(p)  # needs class_id + class_path + level
+    def _inspect(p):
+        class_bonuses = _calc_applied_class_bonuses(p)
         sd = safe_stats(p)
         base = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
         allocated = sum(max(0, sd.get(s, b) - b - class_bonuses.get(s, 0)) for s, b in base.items())
-        total = allocated + safe_int(p.get("stat_points"))
-        return total, max_pts, allocated, safe_int(p.get("stat_points"))
+        pool      = safe_int(p.get("stat_points"))
+        max_pts   = _calc_max_stat_points(p)
+        return allocated, pool, max_pts
 
     if not context.args:
-        # Scan all players — must include class_path for accurate bonus calculation
         conn_s = sqlite3.connect(DB_PATH); conn_s.row_factory = sqlite3.Row; c_s = conn_s.cursor()
-        c_s.execute("SELECT user_id, username, level, stat_points, stats, class_id, class_path FROM players")
+        c_s.execute("SELECT user_id, username, level, prestige_count, stat_points, "
+                    "stats, class_id, class_path FROM players")
         rows = [dict(r) for r in c_s.fetchall()]; conn_s.close()
         flagged = []
         for row in rows:
-            total, max_pts, _, _ = _player_excess(row)
-            if total > max_pts + 5:
-                flagged.append(f"• *{row['username']}* (id `{row['user_id']}`) lv{row['level']}: "
-                               f"total={total} max={max_pts} excess={total-max_pts}")
+            pool = safe_int(row.get("stat_points"))
+            max_pts = _calc_max_stat_points(row)
+            if pool > max_pts + 10:
+                flagged.append(f"• *{row['username']}* (id `{row['user_id']}`) "
+                               f"lv{row['level']} p{row.get('prestige_count',0)}: "
+                               f"pool={pool} max={max_pts} excess≈{pool-max_pts}")
         if not flagged:
-            await send_group(update, "✅ No stat point anomalies found.", delay=15); return
+            await send_group(update, "✅ No stat pool anomalies found.", delay=15); return
         await send_group(update,
-            f"⚠️ *Stat Anomalies ({len(flagged)}):*\n\n" + "\n".join(flagged[:20]) +
-            f"\n\nUse `/fixstats <name or id> fix` to correct.", delay=60); return
+            f"⚠️ *High Pools ({len(flagged)}):*\n\n" + "\n".join(flagged[:20]) +
+            f"\n\nUse `/fixstats <name> setpool 0` to zero, or inspect first.", delay=60); return
 
-    # Resolve target by id or display name
     query_str = context.args[0]
-    do_fix = len(context.args) > 1 and context.args[1].lower() == "fix"
+    rest = context.args[1:]
 
     target_id = None
     try:
         target_id = int(query_str)
     except ValueError:
-        # Name search — case-insensitive, partial match
         search = query_str.lower()
         conn_n = sqlite3.connect(DB_PATH); conn_n.row_factory = sqlite3.Row; c_n = conn_n.cursor()
-        c_n.execute("SELECT user_id, username FROM players WHERE LOWER(username) LIKE ?", (f"%{search}%",))
+        c_n.execute("SELECT user_id, username FROM players WHERE LOWER(username) LIKE ?",
+                    (f"%{search}%",))
         matches = [dict(r) for r in c_n.fetchall()]; conn_n.close()
         if not matches:
             await send_group(update, f"No player found matching '{query_str}'.", delay=9); return
         if len(matches) > 1:
             names = "\n".join(f"• *{m['username']}* — id `{m['user_id']}`" for m in matches[:10])
             await send_group(update,
-                f"Multiple matches for '{query_str}':\n\n{names}\n\nUse the id to be specific.", delay=20); return
+                f"Multiple matches:\n\n{names}\n\nUse the id.", delay=20); return
         target_id = matches[0]["user_id"]
 
-    # Always load via get_player so we have all fields (including class_path)
     p = get_player(target_id)
     if not p:
-        await send_group(update, f"Player '{query_str}' not found.", delay=9); return
+        await send_group(update, f"Player not found.", delay=9); return
 
-    total, max_pts, allocated, current_pool = _player_excess(p)
+    allocated, current_pool, max_pts = _inspect(p)
+    prestige = safe_int(p.get("prestige_count", 0))
 
-    if not do_fix:
+    # setpool — direct override
+    if rest and rest[0].lower() == "setpool":
+        try:
+            new_val = int(rest[1]) if len(rest) > 1 else 0
+        except (ValueError, IndexError):
+            await send_group(update, "Usage: /fixstats <name> setpool <number>", delay=9); return
+        p["stat_points"] = new_val
+        save_player(p)
+        p2 = get_player(target_id)
+        saved = safe_int(p2.get("stat_points")) if p2 else new_val
         await send_group(update,
-            f"🔍 *{p['username']}* (lv {p['level']}) — id `{target_id}`\n"
-            f"Allocated in stats: {allocated}\n"
-            f"Pool (unspent): {current_pool}\n"
-            f"Total: {total}  |  Expected max: {max_pts}\n"
-            f"Excess: {max(0, total-max_pts)}\n\n"
-            f"Use `/fixstats {target_id} fix` to correct.", delay=30); return
+            f"✅ *{p['username']}* pool set: {current_pool} → {saved}", delay=15); return
 
-    if total <= max_pts:
-        await send_group(update, f"✅ {p['username']} is within bounds (total={total}, max={max_pts}). No fix needed.", delay=15); return
+    # fix — formula auto-reduce (only safe when player hasn't prestiged with class baked in)
+    if rest and rest[0].lower() == "fix":
+        total = allocated + current_pool
+        if total <= max_pts:
+            await send_group(update,
+                f"✅ *{p['username']}* is within bounds. No fix needed.\n"
+                f"pool={current_pool} allocated={allocated} max={max_pts}", delay=15); return
+        excess = total - max_pts
+        new_pool = max(0, current_pool - excess)
+        p["stat_points"] = new_pool
+        save_player(p)
+        p2 = get_player(target_id)
+        saved = safe_int(p2.get("stat_points")) if p2 else new_pool
+        await send_group(update,
+            f"✅ Fixed *{p['username']}*\n"
+            f"Pool: {current_pool} → {saved} (removed {excess})\n"
+            f"_If still flagged, use `setpool` to override directly._", delay=15); return
 
-    excess = total - max_pts
-    new_pool = max(0, current_pool - excess)
-    p["stat_points"] = new_pool
-    save_player(p)
-    # Verify the write landed
-    p2 = get_player(target_id)
-    saved_pool = safe_int(p2.get("stat_points")) if p2 else new_pool
+    # inspect
+    sd = safe_stats(p)
+    stats_line = " ".join(f"{s}:{sd.get(s,b)}" for s,b in
+                          [("STR",5),("AGI",5),("INT",5),("WIS",5),("DEX",5),("LUK",5)])
+    cls_name = (get_player_class(p) or {}).get("name", "none")
     await send_group(update,
-        f"✅ Fixed *{p['username']}*\n"
-        f"Pool: {current_pool} → {saved_pool} (removed {excess} excess points)", delay=15)
+        f"🔍 *{p['username']}* — id `{target_id}`\n"
+        f"Level: {p['level']}  |  Prestige: {prestige}  |  Class: {cls_name}\n"
+        f"Stats: {stats_line}\n"
+        f"Allocated (est): {allocated}  |  Pool: {current_pool}\n"
+        f"Formula max: {max_pts}  |  Pool excess: {max(0, current_pool - max_pts)}\n\n"
+        f"`/fixstats {target_id} fix` — auto reduce pool\n"
+        f"`/fixstats {target_id} setpool 0` — zero the pool directly", delay=30)
 
 
 async def fixgear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
