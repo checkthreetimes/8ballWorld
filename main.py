@@ -270,14 +270,14 @@ CLASS_TREE = {
         "stat_bonus":{"STR":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Iron Will",
-             "passive":"Take 10% less damage from all sources.",
+             "passive":"Take 50% less damage from all sources.",
              "active":"Shield Bash","type":"stun",
              "desc":"30% chance to stun target  -  they miss their next attack.",
              "passive_key":"iron_will"},
             {"tier":1,"unlock":5,"name":"Defensive Stance",
-             "passive":"Reduce incoming damage by 5 when HP is above 70%.",
+             "passive":"Reduce incoming damage by 30 when HP is above 50%.",
              "active":"Brace","type":"def_buff",
-             "desc":"Gain +10 DEF for 2 minutes.",
+             "desc":"Gain +30 flat damage reduction for 2 minutes.",
              "passive_key":"defensive_stance"},
         ]
     },
@@ -350,14 +350,14 @@ CLASS_TREE = {
         "stat_bonus":{"STR":3},
         "skills":[
             {"tier":2,"unlock":10,"name":"Bloodlust",
-             "passive":"Each hit landed restores 8% of damage dealt (min 5 HP).",
+             "passive":"Each hit landed restores 20% of damage dealt (min 15 HP).",
              "active":"Triple Strike","type":"multihit",
              "desc":"Hit three times. Second hit 70%, third hit 50%. Each has independent crit. If all three crit, Bloodlust heal triples.",
              "passive_key":"bloodlust","hits":3,"mults":[1.0, 0.70, 0.50]},
             {"tier":2,"unlock":10,"name":"Battle Cry",
-             "passive":"Gain +3 STR for 1 minute after each kill.",
+             "passive":"Gain +50 STR for 15 minutes on every attack. No kill required.",
              "active":"Battle Cry","type":"self_heal_buff",
-             "desc":"Restore 20 HP and gain +5 STR for 2 minutes.",
+             "desc":"Restore 20% of your max HP and gain +50 STR for 2 minutes.",
              "passive_key":"battle_cry"},
         ]
     },
@@ -2154,6 +2154,17 @@ ACCESSORIES = {
                                 "desc":"+35 WIS, priest skills affect 2 targets at once."},
     "The Void Mark":          {"slot":"amulet","effect":{"INT":35,"spell_double_chance":0.15},"rarity":"legendary",
                                 "desc":"+35 INT, 15% chance spells hit twice."},
+    # ── 8-Ball Oracle Items ───────────────────────────────────
+    "Cracked 8-Ball":    {"slot":"oracle","effect":{"LUK":5},"rarity":"uncommon",
+                          "desc":"A cracked orb still faintly whispering. +5 LUK."},
+    "Magic 8-Ball":      {"slot":"oracle","effect":{"LUK":10},"rarity":"rare",
+                          "desc":"The oracle speaks. +10 LUK. Consult with /oracle daily."},
+    "Enchanted 8-Ball":  {"slot":"oracle","effect":{"LUK":15,"WIS":5},"rarity":"epic",
+                          "desc":"Ancient enchantments hum within. +15 LUK, +5 WIS."},
+    "Ancient 8-Ball":    {"slot":"oracle","effect":{"LUK":20,"WIS":10},"rarity":"legendary",
+                          "desc":"It has seen things you have not. +20 LUK, +10 WIS."},
+    "Void 8-Ball":       {"slot":"oracle","effect":{"LUK":25,"WIS":15,"INT":5},"rarity":"mythic",
+                          "desc":"The void stares back. +25 LUK, +15 WIS, +5 INT."},
 }
 
 RARITY_EMOJI = {
@@ -3309,6 +3320,15 @@ def _enc_npc_attack(enc, p):
     raw = int(enc["e_atk"] * dmg_mult * random.uniform(0.85, 1.15))
     def_red = int(get_stat(p, "DEF") * 0.20)
     dmg = max(1, raw - def_red)
+    _enc_cls = get_player_class(p)
+    _enc_pk  = _enc_cls.get("passive_key", "") if _enc_cls else ""
+    if _enc_pk == "iron_will":
+        dmg = max(1, int(dmg * 0.50))
+    if _enc_pk == "defensive_stance":
+        if enc["p_hp"] > enc["p_max_hp"] * 0.50:
+            dmg = max(1, dmg - 30)
+    if _enc_pk == "battle_cry":
+        set_status(p, "battle_cry_str_until", 900)
     if enc.get("p_exposed"):
         dmg = int(dmg * 1.2); enc["p_exposed"] = False
     extra = ""
@@ -3353,6 +3373,14 @@ def _enc_monster_attack(enc):
         return f"*{enc['e_name']}* used *{mv['name']}* on *{fighter.get('nickname') or enc['e_name']}* — {dmg} dmg!{eff}"
     else:
         dmg = max(1, raw)
+        p = get_player(enc.get("uid"))
+        _mon_cls = get_player_class(p) if p else None
+        _mon_pk  = _mon_cls.get("passive_key", "") if _mon_cls else ""
+        if _mon_pk == "iron_will":
+            dmg = max(1, int(dmg * 0.50))
+        if _mon_pk == "defensive_stance":
+            if enc["p_hp"] > enc["p_max_hp"] * 0.50:
+                dmg = max(1, dmg - 30)
         enc["p_hp"] = max(0, enc["p_hp"] - dmg)
         eff = _apply_move_effect(enc, move_key) if mv.get("effect") else ""
         return f"*{enc['e_name']}* used *{mv['name']}* — {dmg} damage!{eff}"
@@ -4215,8 +4243,9 @@ def get_stat(p, stat):
     set_bonuses, _ = get_active_set_bonuses(p)
     set_stat  = set_bonuses.get(stat, 0)
     set_all   = set_bonuses.get("all_stats", 0)
+    battle_cry_bonus = 50 if stat == "STR" and _ts_active(p, "battle_cry_str_until") else 0
     if stat in ("STR","AGI","INT","WIS","DEX","LUK"):
-        return base + acc + all_s + blessed_bonus + title_bonus + all_title + set_stat + set_all
+        return base + acc + all_s + blessed_bonus + title_bonus + all_title + set_stat + set_all + battle_cry_bonus
     return base + acc + all_s + blessed_bonus
 
 def calc_max_hp(p):
@@ -4464,7 +4493,7 @@ def calc_defense(defender, dmg):
     cls = get_player_class(defender)
     if cls:
         pk = cls.get("passive_key","")
-        if pk == "iron_will":      def_reduction += 0.10
+        if pk == "iron_will":      def_reduction += 0.50
         if pk == "holy_stance":
             hp_pct = defender["hp"] / max(1, defender["max_hp"])
             if hp_pct < 0.50:      def_reduction += 0.15
@@ -4490,6 +4519,10 @@ def calc_defense(defender, dmg):
             if random.random() < 0.15: return 0
         if pk == "empress_dread":  def_reduction += 0.10
 
+        if pk == "defensive_stance":
+            hp_pct = defender.get("hp", 1) / max(1, defender.get("max_hp", 1))
+            if hp_pct > 0.50:
+                dmg = max(1, dmg - 30)
     # def_reflect active status — extra damage reduction
     if _ts_active(defender, "def_reflect_until"):
         def_reduction += 0.40
@@ -5340,7 +5373,7 @@ def apply_lifesteal(attacker, dmg):
     if pk == "soul_pact":
         healed = round(dmg * 0.20)
     if pk == "bloodlust":
-        healed = max(5, round(dmg * 0.08))
+        healed = max(15, round(dmg * 0.20))
     # New class passives
     if pk == "verdant_renewal":  healed += round(dmg * 0.15)
     if pk == "eternal_bloom":    healed += round(dmg * 0.10)
@@ -5658,6 +5691,28 @@ def init_db():
             conn.commit()
         except sqlite3.OperationalError:
             pass
+
+    # Migrate new player columns
+    for _col_sql in [
+        "ALTER TABLE players ADD COLUMN influence INTEGER DEFAULT 0",
+        "ALTER TABLE players ADD COLUMN alliance_id TEXT DEFAULT NULL",
+        "ALTER TABLE players ADD COLUMN active_quest TEXT DEFAULT NULL",
+        "ALTER TABLE players ADD COLUMN last_quest_ts INTEGER DEFAULT 0",
+        "ALTER TABLE players ADD COLUMN oracle_last_used INTEGER DEFAULT 0",
+    ]:
+        try: conn.execute(_col_sql)
+        except: pass
+
+    # Alliance system table
+    conn.execute("""CREATE TABLE IF NOT EXISTS alliances (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE,
+        leader_id INTEGER,
+        members TEXT DEFAULT '[]',
+        influence_pool INTEGER DEFAULT 0,
+        created INTEGER DEFAULT 0
+    )""")
+    conn.commit()
 
     conn.close()
 
@@ -6197,6 +6252,7 @@ def save_player(p):
         "holding_hands_with_id","holding_hands_with_name","holding_hands_since",
         "holding_hands_list",
         "last_encounter","monster_squad",
+        "influence","alliance_id","active_quest","last_quest_ts","oracle_last_used",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -6262,7 +6318,7 @@ def add_guild_exp(g, amount):
           g["exp"] >= guild_exp_for_level(safe_int(g.get("level"),1)):
         g["exp"] -= guild_exp_for_level(safe_int(g.get("level"),1))
         g["level"] = safe_int(g.get("level"),1) + 1
-        msgs.append(f"🏰 Hall leveled up to {g['level']}! "
+        msgs.append(f"🏰 Guild leveled up to {g['level']}! "
                     f"{GUILD_PERKS.get(g['level'],{}).get('desc','')}")
     return msgs
 
@@ -6819,7 +6875,7 @@ async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     PAGE_SIZE = 10
     page_entries = ranked[:PAGE_SIZE]
 
-    lines = ["🏆 *Hall Rankings*\n"]
+    lines = ["🏆 *Guild Rankings*\n"]
     for i, e in enumerate(page_entries):
         lines.append(fmt_ranked(i, e))
 
@@ -6879,7 +6935,7 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cls = CLASS_TREE.get(e.get("class_id") or "", {}).get("name", "No Class") if e["type"]=="rpg" else "Shadow"
         return f"{prefix} *{e['username']}* - Lv {e['level']} - {cls}"
 
-    lines = [f"🏆 *Hall Rankings  -  Page {page}*\n"]
+    lines = [f"🏆 *Guild Rankings  -  Page {page}*\n"]
     for i, e in enumerate(page_entries):
         lines.append(fmt(i, e))
 
@@ -7119,6 +7175,10 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 dmg += 5; a["devotion_charge"] = 0
                 extra_notes.append("✨ *Devotion charge!* +5 bonus damage!")
 
+        # Battle Cry: refresh passive +50 STR for 15m on every attack
+        if pk_a == "battle_cry":
+            set_status(a, "battle_cry_str_until", 900)
+
         # Warcry: +20% dmg when multiple recent attackers
         if pk_a == "warcry":
             if len(get_recent_attackers(a)) > 1:
@@ -7192,9 +7252,11 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if pk_d == "bulwark" and random.random() < 0.15:
             extra_notes.append("🛡️ *Bulwark!* Attack completely blocked!")
             dmg = 0
-        # Iron Will: 10% damage reduction
-        if pk_d == "iron_will":
-            dmg = round(dmg * 0.90)
+        # Defensive Stance: flat -30 when HP > 50%
+        if pk_d == "defensive_stance":
+            hp_pct_d = d.get("hp", 1) / max(1, d.get("max_hp", 1))
+            if hp_pct_d > 0.50:
+                dmg = max(1, dmg - 30)
         # Devotion defender: gain charge when hit
         if pk_d == "devotion":
             d["devotion_charge"] = safe_int(d.get("devotion_charge")) + 1
@@ -7521,6 +7583,23 @@ def _exp_bar(current, needed, length=10):
     bar    = "█" * filled + "░" * (length - filled)
     return f"✨ [{bar}] {current:,}/{needed:,} EXP ({int(pct*100)}%)"
 
+def get_fame_tier(n):
+    tiers = [
+        (-999999,-300,"🩸 Reviled"),(-299,-150,"💀 Notorious"),(-149,-75,"🌑 Distrusted"),
+        (-74,-25,"👁️ Suspicious"),(-24,-1,"🌫️ Shady"),(0,0,"🌑 Shadow"),
+        (1,24,"👤 Whisper"),(25,74,"🗣️ Face"),(75,149,"🌟 Voice"),
+        (150,299,"📖 Known"),(300,499,"🔥 Talked About"),(500,799,"⭐ Notable"),
+        (800,1199,"🌠 Prominent"),(1200,1799,"✨ Famous"),(1800,2499,"🌟 Celebrated"),
+        (2500,3499,"💫 Renowned"),(3500,4999,"🔮 Revered"),(5000,7499,"👑 Exalted"),
+        (7500,9999,"🌌 Mythic"),(10000,999999,"🎱 Oracle"),
+    ]
+    for lo, hi, name in tiers:
+        if lo <= n <= hi: return name
+    return "👤 Whisper"
+
+def _add_influence(p, amount):
+    p["influence"] = p.get("influence", 0) + amount
+
 def _build_stats_pages(p, viewing_name=None):
     real_max     = calc_max_hp(p)
     defeated_str = " *(Defeated)*" if is_defeated(p) else ""
@@ -7624,6 +7703,7 @@ def _build_stats_pages(p, viewing_name=None):
         f"💬 Messages: {msg_count:,}",
         f"💰 Gold: {p['gold']}",
         f"⚔️ Wins: {p['wins']}   Losses: {p.get('losses',0)}",
+        f"🌟 Influence: {p.get('influence',0):,}  ({get_fame_tier(p.get('influence',0))})",
     ]
     _ks = safe_int(p.get("kill_streak"))
     if _ks >= 3:
@@ -10596,7 +10676,9 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
                 lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
             if award_title(pp, data["title"]):
                 lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
-            add_exp(pp, data["exp"], w2); save_player(pp)
+            add_exp(pp, data["exp"], w2)
+            _add_influence(pp, 3)
+            save_player(pp)
             lines.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
 
     save_player(p)
@@ -10606,13 +10688,474 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
 
 
 
+# ─── Alliance DB ───────────────────────────────────────────
+def get_alliance(aid):
+    if not aid: return None
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("SELECT * FROM alliances WHERE id = ?", (aid,))
+    row = c.fetchone(); conn.close()
+    return dict(row) if row else None
+
+def get_alliance_by_name(name):
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("SELECT * FROM alliances WHERE LOWER(name) = LOWER(?)", (name,))
+    row = c.fetchone(); conn.close()
+    return dict(row) if row else None
+
+def save_alliance(a):
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    fields = ["id","name","leader_id","members","influence_pool","created"]
+    c.execute(f"INSERT OR REPLACE INTO alliances ({','.join(fields)}) VALUES ({','.join(['?']*len(fields))})",
+              [a.get(f) for f in fields])
+    conn.commit(); conn.close()
+
+def get_all_alliances():
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("SELECT * FROM alliances ORDER BY influence_pool DESC")
+    rows = c.fetchall(); conn.close()
+    return [dict(r) for r in rows]
+
+def delete_alliance(aid):
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("DELETE FROM alliances WHERE id = ?", (aid,)); conn.commit(); conn.close()
+
+# ─── Quest Templates ────────────────────────────────────────
+_SOCIAL_QUEST_TPL = [
+    ("poke","The Order has noticed {target} has been quiet. Give them a /poke.",200,15),
+    ("poke","Go check on {target}. A /poke will suffice.",180,12),
+    ("poke","Your only task: /poke {target}. Don't explain why.",150,10),
+    ("hug","The oracle says {target} needs warmth today. /hug them.",300,20),
+    ("hug","Make {target} feel seen. A /hug before you sleep.",280,18),
+    ("hug","{target} has been chosen for something. Deliver it via /hug.",300,20),
+    ("pat","The Order asks you acknowledge {target} with a /pat.",200,12),
+    ("pat","Go /pat {target}. Consider it your duty.",180,12),
+    ("slap","A warning must be delivered to {target}. /slap them.",400,25),
+    ("slap","Someone stepped out of line. /slap {target} and say nothing.",380,22),
+]
+_CHAT_QUEST_TPL = [
+    ("Has anyone seen my goat?",400,25),
+    ("The third moon is rising.",500,30),
+    ("the old ways remember",500,30),
+    ("Does anyone else hear that sound?",350,22),
+    ("I've made a terrible mistake. Anyway.",350,22),
+    ("The stars are wrong tonight.",400,25),
+    ("What's your 8-ball number?",300,18),
+    ("I know what you did last Thursday.",500,30),
+    ("Something is different about this place lately. Can you feel it?",450,28),
+    ("If you find a black feather, don't touch it.",400,25),
+    ("I consulted the ball. It said to say this.",350,22),
+    ("The 8-ball never lies. Remember that.",300,18),
+    ("Has the oracle spoken to anyone else recently?",400,25),
+    ("I had the dream again.",500,30),
+    ("Not everything that glows is gold. Not everything dark is gone.",550,35),
+    ("I saw something in the water. It looked back.",500,30),
+    ("The 8 always finds a way back.",350,22),
+    ("Who here actually trusts the oracle?",400,25),
+    ("Genuine question: is everyone here actually real?",450,28),
+    ("I tested the ball three times. Same answer. Every time.",500,30),
+]
+_TARGETED_QUEST_TPL = [
+    ("Do you dream of electric sheep?",400,25),
+    ("The oracle spoke your name last night.",500,30),
+    ("What was the last thing you broke on accident?",350,22),
+    ("Have you been chosen before?",400,25),
+    ("Do you trust the ball?",300,18),
+    ("Someone has been talking about you. Couldn't say who.",450,28),
+    ("When was the last time you checked under your bed?",400,25),
+    ("The number 8 has been following you. Have you noticed?",500,30),
+    ("Quick — first word that comes to mind: go.",300,18),
+    ("Your aura is different than last time we spoke.",400,25),
+    ("Between you and me — have you ever felt watched in here?",500,30),
+    ("Do you think the ball knows the future, or creates it?",450,28),
+    ("I heard your name in a whisper. Twice.",550,35),
+    ("What's your earliest memory of the number 8?",400,25),
+    ("You look like someone who knows things they don't talk about.",500,30),
+    ("If you could ask the oracle one thing and get a straight answer, what would it be?",500,30),
+    ("Real talk — are you scared of the dark?",350,22),
+    ("Have you found any secrets in this place? Genuinely asking.",450,28),
+    ("Is that your real username?",300,18),
+    ("When did you first feel like you belonged here?",400,25),
+]
+
+async def _dispatch_secret_quest(uid: int, bot):
+    p = get_player(uid)
+    if not p: return
+    if p.get("active_quest"): return
+    if time.time() - p.get("last_quest_ts", 0) < 28800: return
+    conn = sqlite3.connect(DB_PATH); c2 = conn.cursor()
+    c2.execute("SELECT user_id, username FROM players WHERE user_id != ? AND level >= 1 ORDER BY RANDOM() LIMIT 10", (uid,))
+    targets = [{"id": r[0], "username": r[1]} for r in c2.fetchall()]; conn.close()
+    qtype = random.choices(["social","chat","targeted"], weights=[35,35,30])[0]
+    if qtype == "social" and targets:
+        t = random.choice(targets)
+        action, prompt_tpl, exp_r, inf_r = random.choice(_SOCIAL_QUEST_TPL)
+        quest = {"type":"social","action":action,"target_id":t["id"],"target_name":t["username"],"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
+        dm = f"🎱 *A secret task has found you.*\n\n_{prompt_tpl.format(target='@'+t['username'])}_\n\n⏳ _Expires in 24 hours_\n💫 Reward: *{exp_r} EXP + {inf_r} Influence*"
+    elif qtype == "chat":
+        phrase, exp_r, inf_r = random.choice(_CHAT_QUEST_TPL)
+        quest = {"type":"chat","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
+        dm = f"🎱 *The oracle has an assignment.*\n\n_Say this in the group:_\n\n*\"{phrase}\"*\n\n⏳ _Expires in 24 hours_\n💫 Reward: *{exp_r} EXP + {inf_r} Influence*"
+    elif targets:
+        t = random.choice(targets)
+        phrase, exp_r, inf_r = random.choice(_TARGETED_QUEST_TPL)
+        quest = {"type":"targeted","phrase":phrase,"target_id":t["id"],"target_name":t["username"],"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
+        dm = f"🎱 *A whisper from the order.*\n\n_Find @{t['username']} and ask them:_\n\n*\"{phrase}\"*\n\n_(Reply to them or mention them)_\n\n⏳ _Expires in 24 hours_\n💫 Reward: *{exp_r} EXP + {inf_r} Influence*"
+    else:
+        return
+    p["active_quest"] = json.dumps(quest); p["last_quest_ts"] = int(time.time()); save_player(p)
+    try: await bot.send_message(uid, dm, parse_mode="Markdown")
+    except: pass
+
+async def _try_complete_quest_social(p, action, target_id, bot):
+    q = sjl(p.get("active_quest"), None)
+    if not q or q.get("type") != "social" or q.get("action") != action: return
+    if q.get("target_id") != target_id: return
+    if q.get("expires", 0) < time.time(): p["active_quest"] = None; save_player(p); return
+    exp_r = q.get("reward_exp", 200); inf_r = q.get("reward_inf", 15)
+    p["exp"] = p.get("exp", 0) + exp_r; _add_influence(p, inf_r)
+    p["active_quest"] = None; save_player(p)
+    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r} EXP  +{inf_r} Influence", parse_mode="Markdown")
+    except: pass
+
+async def _try_complete_quest_phrase(p, text, reply_to_id, bot):
+    q = sjl(p.get("active_quest"), None)
+    if not q: return
+    if q.get("expires", 0) < time.time(): p["active_quest"] = None; save_player(p); return
+    qtype = q.get("type"); text_l = text.lower().strip(); matched = False
+    if qtype == "chat":
+        if q.get("phrase","").lower() in text_l: matched = True
+    elif qtype == "targeted":
+        phrase = q.get("phrase",""); tname = q.get("target_name","").lower(); tid = q.get("target_id")
+        if phrase.lower() in text_l and (tname in text_l or (reply_to_id and reply_to_id == tid)): matched = True
+    if not matched: return
+    exp_r = q.get("reward_exp", 300); inf_r = q.get("reward_inf", 20)
+    p["exp"] = p.get("exp", 0) + exp_r; _add_influence(p, inf_r)
+    p["active_quest"] = None; save_player(p)
+    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r} EXP  +{inf_r} Influence", parse_mode="Markdown")
+    except: pass
+
+# ─── Alliance Main Menu Helper ──────────────────────────────
+async def _alliance_main_menu(update_or_none, p, query=None):
+    aid = p.get("alliance_id")
+    a = get_alliance(aid) if aid else None
+    if a:
+        members = sjl(a.get("members"), [])
+        n = len(members); pool = a.get("influence_pool", 0)
+        is_leader = (a.get("leader_id") == p["user_id"])
+        leader_p = get_player(a.get("leader_id"))
+        leader_name = leader_p.get("username","Unknown") if leader_p else "Unknown"
+        role = "👑 *Order Leader*" if is_leader else "⚔️ *Order Member*"
+        text = (f"⚔️ *{a['name']}*\n\n{role}\nMembers: {n}/5  •  Pool: {pool:,}\nLeader: @{leader_name}")
+        kb = [[InlineKeyboardButton("👥 Members", callback_data="allianceM"),
+               InlineKeyboardButton("🎁 Perks", callback_data="allianceP")]]
+        if is_leader:
+            kb.append([InlineKeyboardButton("📨 Invite", callback_data="allianceInv"),
+                       InlineKeyboardButton("💀 Disband", callback_data="allianceDis")])
+        else:
+            kb.append([InlineKeyboardButton("🚪 Leave Order", callback_data="allianceLv")])
+        kb.append([InlineKeyboardButton("❌ Close", callback_data="allianceX")])
+    else:
+        text = ("⚔️ *Secret Orders*\n\nYou are not bound to any order.\n\n"
+                "_Orders are private alliances of up to 5 members. Members share an influence pool and unlock perks together._")
+        kb = [[InlineKeyboardButton("📜 Found an Order", callback_data="allianceFnd"),
+               InlineKeyboardButton("🔍 Browse Orders", callback_data="allianceBrw")],
+              [InlineKeyboardButton("❌ Close", callback_data="allianceX")]]
+    markup = InlineKeyboardMarkup(kb)
+    if query:
+        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        except: pass
+    else:
+        await send_group(update_or_none, text, reply_markup=markup, permanent=True)
+
+async def alliance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    p = get_player(update.effective_user.id)
+    if not p: await send_group(update, "Use /ascend first!", delay=9); return
+    await _alliance_main_menu(update, p)
+
+async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    user = query.from_user
+    p = get_player(user.id)
+    if not p: await query.answer("Use /ascend first!", show_alert=True); return
+    data = query.data
+    aid = p.get("alliance_id"); a = get_alliance(aid) if aid else None
+
+    if data == "allianceX":
+        try: await query.message.delete()
+        except: pass
+        return
+    if data == "allianceBk":
+        await _alliance_main_menu(None, p, query=query); return
+
+    if data == "allianceM":
+        if not a: await query.answer("Not in an order.", show_alert=True); return
+        members = sjl(a.get("members"), [])
+        lines = [f"👥 *{a['name']} — Members*\n"]
+        for mid in members:
+            mp = get_player(mid)
+            if not mp: continue
+            role = "👑" if mid == a.get("leader_id") else "⚔️"
+            lines.append(f"{role} @{mp['username']}  •  {get_fame_tier(mp.get('influence',0))}")
+        kb = [[InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
+               InlineKeyboardButton("❌ Close", callback_data="allianceX")]]
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb)); return
+
+    if data == "allianceP":
+        if not a: await query.answer("Not in an order.", show_alert=True); return
+        pool = a.get("influence_pool", 0)
+        lines = [f"🎁 *{a['name']} — Perks*\n", f"Influence Pool: *{pool:,}*\n",
+                 "✅ Brotherhood — Members below 30% HP gain +10 DEF",
+                 "✅ Shared Whispers — Secret quest EXP doubled",
+                 "✅ Pooled Wisdom — +2% influence gains"]
+        lines.append(("✅ " if pool >= 100 else f"🔒 _(need {100-pool} more)_ ") +
+                     "Marked Path — +5% gold from encounters")
+        lines.append(("✅ " if pool >= 500 else f"🔒 _(need {500-pool} more)_ ") +
+                     "Blood Pact — +5% damage vs non-alliance in arena")
+        lines.append(("✅ " if pool >= 1000 else f"🔒 _(need {1000-pool} more)_ ") +
+                     "Oracle's Eye — /secrets unlocks one extra tier")
+        kb = [[InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
+               InlineKeyboardButton("❌ Close", callback_data="allianceX")]]
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb)); return
+
+    if data == "allianceFnd":
+        if a: await query.answer("Already in an order.", show_alert=True); return
+        context.user_data["awaiting_alliance_name"] = query.message.message_id
+        await query.edit_message_text(
+            "📜 *Found a Secret Order*\n\nReply to this DM with the name for your order _(max 20 chars, unique)_.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="allianceX")]])); return
+
+    if data == "allianceBrw":
+        alliances = get_all_alliances()
+        if not alliances:
+            await query.edit_message_text("🔍 *Orders*\n\nNo orders founded yet. Be the first.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
+                    InlineKeyboardButton("❌ Close", callback_data="allianceX")]])); return
+        lines = ["🔍 *Secret Orders*\n"]; kb_rows = []
+        for al in alliances[:8]:
+            mbs = sjl(al.get("members"), []); pool = al.get("influence_pool", 0); n2 = len(mbs)
+            lines.append(f"⚔️ *{al['name']}*  —  {n2}/5  •  Pool: {pool:,}")
+            if n2 < 5 and al["id"] != (aid or ""):
+                kb_rows.append([InlineKeyboardButton(f"Join {al['name']}", callback_data=f"allianceJn_{al['id']}")])
+        kb_rows.append([InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
+                        InlineKeyboardButton("❌ Close", callback_data="allianceX")])
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_rows)); return
+
+    if data.startswith("allianceJn_"):
+        join_aid = data[len("allianceJn_"):]
+        if aid: await query.answer("Leave your current order first.", show_alert=True); return
+        ta = get_alliance(join_aid)
+        if not ta: await query.answer("Order not found.", show_alert=True); return
+        mbs = sjl(ta.get("members"), [])
+        if len(mbs) >= 5: await query.answer("Order is full.", show_alert=True); return
+        mbs.append(p["user_id"]); ta["members"] = json.dumps(mbs); save_alliance(ta)
+        p["alliance_id"] = join_aid; save_player(p)
+        await query.answer(f"You joined {ta['name']}!", show_alert=True)
+        await _alliance_main_menu(None, get_player(p["user_id"]), query=query); return
+
+    if data == "allianceLv":
+        if not a: await query.answer("Not in an order.", show_alert=True); return
+        if a.get("leader_id") == p["user_id"]: await query.answer("Leaders must disband.", show_alert=True); return
+        mbs = sjl(a.get("members"), []); mbs = [m for m in mbs if m != p["user_id"]]
+        a["members"] = json.dumps(mbs); save_alliance(a); p["alliance_id"] = None; save_player(p)
+        await query.answer(f"You left {a['name']}.", show_alert=True)
+        await _alliance_main_menu(None, get_player(p["user_id"]), query=query); return
+
+    if data == "allianceDis":
+        if not a or a.get("leader_id") != p["user_id"]: await query.answer("Leaders only.", show_alert=True); return
+        await query.edit_message_text(f"⚠️ *Disband {a['name']}?*\n\nThis removes all members and cannot be undone.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("💀 Yes, Disband", callback_data="allianceDis2"),
+                InlineKeyboardButton("❌ Cancel", callback_data="allianceBk")]])); return
+
+    if data == "allianceDis2":
+        if not a or a.get("leader_id") != p["user_id"]: await query.answer("Not authorized.", show_alert=True); return
+        for mid in sjl(a.get("members"), []):
+            mp = get_player(mid)
+            if mp: mp["alliance_id"] = None; save_player(mp)
+        delete_alliance(aid)
+        await query.answer("Order disbanded.", show_alert=True)
+        await _alliance_main_menu(None, get_player(p["user_id"]), query=query); return
+
+    if data == "allianceInv":
+        if not a or a.get("leader_id") != p["user_id"]: await query.answer("Leaders only.", show_alert=True); return
+        if len(sjl(a.get("members"), [])) >= 5: await query.answer("Order is full.", show_alert=True); return
+        context.user_data["awaiting_alliance_invite"] = True
+        await query.edit_message_text(f"📨 *Invite to {a['name']}*\n\nReply with the @username to invite.\n_(They must use /alliance to confirm.)_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
+                InlineKeyboardButton("❌ Close", callback_data="allianceX")]])); return
+
+# ─── Rumor System ────────────────────────────────────────────
+_RUMOR_TPL = [
+    "{name} was seen talking to a door. The door seemed interested.",
+    "Sources say {name} has never actually used the 8-ball. They just pretend.",
+    "{name} was spotted in town wearing a cape. No context given.",
+    "Three reliable witnesses say {name} owes a goblin money.",
+    "It is said {name} once tried to cook a legendary item. Allegedly.",
+    "{name}'s sword may or may not be borrowed. Nobody's saying from who.",
+    "Multiple accounts confirm {name} laughed at their own shadow last week.",
+    "Someone heard {name} whispering to the void. The void answered.",
+    "{name} has reportedly been doing push-ups in the dungeon. Exclusively.",
+    "A trusted source says {name} once arm-wrestled a bear. The bear never recovered.",
+    "{name} has been collecting rocks. Not ore — just rocks.",
+    "Witnesses claim {name} tried to trade a broken stick for legendary armor.",
+    "{name} was seen staring at a wall for 20 minutes. They seemed satisfied.",
+    "I heard {name} once ate a rare monster core thinking it was candy.",
+    "{name}'s guild application reportedly just said 'trust me.' It worked.",
+    "{name} asked the oracle if they were the main character. It said 'ask again later.'",
+    "Scouts report {name} has been seen bowing to random NPCs.",
+    "{name} allegedly has a different name they use when no one's watching.",
+    "Four separate sources confirm {name} talks to their inventory.",
+    "Evidence suggests {name} once lost a duel to someone who was AFK.",
+]
+
+async def rumor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    p = get_player(update.effective_user.id)
+    if not p: await send_group(update, "Use /ascend first!", delay=9); return
+    inf = p.get("influence", 0); cost = 50
+    if inf < cost:
+        await send_group(update, f"🗣️ Spreading rumors costs *{cost} influence*. You have *{inf}*.", delay=9); return
+    conn = sqlite3.connect(DB_PATH); cr = conn.cursor()
+    cr.execute("SELECT user_id, username FROM players WHERE user_id != ? ORDER BY RANDOM() LIMIT 8", (p["user_id"],))
+    targets = [{"id": r[0], "username": r[1]} for r in cr.fetchall()]; conn.close()
+    if not targets: await send_group(update, "No one to spread rumors about yet.", delay=9); return
+    kb = [[InlineKeyboardButton(f"@{t['username']}", callback_data=f"rumorT_{t['id']}")] for t in targets]
+    kb.append([InlineKeyboardButton("❌ Close", callback_data="rumorX")])
+    await send_group(update,
+        f"🗣️ *Spread a Rumor*\n\nCosts *{cost} influence* (you have {inf})\n\nWho is the subject?",
+        reply_markup=InlineKeyboardMarkup(kb), permanent=True)
+
+async def rumor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    data = query.data
+    if data == "rumorX":
+        try: await query.message.delete()
+        except: pass
+        return
+    p = get_player(query.from_user.id)
+    if not p: return
+    if data.startswith("rumorT_"):
+        tid = int(data[len("rumorT_"):])
+        tp = get_player(tid)
+        if not tp: await query.answer("Player not found.", show_alert=True); return
+        cost = 50
+        if p.get("influence", 0) < cost: await query.answer("Not enough influence.", show_alert=True); return
+        _add_influence(p, -cost); save_player(p)
+        rumor = random.choice(_RUMOR_TPL).format(name=f"@{tp['username']}")
+        try: await query.message.chat.send_message(f"🗣️ _{rumor}_", parse_mode="Markdown")
+        except: pass
+        try: await query.message.delete()
+        except: pass
+
+# ─── Secrets System ──────────────────────────────────────────
+_SECRETS_PAGES = [
+    (0,    "The ball sees all. It does not always speak clearly. This is intentional."),
+    (0,    "Every interaction here leaves a mark. Most marks are invisible."),
+    (75,   "The first member of this order was not a player. The oracle chose them."),
+    (75,   "Every /poke, every /hug — the Order watches. Nothing is without consequence."),
+    (150,  "Your influence is not a number. It is a weight. Others feel it without knowing why."),
+    (150,  "The ball has spoken 8,888 times. Twice, it said nothing. No one knows what that means."),
+    (500,  "Secret missions are real. If you haven't received one, you haven't been noticed yet."),
+    (500,  "Orders are more than friendship. They are a promise made to the void."),
+    (800,  "The Oracle item is not merely equipment. It is a fragment of something older."),
+    (1200, "Being slapped costs you something. Being the one who slaps costs something else."),
+    (1200, "There are 8 types of cores. There is a 9th. No one has found it."),
+    (1800, "A rumor, once started, cannot be fully stopped. Even by the one who started it."),
+    (2500, "The influence pool of an order is tied to the void. High enough, and something changes."),
+    (3500, "Every boss has a weakness. The ball knows it. Ask at the right moment."),
+    (5000, "The last Oracle-tier player left no record. Their final /secrets entry read: 'Hello.'"),
+    (10000,"There is nothing more to reveal. You already know everything. The question is what you do with it."),
+]
+
+async def secrets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    p = get_player(update.effective_user.id)
+    if not p: await send_group(update, "Use /ascend first!", delay=9); return
+    await _show_secrets_page(update, p, 0, is_callback=False)
+
+async def _show_secrets_page(update_or_query, p, page, is_callback=False):
+    inf = p.get("influence", 0)
+    bonus = 500 if (lambda aid: (lambda a: a and a.get("influence_pool",0)>=1000)(get_alliance(aid)) if aid else False)(p.get("alliance_id")) else 0
+    visible = [(lo, s) for lo, s in _SECRETS_PAGES if inf + bonus >= lo]
+    if not visible:
+        text = f"🔮 *Secrets*\n\n_You are too new to the order. The knowledge reveals itself in time._\n\nCurrent standing: *{get_fame_tier(inf)}*"
+        kb = [[InlineKeyboardButton("❌ Close", callback_data="secretsX")]]
+    else:
+        total = len(visible); pg = page % total
+        lo_req, entry = visible[pg]
+        text = (f"🔮 *Secrets* — Entry {pg+1}/{total}\n\n_{entry}_\n\n"
+                f"Standing: *{get_fame_tier(inf)}*  •  Influence: {inf:,}")
+        nav = []
+        if total > 1:
+            nav = [InlineKeyboardButton("◀️", callback_data=f"secretsPg_{(pg-1)%total}"),
+                   InlineKeyboardButton("▶️", callback_data=f"secretsPg_{(pg+1)%total}")]
+        kb = [nav] if nav else []
+        kb.append([InlineKeyboardButton("❌ Close", callback_data="secretsX")])
+    markup = InlineKeyboardMarkup(kb)
+    if is_callback:
+        try: await update_or_query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        except: pass
+    else:
+        await send_group(update_or_query, text, reply_markup=markup, permanent=True)
+
+async def secrets_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    data = query.data
+    if data == "secretsX":
+        try: await query.message.delete()
+        except: pass
+        return
+    if data.startswith("secretsPg_"):
+        page = int(data[len("secretsPg_"):])
+        p = get_player(query.from_user.id)
+        if p: await _show_secrets_page(query, p, page, is_callback=True)
+
+# ─── Oracle Command ──────────────────────────────────────────
+_ORACLE_RESP = [
+    ("It is certain.","pos"),("Without a doubt.","pos"),("Signs point to yes.","pos"),
+    ("Outlook good.","pos"),("The stars align.","pos"),("Undeniably.","pos"),("As I see it, yes.","pos"),
+    ("Ask again later.","neu"),("Cannot predict now.","neu"),("Concentrate and ask again.","neu"),
+    ("Reply hazy, try again.","neu"),("The void is quiet today.","neu"),
+    ("Don't count on it.","neg"),("Outlook not so good.","neg"),("Very doubtful.","neg"),
+    ("My sources say no.","neg"),("The shadows say otherwise.","neg"),("Better left unknown.","neg"),
+]
+
+async def oracle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    p = get_player(update.effective_user.id)
+    if not p: await send_group(update, "Use /ascend first!", delay=9); return
+    inv = sjl(p.get("inventory"), [])
+    eight_balls = ["Cracked 8-Ball","Magic 8-Ball","Enchanted 8-Ball","Ancient 8-Ball","Void 8-Ball"]
+    has_ball = (any(b in inv for b in eight_balls) or
+                any(p.get(s) in eight_balls for s in ("equipped_accessory","equipped_hat","equipped_mask")))
+    if not has_ball:
+        await send_group(update, "🎱 You need a *Magic 8-Ball* (or better) to consult the oracle.\n\n_Rare drops from bosses._", delay=9); return
+    if time.time() - p.get("oracle_last_used", 0) < 72000:
+        rem = int(72000 - (time.time() - p.get("oracle_last_used", 0)))
+        h, m = divmod(rem // 60, 60)
+        await send_group(update, f"🎱 The oracle is resting. Returns in *{h}h {m}m*.", delay=9); return
+    resp, tone = random.choice(_ORACLE_RESP)
+    effects = {
+        "pos": [("+5 LUK for 2 hours", lambda pp: set_status(pp,"blessed_until",7200)),
+                ("+50 gold",            lambda pp: pp.update({"gold": pp.get("gold",0)+50})),
+                ("+5 influence",        lambda pp: _add_influence(pp, 5))],
+        "neu": [("The void offered nothing.", lambda pp: None)],
+        "neg": [("-5 influence _(the ball has spoken)_", lambda pp: _add_influence(pp, -5))],
+    }
+    eff_desc, eff_fn = random.choice(effects.get(tone, effects["neu"]))
+    eff_fn(p)
+    p["oracle_last_used"] = int(time.time()); save_player(p)
+    tone_icon = {"pos":"✨","neu":"🌫️","neg":"🌑"}.get(tone,"🎱")
+    await send_group(update, f"🎱 *The Oracle Speaks...*\n\n\"{resp}\"\n\n{tone_icon} _{eff_desc}_", permanent=True)
+
 # ── GUILD ─────────────────────────────────────────────────────────────────────
 async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(update.effective_user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     await send_group(update,
-        "🏰 *Hall Commands*\n\n"
+        "🏰 *Guild Commands*\n\n"
         "/guildcreate [name]  -  Found a hall (100g)\n"
         "/guildjoin  -  Browse and join available halls\n"
         "/guildinfo  -  Your hall info and perks\n"
@@ -10687,7 +11230,7 @@ async def guildjoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await send_group(update, "No halls exist yet  -  use /guildcreate to found one!", delay=9); return
     medals = ["🥇","🥈","🥉"] + ["🏰"]*7
-    lines = ["🏰 *Available Halls  -  tap to join:*\n"]
+    lines = ["🏰 *Available Guilds  -  tap to join:*\n"]
     buttons = []
     for i, row in enumerate(rows):
         mcount = len(sjl(row["members"], []))
@@ -10717,7 +11260,7 @@ def _build_guildinfo_overview(g):
     )
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton(f"👥 Members ({len(member_ids)})", callback_data=f"ginfoM_{gid}")],
-        [InlineKeyboardButton("🔙 All Halls", callback_data="ginfoList")],
+        [InlineKeyboardButton("🔙 All Guilds", callback_data="ginfoList")],
     ])
     return text, markup
 
@@ -10746,7 +11289,7 @@ async def guildinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "No halls exist yet. Use /guildcreate to found one!", delay=9); return
 
     my_gid = str(p.get("guild_id", ""))
-    lines  = ["🏰 *Halls  —  tap to inspect:*\n"]
+    lines  = ["🏰 *Guilds  —  tap to inspect:*\n"]
     buttons = []
     medals  = ["🥇", "🥈", "🥉"] + ["🏰"] * 12
     for i, row in enumerate(rows):
@@ -10804,7 +11347,7 @@ async def guildinfo_members_callback(update: Update, context: ContextTypes.DEFAU
         lines.append("(no registered members)")
 
     markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔙 Back to Hall", callback_data=f"ginfo_{gid}")],
+        [InlineKeyboardButton("🔙 Back to Guild", callback_data=f"ginfo_{gid}")],
     ])
     await query.answer()
     await query.edit_message_text("\n".join(lines), reply_markup=markup, parse_mode="Markdown")
@@ -10819,7 +11362,7 @@ async def guildinfo_list_callback(update: Update, context: ContextTypes.DEFAULT_
 
     p = get_player(query.from_user.id)
     my_gid = str(p.get("guild_id", "")) if p else ""
-    lines   = ["🏰 *Halls  —  tap to inspect:*\n"]
+    lines   = ["🏰 *Guilds  —  tap to inspect:*\n"]
     buttons = []
     medals  = ["🥇", "🥈", "🥉"] + ["🏰"] * 12
     for i, row in enumerate(rows):
@@ -10840,7 +11383,7 @@ async def guildlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await send_group(update, "No halls yet!", delay=9); return
     medals = ["🥇","🥈","🥉"] + ["🏰"]*7
-    lines = ["🏰 *Hall Standings*\n"]
+    lines = ["🏰 *Guild Standings*\n"]
     for i, row in enumerate(rows):
         mcount = len(sjl(row["members"], []))
         lines.append(f"{medals[i]} *{row['name']}*  -  Lv {safe_int(row['level'],1)} | {mcount} members")
@@ -11128,7 +11671,7 @@ async def resolve_expired_wars(bot=None, chat_id=None):
                 results.append(
                     f"⚔️ *Guild War Over!*\n"
                     f"🏆 *{winner['name']}* defeats *{loser['name']}* — {wk}–{lk}!\n"
-                    f"+2,000 Hall EXP awarded to {winner['name']}! {lv_note}")
+                    f"+2,000 Guild EXP awarded to {winner['name']}! {lv_note}")
         except Exception:
             continue
     return results
@@ -11196,7 +11739,7 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn_gl.close()
 
         if not all_guilds:
-            await send_group(update, "⚔️ No other Halls to declare war on yet!", delay=9); return
+            await send_group(update, "⚔️ No other Guilds to declare war on yet!", delay=9); return
 
         buttons = []
         for eg in all_guilds:
@@ -11207,7 +11750,7 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         markup = InlineKeyboardMarkup(buttons)
         await send_group(update,
             f"⚔️ *{g['name']} — Declare Guild War*\n\n"
-            f"Choose a Hall to challenge. War lasts 24 hours.\n"
+            f"Choose a Guild to challenge. War lasts 24 hours.\n"
             f"_Most kills wins. Each PvP kill counts double for objectives._",
             delay=60, reply_markup=markup)
         return
@@ -11241,8 +11784,8 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚔️ *WAR DECLARED!*\n\n"
         f"*{g['name']}* has declared war on *{enemy_g['name']}*!\n"
         f"Duration: 24 hours\n"
-        f"Every kill against the enemy Hall scores a point.\n"
-        f"May the best Hall win! 🔥", delay=30)
+        f"Every kill against the enemy Guild scores a point.\n"
+        f"May the best Guild win! 🔥", delay=30)
 
 
 async def guildwar_declare_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -11293,7 +11836,7 @@ async def guildwar_declare_callback(update: Update, context: ContextTypes.DEFAUL
             f"⚔️ *WAR DECLARED!*\n\n"
             f"*{g['name']}* has declared war on *{enemy_g['name']}*!\n"
             f"Duration: 24 hours — most kills wins!\n"
-            f"May the best Hall win! 🔥",
+            f"May the best Guild win! 🔥",
             parse_mode="Markdown")
     except Exception as e:
         try: await query.answer("Something went wrong. Try again!", show_alert=True)
@@ -11525,9 +12068,10 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
                 lines.append(f"💚 Healed self for *{heal} HP*!")
             elif stype == "self_heal_buff":
-                heal = round(p["max_hp"] * 0.30)
+                heal = round(p["max_hp"] * 0.20)
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
-                lines.append(f"💚 *Rally!* +{heal} HP restored.")
+                set_status(p, "battle_cry_str_until", 120)
+                lines.append(f"💪 *Battle Cry!* +{heal} HP restored. +50 STR for 2 minutes!")
             elif stype == "self_atk_buff":
                 set_status(p, "blessed_until", 120)
                 lines.append("⚔️ *War Cry!* +30% ATK for 2 minutes!")
@@ -11845,8 +12389,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         stype = sk.get("type", "damage")
         out = [f"⚡ *{p['username']}* uses *{sk['name']}* on *{boss_dict['data']['name']}*!"]
         if stype in ("self_heal", "self_heal_buff"):
-            heal = round(p["max_hp"] * 0.30) if stype == "self_heal_buff" else round(get_stat(p, "WIS") * sk.get("mult", 3.0))
+            heal = round(p["max_hp"] * 0.20) if stype == "self_heal_buff" else round(get_stat(p, "WIS") * sk.get("mult", 3.0))
             p["hp"] = min(p["max_hp"], p["hp"] + heal)
+            if stype == "self_heal_buff":
+                set_status(p, "battle_cry_str_until", 120)
             out.append(f"💚 Healed self for *{heal} HP*!")
             dmg = 0
         else:
@@ -12796,7 +13342,7 @@ def _war_page_text(page: int) -> str:
                 lines.append("_No kills recorded yet._")
 
         elif page == 4:
-            lines = ["🏆 *Hall of Fame — Guild War Records*\n"]
+            lines = ["🏆 *Guild Hall of Fame — War Records*\n"]
             cw.execute("SELECT name, war_wins FROM guilds WHERE war_wins > 0 ORDER BY war_wins DESC LIMIT 15")
             hall = cw.fetchall()
             if hall:
@@ -15327,6 +15873,8 @@ async def pat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pats = [f"🤝 {a} gently pats {d}'s hand. They're still holding it.",
                     f"🫸 {a} pats {d} with their free hand. The other one's occupied. 🤝"]
     await send_group(update, random.choice(pats), permanent=True)
+    pp2 = get_player(user.id)
+    if pp2: _add_influence(pp2, 1); save_player(pp2)
 
 
 async def hug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -15355,6 +15903,8 @@ async def hug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             hugs = [f"🤝 {a} hugs {d} without letting go of their hand. Impressive.",
                     f"🫂 {a} pulls {d} close. They're already holding hands — this tracks. 🤝"]
     await send_group(update, random.choice(hugs), permanent=True)
+    ph = get_player(user.id)
+    if ph: _add_influence(ph, 2); save_player(ph)
 
 
 async def slap_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -15395,6 +15945,8 @@ async def slap_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎭 {a} open-palm slaps {d} with flair. Dramatic.",
     ] + weapon_slaps
     await send_group(update, random.choice(slaps), permanent=True)
+    ps = get_player(user.id)
+    if ps: _add_influence(ps, -1); save_player(ps)
 
 
 async def poke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -15414,6 +15966,8 @@ async def poke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👉 {d} did not consent to this poke but {a} did it anyway.",
     ]
     await send_group(update, random.choice(pokes), permanent=True)
+    pa = get_player(user.id)
+    if pa: _add_influence(pa, 1); save_player(pa)
 
 
 async def wave_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -15466,6 +16020,8 @@ async def kiss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await send_group(update, random.choice(rejects), permanent=True); return
     await send_group(update, random.choice(kisses), permanent=True)
+    pk = get_player(user.id)
+    if pk: _add_influence(pk, 2); save_player(pk)
 
 
 # ── BONDS BOARD ───────────────────────────────────────────────────────────────
@@ -15864,11 +16420,23 @@ def build_arena_markup(arena, chat_id):
     if arena["status"] == "done":
         return None
     uid = arena["turn"]
-    return InlineKeyboardMarkup([[
+    p = get_player(uid)
+    skills = sjl(p.get("all_skills"), []) if p else []
+    rows = [[
         InlineKeyboardButton("⚔️ Attack", callback_data=f"arena_act_{chat_id}_{uid}_atk"),
-        InlineKeyboardButton("✨ Skill",  callback_data=f"arena_act_{chat_id}_{uid}_skl"),
         InlineKeyboardButton("🏃 Flee",   callback_data=f"arena_act_{chat_id}_{uid}_flee"),
-    ]])
+    ]]
+    skill_row = []
+    for i, sk in enumerate(skills):
+        skill_row.append(InlineKeyboardButton(
+            f"✨ {sk['name']}", callback_data=f"arena_act_{chat_id}_{uid}_skl_{i}"
+        ))
+        if len(skill_row) == 2:
+            rows.append(skill_row)
+            skill_row = []
+    if skill_row:
+        rows.append(skill_row)
+    return InlineKeyboardMarkup(rows)
 
 async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -16065,6 +16633,11 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 def_state["miss_next_enemy"] = False
                 arena["log"].append(f"🌫️ {def_name}'s evasion causes {atk_name} to miss!")
                 dmg = 0
+            # Battle Cry passive: refresh +50 STR for 15m on attack
+            _arena_cls = get_player_class(attacker_data)
+            if _arena_cls and _arena_cls.get("passive_key") == "battle_cry":
+                set_status(attacker_data, "battle_cry_str_until", 900)
+                save_player(attacker_data)
             if dmg > 0 and check_crit(attacker_data):
                 dmg = apply_crit(attacker_data, dmg)
                 log_entry = f"💥 CRIT! {atk_name} hits {def_name} for *{dmg}*!"
@@ -16114,6 +16687,15 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 atk_state["def_mod"] = def_mod
                 atk_state["buff_turns"] = sk.get("buff_turns", 2)
                 log_entry = f"🛡️ {atk_name} uses *{sk['name']}*! Damage reduced for {sk.get('buff_turns',2)} turns."
+            elif stype == "self_heal_buff":
+                if atk_state.get("heal_block_turns", 0) > 0:
+                    log_entry = f"🚫 {atk_name}'s healing is blocked!"
+                else:
+                    heal = round(arena[atk_max_key] * 0.20)
+                    arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
+                    set_status(attacker_data, "battle_cry_str_until", 120)
+                    save_player(attacker_data)
+                    log_entry = f"💪 {atk_name} uses *{sk['name']}*! +{heal} HP + 50 STR for 2 turns!"
             elif stype in ("self_heal","revive_heal"):
                 if atk_state.get("heal_block_turns", 0) > 0:
                     arena["log"].append(f"🚫 {atk_name} cannot be healed!")
@@ -16680,9 +17262,10 @@ async def arena_act_callback(update, context):
     if len(parts) < 5:
         return
     try:
-        chat_id = int(parts[2])
-        uid     = int(parts[3])
-        action  = parts[4]
+        chat_id   = int(parts[2])
+        uid       = int(parts[3])
+        action    = parts[4]
+        skill_idx = int(parts[5]) if len(parts) > 5 else None
     except (ValueError, IndexError):
         return
 
@@ -16826,6 +17409,11 @@ async def arena_act_callback(update, context):
             def_state["miss_next_enemy"] = False
             arena["log"].append(f"🌫️ {def_name}'s evasion causes {atk_name} to miss!")
             dmg = 0
+        # Battle Cry passive: refresh +50 STR for 15m on attack
+        _arena_cls = get_player_class(attacker_data)
+        if _arena_cls and _arena_cls.get("passive_key") == "battle_cry":
+            set_status(attacker_data, "battle_cry_str_until", 900)
+            save_player(attacker_data)
         if dmg > 0 and check_crit(attacker_data):
             dmg = apply_crit(attacker_data, dmg)
             log_entry = f"💥 CRIT! {atk_name} hits {def_name} for *{dmg}*!"
@@ -16852,9 +17440,13 @@ async def arena_act_callback(update, context):
             await query.answer("You're silenced — no skills this turn!", show_alert=True)
             return
         skills = sjl(attacker_data.get("all_skills"), [])
-        sk = skills[0] if skills else None
+        sk = None
+        if skill_idx is not None and 0 <= skill_idx < len(skills):
+            sk = skills[skill_idx]
+        elif skills:
+            sk = skills[0]
         if not sk:
-            await query.answer("No skills available!", show_alert=True)
+            await query.answer("No skill available.", show_alert=True)
             return
         stype = sk.get("type", "damage")
         base_dmg = calc_attack_damage(attacker_data, w)
@@ -16870,6 +17462,15 @@ async def arena_act_callback(update, context):
             atk_state["def_mod"] = def_mod
             atk_state["buff_turns"] = sk.get("buff_turns", 2)
             log_entry = f"🛡️ {atk_name} uses *{sk['name']}*! Damage reduced for {sk.get('buff_turns',2)} turns."
+        elif stype == "self_heal_buff":
+            if atk_state.get("heal_block_turns", 0) > 0:
+                log_entry = f"🚫 {atk_name}'s healing is blocked!"
+            else:
+                heal = round(arena[atk_max_key] * 0.20)
+                arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
+                set_status(attacker_data, "battle_cry_str_until", 120)
+                save_player(attacker_data)
+                log_entry = f"💪 {atk_name} uses *{sk['name']}*! +{heal} HP + 50 STR for 2 turns!"
         elif stype in ("self_heal","revive_heal"):
             if atk_state.get("heal_block_turns", 0) > 0:
                 log_entry = f"🚫 {atk_name}'s healing is blocked!"
@@ -17366,7 +17967,7 @@ async def rankwins_cmd(update, context):
 GUIDE_PAGES = [
     # Page 1 - Getting Started
     (
-        "🎱 *8Ball World  -  Getting Started* (1/10)\n"
+        "🎱 *8Ball World  -  Getting Started* (1/12)\n"
         "\n"
         "Welcome to 8Ball World  -  a fantasy RPG built inside Telegram.\n"
         "\n"
@@ -17385,7 +17986,7 @@ GUIDE_PAGES = [
     ),
     # Page 2 - Character Building
     (
-        "🎱 *8Ball World  -  Building Your Character* (2/10)\n"
+        "🎱 *8Ball World  -  Building Your Character* (2/12)\n"
         "\n"
         "Use /class at Level 5 to pick your starting class. Browse with arrows to see each class's Path A and Path B.\n"
         "\n"
@@ -17431,7 +18032,7 @@ GUIDE_PAGES = [
     ),
     # Page 3 - Daily Activities
     (
-        "🎱 *8Ball World  -  Daily Activities* (3/10)\n"
+        "🎱 *8Ball World  -  Daily Activities* (3/12)\n"
         "\n"
         "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
         "\n"
@@ -17460,7 +18061,7 @@ GUIDE_PAGES = [
     ),
     # Page 4 - Combat & Raids
     (
-        "🎱 *8Ball World  -  Combat & Raids* (4/10)\n"
+        "🎱 *8Ball World  -  Combat & Raids* (4/12)\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
         "Reply to any player's message and use /attack to fight them. Winners steal gold and EXP. Losers are defeated for 6 hours and lose 10% EXP.\n"
@@ -17504,7 +18105,7 @@ GUIDE_PAGES = [
     ),
     # Page 5 - Gear & Economy
     (
-        "🎱 *8Ball World  -  Gear & Economy* (5/10)\n"
+        "🎱 *8Ball World  -  Gear & Economy* (5/12)\n"
         "\n"
         "*Gear Slots*\n"
         "⚔️ Weapon, 🛡️ Armor, 🔰 Shield, 💍 Accessory, 🎩 Hat, 🧤 Gloves, 👢 Boots, 🎭 Mask.\n"
@@ -17546,7 +18147,7 @@ GUIDE_PAGES = [
     ),
     # Page 6 - Command Reference
     (
-        "🎱 *8Ball World  -  Command Reference* (6/10)\n"
+        "🎱 *8Ball World  -  Command Reference* (6/12)\n"
         "\n"
         "*Character*\n"
         "/ascend  -  Create your RPG character (DM only)\n"
@@ -17630,16 +18231,25 @@ GUIDE_PAGES = [
         "/holdhands  -  Reach out to someone (reply to target) or check timer. No limit.\n"
         "/releasehands  -  Let go (button picker if holding multiple hands)\n"
         "/bonds  -  View the full marriage and holding hands board\n"
-        "/pat  -  Reply to a player to give them a pat\n"
-        "/hug  -  Reply to a player to give them a hug\n"
-        "/kiss  -  Reply to a player for a kiss (relationship-aware)\n"
-        "/slap  -  Reply to a player to slap them (uses your weapon name if equipped)\n"
-        "/poke  -  Reply to a player for a poke\n"
-        "/wave  -  Wave at someone"
+        "/pat  -  Reply to a player to give them a pat  _(+1 influence)_\n"
+        "/hug  -  Reply to a player to give them a hug  _(+2 influence)_\n"
+        "/kiss  -  Reply to a player for a kiss _(relationship-aware, +2 influence)_\n"
+        "/slap  -  Reply to a player to slap them  _(−1 influence for you)_\n"
+        "/poke  -  Reply to a player for a poke  _(+1 influence)_\n"
+        "/wave  -  Wave at someone\n"
+        "\n"
+        "*Influence & Orders*\n"
+        "/alliance  -  Open the Secret Orders menu (create, join, manage)\n"
+        "/rumor  -  Spread an anonymous rumor about a player _(costs 50 influence)_\n"
+        "/secrets  -  View hidden lore, unlocked by your fame tier\n"
+        "/oracle  -  Consult the Magic 8-Ball _(requires 8-Ball item, 20hr cooldown)_\n"
+        "\n"
+        "*Encounters*\n"
+        "/encounter  -  Fight an NPC (Battle) or hunt a wild monster (Hunt)"
     ),
     # Page 7 - Guilds & Advanced
     (
-        "🎱 *8Ball World  -  Guilds & Advanced Systems* (7/10)\n"
+        "🎱 *8Ball World  -  Guilds & Advanced Systems* (7/12)\n"
         "\n"
         "*Guilds*\n"
         "Guilds level up as members donate gold via /guilddonate, unlocking EXP bonuses, shop discounts, and more.\n"
@@ -17672,7 +18282,7 @@ GUIDE_PAGES = [
     ),
     # Page 8 - Pets
     (
-        "🎱 *8Ball World  -  Pets* (8/10)\n"
+        "🎱 *8Ball World  -  Pets* (8/12)\n"
         "\n"
         "*Getting a Pet*\n"
         "Buy eggs from the Pet Shop (/petshop) or find them in dungeons and quests.\n"
@@ -17718,7 +18328,7 @@ GUIDE_PAGES = [
     ),
     # Page 9 - Marriage & Social
     (
-        "🎱 *8Ball World  -  Marriage & Social* (9/10)\n"
+        "🎱 *8Ball World  -  Marriage & Social* (9/12)\n"
         "\n"
         "*Getting Married*\n"
         "Reply to any player's message and type /marry to propose.\n"
@@ -17764,7 +18374,7 @@ GUIDE_PAGES = [
 
     # Page 10 - Encounters & Monsters
     (
-        "🎱 *8Ball World  -  Encounters & Monsters* (10/10)\n"
+        "🎱 *8Ball World  -  Encounters & Monsters* (10/12)\n"
         "\n"
         "Use /encounter to begin. Choose *Battle* or *Hunt*.\n"
         "\n"
@@ -17797,9 +18407,78 @@ GUIDE_PAGES = [
         "\n"
         "🐉 _Hunt, catch, and grow stronger with every core._"
     ),
+    # Page 11 - Influence & Fame
+    (
+        "🎱 *8Ball World  -  Influence & Fame* (11/12)\n"
+        "\n"
+        "Influence is a silent measure of your standing in the order. It grows through kindness, shrinks through cruelty, and tells the world exactly how you carry yourself.\n"
+        "\n"
+        "*Gaining Influence:*\n"
+        "• /hug someone → +2\n"
+        "• /kiss someone → +2\n"
+        "• /pat someone → +1\n"
+        "• /poke someone → +1\n"
+        "• Replying 'thank you' / 'thanks' → +1\n"
+        "• Replying 'welcome' / 'np' → +1\n"
+        "• Kill a boss → +3\n"
+        "• Win arena match → +5\n"
+        "• Complete a secret quest → +10 to +50\n"
+        "• Positive /oracle reading → +5\n"
+        "\n"
+        "*Losing Influence:*\n"
+        "• /slap someone → −1\n"
+        "• Negative /oracle reading → −5\n"
+        "• Spreading a /rumor → −50\n"
+        "\n"
+        "*Fame Tiers (low → high):*\n"
+        "🌫️ Shady · 👁️ Suspicious · 🌑 Distrusted · 💀 Notorious · 🩸 Reviled _(infamy)_\n"
+        "🌑 Shadow (0) · 👤 Whisper · 🗣️ Face · 🌟 Voice · 📖 Known\n"
+        "🔥 Talked About · ⭐ Notable · 🌠 Prominent · ✨ Famous · 🌟 Celebrated\n"
+        "💫 Renowned · 🔮 Revered · 👑 Exalted · 🌌 Mythic · 🎱 Oracle _(10,000+)_\n"
+        "\n"
+        "*Influence unlocks:*\n"
+        "• /secrets — tiered lore pages, more visible as your fame grows\n"
+        "• /rumor — costs 50 influence to use\n"
+        "• Your fame tier appears in /stats\n"
+        "• Alliance perks scale with your order's shared influence pool"
+    ),
+    # Page 12 - Secret Orders
+    (
+        "🎱 *8Ball World  -  Secret Orders* (12/12)\n"
+        "\n"
+        "Orders are private alliances of up to 5 members — separate from Guilds. They operate in the shadows, share an influence pool, and unlock perks that grow over time.\n"
+        "\n"
+        "*Commands:*\n"
+        "/alliance  -  Open the Orders menu (create, join, manage, view perks)\n"
+        "/rumor  -  Anonymously spread a rumor in the group _(costs 50 influence)_\n"
+        "/secrets  -  View hidden lore. More pages unlock at higher fame tiers.\n"
+        "/oracle  -  Consult the Magic 8-Ball once every 20 hours\n"
+        "\n"
+        "*Order Perks (always active):*\n"
+        "• Brotherhood — members below 30% HP gain +10 DEF\n"
+        "• Shared Whispers — secret quest EXP doubled\n"
+        "• Pooled Wisdom — +2% influence gains\n"
+        "\n"
+        "*Perks unlocked by shared influence pool:*\n"
+        "• Pool 100 → Marked Path: +5% gold from encounters\n"
+        "• Pool 500 → Blood Pact: +5% damage vs outsiders in arena\n"
+        "• Pool 1000 → Oracle's Eye: /secrets unlocks one extra tier for all members\n"
+        "\n"
+        "*Magic 8-Ball Items (rare boss drops):*\n"
+        "🎱 Cracked 8-Ball _(uncommon)_ → +5 LUK\n"
+        "🎱 Magic 8-Ball _(rare)_ → +10 LUK  •  unlocks /oracle\n"
+        "🎱 Enchanted 8-Ball _(epic)_ → +15 LUK +5 WIS\n"
+        "🎱 Ancient 8-Ball _(legendary)_ → +20 LUK +10 WIS\n"
+        "🎱 Void 8-Ball _(mythic)_ → +25 LUK +15 WIS +5 INT\n"
+        "\n"
+        "*Secret Quests:*\n"
+        "The Order may DM you a private mission at any time — a /poke request, a phrase to say in the group, a question to ask someone. No one else sees it. Complete it for EXP and Influence.\n"
+        "\n"
+        "🎱 _The ball knows. The order watches. Act accordingly._"
+    ),
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders"]
 
 async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
     total = len(GUIDE_PAGES)
@@ -19122,6 +19801,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     chat_id = update.effective_chat.id
     text    = (update.message.text or "").lower()
+
+    # Silent influence: social greetings
+    _p_msg = get_player(user.id)
+    if _p_msg and update.message.reply_to_message:
+        _txt = (update.message.text or "").lower().strip()
+        _greets_pos = ["thank you", "thanks", "ty ", "ty!", "thx", " ty"]
+        _greets_wel  = ["you're welcome", "youre welcome", "welcome", " np ", "no problem", "anytime"]
+        if any(g in _txt for g in _greets_pos):
+            _add_influence(_p_msg, 1); save_player(_p_msg)
+        elif any(g in _txt for g in _greets_wel):
+            _add_influence(_p_msg, 1); save_player(_p_msg)
+    # Secret quest: phrase completion
+    if _p_msg and update.message.text and not update.message.text.startswith("/"):
+        _reply_uid = (update.message.reply_to_message.from_user.id
+                      if update.message.reply_to_message and update.message.reply_to_message.from_user
+                      else None)
+        await _try_complete_quest_phrase(_p_msg, update.message.text, _reply_uid, context.bot)
+    # Quest dispatch trigger (20% chance if no active quest, 8h+ since last)
+    if _p_msg and random.random() < 0.20:
+        await _dispatch_secret_quest(user.id, context.bot)
 
     # Non-text messages (stickers, photos, etc.)  -  track shadow profile but skip keyword triggers
     if not update.message.text:
@@ -20531,6 +21230,14 @@ def main():
     app.add_handler(CallbackQueryHandler(duel_wager_callback,       pattern="^duelwager_"))
     app.add_handler(CallbackQueryHandler(soloraid_act_callback, pattern="^sr_act_"))
     app.add_handler(CallbackQueryHandler(boss_act_callback,     pattern="^boss_act_"))
+    # Social orders & secrets
+    app.add_handler(CommandHandler("alliance",  alliance_cmd))
+    app.add_handler(CommandHandler("rumor",     rumor_cmd))
+    app.add_handler(CommandHandler("secrets",   secrets_cmd))
+    app.add_handler(CommandHandler("oracle",    oracle_cmd))
+    app.add_handler(CallbackQueryHandler(alliance_callback, pattern="^alliance"))
+    app.add_handler(CallbackQueryHandler(rumor_callback,    pattern="^rumor"))
+    app.add_handler(CallbackQueryHandler(secrets_callback,  pattern="^secrets"))
     app.add_handler(CallbackQueryHandler(prestige_callback,     pattern="^prestige_"))
     app.add_handler(CallbackQueryHandler(dungeon_diff_callback, pattern="^dungeon_d_"))
     app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shop_b_"))
