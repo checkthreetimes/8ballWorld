@@ -15031,10 +15031,18 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 elem    = enc.get("element", "")
                 elem_e  = ELEMENT_EMOJI.get(elem, "")
                 catch_r = enc.get("e_catch_rate", 0.30)
+                _elem_to_core = {
+                    "fire": "Fire", "water": "Water", "earth": "Earth",
+                    "wind": "Wind", "lightning": "Lightning", "ice": "Ice",
+                    "shadow": "Shadow", "dark": "Shadow",
+                    "holy": "Holy", "void": "Void",
+                    "physical": "Earth", "poison": "Shadow",
+                }
                 if catch_r < 0.08:
                     core_item = "Rare Monster Core"
                 else:
-                    core_item = f"Monster Core ({elem.capitalize()})" if elem else "Monster Core (Earth)"
+                    core_name = _elem_to_core.get(elem, "Earth")
+                    core_item = f"Monster Core ({core_name})"
                 add_item(p, core_item)
                 exp_gain  = enc["e_level"] * 15
                 gold_gain = enc["e_level"] * 8
