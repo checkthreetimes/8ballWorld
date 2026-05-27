@@ -2996,9 +2996,12 @@ def _mon_level_stats(base_hp, base_atk, level):
     atk = int(base_atk * (1 + 0.05 * (level - 1)))
     return hp, atk
 
-def _npc_level_stats(base_hp, base_dmg, level):
-    hp  = int(base_hp  * (1 + 0.05 * (level - 1)))
-    atk = int(base_dmg * (1 + 0.04 * (level - 1)))
+def _npc_level_stats(base_hp, base_dmg, level, player_cp=0):
+    hp  = int(base_hp  * (1 + 0.12 * (level - 1)))
+    atk = int(base_dmg * (1 + 0.10 * (level - 1)))
+    if player_cp > 0:
+        hp  = max(hp,  int(player_cp * 1.5))
+        atk = max(atk, int(player_cp * 0.12))
     return hp, atk
 
 def _get_monster_squad(uid):
@@ -3220,7 +3223,7 @@ def _enc_npc_attack(enc, p):
     attacks = NPC_CLASS_ATTACKS.get(enc.get("e_class", "fighter"), _NPC_DEFAULT_ATTACKS)
     atk_name, dmg_mult, effect = random.choice(attacks)
     raw = int(enc["e_atk"] * dmg_mult * random.uniform(0.85, 1.15))
-    def_red = int(get_stat(p, "DEF") * 0.4)
+    def_red = int(get_stat(p, "DEF") * 0.20)
     dmg = max(1, raw - def_red)
     if enc.get("p_exposed"):
         dmg = int(dmg * 1.2); enc["p_exposed"] = False
@@ -12354,6 +12357,7 @@ async def who_cmd(update, context):
     cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
     c.execute("""SELECT s.user_id, s.username, s.level, s.last_seen,
                         p.class_id, p.hp, p.max_hp, p.kill_streak, p.kills_today,
+                        p.kills_today_date,
                         p.invincible_until, p.defeated_until
                  FROM shadow_profiles s
                  LEFT JOIN players p ON p.user_id = s.user_id
@@ -12379,6 +12383,7 @@ async def who_cmd(update, context):
     if not rows:
         await send_group(update, "No players active in the last 24 hours.", delay=9); return
 
+    today_str = datetime.now().strftime("%Y-%m-%d")
     lines = ["👥 *Active Players (last 24h)*\n"]
     for row in rows:
         cls = CLASS_TREE.get(row["class_id"] or "", {}).get("name", "No Class")
@@ -12402,7 +12407,7 @@ async def who_cmd(update, context):
         else:
             hp_icon = "🔴"
         try:
-            kills_today = safe_int(row["kills_today"])
+            kills_today = safe_int(row["kills_today"]) if row["kills_today_date"] == today_str else 0
             ks          = safe_int(row["kill_streak"])
         except (IndexError, KeyError):
             kills_today = 0; ks = 0
@@ -12693,6 +12698,92 @@ async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p["active_title"] = chosen; save_player(p)
     await send_group(update, f"🏅 Title set to *{chosen}*!", delay=9)
 
+_TRADE_CATS = [
+    ("all",         "All"),
+    ("weapons",     "⚔️ Weapons"),
+    ("armors",      "🛡️ Armors"),
+    ("shields",     "🔰 Shields"),
+    ("accessories", "💍 Accessories"),
+    ("consumables", "🧪 Items"),
+]
+_TRADE_CAT_POOLS = {
+    "weapons":     set(WEAPONS),
+    "armors":      set(ARMORS),
+    "shields":     set(SHIELDS),
+    "accessories": set(ACCESSORIES),
+    "consumables": set(CONSUMABLES),
+}
+_TRADE_PAGE_SIZE = 8
+
+def _build_trade_menu(seller_uid, buyer_uid, inv, category="all", page=0):
+    tradeable = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES) | set(CONSUMABLES)
+    all_items = [(k, inv.count(k)) for k in dict.fromkeys(inv) if k in tradeable]
+    pool = _TRADE_CAT_POOLS.get(category)
+    filtered = [(k, c) for k, c in all_items if pool is None or k in pool]
+    total_pages = max(1, (len(filtered) + _TRADE_PAGE_SIZE - 1) // _TRADE_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    page_items = filtered[page * _TRADE_PAGE_SIZE:(page + 1) * _TRADE_PAGE_SIZE]
+
+    buttons = []
+    # Category filter rows (3 per row)
+    cat_row = []
+    for cat_key, cat_label in _TRADE_CATS:
+        marker = "▸" if cat_key == category else ""
+        cat_row.append(InlineKeyboardButton(
+            f"{marker}{cat_label}", callback_data=f"trdcat_{seller_uid}_{buyer_uid}_{cat_key}_0"))
+        if len(cat_row) == 3:
+            buttons.append(cat_row); cat_row = []
+    if cat_row: buttons.append(cat_row)
+
+    if not page_items:
+        buttons.append([InlineKeyboardButton("(nothing here)", callback_data="noop")])
+    else:
+        for item, count in page_items:
+            label = f"📦 {item}{' x'+str(count) if count > 1 else ''}"
+            buttons.append([InlineKeyboardButton(label,
+                callback_data=f"trdi_{seller_uid}_{buyer_uid}_{item}")])
+
+    # Pagination row
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀ Prev", callback_data=f"trdcat_{seller_uid}_{buyer_uid}_{category}_{page-1}"))
+    nav_row.append(InlineKeyboardButton(f"  {page+1}/{total_pages}  ", callback_data="noop"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("Next ▶", callback_data=f"trdcat_{seller_uid}_{buyer_uid}_{category}_{page+1}"))
+    if len(nav_row) > 1:
+        buttons.append(nav_row)
+
+    buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{seller_uid}")])
+    cat_display = dict(_TRADE_CATS).get(category, "All")
+    text = (f"📦 *Trade Inventory*  —  {cat_display}\n"
+            f"_{len(filtered)} item{'s' if len(filtered) != 1 else ''} available_\n\nSelect an item to offer:")
+    return InlineKeyboardMarkup(buttons), text
+
+
+async def trade_cat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle trade category/page nav buttons."""
+    query = update.callback_query
+    # trdcat_{seller}_{buyer}_{category}_{page}
+    parts = query.data.split("_", 4)
+    try:
+        seller_uid = int(parts[1]); buyer_uid = int(parts[2])
+        category   = parts[3]; page = int(parts[4])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != seller_uid:
+        await query.answer("Not your trade!", show_alert=True); return
+    await query.answer()
+    p = get_player(seller_uid)
+    if not p:
+        await query.edit_message_text("Player not found."); return
+    inv = sjl(p.get("inventory"), [])
+    markup, text = _build_trade_menu(seller_uid, buyer_uid, inv, category, page)
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
+
+
 async def trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
@@ -12704,20 +12795,11 @@ async def trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tu.id == user.id:
             await send_group(update, "❌ Can't trade with yourself.", delay=9); return
         inv = sjl(p.get("inventory"), [])
-        tradeable_pools = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES) | set(CONSUMABLES)
-        trade_items = [(k, inv.count(k)) for k in dict.fromkeys(inv) if k in tradeable_pools]
-        if not trade_items:
+        markup, text = _build_trade_menu(user.id, tu.id, inv)
+        if not markup:
             await send_group(update, "📦 Nothing tradeable in your inventory.", delay=9); return
-        buttons = []
-        for item, count in trade_items[:12]:
-            label = f"📦 {item} {'x'+str(count) if count>1 else ''}"
-            buttons.append([InlineKeyboardButton(label,
-                callback_data=f"trdi_{user.id}_{tu.id}_{item}")])
-        buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")])
-        markup = InlineKeyboardMarkup(buttons)
-        await send_group(update,
-            f"📦 *Trade with {tu.first_name}*\n\nSelect an item to offer:",
-            delay=60, reply_markup=markup)
+        await send_group(update, f"📦 *Trade with {tu.first_name}*\n\n{text}",
+                         delay=60, reply_markup=markup)
         return
 
     # ── Legacy typed path ─────────────────────────────────────────────────────
@@ -14237,7 +14319,8 @@ async def deposit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _start_encounter_battle(query, uid, p):
     npc = _pick_random_npc(p.get("level", 1))
     n_level = _enc_npc_level(npc, p.get("level", 1))
-    n_hp, n_atk = _npc_level_stats(npc[4], npc[5], n_level)
+    player_cp = calc_combat_power(p)
+    n_hp, n_atk = _npc_level_stats(npc[4], npc[5], n_level, player_cp)
     p_mhp = safe_int(p.get("max_hp")) or calc_max_hp(p)
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     cls_name = CLASS_TREE.get(npc[1], {}).get("name", npc[1].replace("_"," ").title())
@@ -14451,24 +14534,33 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         # Check enemy dead
         if enc["e_hp"] <= 0:
-            gold_r = enc.get("e_gold_range", (5,15))
-            gold   = random.randint(*gold_r) if isinstance(gold_r, tuple) else random.randint(5, 30)
-            exp_r  = enc.get("e_exp_range", (20,60))
-            exp    = random.randint(*exp_r)  if isinstance(exp_r, tuple) else random.randint(20, 60)
+            e_level = enc.get("e_level", 1)
+            gold_r = enc.get("e_gold_range", (5, 15))
+            gold   = (random.randint(*gold_r) if isinstance(gold_r, tuple) else random.randint(5, 30)) + e_level * 4
+            exp_r  = enc.get("e_exp_range", (20, 60))
+            exp    = (random.randint(*exp_r) if isinstance(exp_r, tuple) else random.randint(20, 60)) + e_level * 18
             add_exp(p, exp)
             p["gold"] = safe_int(p.get("gold", 0)) + gold
-            # Loot
+            # Loot key item
             loot_key  = enc.get("e_loot_key", "Encounter Token")
-            loot_item = loot_key if random.random() < 0.30 else None
+            loot_item = loot_key if random.random() < 0.35 else None
+            # Gear drop — rarity scaled by NPC level
             gear_drop = None
-            if random.random() < 0.15:
-                gear_pool = list(WEAPONS.keys()) + list(ARMORS.keys())
-                gear_drop = random.choice(gear_pool)
-                inv = sjl(p.get("inventory"), [])
-                inv.append(gear_drop); p["inventory"] = json.dumps(inv)
+            if random.random() < 0.25:
+                if e_level < 20:
+                    _rar = random.choice(["common", "common", "uncommon"])
+                elif e_level < 40:
+                    _rar = random.choice(["uncommon", "rare", "rare"])
+                elif e_level < 60:
+                    _rar = random.choice(["rare", "rare", "epic"])
+                else:
+                    _rar = random.choice(["rare", "epic", "legendary"])
+                _gear_pool = [n for n, d in {**WEAPONS, **ARMORS}.items() if d.get("rarity") == _rar]
+                gear_drop = random.choice(_gear_pool) if _gear_pool else None
+            if gear_drop:
+                inv = sjl(p.get("inventory"), []); inv.append(gear_drop); p["inventory"] = json.dumps(inv)
             if loot_item:
-                inv = sjl(p.get("inventory"), [])
-                inv.append(loot_item); p["inventory"] = json.dumps(inv)
+                inv = sjl(p.get("inventory"), []); inv.append(loot_item); p["inventory"] = json.dumps(inv)
             loot_line = ""
             if gear_drop: loot_line += f"\n🎁 Found: *{gear_drop}*"
             if loot_item: loot_line += f"\n📦 Loot: *{loot_item}*"
@@ -16072,11 +16164,101 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "expires": (datetime.now() + timedelta(minutes=5)).isoformat(),
     }
     wager_str = f" for *{wager}g*" if wager > 0 else " (no wager)"
+    arena_challenge_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Accept", callback_data=f"arena_acc_{user.id}_{du.id}"),
+        InlineKeyboardButton("❌ Decline", callback_data=f"arena_dec_{user.id}_{du.id}"),
+    ]])
     await send_group(update,
         f"🎪 *{user.first_name}* challenges *{du.first_name}* to an Arena fight{wager_str}!\n\n"
-        f"_{du.first_name}: type `/arena accept` to begin._\n"
-        f"_HP changes are arena-only  -  your real HP is safe._\n\n"
-        f"Challenge expires in 5 minutes.", permanent=False, delay=300)
+        f"_HP changes are arena-only — your real HP is safe._\n"
+        f"_Challenge expires in 5 minutes._",
+        permanent=False, delay=300, reply_markup=arena_challenge_markup)
+
+
+async def arena_respond_callback(update, context):
+    """Handle arena challenge Accept/Decline button presses."""
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")  # arena_acc_{p1_uid}_{p2_uid} or arena_dec_...
+    if len(parts) < 4:
+        return
+    action   = parts[1]  # 'acc' or 'dec'
+    try:
+        p1_uid = int(parts[2]); p2_uid = int(parts[3])
+    except (ValueError, IndexError):
+        return
+    if query.from_user.id != p2_uid:
+        await query.answer("This challenge isn't for you!", show_alert=True); return
+
+    # Find the arena by scanning active_arenas
+    arena = None; arena_cid = None
+    for cid, a in list(active_arenas.items()):
+        if a["p1_id"] == p1_uid and a["p2_id"] == p2_uid:
+            arena = a; arena_cid = cid; break
+    if not arena or arena["status"] != "waiting":
+        try: await query.edit_message_text("❌ Challenge no longer available.")
+        except Exception: pass
+        return
+
+    if action == "dec":
+        active_arenas.pop(arena_cid, None)
+        try: await query.edit_message_text("❌ Arena challenge declined.")
+        except Exception: pass
+        return
+
+    # Accept
+    if datetime.now() > datetime.fromisoformat(arena["expires"]):
+        active_arenas.pop(arena_cid, None)
+        try: await query.edit_message_text("⏰ Challenge has expired.")
+        except Exception: pass
+        return
+
+    p1 = get_player(p1_uid); p2 = get_player(p2_uid)
+    if not p1 or not p2:
+        active_arenas.pop(arena_cid, None)
+        try:
+            await query.edit_message_text("Player not found.")
+        except Exception:
+            pass
+        return
+
+    wager = arena["wager"]
+    if wager > 0 and p2["gold"] < wager:
+        try:
+            await query.edit_message_text(f"❌ Need {wager}g. Have {p2['gold']}g.")
+        except Exception:
+            pass
+        return
+    if wager > 0 and p1["gold"] < wager:
+        active_arenas.pop(arena_cid, None)
+        try:
+            await query.edit_message_text("❌ Challenger can no longer afford the wager.")
+        except Exception:
+            pass
+        return
+    if wager > 0:
+        p1["gold"] -= wager; p2["gold"] -= wager
+        save_player(p1); save_player(p2)
+
+    arena["p1"] = p1; arena["p2"] = p2
+    arena["p1_hp"] = p1["max_hp"]; arena["p2_hp"] = p2["max_hp"]
+    arena["p1_max"] = p1["max_hp"]; arena["p2_max"] = p2["max_hp"]
+    arena["p1_items"] = dict(Counter(sjl(p1.get("inventory"), [])))
+    arena["p2_items"] = dict(Counter(sjl(p2.get("inventory"), [])))
+    arena["turn"] = p1_uid; arena["round"] = 1
+    arena["status"] = "active"; arena["log"] = ["⚔️ Arena battle begins!"]
+    card_text = build_arena_card(arena)
+    markup    = build_arena_markup(arena, arena_cid)
+    try:
+        msg = await context.bot.send_message(
+            chat_id=arena_cid, text=card_text[:4096], parse_mode="Markdown",
+            reply_markup=markup)
+        arena["msg_id"] = msg.message_id
+    except Exception:
+        arena["msg_id"] = None
+    try: await query.edit_message_text("⚔️ Arena battle started!")
+    except Exception: pass
+
 
 async def arena_act_callback(update, context):
     """Handle arena button presses: attack, skill, flee."""
@@ -18747,21 +18929,41 @@ async def greet_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def fight_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id; user = update.effective_user
     event = active_events.get(chat_id)
-    if not event or event["key"] != "bandit": return
+    if not event or event["key"] not in ("bandit", "rival"):
+        await send_group(update, "⚔️ Nothing to fight here right now.", delay=5)
+        return
     p = get_player(user.id); s = get_or_create_shadow(user.id, user.first_name)
-    dmg = random.randint(10,30)
-    event["enemy_hp"] = event.get("enemy_hp",150) - dmg
-    event.setdefault("fighters",[])
+
+    # ── Rival event: first player to /fight claims it ────────────────────────
+    if event["key"] == "rival":
+        active_events.pop(chat_id, None)
+        gold_prize = random.randint(80, 200)
+        exp_prize  = random.randint(200, 450)
+        lines = [f"⚔️ *{user.first_name}* steps up first and claims the table!"]
+        if p and not is_defeated(p):
+            p["gold"] = p.get("gold", 0) + gold_prize
+            add_exp(p, exp_prize); save_player(p)
+            lines.append(f"💰 +{gold_prize} gold | ✨ +{exp_prize} EXP")
+        elif s:
+            add_shadow_exp(s, exp_prize); save_shadow(s)
+            lines.append(f"✨ +{exp_prize} EXP")
+        await send_group(update, "\n".join(lines), delay=20)
+        return
+
+    # ── Bandit event ──────────────────────────────────────────────────────────
+    dmg = random.randint(10, 30)
+    event["enemy_hp"] = event.get("enemy_hp", 150) - dmg
+    event.setdefault("fighters", [])
     if user.id not in event["fighters"]: event["fighters"].append(user.id)
     lines = [f"🗡️ *{user.first_name}* strikes the bandit for {dmg}! "
-             f"(HP: {max(0,event['enemy_hp'])}/150)"]
+             f"(HP: {max(0, event['enemy_hp'])}/150)"]
     if event["enemy_hp"] <= 0:
         active_events.pop(chat_id, None)
         lines.append("💀 *Bandit defeated!* +250 EXP each!")
         for fid in event["fighters"]:
             fp = get_player(fid); fs = get_shadow(fid)
             if fp and not is_defeated(fp):
-                loot = roll_loot_table(event.get("loot_table",[]))
+                loot = roll_loot_table(event.get("loot_table", []))
                 if loot: add_item(fp, loot)
                 lmsgs, leveled = add_exp(fp, 250); save_player(fp)
                 if loot: lines.append(f"🎒 *{fp['username']}* found *{loot}*!")
@@ -19840,6 +20042,7 @@ def main():
     app.add_handler(CallbackQueryHandler(guildinfo_members_callback,pattern="^ginfoM_"))
     app.add_handler(CallbackQueryHandler(guildinfo_list_callback,   pattern="^ginfoList$"))
     app.add_handler(CallbackQueryHandler(bounty_amount_callback,    pattern="^bountyamt_"))
+    app.add_handler(CallbackQueryHandler(trade_cat_callback,        pattern="^trdcat_"))
     app.add_handler(CallbackQueryHandler(trade_item_callback,       pattern="^trdi_"))
     app.add_handler(CallbackQueryHandler(trade_price_callback,      pattern="^trdp_"))
     app.add_handler(CallbackQueryHandler(trade_back_callback,       pattern="^trdback_"))
@@ -19854,6 +20057,7 @@ def main():
     app.add_handler(CallbackQueryHandler(enchant_slot_callback, pattern="^enchant_"))
     app.add_handler(CallbackQueryHandler(allocate_callback,     pattern="^alloc_"))
     # New inline button callbacks
+    app.add_handler(CallbackQueryHandler(arena_respond_callback, pattern="^arena_acc_|^arena_dec_"))
     app.add_handler(CallbackQueryHandler(arena_act_callback,     pattern="^arena_act_"))
     app.add_handler(CallbackQueryHandler(raid_atk_callback,      pattern="^raid_atk_"))
     app.add_handler(CallbackQueryHandler(duel_response_callback, pattern="^duel_(acc|dec)_"))
