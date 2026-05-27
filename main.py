@@ -3,7 +3,7 @@
 The World of 8Ball  -  RPG Bot v13
 """
 
-import os, json, random, logging, sqlite3, re, asyncio
+import os, json, random, logging, sqlite3, re, asyncio, time
 from datetime import datetime, timedelta
 from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -11187,7 +11187,7 @@ async def _alliance_main_menu(update_or_none, p, query=None):
         leader_p = get_player(a.get("leader_id"))
         leader_name = leader_p.get("username","Unknown") if leader_p else "Unknown"
         role = "👑 *Order Leader*" if is_leader else "⚔️ *Order Member*"
-        text = (f"⚔️ *{a['name']}*\n\n{role}\nMembers: {n}/5  •  Pool: {pool:,}\nLeader: @{leader_name}")
+        text = (f"⚔️ *{a['name']}*\n\n{role}\nMembers: {n}/30  •  Pool: {pool:,}\nLeader: @{leader_name}")
         kb = [[InlineKeyboardButton("👥 Members", callback_data="allianceM"),
                InlineKeyboardButton("🎁 Perks", callback_data="allianceP")]]
         if is_leader:
@@ -11198,7 +11198,7 @@ async def _alliance_main_menu(update_or_none, p, query=None):
         kb.append([InlineKeyboardButton("❌ Close", callback_data="allianceX")])
     else:
         text = ("⚔️ *Secret Orders*\n\nYou are not bound to any order.\n\n"
-                "_Orders are private alliances of up to 5 members. Members share an influence pool and unlock perks together._")
+                "_Orders are cross-guild alliances of up to 30 members. They span multiple guilds, share an influence pool, and unlock perks together._")
         kb = [[InlineKeyboardButton("📜 Found an Order", callback_data="allianceFnd"),
                InlineKeyboardButton("🔍 Browse Orders", callback_data="allianceBrw")],
               [InlineKeyboardButton("❌ Close", callback_data="allianceX")]]
@@ -11277,8 +11277,8 @@ async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = ["🔍 *Secret Orders*\n"]; kb_rows = []
         for al in alliances[:8]:
             mbs = sjl(al.get("members"), []); pool = al.get("influence_pool", 0); n2 = len(mbs)
-            lines.append(f"⚔️ *{al['name']}*  —  {n2}/5  •  Pool: {pool:,}")
-            if n2 < 5 and al["id"] != (aid or ""):
+            lines.append(f"⚔️ *{al['name']}*  —  {n2}/30  •  Pool: {pool:,}")
+            if n2 < 30 and al["id"] != (aid or ""):
                 kb_rows.append([InlineKeyboardButton(f"Join {al['name']}", callback_data=f"allianceJn_{al['id']}")])
         kb_rows.append([InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
                         InlineKeyboardButton("❌ Close", callback_data="allianceX")])
@@ -11290,7 +11290,7 @@ async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ta = get_alliance(join_aid)
         if not ta: await query.answer("Order not found.", show_alert=True); return
         mbs = sjl(ta.get("members"), [])
-        if len(mbs) >= 5: await query.answer("Order is full.", show_alert=True); return
+        if len(mbs) >= 30: await query.answer("Order is full.", show_alert=True); return
         mbs.append(p["user_id"]); ta["members"] = json.dumps(mbs); save_alliance(ta)
         p["alliance_id"] = join_aid; save_player(p)
         await query.answer(f"You joined {ta['name']}!", show_alert=True)
@@ -11323,12 +11323,42 @@ async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "allianceInv":
         if not a or a.get("leader_id") != p["user_id"]: await query.answer("Leaders only.", show_alert=True); return
-        if len(sjl(a.get("members"), [])) >= 5: await query.answer("Order is full.", show_alert=True); return
-        context.user_data["awaiting_alliance_invite"] = True
-        await query.edit_message_text(f"📨 *Invite to {a['name']}*\n\nReply with the @username to invite.\n_(They must use /alliance to confirm.)_",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
-                InlineKeyboardButton("❌ Close", callback_data="allianceX")]])); return
+        mbs_inv = sjl(a.get("members"), [])
+        if len(mbs_inv) >= 30: await query.answer("Order is full (30/30).", show_alert=True); return
+        _iconn = sqlite3.connect(DB_PATH); _ic = _iconn.cursor()
+        _ic.execute("SELECT user_id, username FROM players WHERE level >= 1 ORDER BY level DESC LIMIT 40")
+        _all_pl = [{"id": r[0], "username": r[1]} for r in _ic.fetchall()]; _iconn.close()
+        candidates = [pl for pl in _all_pl if pl["id"] not in mbs_inv and pl["id"] != p["user_id"]][:20]
+        if not candidates:
+            await query.answer("No eligible players to invite.", show_alert=True); return
+        inv_kb = []
+        for pl in candidates:
+            inv_kb.append([InlineKeyboardButton(f"+ @{pl['username']}", callback_data=f"allianceAdd_{pl['id']}")])
+        inv_kb.append([InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
+                       InlineKeyboardButton("❌ Close", callback_data="allianceX")])
+        await query.edit_message_text(
+            f"📨 *Invite to {a['name']}* ({len(mbs_inv)}/30)\n\nSelect a player to add to the order:",
+            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inv_kb)); return
+
+    if data.startswith("allianceAdd_"):
+        if not a or a.get("leader_id") != p["user_id"]: await query.answer("Leaders only.", show_alert=True); return
+        mbs_add = sjl(a.get("members"), [])
+        if len(mbs_add) >= 30: await query.answer("Order is full.", show_alert=True); return
+        try: invite_uid = int(data[len("allianceAdd_"):])
+        except ValueError: await query.answer("Invalid player.", show_alert=True); return
+        if invite_uid in mbs_add: await query.answer("Already a member.", show_alert=True); return
+        ip = get_player(invite_uid)
+        if not ip: await query.answer("Player not found.", show_alert=True); return
+        if ip.get("alliance_id"): await query.answer(f"@{ip['username']} is already in another order.", show_alert=True); return
+        mbs_add.append(invite_uid); a["members"] = json.dumps(mbs_add); save_alliance(a)
+        ip["alliance_id"] = a["id"]; save_player(ip)
+        try:
+            await context.bot.send_message(invite_uid,
+                f"⚔️ You have been added to the Secret Order *{a['name']}* by @{p['username']}.\nUse /alliance to view your order.",
+                parse_mode="Markdown")
+        except: pass
+        await query.answer(f"@{ip['username']} added to {a['name']}!", show_alert=True)
+        await _alliance_main_menu(None, get_player(p["user_id"]), query=query); return
 
 # ─── Rumor System ────────────────────────────────────────────
 _RUMOR_TPL = [
@@ -18440,6 +18470,9 @@ GUIDE_PAGES = [
         "• Ask a Priest to /heal you  -  they revive for free\n"
         "• 📿 Chalkers can also /heal themselves with no reply to self-revive\n"
         "\n"
+        "*Offline Protection*\n"
+        "Players who have been inactive for 30+ minutes cannot be attacked. If someone tries, the attack is blocked and you get a DM warning. Using any command keeps you marked as active.\n"
+        "\n"
         "*Pets in Combat*\n"
         "Your active pet auto-attacks with you. If attacked, it may trigger its defensive ability (intercept, counter, poison, stun, lifesteal, or shield). Defensive abilities unlock at pet Level 10."
     ),
@@ -18480,7 +18513,8 @@ GUIDE_PAGES = [
         "\n"
         "*Economy*\n"
         "/inventory — Browse your bag by category. Tap 💰 Sell buttons to sell items directly.\n"
-        "/shop  -  Daily rotating shop (Guild members get a discount at guild level 7+)\n"
+        "/shop  -  Tabbed shop with 10 categories: 🧪 Potions, ⚔️ Weapons, 🛡️ Armor, 🔰 Shields, 💍 Accessories, 🎩 Hats, 🧤 Gloves, 👢 Boots, 🎭 Masks, 📦 Materials. Gear items show which class they're for. Guild members get a discount at guild level 7+.\n"
+        "/shoplegend  -  Legendary Craftsman's shop. Only available for 10 minutes when the rare event fires. Stocks legendary and mythic gear from all categories.\n"
         "\n"
         "*Set Bonuses*\n"
         "Equip matching legendary pieces to unlock set bonuses shown in /stats Gear page."
@@ -18536,7 +18570,8 @@ GUIDE_PAGES = [
         "/forge  -  Craft items from materials\n"
         "/claim  -  Daily streak reward (gold + materials)\n"
         "/trade @user [item] [price]  -  Trade with a player\n"
-        "/shop  -  Daily rotating shop\n"
+        "/shop  -  Daily rotating shop (tabbed by category, class labels on gear)\n"
+        "/shoplegend  -  Legendary craftsman shop (event-only, 10 min window)\n"
         "\n"
         "*Leaderboards & Info*\n"
         "/rank  -  Leaderboard\n"
@@ -18617,6 +18652,12 @@ GUIDE_PAGES = [
         "\n"
         "*Kill Streaks & Wanted System*\n"
         "Every kill without dying extends your streak (visible in /who). 5+ kills in one day marks you as 🔴 WANTED — higher risk but all eyes on you.\n"
+        "\n"
+        "*Secret Orders (Alliances)*\n"
+        "Orders are cross-guild alliances of up to 30 members. They span multiple guilds and share an influence pool.\n"
+        "/alliance  -  Create, join, or manage your order\n"
+        "Use /alliance → 'Found an Order' and type your order name. Leaders invite members via the Invite button.\n"
+        "Order perks: shared influence pool, brotherhood defense bonus, doubled secret quest EXP, and more.\n"
         "\n"
         "🎱 *Good luck on your adventure.*"
     ),
@@ -18786,10 +18827,12 @@ GUIDE_PAGES = [
     (
         "🎱 *8Ball World  -  Secret Orders* (12/12)\n"
         "\n"
-        "Orders are private alliances of up to 5 members — separate from Guilds. They operate in the shadows, share an influence pool, and unlock perks that grow over time.\n"
+        "Orders are cross-guild alliances of up to 30 members — a tier above Guilds. They span multiple guilds, operate in the shadows, share an influence pool, and unlock perks that grow over time.\n"
         "\n"
         "*Commands:*\n"
         "/alliance  -  Open the Orders menu (create, join, manage, view perks)\n"
+        "To found an order: tap 'Found an Order', then type the name in chat (2–20 chars).\n"
+        "Leaders invite members via /alliance → Invite (shows a player list with + buttons).\n"
         "/rumor  -  Anonymously spread a rumor in the group _(costs 50 influence)_\n"
         "/secrets  -  View hidden lore. More pages unlock at higher fame tiers.\n"
         "/oracle  -  Consult the Magic 8-Ball once every 20 hours\n"
@@ -20159,9 +20202,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user or user.is_bot: return
     if update.message.text and update.message.text.startswith("/"):
+        # Commands don't go through the full message flow, but still mark the player as active
+        _s_cmd = get_or_create_shadow(user.id, user.first_name)
+        _s_cmd["last_seen"] = datetime.now().isoformat()
+        save_shadow(_s_cmd)
         return
     chat_id = update.effective_chat.id
     text    = (update.message.text or "").lower()
+
+    # Alliance name creation: leader typed the name after clicking "Found an Order"
+    if context.user_data.get("awaiting_alliance_name") is not None:
+        raw_name = (update.message.text or "").strip()
+        if raw_name and not raw_name.startswith("/") and 2 <= len(raw_name) <= 20:
+            p_create = get_player(user.id)
+            if p_create and not p_create.get("alliance_id"):
+                if not get_alliance_by_name(raw_name):
+                    new_aid = f"{user.id}_{int(time.time())}"
+                    new_a = {
+                        "id": new_aid, "name": raw_name, "leader_id": user.id,
+                        "members": json.dumps([user.id]),
+                        "influence_pool": 0, "created": int(time.time()),
+                    }
+                    save_alliance(new_a)
+                    p_create["alliance_id"] = new_aid; save_player(p_create)
+                    del context.user_data["awaiting_alliance_name"]
+                    try: await update.message.reply_text(
+                        f"⚔️ *Secret Order Founded!*\n\n*{raw_name}* is now bound to the void.\nUse /alliance to manage your order.",
+                        parse_mode="Markdown")
+                    except: pass
+                    return
+                else:
+                    try: await update.message.reply_text(
+                        f"❌ An order named *{raw_name}* already exists. Try another name.",
+                        parse_mode="Markdown")
+                    except: pass
+                    return
+            else:
+                del context.user_data["awaiting_alliance_name"]
 
     # Silent influence: social greetings
     _p_msg = get_player(user.id)
