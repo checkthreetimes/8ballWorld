@@ -20201,12 +20201,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
     user = update.effective_user
     if not user or user.is_bot: return
-    if update.message.text and update.message.text.startswith("/"):
-        # Commands don't go through the full message flow, but still mark the player as active
-        _s_cmd = get_or_create_shadow(user.id, user.first_name)
-        _s_cmd["last_seen"] = datetime.now().isoformat()
-        save_shadow(_s_cmd)
-        return
     chat_id = update.effective_chat.id
     text    = (update.message.text or "").lower()
 
@@ -21725,6 +21719,15 @@ def main():
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
+    # Commands bypass handle_message entirely (filtered out above), so they never update
+    # last_seen. This group-1 handler fires for commands only and keeps the timer accurate.
+    async def _cmd_last_seen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message or not update.effective_user or update.effective_user.is_bot: return
+        u = update.effective_user
+        _s = get_or_create_shadow(u.id, u.first_name)
+        _s["last_seen"] = datetime.now().isoformat()
+        save_shadow(_s)
+    app.add_handler(MessageHandler(filters.COMMAND, _cmd_last_seen), group=1)
 
     explore_timers.clear()
     print(f"🎱 {WORLD_NAME} {CURRENT_VERSION} is running...")
