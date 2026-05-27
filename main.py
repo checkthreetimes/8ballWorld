@@ -12570,10 +12570,13 @@ def _war_page_text(page: int) -> str:
 def _war_nav_markup(current_page: int) -> InlineKeyboardMarkup:
     buttons = []
     for i, (emoji, label) in enumerate(_WAR_PAGES):
-        text = f"› {emoji} {label} ‹" if i == current_page else f"{emoji} {label}"
-        buttons.append(InlineKeyboardButton(text, callback_data=f"war_p_{i}"))
-    rows = [buttons[:3], buttons[3:]]
-    return InlineKeyboardMarkup(rows)
+        txt = f"› {emoji} {label} ‹" if i == current_page else f"{emoji} {label}"
+        buttons.append(InlineKeyboardButton(txt, callback_data=f"war_p_{i}"))
+    return InlineKeyboardMarkup([
+        buttons[:3],
+        buttons[3:],
+        [InlineKeyboardButton("✖️ Close", callback_data="war_close")],
+    ])
 
 async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -12585,11 +12588,24 @@ async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = "🔥 *8Ball World — War Board*\n\n" + _war_page_text(0)
     markup = _war_nav_markup(0)
-    await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+    bot = update.get_bot()
+    chat_id = update.effective_chat.id
+    try:
+        await update.effective_message.delete()
+    except Exception:
+        pass
+    msg = await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown", reply_markup=markup)
+    asyncio.create_task(_auto_delete(bot, chat_id, msg.message_id, 30))
 
 async def war_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    if query.data == "war_close":
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        return
     try:
         page = int(query.data.split("_")[-1])
     except Exception:
@@ -20130,7 +20146,7 @@ def main():
     app.add_handler(CallbackQueryHandler(stats_callback,        pattern="^stats_p_"))
     app.add_handler(CallbackQueryHandler(guildjoin_callback,       pattern="^guildjoin_"))
     app.add_handler(CallbackQueryHandler(guildwar_declare_callback, pattern="^gwdeclare_"))
-    app.add_handler(CallbackQueryHandler(war_page_callback,        pattern="^war_p_"))
+    app.add_handler(CallbackQueryHandler(war_page_callback,        pattern="^war_p_|^war_close$"))
     app.add_handler(CallbackQueryHandler(guildkick_callback,        pattern="^gkick_"))
     app.add_handler(CallbackQueryHandler(guildinfo_view_callback,   pattern="^ginfo_"))
     app.add_handler(CallbackQueryHandler(guildinfo_members_callback,pattern="^ginfoM_"))
