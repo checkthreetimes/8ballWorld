@@ -224,7 +224,20 @@ def exp_for_level(level):
     elif level <= 90: return level * 120000
     else:             return level * 250000
 
-def max_hp_for_level(level): return 100 + (level - 1) * 15
+def max_hp_for_level(level): return 250 + (level - 1) * 50
+
+# HP multiplier per class line — warrior = tank, mage = glass cannon
+_CLASS_LINE_HP_MULT = {
+    "warrior":        1.30,
+    "valkyrie":       1.20,
+    "priest":         1.10,
+    "thief":          1.00,
+    "archer":         1.00,
+    "phantom_dancer": 0.95,
+    "botanist":       0.90,
+    "mage":           0.85,
+    "enchantress":    0.85,
+}
 
 RANK_TIERS = [
     {"name":"👑 Legends",         "emoji":"👑","min":75,"max":100},
@@ -2996,12 +3009,12 @@ def _mon_level_stats(base_hp, base_atk, level):
     atk = int(base_atk * (1 + 0.05 * (level - 1)))
     return hp, atk
 
-def _npc_level_stats(base_hp, base_dmg, level, player_cp=0):
-    hp  = int(base_hp  * (1 + 0.12 * (level - 1)))
-    atk = int(base_dmg * (1 + 0.10 * (level - 1)))
-    if player_cp > 0:
-        hp  = max(hp,  int(player_cp * 1.5))
-        atk = max(atk, int(player_cp * 0.12))
+def _npc_level_stats(base_hp, base_dmg, level, player_max_hp=0):
+    hp  = int(base_hp  * (1 + 0.08 * (level - 1)))
+    atk = int(base_dmg * (1 + 0.08 * (level - 1)))
+    if player_max_hp > 0:
+        hp  = min(hp,  int(player_max_hp * 1.5))   # never more than 1.5× player's max HP
+        atk = max(atk, int(player_max_hp * 0.08))  # always hurts: ~8% of player max HP raw
     return hp, atk
 
 def _get_monster_squad(uid):
@@ -4124,6 +4137,10 @@ def get_stat(p, stat):
 
 def calc_max_hp(p):
     base   = max_hp_for_level(p["level"])
+    # Apply class-line HP multiplier (warrior tankiest, mage squishiest)
+    cls_line = CLASS_TREE.get(p.get("class_id") or "", {}).get("line", "")
+    mult = _CLASS_LINE_HP_MULT.get(cls_line, 1.0)
+    base = int(base * mult)
     acc_hp = get_accessory_bonus(p, "hp")
     enc_hp = get_enchant_bonus(p, "max_hp")
     temp   = safe_int(p.get("temp_hp_bonus")) if _ts_active(p, "temp_hp_until") else 0
@@ -5495,6 +5512,7 @@ def init_db():
         ("players", "revenge_expires",  "TEXT DEFAULT NULL"),
         ("players", "kills_today",      "INTEGER DEFAULT 0"),
         ("players", "kills_today_date", "TEXT DEFAULT NULL"),
+        ("players", "is_wanted",        "INTEGER DEFAULT 0"),
         ("players", "last_claim",       "TEXT DEFAULT NULL"),
         ("players", "claim_streak",     "INTEGER DEFAULT 0"),
         ("players", "pvp_history",      "TEXT DEFAULT '[]'"),
@@ -6073,7 +6091,7 @@ def save_player(p):
         "item_reinforce_data","daily_objectives","daily_obj_date",
         "total_reinforces","total_ascensions","total_obj_completed",
         "kill_streak","max_kill_streak","revenge_target","revenge_expires",
-        "kills_today","kills_today_date","last_claim","claim_streak","pvp_history",
+        "kills_today","kills_today_date","is_wanted","last_claim","claim_streak","pvp_history",
         "married_to_id","married_to_name","married_at",
         "marriages",
         "def_reflect_until",
@@ -6864,6 +6882,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
             d["last_defeated_by"] = f"{a['username']} (Killshot)"
             d["kill_streak"] = 0
+            d["is_wanted"]   = 0
             d["revenge_target"] = au.id
             d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
             asyncio.create_task(_notify_defeat(update.get_bot(), d, a['username'] + " (Killshot)"))
@@ -6879,6 +6898,8 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if a.get("kills_today_date") != today_str:
                 a["kills_today"] = 0; a["kills_today_date"] = today_str
             a["kills_today"] = safe_int(a.get("kills_today")) + 1
+            if a["kills_today"] >= 5:
+                a["is_wanted"] = 1
             hist_ks = sjl(d.get("pvp_history"), [])
             hist_ks.insert(0, {"attacker": a["username"], "dmg": "KO",
                                "ts": datetime.now().strftime("%m/%d %H:%M")})
@@ -7152,6 +7173,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
         d["last_defeated_by"] = f"{a['username']} (PvP)"
         d["kill_streak"] = 0
+        d["is_wanted"]   = 0
         d["revenge_target"] = au.id
         d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
         exp_loss = round(d.get("exp",0) * 0.10)
@@ -7167,6 +7189,8 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if a.get("kills_today_date") != today_str:
             a["kills_today"] = 0; a["kills_today_date"] = today_str
         a["kills_today"] = safe_int(a.get("kills_today")) + 1
+        if a["kills_today"] >= 5:
+            a["is_wanted"] = 1
         # PvP history for victim
         hist = sjl(d.get("pvp_history"), [])
         hist.insert(0, {"attacker": a["username"], "dmg": "KO",
@@ -7487,6 +7511,11 @@ def _build_stats_pages(p, viewing_name=None):
         f"💰 Gold: {p['gold']}",
         f"⚔️ Wins: {p['wins']}   Losses: {p.get('losses',0)}",
     ]
+    _ks = safe_int(p.get("kill_streak"))
+    if _ks >= 3:
+        page1_lines.append(f"🔥 Kill Streak: *{_ks}*  (Best: {safe_int(p.get('max_kill_streak'))})")
+    if p.get("is_wanted"):
+        page1_lines.append("🔴 *WANTED* — take them down for extra rewards!")
     if defeat_line:
         page1_lines.append(defeat_line)
 
@@ -7624,8 +7653,12 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     real_max = calc_max_hp(p)
     if real_max != p["max_hp"] and not viewing_other:
+        hp_delta = real_max - p["max_hp"]
         p["max_hp"] = real_max
-        if p["hp"] > real_max: p["hp"] = real_max
+        if hp_delta > 0:
+            p["hp"] = min(real_max, p["hp"] + hp_delta)
+        elif p["hp"] > real_max:
+            p["hp"] = real_max
         save_player(p)
 
     caller_name = user.first_name if not viewing_other else None
@@ -12128,7 +12161,7 @@ async def _execute_skill(update, context, p, sk):
     elif stype == "bounty":
         # Railrunner: Execution Order — 2000g bounty + Marked debuff (+20% dmg taken 30 min)
         dmg = round(base * 0.6)
-        expires = (datetime.now() + timedelta(hours=48)).isoformat()
+        expires = "2099-12-31T23:59:59"
         placed = False
         try:
             bconn = sqlite3.connect(DB_PATH); bc2 = bconn.cursor()
@@ -12147,7 +12180,7 @@ async def _execute_skill(update, context, p, sk):
             set_status(d, "marked_until", 1800)  # 30 min +20% dmg taken
             lines.append(f"🎯 *Execution Order!* A *2,000g bounty* placed on *{d['username']}*!\n"
                          f"🎯 *Marked for Death!* {d['username']} takes +20% damage for 30 minutes!\n"
-                         f"Expires in 48h. First to defeat them collects.")
+                         f"Stays active until they are defeated.")
             asyncio.create_task(context.bot.send_message(
                 chat_id=d["user_id"],
                 text=f"🎯 *{p['username']}* (Bounty Hunter) placed a *2,000g bounty* on you and marked you!\n"
@@ -12357,7 +12390,7 @@ async def who_cmd(update, context):
     cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
     c.execute("""SELECT s.user_id, s.username, s.level, s.last_seen,
                         p.class_id, p.hp, p.max_hp, p.kill_streak, p.kills_today,
-                        p.kills_today_date,
+                        p.kills_today_date, p.is_wanted,
                         p.invincible_until, p.defeated_until
                  FROM shadow_profiles s
                  LEFT JOIN players p ON p.user_id = s.user_id
@@ -12409,9 +12442,10 @@ async def who_cmd(update, context):
         try:
             kills_today = safe_int(row["kills_today"]) if row["kills_today_date"] == today_str else 0
             ks          = safe_int(row["kill_streak"])
+            is_wanted   = safe_int(row["is_wanted"])
         except (IndexError, KeyError):
-            kills_today = 0; ks = 0
-        wanted_tag  = " 🔴 WANTED" if kills_today >= 5 else ""
+            kills_today = 0; ks = 0; is_wanted = 0
+        wanted_tag  = " 🔴 WANTED" if is_wanted else ""
         streak_tag  = f" 🔥×{ks}" if ks >= 3 else ""
         bounty_tag  = " 💰" if row["user_id"] in bounty_ids else ""
         lines.append(f"{hp_icon} *{row['username']}* - Lv {row['level']} {cls}{streak_tag}{wanted_tag}{bounty_tag}")
@@ -12431,8 +12465,117 @@ async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"⚔️ *{entry.get('attacker','?')}* — {dmg_str}  _{entry.get('ts','')}_")
     await send_group(update, "\n".join(lines), delay=20)
 
+_WAR_PAGES = [
+    ("🎯", "Bounties"),
+    ("⚔️", "Guild Wars"),
+    ("🏆", "Hall of Fame"),
+    ("💀", "Today's Killers"),
+    ("☠️", "All-Time Board"),
+]
+
+def _war_page_text(page: int) -> str:
+    now_iso = datetime.now().isoformat()
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    try:
+        conn_w = sqlite3.connect(DB_PATH); conn_w.row_factory = sqlite3.Row; cw = conn_w.cursor()
+
+        if page == 0:
+            lines = ["🎯 *Active Bounties*\n"]
+            cw.execute("""SELECT b.reward, b.expires_at,
+                                 p.username  AS target_name,
+                                 p2.username AS placer_name
+                          FROM bounties b
+                          LEFT JOIN players p  ON b.target_id  = p.user_id
+                          LEFT JOIN players p2 ON b.placer_id  = p2.user_id
+                          WHERE b.claimed_by IS NULL AND b.expires_at > ?
+                          ORDER BY b.reward DESC LIMIT 20""", (now_iso,))
+            brows = cw.fetchall()
+            if brows:
+                for i, b in enumerate(brows, 1):
+                    lines.append(f"{i}. 💰 *{b['target_name'] or 'Unknown'}* — {b['reward']}g  _(by {b['placer_name'] or 'Unknown'})_")
+            else:
+                lines.append("_No active bounties right now._")
+
+        elif page == 1:
+            lines = ["⚔️ *Active Guild Wars*\n"]
+            cw.execute("""SELECT gw.expires_at, gw.kills1, gw.kills2,
+                                 g1.name AS name1, g2.name AS name2
+                          FROM guild_wars gw
+                          LEFT JOIN guilds g1 ON g1.guild_id = gw.guild1_id
+                          LEFT JOIN guilds g2 ON g2.guild_id = gw.guild2_id
+                          WHERE gw.active=1 AND gw.expires_at > ?""", (now_iso,))
+            wars = cw.fetchall()
+            if wars:
+                for wrow in wars:
+                    tl = time_until(wrow["expires_at"]) or "ending soon"
+                    lines.append(f"🏰 *{wrow['name1']}* vs *{wrow['name2']}*")
+                    lines.append(f"   Score: {wrow['kills1']} – {wrow['kills2']}  |  {tl} left\n")
+            else:
+                lines.append("_No guild wars currently active._")
+
+        elif page == 2:
+            lines = ["🏆 *Hall of Fame — Guild War Records*\n"]
+            cw.execute("SELECT name, war_wins FROM guilds WHERE war_wins > 0 ORDER BY war_wins DESC LIMIT 15")
+            hall = cw.fetchall()
+            if hall:
+                medals = ["🥇","🥈","🥉"]
+                for i, h in enumerate(hall):
+                    medal = medals[i] if i < 3 else f"{i+1}."
+                    lines.append(f"{medal} *{h['name']}* — {h['war_wins']} war win{'s' if h['war_wins'] != 1 else ''}")
+            else:
+                lines.append("_No guild war records yet._")
+
+        elif page == 3:
+            lines = [f"💀 *Today's Top Killers* _{today_str}_\n"]
+            cw.execute("""SELECT username, kills_today, kill_streak, is_wanted
+                          FROM players
+                          WHERE kills_today_date=? AND kills_today>0
+                          ORDER BY kills_today DESC LIMIT 15""", (today_str,))
+            killers = cw.fetchall()
+            if killers:
+                medals = ["🥇","🥈","🥉"]
+                for i, k in enumerate(killers):
+                    medal = medals[i] if i < 3 else f"{i+1}."
+                    wanted = " 🔴 WANTED" if safe_int(k["is_wanted"]) else ""
+                    ks = safe_int(k["kill_streak"])
+                    streak_txt = f"  🔥{ks}" if ks >= 3 else ""
+                    lines.append(f"{medal} *{k['username']}* — {k['kills_today']} kills{streak_txt}{wanted}")
+            else:
+                lines.append("_No kills recorded today._")
+
+        elif page == 4:
+            lines = ["☠️ *All-Time Kill Board*\n"]
+            cw.execute("""SELECT username, wins, max_kill_streak
+                          FROM players WHERE wins > 0
+                          ORDER BY wins DESC LIMIT 15""")
+            board = cw.fetchall()
+            if board:
+                medals = ["🥇","🥈","🥉"]
+                for i, r in enumerate(board):
+                    medal = medals[i] if i < 3 else f"{i+1}."
+                    mks = safe_int(r["max_kill_streak"])
+                    streak_txt = f"  (best streak: {mks})" if mks >= 3 else ""
+                    lines.append(f"{medal} *{r['username']}* — {r['wins']} kills{streak_txt}")
+            else:
+                lines.append("_No kills recorded yet._")
+        else:
+            lines = ["⚠️ Invalid page."]
+
+        conn_w.close()
+    except Exception as e:
+        lines = [f"⚠️ _War board error: {e}_"]
+
+    return "\n".join(lines)
+
+def _war_nav_markup(current_page: int) -> InlineKeyboardMarkup:
+    buttons = []
+    for i, (emoji, label) in enumerate(_WAR_PAGES):
+        text = f"› {emoji} {label} ‹" if i == current_page else f"{emoji} {label}"
+        buttons.append(InlineKeyboardButton(text, callback_data=f"war_p_{i}"))
+    rows = [buttons[:3], buttons[3:]]
+    return InlineKeyboardMarkup(rows)
+
 async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Resolve any expired wars first
     try:
         resolved = await resolve_expired_wars()
         for r in resolved:
@@ -12440,71 +12583,23 @@ async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    lines = ["🔥 *8Ball World — War Board*\n"]
+    text = "🔥 *8Ball World — War Board*\n\n" + _war_page_text(0)
+    markup = _war_nav_markup(0)
+    await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
 
+async def war_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     try:
-        conn_w = sqlite3.connect(DB_PATH); conn_w.row_factory = sqlite3.Row; cw = conn_w.cursor()
-
-        # Active bounties
-        cw.execute("""SELECT b.reward, p.username as target_name, p2.username as placer_name
-                      FROM bounties b
-                      LEFT JOIN players p  ON b.target_id  = p.user_id
-                      LEFT JOIN players p2 ON b.placer_id  = p2.user_id
-                      WHERE b.claimed_by IS NULL AND b.expires_at > ?
-                      ORDER BY b.reward DESC LIMIT 5""", (datetime.now().isoformat(),))
-        brows = cw.fetchall()
-        if brows:
-            lines.append("🎯 *Active Bounties:*")
-            for b in brows:
-                lines.append(f"💰 *{b['target_name'] or 'Unknown'}* — {b['reward']}g (by {b['placer_name'] or 'Unknown'})")
-        else:
-            lines.append("🎯 *Active Bounties:* None")
-
-        # Active guild wars
-        cw.execute("""SELECT gw.guild1_id, gw.guild2_id, gw.expires_at, gw.kills1, gw.kills2,
-                             g1.name as name1, g2.name as name2
-                      FROM guild_wars gw
-                      LEFT JOIN guilds g1 ON g1.guild_id = gw.guild1_id
-                      LEFT JOIN guilds g2 ON g2.guild_id = gw.guild2_id
-                      WHERE gw.active=1 AND gw.expires_at > ?""", (datetime.now().isoformat(),))
-        wars = cw.fetchall()
-        lines.append("")
-        if wars:
-            lines.append("⚔️ *Active Guild Wars:*")
-            for wrow in wars:
-                time_left = time_until(wrow["expires_at"]) or "ending soon"
-                lines.append(f"🏰 *{wrow['name1']}* vs *{wrow['name2']}*  ({wrow['kills1']} – {wrow['kills2']}) — {time_left} left")
-        else:
-            lines.append("⚔️ *Guild Wars:* None active")
-
-        # Hall win records
-        cw.execute("SELECT name, war_wins FROM guilds WHERE war_wins > 0 ORDER BY war_wins DESC LIMIT 5")
-        hall_champs = cw.fetchall()
-        if hall_champs:
-            lines.append("")
-            lines.append("🏆 *Hall War Records:*")
-            for h in hall_champs:
-                lines.append(f"🏰 *{h['name']}* — {h['war_wins']} war win{'s' if h['war_wins'] != 1 else ''}")
-
-        # Top killers today
-        cw.execute("""SELECT username, kills_today, kill_streak FROM players
-                      WHERE kills_today_date=? AND kills_today>0
-                      ORDER BY kills_today DESC LIMIT 5""",
-                   (datetime.now().strftime("%Y-%m-%d"),))
-        killers = cw.fetchall()
-        conn_w.close()
-        lines.append("")
-        if killers:
-            lines.append("💀 *Today's Top Killers:*")
-            for k in killers:
-                wanted = " 🔴 WANTED" if safe_int(k["kills_today"]) >= 5 else ""
-                lines.append(f"⚔️ *{k['username']}* — {k['kills_today']} kills today, {k['kill_streak']} streak{wanted}")
-        else:
-            lines.append("💀 *Today's Top Killers:* —")
-    except Exception as _war_err:
-        lines.append(f"\n⚠️ _War board partially unavailable_")
-
-    await send_group(update, "\n".join(lines), delay=30)
+        page = int(query.data.split("_")[-1])
+    except Exception:
+        return
+    text = "🔥 *8Ball World — War Board*\n\n" + _war_page_text(page)
+    markup = _war_nav_markup(page)
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
 
 async def claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -13531,9 +13626,8 @@ async def bounty_amount_callback(update: Update, context: ContextTypes.DEFAULT_T
             f"⚠️ You've hit your active contract limit ({max_contracts}).",
             parse_mode="Markdown"); return
 
-    expires = (datetime.now() + timedelta(hours=24)).isoformat()
     bc.execute("INSERT INTO bounties (placer_id,target_id,reward,expires_at) VALUES (?,?,?,?)",
-               (placer_uid, target_uid, amount, expires))
+               (placer_uid, target_uid, amount, "2099-12-31T23:59:59"))
     bconn.commit(); bconn.close()
 
     if not no_fee:
@@ -13546,7 +13640,7 @@ async def bounty_amount_callback(update: Update, context: ContextTypes.DEFAULT_T
     await query.edit_message_text(
         f"🎯 *BOUNTY PLACED!*\n\n"
         f"Target: *{target['username']}*\n"
-        f"Reward: *{amount:,}g* — expires in 24 hours\n{cost_line}\n\n"
+        f"Reward: *{amount:,}g*\n{cost_line}\n\n"
         f"_First to defeat them collects it. Others can stack more bounties on top!_",
         parse_mode="Markdown")
     try:
@@ -14319,9 +14413,8 @@ async def deposit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _start_encounter_battle(query, uid, p):
     npc = _pick_random_npc(p.get("level", 1))
     n_level = _enc_npc_level(npc, p.get("level", 1))
-    player_cp = calc_combat_power(p)
-    n_hp, n_atk = _npc_level_stats(npc[4], npc[5], n_level, player_cp)
     p_mhp = safe_int(p.get("max_hp")) or calc_max_hp(p)
+    n_hp, n_atk = _npc_level_stats(npc[4], npc[5], n_level, p_mhp)
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     cls_name = CLASS_TREE.get(npc[1], {}).get("name", npc[1].replace("_"," ").title())
     enc = {
@@ -20037,6 +20130,7 @@ def main():
     app.add_handler(CallbackQueryHandler(stats_callback,        pattern="^stats_p_"))
     app.add_handler(CallbackQueryHandler(guildjoin_callback,       pattern="^guildjoin_"))
     app.add_handler(CallbackQueryHandler(guildwar_declare_callback, pattern="^gwdeclare_"))
+    app.add_handler(CallbackQueryHandler(war_page_callback,        pattern="^war_p_"))
     app.add_handler(CallbackQueryHandler(guildkick_callback,        pattern="^gkick_"))
     app.add_handler(CallbackQueryHandler(guildinfo_view_callback,   pattern="^ginfo_"))
     app.add_handler(CallbackQueryHandler(guildinfo_members_callback,pattern="^ginfoM_"))
