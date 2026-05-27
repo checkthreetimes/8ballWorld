@@ -6744,7 +6744,7 @@ def get_recent_attackers(p):
 # combat_cards removed in v14  -  using inline send+auto-delete instead
 
 # ── IDLE REWARDS ──────────────────────────────────────────────────────────────
-async def check_idle_reward(user, s, p, bot, chat_id):
+async def check_idle_reward(user, s, p, bot, chat_id, announce_group=True):
     last_seen = s.get("last_seen")
     if not last_seen: return
     try:
@@ -6805,7 +6805,8 @@ async def check_idle_reward(user, s, p, bot, chat_id):
                 f"📈 *{s['username']}* reached *Level {s['level']}*!",
                 delay=60))
 
-    await announce(bot, chat_id, chat_msg, permanent=False, delay=30)
+    if announce_group:
+        await announce(bot, chat_id, chat_msg, permanent=False, delay=30)
     try:
         await bot.send_message(chat_id=user.id, text=dm_msg, parse_mode="Markdown")
     except Exception:
@@ -20028,13 +20029,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s = get_or_create_shadow(user.id, user.first_name)
     s["username"] = user.first_name
 
-    # Idle reward check
-    p = get_player(user.id) if s.get("ascended") else None
-    await check_idle_reward(user, s, p, context.bot, chat_id)
+    _is_group = update.effective_chat.type in ("group", "supergroup")
 
-    # Update last_seen
+    # Idle reward check — fires in both group and DM; group announcement only in groups
+    p = get_player(user.id) if s.get("ascended") else None
+    await check_idle_reward(user, s, p, context.bot, chat_id, announce_group=_is_group)
+
+    # Update last_seen regardless of context so DM-only players build and consume the timer
     s["message_count"] = s.get("message_count",0) + 1
-    s["last_seen"]     = datetime.now().isoformat()
+    s["last_seen"] = datetime.now().isoformat()
 
     if p and s: sync_levels(p, s)
 
