@@ -2634,7 +2634,7 @@ ENHANCE_RATES = {1:1.00, 2:0.95, 3:0.90, 4:0.85, 5:0.75,
 
 ENCHANT_EFFECTS = {
     "weapon": [
-        {"id":"lifesteal",    "desc":"Each hit restores 3 HP",          "type":"lifesteal_flat","val":3},
+        {"id":"lifesteal",    "desc":"Each hit restores 15% of damage as HP", "type":"lifesteal_flat","val":3},
         {"id":"flaming",      "desc":"10% chance to burn on hit (5 dmg/20s for 1min)","type":"burn_proc","val":5},
         {"id":"keen",         "desc":"+8% crit chance",                 "type":"crit_bonus","val":0.08},
         {"id":"heavy",        "desc":"+5 flat damage per hit",          "type":"flat_dmg","val":5},
@@ -5272,7 +5272,7 @@ def apply_lifesteal(attacker, dmg):
         healed += get_accessory_bonus(attacker, "lifesteal_flat")
     enc_heal = get_enchant_bonus(attacker, "lifesteal_flat")
     if enc_heal:
-        healed += enc_heal
+        healed += round(dmg * 0.15)  # 15% of damage dealt
     ls_pet = get_active_pet_record(attacker.get("user_id"))
     if ls_pet:
         healed += get_pet_passives(ls_pet.get("level", 1)).get("lifesteal_flat", 0)
@@ -6809,11 +6809,6 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # If attacker is in a solo raid
     if au.id in active_soloraids:
         await solostrike_cmd(update, context); return
-
-    # Block if attacker is in any boss fight in any chat
-    a_boss, _ = in_active_boss(au.id, chat_id)
-    if a_boss and not (boss_dict and au.id in [u["id"] for u in boss_dict["participants"]]):
-        await send_group(update, "⚔️ You're in a boss fight  -  use /attack to strike the boss!", delay=9); return
 
     # ── PvP below ──────────────────────────────────────────────────────────
     chat = chat_id
@@ -9284,39 +9279,12 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False, uid
         btn_row.append(InlineKeyboardButton(f"{nxt} ▶", callback_data=f"inv_s_{_inv_uid}_{nxt}"))
     markup = InlineKeyboardMarkup([btn_row]) if btn_row else None
 
-    # Add per-item sell buttons for bag sections
-    sell_buttons = []
-    BULK_SELL_PROTECTED = {
-        "Iron Shard", "Enchanting Scroll",
-        "Scroll of Revival", "Holy Water Vial",
-        "Common Egg", "Rare Egg", "Dragon Egg", "Mythic Egg", "Pet Snack",
-    }
-    RARITY_SELL_VALUES = {"common": 20, "uncommon": 60, "rare": 200, "epic": 600, "legendary": 2000}
-    if section not in ("Equipped", "Materials", "Consumables"):
-        pool_map_sell = {
-            "Weapons": WEAPONS, "Armors": ARMORS,
-            "Shields": SHIELDS, "Accessories": ACCESSORIES,
-        }
-        equipped_set = {p.get("equipped_weapon"), p.get("equipped_armor"),
-                        p.get("equipped_shield"), p.get("equipped_accessory")}
-        pool_sell = pool_map_sell.get(section, {})
-        sellable = [
-            k for k in inv if k in pool_sell and k not in BULK_SELL_PROTECTED and k not in equipped_set
-        ]
-        for it in sorted(set(sellable))[:8]:
-            price = RARITY_SELL_VALUES.get(pool_sell[it].get("rarity","common"), 20)
-            uid_p = p["user_id"]
-            sell_buttons.append([InlineKeyboardButton(
-                f"💰 Sell {it} ({price}g)",
-                callback_data=f"sll_{uid_p}_{it}")])
     close_btn_row = [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{p['user_id']}")]
-    if sell_buttons:
-        nav_rows = list(markup.inline_keyboard) if markup else []
-        markup = InlineKeyboardMarkup(sell_buttons + nav_rows + [close_btn_row])
-    elif markup:
+    if markup:
         markup = InlineKeyboardMarkup(list(markup.inline_keyboard) + [close_btn_row])
     else:
         markup = InlineKeyboardMarkup([close_btn_row])
+    lines.append("\n_💰 Use /sell to sell items by rarity_")
     text = "\n".join(lines)[:4096]
     if edit:
         await target.edit_message_text(text=text, parse_mode="Markdown", reply_markup=markup)
@@ -10097,22 +10065,26 @@ async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id in active_bosses:
         boss = active_bosses[chat_id]
-        if user.id not in [u["id"] for u in boss["participants"]]:
-            boss["participants"].append({"id": user.id, "name": user.first_name, "dmg": 0})
-        # Delete old card if present, then resend fresh with buttons
+        summoner_id = boss.get("summoner_id")
+        # Solo fight — only the summoner can interact
+        if user.id != summoner_id:
+            await send_group(update,
+                f"⚔️ *{boss['data']['name']}* is already being fought here!\n"
+                f"Boss battles are solo — wait for it to finish.", delay=9)
+            return
+        # Summoner re-used /boss — resend the card with fresh buttons
         old_card = boss.get("card_msg_id")
         if old_card:
             try: await update.get_bot().delete_message(chat_id=chat_id, message_id=old_card)
             except Exception: pass
         try: await update.message.delete()
         except Exception: pass
-        summoner_id = boss.get("summoner_id", user.id)
         bd = boss["data"]
         msg = await update.get_bot().send_message(
             chat_id=chat_id,
             text=(f"🎱 *{bd['name']}*\n"
                   f"❤️ {boss['hp']}/{bd['max_hp']} HP\n\n"
-                  f"*{user.first_name}* is in the fight! Use the buttons or /strike."),
+                  f"Use the buttons to continue the fight!"),
             parse_mode="Markdown",
             reply_markup=_build_boss_markup(summoner_id))
         boss["card_msg_id"] = msg.message_id
@@ -10140,7 +10112,7 @@ async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=chat_id,
         text=(f"🎱 *{bd['name']} HAS APPEARED!*\n\n_{bd['desc']}_\n\n"
               f"❤️ HP: {bd['max_hp']} | 💀 {bd['dmg_min']}–{bd['dmg_max']} dmg\n\n"
-              f"*{user.first_name}* engaged! Use the buttons below or /strike."),
+              f"*{user.first_name}* engaged! Use the buttons to fight."),
         parse_mode="Markdown",
         reply_markup=_build_boss_markup(user.id))
     active_bosses[chat_id]["card_msg_id"] = msg.message_id
@@ -10183,7 +10155,7 @@ async def boss_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(
             f"🎱 *{bd['name']} HAS APPEARED!*\n\n_{bd['desc']}_\n\n"
             f"❤️ HP: {bd['max_hp']} | 💀 {bd['dmg_min']}–{bd['dmg_max']} dmg\n\n"
-            f"*{query.from_user.first_name}* engaged! Use the buttons below or /strike.",
+            f"*{query.from_user.first_name}* engaged! Use the buttons to fight.",
             parse_mode="Markdown", reply_markup=_build_boss_markup(uid))
     except Exception:
         pass
@@ -10205,7 +10177,7 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
             boss_dict["player_hp"] = {}
             boss_dict["player_max_hp"] = {}
         mhp = calc_max_hp(p)
-        boss_dict["player_hp"][user.id] = mhp
+        boss_dict["player_hp"][user.id] = min(mhp, max(1, safe_int(p.get("hp")) or mhp))
         boss_dict["player_max_hp"][user.id] = mhp
     elif "player_hp" not in boss_dict:
         # Init for existing participants (first attack after boss spawned)
@@ -10215,7 +10187,7 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
             pp = get_player(u["id"])
             if pp:
                 mhp = calc_max_hp(pp)
-                boss_dict["player_hp"][u["id"]] = mhp
+                boss_dict["player_hp"][u["id"]] = min(mhp, max(1, safe_int(pp.get("hp")) or mhp))
                 boss_dict["player_max_hp"][u["id"]] = mhp
     participant = next(u for u in boss_dict["participants"] if u["id"] == user.id)
 
@@ -10279,6 +10251,10 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
         for u in boss_dict["participants"]:
             pp = get_player(u["id"])
             if not pp: continue
+            # Sync boss instance HP back to real HP
+            inst_hp = boss_dict.get("player_hp", {}).get(u["id"])
+            if inst_hp is not None and not is_defeated(pp):
+                pp["hp"] = max(1, inst_hp)
             pp["gold"] = pp.get("gold", 0) + data["gold"]
             loot = roll_loot_table(data.get("loot_table", []))
             if loot:
@@ -10296,94 +10272,7 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
     except Exception: pass
     await announce(update.get_bot(), chat_id, "\n".join(lines), delay=30)
 
-async def strike_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user; p = get_player(user.id); chat_id = update.effective_chat.id
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    if is_defeated(p):
-        await send_group(update, _defeated_msg(p), delay=15); return
 
-    boss_dict = active_bosses.get(chat_id) or secret_boss_active.get(chat_id)
-    is_secret = chat_id in secret_boss_active
-    if not boss_dict:
-        await send_group(update, "No active boss! Use /boss.", delay=9); return
-
-    # Auto-join
-    if user.id not in [u["id"] for u in boss_dict["participants"]]:
-        boss_dict["participants"].append({"id":user.id,"name":user.first_name,"dmg":0})
-    participant = next(u for u in boss_dict["participants"] if u["id"]==user.id)
-
-    w   = get_weather()
-    dmg = calc_attack_damage(p, w)
-    boss_dict["hp"] = max(0, boss_dict["hp"] - dmg)
-    participant["dmg"] += dmg
-
-    lines = [f"⚔️ *{user.first_name}* strikes *{boss_dict['data']['name']}* for *{dmg}!*\n"
-             f"❤️ Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}"]
-
-    alive = [u for u in boss_dict["participants"]
-             if not is_defeated(get_player(u["id"]))]
-    if alive and boss_dict["hp"] > 0 and random.random() < 0.90:
-        target = random.choice(alive)
-        tp = get_player(target["id"])
-        if tp and not is_defeated(tp):
-            raw = random.randint(
-                boss_dict["data"]["dmg_min"],
-                boss_dict["data"]["dmg_max"])
-            edm = calc_defense(tp, raw)
-            tp["hp"] = max(0, tp["hp"] - edm)
-            if tp["hp"] == 0:
-                exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
-                asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
-                lines.append(
-                    f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! "
-                    f"6hr defeat. -{exp_loss} EXP.")
-            else:
-                lines.append(
-                    f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* "
-                    f"for *{edm} damage!* ({tp['hp']}/{tp.get('max_hp', calc_max_hp(tp))} HP)")
-            save_player(tp)
-
-    # Check if all players dead  -  end fight
-    alive_after = [u for u in boss_dict["participants"]
-                   if not is_defeated(get_player(u["id"]))]
-    if not alive_after and boss_dict["hp"] > 0:
-        if is_secret: secret_boss_active.pop(chat_id, None)
-        else:         active_bosses.pop(chat_id, None)
-        lines.append(f"\n💀 *ALL PLAYERS DEFEATED!* The boss wins this time...")
-        save_player(p)
-        await send_group(update, "\n".join(lines), delay=30); return
-
-    if boss_dict["hp"] <= 0:
-        data = boss_dict["data"]
-        if is_secret: secret_boss_active.pop(chat_id, None)
-        else:         active_bosses.pop(chat_id, None)
-        lines.append(f"\n🏆 *{data['name']} DEFEATED!*\n")
-        for u in boss_dict["participants"]:
-            pp = get_player(u["id"])
-            if not pp: continue
-            pp["gold"] = pp.get("gold",0) + data["gold"]
-            loot = roll_loot_table(data.get("loot_table",[]))
-            if loot:
-                add_item(pp, loot)
-                r = ""
-                for pool in [WEAPONS,ARMORS,ACCESSORIES]: 
-                    if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity",""),""); break
-                lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
-            if award_title(pp, data["title"]):
-                lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
-            lmsgs, leveled = add_exp(pp, data["exp"], w)
-            save_player(pp)
-            lines.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
-            if leveled and pp["level"] % 10 == 0:
-                asyncio.create_task(announce(update.get_bot(), chat_id,
-                    f"🎉 *{pp['username']}* reached *Level {pp['level']}* defeating "
-                    f"{data['name']}! 🏆", delay=60))
-
-    save_player(p)
-    try: await update.message.delete()
-    except Exception: pass
-    await announce(update.get_bot(), chat_id, "\n".join(lines), delay=30)
 
 # ── GUILD ─────────────────────────────────────────────────────────────────────
 async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -11671,8 +11560,12 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     if tp and not is_defeated(tp):
                         raw = random.randint(boss_dict["data"]["dmg_min"], boss_dict["data"]["dmg_max"])
                         edm = calc_defense(tp, raw)
-                        boss_dict["player_hp"][target["id"]] = max(0,
-                            boss_dict["player_hp"].get(target["id"], calc_max_hp(tp)) - edm)
+                        cur = boss_dict["player_hp"].get(target["id"])
+                        if cur is None:
+                            cur = min(calc_max_hp(tp), max(1, safe_int(tp.get("hp")) or calc_max_hp(tp)))
+                            boss_dict["player_hp"][target["id"]] = cur
+                            boss_dict["player_max_hp"][target["id"]] = calc_max_hp(tp)
+                        boss_dict["player_hp"][target["id"]] = max(0, cur - edm)
                         php  = boss_dict["player_hp"][target["id"]]
                         pmhp = boss_dict["player_max_hp"].get(target["id"], calc_max_hp(tp))
                         if php == 0:
@@ -11692,6 +11585,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             for u in boss_dict["participants"]:
                 pp = get_player(u["id"])
                 if not pp: continue
+                # Sync boss instance HP back to real HP
+                inst_hp = boss_dict.get("player_hp", {}).get(u["id"])
+                if inst_hp is not None and not is_defeated(pp):
+                    pp["hp"] = max(1, inst_hp)
                 pp["gold"] = pp.get("gold", 0) + data["gold"]
                 loot = roll_loot_table(data.get("loot_table", []))
                 if loot:
@@ -19426,7 +19323,8 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if "player_hp" not in boss_dict:
                 boss_dict["player_hp"] = {}; boss_dict["player_max_hp"] = {}
             mhp = calc_max_hp(p)
-            boss_dict["player_hp"][uid] = mhp; boss_dict["player_max_hp"][uid] = mhp
+            boss_dict["player_hp"][uid] = min(mhp, max(1, safe_int(p.get("hp")) or mhp))
+            boss_dict["player_max_hp"][uid] = mhp
         if len(all_skills) > 1:
             markup = _build_skill_picker_keyboard(all_skills, uid, 0, show_close=False)
             await query.edit_message_text(
@@ -20130,8 +20028,6 @@ def main():
     app.add_handler(CommandHandler("attack",     attack_cmd))
     app.add_handler(CommandHandler("heal",       heal_cmd))
     app.add_handler(CommandHandler("boss",       boss_cmd))
-    # strike_cmd kept for reference but unregistered  -  use /attack instead
-    # app.add_handler(CommandHandler("strike",     strike_cmd))
     app.add_handler(CommandHandler("dungeon",          dungeon_cmd))
     app.add_handler(CommandHandler("dungeonhard",      dungeonhard_cmd))
     app.add_handler(CommandHandler("dungeonlegendary", dungeonlegendary_cmd))
