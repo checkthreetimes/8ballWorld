@@ -6029,6 +6029,13 @@ def init_db():
     )""")
     conn.commit()
 
+    # Persist pet notification timestamps across restarts
+    try:
+        conn.execute("ALTER TABLE shadow_profiles ADD COLUMN pet_notify_ts TEXT DEFAULT '{}'")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
     conn.close()
 
     # ── v21 Item Rename Migration (pool-hall → RPG fantasy names) ────────────
@@ -6382,13 +6389,13 @@ def save_shadow(s):
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO shadow_profiles
         (user_id,username,level,exp,total_exp,message_count,
-         passive_cooldowns,ascended,last_seen,last_pool,pending_items)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+         passive_cooldowns,ascended,last_seen,last_pool,pending_items,pet_notify_ts)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
         (s["user_id"],s["username"],s["level"],s["exp"],
          safe_int(s.get("total_exp")),s.get("message_count",0),
          s.get("passive_cooldowns","{}"),s.get("ascended",0),
          datetime.now().isoformat(),s.get("last_pool"),
-         s.get("pending_items","[]")))
+         s.get("pending_items","[]"),s.get("pet_notify_ts","{}")))
     conn.commit(); conn.close()
 
 # Normalizes pool-hall item names → RPG names at save time (catches loot drops too)
@@ -6916,14 +6923,27 @@ def get_recent_attackers(p):
 
 # ── IDLE REWARDS ──────────────────────────────────────────────────────────────
 async def check_pet_notifications(p, bot):
-    """DM the owner if their active pet is hungry, sad, or ready to train. Rate-limited per condition."""
+    """DM the owner if their active pet is hungry, sad, or ready to train. Rate-limited per condition.
+    Timestamps are persisted in shadow_profiles.pet_notify_ts so restarts don't cause spam."""
     if not p: return
     pet = get_active_pet_record(p["user_id"])
     if not pet: return
     uid      = p["user_id"]
     name     = pet.get("nickname") or pet.get("species", "your pet")
     now      = datetime.now()
-    cache    = _pet_notify_ts.setdefault(uid, {})
+
+    # Load persisted timestamps from DB (fall back to in-memory for this session)
+    s = get_shadow(uid)
+    if s:
+        try:
+            raw = json.loads(s.get("pet_notify_ts") or "{}")
+            # Convert ISO strings back to datetime objects
+            cache = {k: datetime.fromisoformat(v) for k, v in raw.items()}
+        except Exception:
+            cache = {}
+    else:
+        cache = _pet_notify_ts.get(uid, {})
+
     msgs     = []
 
     def _due(key, hours):
@@ -6932,22 +6952,30 @@ async def check_pet_notifications(p, bot):
 
     hunger = pet.get("hunger", 100)
     mood   = pet.get("mood", 100)
+    changed = False
 
     if hunger < 25 and _due("hunger", 6):
         msgs.append(f"🍖 *{name}* is hungry (hunger: {hunger}/100)! Use /pet to feed them.")
-        cache["hunger"] = now
+        cache["hunger"] = now; changed = True
     if mood < 25 and _due("mood", 6):
         msgs.append(f"😢 *{name}* is feeling down (mood: {mood}/100). Use /pet to cheer them up.")
-        cache["mood"] = now
+        cache["mood"] = now; changed = True
     last_trained = pet.get("last_trained")
     if last_trained and _due("train", 12):
         try:
             hours_idle = (now - datetime.fromisoformat(last_trained)).total_seconds() / 3600
             if hours_idle >= 8:
                 msgs.append(f"🏋️ *{name}* is eager to train! Use /pet to train them.")
-                cache["train"] = now
+                cache["train"] = now; changed = True
         except Exception:
             pass
+
+    if changed and s:
+        # Persist updated timestamps as ISO strings
+        s["pet_notify_ts"] = json.dumps({k: v.isoformat() for k, v in cache.items()})
+        save_shadow(s)
+    # Keep in-memory dict in sync too
+    _pet_notify_ts[uid] = cache
 
     if msgs:
         try:
@@ -7024,7 +7052,7 @@ async def check_idle_reward(user, s, p, bot, chat_id, announce_group=True):
                 delay=60))
 
     if announce_group:
-        await announce(bot, chat_id, chat_msg, permanent=False, delay=30)
+        await announce(bot, chat_id, chat_msg, permanent=False, delay=90)
     try:
         await bot.send_message(chat_id=user.id, text=dm_msg, parse_mode="Markdown")
     except Exception:
@@ -7379,14 +7407,15 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🏰 *{d['username']}* is in *{gname}* — you can't attack your own guild members!",
             delay=9); return
 
-    # Block attack if target has been offline for 30+ minutes
+    # Block attack if target has been offline for 1+ hour
     s_tgt = get_shadow(du.id)
     target_last_seen = s_tgt.get("last_seen") if s_tgt else None
     if target_last_seen:
         try:
             away_secs = (datetime.now() - datetime.fromisoformat(target_last_seen)).total_seconds()
-            if away_secs > 1800:
-                await send_group(update, f"💤 *{d['username']}* stepped away from the table  -  can't attack offline players.", delay=9)
+            if away_secs > 3600:
+                away_str = f"{int(away_secs // 60)} min" if away_secs < 7200 else f"{int(away_secs // 3600)}h"
+                await send_group(update, f"💤 *{d['username']}* stepped away from the table *(last seen {away_str} ago)*  -  can't attack offline players.", delay=9)
                 try:
                     await context.bot.send_message(
                         chat_id=du.id,
@@ -12268,22 +12297,47 @@ async def guildkick_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not g or g["leader_id"] != user.id:
         await send_group(update, "Only the guild leader can kick members.", delay=9); return
 
-    # If replying to a message, kick that player directly
-    if update.message.reply_to_message:
-        tp = get_player(update.message.reply_to_message.from_user.id)
-        if not tp or tp.get("guild_id") != p.get("guild_id"):
-            await send_group(update, "That player isn't in your guild.", delay=9); return
-        if update.message.reply_to_message.from_user.id == user.id:
-            await send_group(update, "You can't kick yourself! Use /guilddisband to close the guild.", delay=9); return
+    def _do_kick(tp):
         members = sjl(g["members"], [])
-        if update.message.reply_to_message.from_user.id in members:
-            members.remove(update.message.reply_to_message.from_user.id)
+        if tp["user_id"] in members: members.remove(tp["user_id"])
         g["members"] = json.dumps(members); save_guild(g)
         tp["guild_id"] = None; save_player(tp)
-        await send_group(update, f"🚫 *{tp['username']}* has been kicked from *{g['name']}*.", delay=9)
+
+    # If replying to a message, kick that player directly
+    if update.message.reply_to_message:
+        ru = update.message.reply_to_message.from_user
+        if not ru:
+            await send_group(update, "Can't identify that user.", delay=9); return
+        if ru.id == user.id:
+            await send_group(update, "You can't kick yourself! Use /guilddisband to close the guild.", delay=9); return
+        tp = get_player(ru.id)
+        if not tp or str(tp.get("guild_id")) != str(p.get("guild_id")):
+            await send_group(update, "That player isn't in your guild.", delay=9); return
+        _do_kick(tp)
+        await send_group(update, f"🚫 *{tp['username']}* has been kicked from *{g['name']}*.", delay=15)
         return
 
-    # No reply — show member picker buttons
+    # If name arg provided, search members by display name
+    if context.args:
+        query_name = " ".join(context.args).lower()
+        members = sjl(g["members"], [])
+        matches = []
+        for mid in members:
+            if mid == user.id: continue
+            mp = get_player(mid)
+            if mp and query_name in mp["username"].lower():
+                matches.append(mp)
+        if not matches:
+            await send_group(update, f"No guild member matches *{' '.join(context.args)}*.", delay=9); return
+        if len(matches) > 1:
+            names = ", ".join(f"*{m['username']}*" for m in matches)
+            await send_group(update, f"Multiple matches: {names}\nBe more specific.", delay=12); return
+        tp = matches[0]
+        _do_kick(tp)
+        await send_group(update, f"🚫 *{tp['username']}* has been kicked from *{g['name']}*.", delay=15)
+        return
+
+    # No reply, no name — show member picker buttons
     members = sjl(g["members"], [])
     kickable = [mid for mid in members if mid != user.id]
     if not kickable:
@@ -12294,7 +12348,7 @@ async def guildkick_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mp = get_player(mid)
         if mp:
             buttons.append([InlineKeyboardButton(
-                f"🚫 Kick: {mp['username']} (Lv {mp['level']})",
+                f"🚫 {mp['username']} (Lv {mp['level']})",
                 callback_data=f"gkick_{user.id}_{mid}")])
 
     if not buttons:
@@ -12302,8 +12356,8 @@ async def guildkick_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     markup = InlineKeyboardMarkup(buttons)
     await send_group(update,
-        f"🚫 *{g['name']} — Kick a Member*\n\nSelect who to remove from the guild:",
-        delay=30, reply_markup=markup)
+        f"🚫 *{g['name']} — Kick a Member*\n\nTap a name to remove them from the guild:",
+        delay=90, reply_markup=markup)
 
 
 async def guildkick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -22386,19 +22440,29 @@ def main():
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
     # Commands bypass handle_message entirely (filtered out above), so they never update
-    # last_seen. This group-1 handler fires for commands only and keeps the timer accurate.
+    # last_seen or trigger idle rewards. This group=-1 handler fires for commands only,
+    # checks the idle reward first (so returning players get credit even if they type a command),
+    # then stamps last_seen.
     async def _cmd_pre_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Runs before all command handlers (group=-1).
-        Stamps last_seen and enforces rate limit — raises ApplicationHandlerStop
-        if the user is spamming so no group=0 handler fires."""
+        Checks idle reward then stamps last_seen and enforces rate limit — raises
+        ApplicationHandlerStop if the user is spamming so no group=0 handler fires."""
         if not update.message or not update.effective_user or update.effective_user.is_bot: return
         u = update.effective_user
         if u.id != ADMIN_ID and not _rate_ok(u.id):
             raise ApplicationHandlerStop  # silently drop — no reply, no exploit loop
         try:
-            _lc = sqlite3.connect(DB_PATH); _lc.execute(
-                "UPDATE shadow_profiles SET last_seen=? WHERE user_id=?",
-                (datetime.now().isoformat(), u.id)); _lc.commit(); _lc.close()
+            s = get_or_create_shadow(u.id, u.first_name)
+            p = get_player(u.id) if s.get("ascended") else None
+            _is_group = update.effective_chat.type in ("group", "supergroup")
+            await check_idle_reward(u, s, p, context.bot, update.effective_chat.id,
+                                    announce_group=_is_group)
+            # Stamp last_seen after reward check (save_shadow inside check_idle_reward
+            # already ran if a reward fired; this covers the no-reward path)
+            _lc = sqlite3.connect(DB_PATH)
+            _lc.execute("UPDATE shadow_profiles SET last_seen=? WHERE user_id=?",
+                        (datetime.now().isoformat(), u.id))
+            _lc.commit(); _lc.close()
         except Exception: pass
     app.add_handler(MessageHandler(filters.COMMAND, _cmd_pre_filter), group=-1)
 
