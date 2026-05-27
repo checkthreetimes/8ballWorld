@@ -3824,23 +3824,6 @@ GUILD_PERKS = {
 }
 def guild_exp_for_level(level): return level * 500
 
-IDLE_TIERS = [
-    {"min_hours":1,   "max_hours":3,   "gold":50,   "exp":100,  "item_chances":[]},
-    {"min_hours":3,   "max_hours":8,   "gold":150,  "exp":300,  "item_chances":[("common",0.10)]},
-    {"min_hours":8,   "max_hours":24,  "gold":400,  "exp":800,  "item_chances":[("uncommon",0.25),("rare",0.10)]},
-    {"min_hours":24,  "max_hours":72,  "gold":1000, "exp":2000, "item_chances":[("uncommon",0.40),("rare",0.20),("epic",0.05)]},
-    {"min_hours":72,  "max_hours":168, "gold":2500, "exp":5000, "item_chances":[("rare",0.50),("epic",0.15),("legendary",0.02)]},
-    {"min_hours":168, "max_hours":9999,"gold":5000, "exp":10000,"item_chances":[("rare",0.60),("epic",0.25),("legendary",0.05)]},
-]
-
-IDLE_FLAVOR = {
-    "warrior":  "blade still sharp from distant battles",
-    "mage":     "robes dusty from arcane research",
-    "thief":    "pockets suspiciously full",
-    "archer":   "quiver restocked from the wilds",
-    "priest":   "returning from a holy pilgrimage",
-    None:       "returning from a long journey",
-}
 
 # ── DUNGEON CONSTANTS ─────────────────────────────────────────────────────────
 DUNGEON_THEMES = [
@@ -6922,7 +6905,6 @@ def get_recent_attackers(p):
 # ── COMBAT CARD ───────────────────────────────────────────────────────────────
 # combat_cards removed in v14  -  using inline send+auto-delete instead
 
-# ── IDLE REWARDS ──────────────────────────────────────────────────────────────
 async def check_pet_notifications(p, bot):
     """DM the owner if their active pet is hungry, sad, or ready to train. Rate-limited per condition.
     Timestamps are persisted in shadow_profiles.pet_notify_ts so restarts don't cause spam."""
@@ -6987,77 +6969,6 @@ async def check_pet_notifications(p, bot):
             pass
 
 
-async def check_idle_reward(user, s, p, bot, chat_id, announce_group=True):
-    last_seen = s.get("last_seen")
-    if not last_seen: return
-    try:
-        away = (datetime.now() - datetime.fromisoformat(last_seen)).total_seconds() / 3600
-    except Exception:
-        return
-    if away < 1: return
-
-    # Stamp last_seen immediately so rapid messages don't fire this twice
-    s["last_seen"] = datetime.now().isoformat()
-    save_shadow(s)
-
-    tier = None
-    for t in IDLE_TIERS:
-        if t["min_hours"] <= away < t["max_hours"]:
-            tier = t; break
-    if not tier: tier = IDLE_TIERS[-1]
-
-    gold_reward = tier["gold"]
-    exp_reward  = tier["exp"]
-    item_found  = None
-
-    for rarity, chance in tier["item_chances"]:
-        if random.random() < chance:
-            item_found = get_random_item_by_rarity(rarity)
-            break
-
-    # Build flavor
-    line = get_class_line(p) if p else None
-    flavor = IDLE_FLAVOR.get(line, IDLE_FLAVOR[None])
-    hours_str = f"{int(away)}h" if away < 48 else f"{int(away/24)}d"
-
-    # Chat sees the return announcement only
-    chat_msg = f"🎱 *{user.first_name}* returns after *{hours_str}* away!"
-
-    # DM gets the full reward breakdown
-    dm_msg = (f"🎱 *Welcome back!* You were away for *{hours_str}*\n"
-              f"💰 +{gold_reward} gold\n"
-              f"✨ +{exp_reward} EXP")
-    if item_found:
-        rarity_tag = ""
-        for pool in [WEAPONS, ARMORS, ACCESSORIES]:
-            if item_found in pool:
-                r = pool[item_found].get("rarity","")
-                rarity_tag = RARITY_EMOJI.get(r,"")
-                break
-        dm_msg += f"\n🎒 +{rarity_tag} *{item_found}*"
-
-    if p:
-        p["gold"] = p.get("gold", 0) + gold_reward
-        if item_found: add_item(p, item_found)
-        lmsgs, leveled = add_exp(p, exp_reward)
-        save_player(p)
-        if leveled and p["level"] % 10 == 0:
-            await announce(bot, chat_id,
-                f"🎉 *{p['username']}* reached *Level {p['level']}*! 🎱",
-                delay=60)
-    else:
-        lmsgs, leveled = add_shadow_exp(s, exp_reward)
-        if leveled and s["level"] % 10 == 0:
-            asyncio.create_task(announce(bot, chat_id,
-                f"📈 *{s['username']}* reached *Level {s['level']}*!",
-                delay=60))
-
-    if announce_group:
-        await announce(bot, chat_id, chat_msg, permanent=False, delay=90)
-    try:
-        await bot.send_message(chat_id=user.id, text=dm_msg, parse_mode="Markdown")
-    except Exception:
-        pass  # DM blocked or bot never started — silently skip
 
 async def gear_cmd(update, context):
     user = update.effective_user
@@ -21093,9 +21004,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     _is_group = update.effective_chat.type in ("group", "supergroup")
 
-    # Idle reward check — fires in both group and DM; group announcement only in groups
     p = get_player(user.id) if s.get("ascended") else None
-    await check_idle_reward(user, s, p, context.bot, chat_id, announce_group=_is_group)
     asyncio.create_task(check_pet_notifications(p, context.bot))
 
     # Update last_seen regardless of context so DM-only players build and consume the timer
@@ -22483,26 +22392,13 @@ def main():
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
-    # Commands bypass handle_message entirely (filtered out above), so they never update
-    # last_seen or trigger idle rewards. This group=-1 handler fires for commands only,
-    # checks the idle reward first (so returning players get credit even if they type a command),
-    # then stamps last_seen.
     async def _cmd_pre_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Runs before all command handlers (group=-1).
-        Checks idle reward then stamps last_seen and enforces rate limit — raises
-        ApplicationHandlerStop if the user is spamming so no group=0 handler fires."""
+        """Runs before all command handlers (group=-1). Stamps last_seen and enforces rate limit."""
         if not update.message or not update.effective_user or update.effective_user.is_bot: return
         u = update.effective_user
         if u.id != ADMIN_ID and not _rate_ok(u.id):
             raise ApplicationHandlerStop  # silently drop — no reply, no exploit loop
         try:
-            s = get_or_create_shadow(u.id, u.first_name)
-            p = get_player(u.id) if s.get("ascended") else None
-            _is_group = update.effective_chat.type in ("group", "supergroup")
-            await check_idle_reward(u, s, p, context.bot, update.effective_chat.id,
-                                    announce_group=_is_group)
-            # Stamp last_seen after reward check (save_shadow inside check_idle_reward
-            # already ran if a reward fired; this covers the no-reward path)
             _lc = sqlite3.connect(DB_PATH)
             _lc.execute("UPDATE shadow_profiles SET last_seen=? WHERE user_id=?",
                         (datetime.now().isoformat(), u.id))
