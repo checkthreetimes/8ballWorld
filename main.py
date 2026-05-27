@@ -3010,11 +3010,13 @@ def _mon_level_stats(base_hp, base_atk, level):
     return hp, atk
 
 def _npc_level_stats(base_hp, base_dmg, level, player_max_hp=0):
-    hp  = int(base_hp  * (1 + 0.08 * (level - 1)))
-    atk = int(base_dmg * (1 + 0.08 * (level - 1)))
+    hp  = int(base_hp  * (1 + 0.10 * (level - 1)))
+    atk = int(base_dmg * (1 + 0.10 * (level - 1)))
     if player_max_hp > 0:
-        hp  = min(hp,  int(player_max_hp * 1.5))   # never more than 1.5× player's max HP
-        atk = max(atk, int(player_max_hp * 0.08))  # always hurts: ~8% of player max HP raw
+        # HP: between 85% and 160% of player max HP — some fights easy, some tough
+        hp  = max(int(player_max_hp * 0.85), min(hp, int(player_max_hp * 1.60)))
+        # ATK: floor 11%, ceiling 25% of player max HP (raw before DEF mitigation)
+        atk = max(int(player_max_hp * 0.11), min(atk, int(player_max_hp * 0.25)))
     return hp, atk
 
 def _get_monster_squad(uid):
@@ -14435,7 +14437,7 @@ async def _start_encounter_battle(query, uid, p):
         "e_hp": n_hp, "e_max_hp": n_hp, "e_atk": n_atk, "e_level": n_level,
         "e_gold_range": npc[6], "e_exp_range": npc[7], "e_loot_key": npc[8],
         "last_action": f"*{npc[0]}* [{cls_name}] Lv.{n_level} steps forward!",
-        "heals_left": 3,
+        "heals_left": 2,
     }
     active_encounters[uid] = enc
     card = _encounter_battle_card(enc)
@@ -14613,7 +14615,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         elif data == f"enc_heal_{uid}":
             if enc.get("heals_left", 0) <= 0:
                 await query.answer("No heals left!", show_alert=True); return
-            heal = max(10, enc["p_max_hp"] // 6)
+            heal = max(10, enc["p_max_hp"] // 7)
             enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
             enc["heals_left"] = enc.get("heals_left", 1) - 1
             action_txt = f"💊 You healed *{heal}* HP! ({enc['heals_left']} heals left)"
@@ -14640,9 +14642,23 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if enc["e_hp"] <= 0:
             e_level = enc.get("e_level", 1)
             gold_r = enc.get("e_gold_range", (5, 15))
-            gold   = (random.randint(*gold_r) if isinstance(gold_r, tuple) else random.randint(5, 30)) + e_level * 4
+            gold   = (random.randint(*gold_r) if isinstance(gold_r, tuple) else random.randint(5, 30)) + e_level * 6
             exp_r  = enc.get("e_exp_range", (20, 60))
-            exp    = (random.randint(*exp_r) if isinstance(exp_r, tuple) else random.randint(20, 60)) + e_level * 18
+            exp    = (random.randint(*exp_r) if isinstance(exp_r, tuple) else random.randint(20, 60)) + e_level * 25
+
+            # Close-fight bonus: reward surviving tough battles
+            hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
+            close_bonus = ""
+            gear_drop_chance = 0.30
+            if hp_pct <= 0.15:
+                gold = int(gold * 2.0); exp = int(exp * 2.0)
+                gear_drop_chance = 0.55
+                close_bonus = "\n🔥 *Clutch Victory!* Bonus rewards for surviving on the edge!"
+            elif hp_pct <= 0.30:
+                gold = int(gold * 1.5); exp = int(exp * 1.5)
+                gear_drop_chance = 0.45
+                close_bonus = "\n⚔️ *Close Fight Bonus!*"
+
             add_exp(p, exp)
             p["gold"] = safe_int(p.get("gold", 0)) + gold
             # Loot key item
@@ -14650,7 +14666,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             loot_item = loot_key if random.random() < 0.35 else None
             # Gear drop — rarity scaled by NPC level
             gear_drop = None
-            if random.random() < 0.25:
+            if random.random() < gear_drop_chance:
                 if e_level < 20:
                     _rar = random.choice(["common", "common", "uncommon"])
                 elif e_level < 40:
@@ -14669,7 +14685,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if gear_drop: loot_line += f"\n🎁 Found: *{gear_drop}*"
             if loot_item: loot_line += f"\n📦 Loot: *{loot_item}*"
             await _end_encounter(
-                f"✅ *Victory!*\n*{enc['e_name']}* was defeated!\n"
+                f"✅ *Victory!*\n*{enc['e_name']}* was defeated!{close_bonus}\n"
                 f"💰 +{gold} gold | ⭐ +{exp} EXP{loot_line}\n_(30s cooldown)_")
             return
 
