@@ -2609,6 +2609,17 @@ CONSUMABLES = {
     "Rare Egg":               {"desc":"A glowing egg. Uncommon to rare pet inside.","sell":400},
     "Dragon Egg":             {"desc":"A heavy scaled egg. Rare to epic pet inside.","sell":1000},
     "Mythic Egg":             {"desc":"A shimmering egg. Epic to mythic pet inside.","sell":3000},
+    # Monster Cores — dropped from caught monsters in /hunt
+    "Monster Core (Fire)":      {"desc":"A blazing core from a fire monster. Used for crafting.","sell":80},
+    "Monster Core (Water)":     {"desc":"A fluid core from a water monster. Used for crafting.","sell":80},
+    "Monster Core (Earth)":     {"desc":"A dense core from an earth monster. Used for crafting.","sell":80},
+    "Monster Core (Wind)":      {"desc":"A swirling core from a wind monster. Used for crafting.","sell":80},
+    "Monster Core (Lightning)": {"desc":"A crackling core from a lightning monster. Used for crafting.","sell":80},
+    "Monster Core (Ice)":       {"desc":"A frozen core from an ice monster. Used for crafting.","sell":80},
+    "Monster Core (Shadow)":    {"desc":"A dark core from a shadow monster. Used for crafting.","sell":120},
+    "Monster Core (Holy)":      {"desc":"A radiant core from a holy monster. Used for crafting.","sell":120},
+    "Monster Core (Void)":      {"desc":"A strange core from a void monster. Used for crafting.","sell":200},
+    "Rare Monster Core":        {"desc":"A powerful core from a rare or higher monster. Used for crafting.","sell":400},
 }
 
 # ── DEF GEAR SLOTS ────────────────────────────────────────────────────────────
@@ -3180,22 +3191,27 @@ def _encounter_battle_markup(enc, p=None):
             for i in range(0, len(skill_btns), 2):
                 rows.append(skill_btns[i:i+2])
         rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"enc_flee_{uid}")])
-    else:  # hunt
-        moves = enc.get("p_moves", enc.get("e_moves", ["tackle","tackle","tackle","tackle"]))
-        mdata = MONSTER_MOVES
-        btns_moves = []
-        for mk in moves[:4]:
-            mv = mdata.get(mk, {"name": mk.replace("_"," ").title()})
-            btns_moves.append(InlineKeyboardButton(mv["name"], callback_data=f"enc_mv_{uid}_{mk}"))
-        p_hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
-        catch_btn = []
+    else:  # hunt — player fights directly, can catch when monster is weak
+        rows = [
+            [InlineKeyboardButton("⚔️ Attack", callback_data=f"enc_atk_{uid}"),
+             InlineKeyboardButton("💊 Heal",   callback_data=f"enc_heal_{uid}")],
+        ]
+        if p:
+            cls = get_player_class(p)
+            p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
+                        if p.get("level", 1) >= sk.get("unlock", 5)]
+            skill_btns = [
+                InlineKeyboardButton(sk.get("active", sk.get("name","Skill")),
+                                     callback_data=f"enc_skl_{uid}_{i}")
+                for i, sk in enumerate(p_skills[:4])
+            ]
+            for i in range(0, len(skill_btns), 2):
+                rows.append(skill_btns[i:i+2])
+        bottom = []
         if enc["e_hp"] / max(1, enc["e_max_hp"]) <= 0.5:
-            catch_btn = [InlineKeyboardButton("🎯 Catch", callback_data=f"enc_catch_{uid}")]
-        row1 = btns_moves[:2]
-        row2 = btns_moves[2:4]
-        row3 = catch_btn + [InlineKeyboardButton("🔄 Switch", callback_data=f"enc_switch_{uid}"),
-                            InlineKeyboardButton("🏃 Flee",   callback_data=f"enc_flee_{uid}")]
-        rows = [row1, row2, row3]
+            bottom.append(InlineKeyboardButton("🎯 Catch", callback_data=f"enc_catch_{uid}"))
+        bottom.append(InlineKeyboardButton("🏃 Flee", callback_data=f"enc_flee_{uid}"))
+        rows.append(bottom)
     return InlineKeyboardMarkup(rows)
 
 def _pick_random_npc(p_level):
@@ -9745,6 +9761,29 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p["defeated_until"] = None; p["hp"] = p["max_hp"] // 2
         set_status(p, "invincible_until", 3600)
         msg += f"💚 Revived at {p['hp']} HP! 1 hour invincibility granted."
+    elif item_name.startswith("Monster Core (") or item_name == "Rare Monster Core":
+        _core_stat_map = {
+            "Monster Core (Fire)":      {"STR": 1},
+            "Monster Core (Water)":     {"WIS": 1},
+            "Monster Core (Earth)":     {"DEF": 1},
+            "Monster Core (Wind)":      {"AGI": 1},
+            "Monster Core (Lightning)": {"DEX": 1},
+            "Monster Core (Ice)":       {"INT": 1},
+            "Monster Core (Shadow)":    {"LUK": 1},
+            "Monster Core (Holy)":      {"STR":1,"AGI":1,"INT":1,"WIS":1,"DEX":1,"LUK":1},
+            "Monster Core (Void)":      {"STR":2,"AGI":2,"INT":2},
+            "Rare Monster Core":        {"STR":1,"AGI":1,"INT":1,"WIS":1,"DEX":1,"LUK":1},
+        }
+        boosts = _core_stat_map.get(item_name, {})
+        if boosts:
+            stats = safe_stats(p)
+            for stat, val in boosts.items():
+                stats[stat] = stats.get(stat, 0) + val
+            p["stats"] = json.dumps(stats)
+            boost_str = ", ".join(f"+{v} {s}" for s, v in boosts.items())
+            msg += f"🔮 Permanent stat boost: *{boost_str}*!"
+        else:
+            msg += "_(No direct effect)_"
     else:
         msg += "_(No direct effect)_"
     save_player(p)
@@ -9964,6 +10003,29 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p["hp"] = p["max_hp"] // 2
         set_status(p, "invincible_until", 3600)
         msg += f"💚 Revived at {p['hp']} HP! 1 hour invincibility granted."
+    elif item.startswith("Monster Core (") or item == "Rare Monster Core":
+        _core_stat_map = {
+            "Monster Core (Fire)":      {"STR": 1},
+            "Monster Core (Water)":     {"WIS": 1},
+            "Monster Core (Earth)":     {"DEF": 1},
+            "Monster Core (Wind)":      {"AGI": 1},
+            "Monster Core (Lightning)": {"DEX": 1},
+            "Monster Core (Ice)":       {"INT": 1},
+            "Monster Core (Shadow)":    {"LUK": 1},
+            "Monster Core (Holy)":      {"STR":1,"AGI":1,"INT":1,"WIS":1,"DEX":1,"LUK":1},
+            "Monster Core (Void)":      {"STR":2,"AGI":2,"INT":2},
+            "Rare Monster Core":        {"STR":1,"AGI":1,"INT":1,"WIS":1,"DEX":1,"LUK":1},
+        }
+        boosts = _core_stat_map.get(item, {})
+        if boosts:
+            stats = safe_stats(p)
+            for stat, val in boosts.items():
+                stats[stat] = stats.get(stat, 0) + val
+            p["stats"] = json.dumps(stats)
+            boost_str = ", ".join(f"+{v} {s}" for s, v in boosts.items())
+            msg += f"🔮 Permanent stat boost: *{boost_str}*!"
+        else:
+            msg += "_(No direct effect  -  used as crafting material or quest item)_"
     else:
         msg += "_(No direct effect  -  used as crafting material or quest item)_"
     save_player(p)
@@ -14516,28 +14578,15 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         secs = time_remaining(p.get("last_encounter"), 30)
         await send_group(update, f"⏳ Encounter cooldown: {secs} remaining.", delay=8); return
 
-    # First-time hunt: pick a starter
-    if not _has_starter(uid):
-        starters = random.sample(MONSTER_STARTERS, min(3, len(MONSTER_STARTERS)))
-        rows = []
-        for m in starters:
-            mdata = m
-            elem_e = ELEMENT_EMOJI.get(mdata[2], "")
-            rows.append([InlineKeyboardButton(
-                f"{elem_e} {mdata[1]} (Lv.1 {mdata[2].title()})",
-                callback_data=f"enc_starter_{uid}_{mdata[0]}")])
-        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
-        txt = ("🌿 *First Encounter!*\n\nBefore you venture out you need a *starter monster*.\n"
-               "Choose your companion:\n_(They will join your squad and help you catch more!)_")
-        await send_group(update, txt, reply_markup=InlineKeyboardMarkup(rows), permanent=True)
-        return
-
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⚔️ Battle — fight an NPC", callback_data=f"enc_mode_{uid}_battle")],
-        [InlineKeyboardButton("🌿 Hunt — find wild monsters", callback_data=f"enc_mode_{uid}_hunt")],
+        [InlineKeyboardButton("🌿 Hunt — fight wild monsters", callback_data=f"enc_mode_{uid}_hunt")],
         [InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")],
     ])
-    await send_group(update, "🎱 *Encounter*\nChoose your mode:", reply_markup=markup, permanent=True)
+    await send_group(update, "🎱 *Encounter*\nChoose your mode:\n\n"
+                    "⚔️ *Battle* — fight NPCs for EXP and gear\n"
+                    "🌿 *Hunt* — fight wild monsters with your class; weaken them to 🎯 catch for *Monster Cores*",
+                    reply_markup=markup, permanent=True)
 
 async def squad_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -14664,45 +14713,27 @@ async def _start_encounter_battle(query, uid, p):
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
 
 async def _start_encounter_hunt(query, uid, p):
-    squad = _get_monster_squad(uid)
-    # Scale to active squad fighter's level so difficulty tracks squad progression
-    fighter_level = next((sm["level"] for sm in squad if sm["hp"] > 0), p.get("level", 1))
-    monster = _pick_random_monster(fighter_level)
-    m_level = _enc_monster_level(monster, fighter_level)
+    monster = _pick_random_monster(p.get("level", 1))
+    m_level = _enc_monster_level(monster, p.get("level", 1))
+    p_mhp = safe_int(p.get("max_hp")) or calc_max_hp(p)
     m_hp, m_atk = _mon_level_stats(monster[4], monster[5], m_level)
-    # Active fighter: first squad monster with HP > 0
-    fighter = None
-    for sm in squad:
-        if sm["hp"] > 0:
-            fighter = dict(sm); fighter["type"] = "monster"; break
-    if not fighter:
-        # No healthy squad monster — player fights directly
-        p_mhp_f = safe_int(p.get("max_hp")) or calc_max_hp(p)
-        fighter = {"type": "player", "hp": min(p_mhp_f, max(1, safe_int(p.get("hp")) or p_mhp_f)), "max_hp": p_mhp_f}
-
-    f_hp   = fighter["hp"]
-    f_mhp  = fighter.get("max_hp", f_hp)
-    # p_moves: moves shown as player's battle buttons (fighter's species moves)
-    if fighter.get("type") == "monster":
-        fmdata = MONSTER_BY_KEY.get(fighter.get("key"), {})
-        p_moves = fmdata[7] if fmdata and len(fmdata) > 7 else ["tackle","tackle","tackle","tackle"]
-    else:
-        p_moves = ["tackle", "tackle", "tackle", "tackle"]
+    # Scale monster to player HP range like NPC battles
+    m_hp  = max(int(p_mhp * 0.70), min(m_hp, int(p_mhp * 1.40)))
+    m_atk = max(int(p_mhp * 0.08), min(m_atk, int(p_mhp * 0.22)))
+    p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
+    elem_e = ELEMENT_EMOJI.get(monster[2], "")
     enc = {
         "uid": uid, "mode": "hunt", "p_name": p.get("username", "You"),
-        "p_hp": f_hp, "p_max_hp": f_mhp,
-        "active_fighter": fighter,
-        "p_moves": p_moves,
+        "p_hp": p_hp, "p_max_hp": p_mhp,
         "e_name": monster[1], "e_key": monster[0], "element": monster[2],
         "e_hp": m_hp, "e_max_hp": m_hp, "e_atk": m_atk, "e_level": m_level,
-        "e_moves": monster[7], "e_catch_rate": monster[6],
-        "last_action": f"A wild *{monster[1]}* (Lv.{m_level}) appeared!",
-        "squad_slots": [sm["slot"] for sm in squad],
-        "squad_snap": squad,
+        "e_catch_rate": monster[6],
+        "last_action": f"A wild *{monster[1]}* {elem_e} (Lv.{m_level}) appears!",
+        "heals_left": 2,
     }
     active_encounters[uid] = enc
     card = _encounter_battle_card(enc)
-    markup = _encounter_battle_markup(enc)
+    markup = _encounter_battle_markup(enc, p)
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
 
 async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -14933,115 +14964,145 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # ── HUNT MODE ACTIONS ────────────────────────────────────────────────────
     if enc["mode"] == "hunt":
-        # Move buttons
-        if data.startswith(f"enc_mv_{uid}_"):
-            move_key = data[len(f"enc_mv_{uid}_"):]
-            mv = MONSTER_MOVES.get(move_key, {"name":"Attack","dmg_mult":1.0,"effect":None})
-            fighter = enc.get("active_fighter", {})
-            f_atk   = int(fighter.get("max_hp", 50) * 0.25)  # squad monster atk based on max_hp
-            dmg_mult = mv.get("dmg_mult", 1.0)
-            if dmg_mult == 0.0:
-                action_txt = f"Your *{fighter.get('nickname') or enc.get('e_name','fighter')}* used *{mv['name']}*!"
+        action_txt = ""
+
+        if data == f"enc_atk_{uid}":
+            if enc.pop("p_stunned", False):
+                action_txt = "⚡ You're stunned and lose your turn!"
             else:
-                dmg = max(1, int(f_atk * dmg_mult * random.uniform(0.85, 1.15)))
+                str_val = get_stat(p, "STR")
+                wep     = p.get("equipped_weapon")
+                wep_atk = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
+                dmg     = max(1, int((str_val + wep_atk) * random.uniform(0.85, 1.15)))
                 enc["e_hp"] = max(0, enc["e_hp"] - dmg)
-                action_txt = f"*{fighter.get('nickname') or 'Your monster'}* used *{mv['name']}* — {dmg} dmg!"
+                elem_e = ELEMENT_EMOJI.get(enc.get("element",""), "")
+                action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage!"
 
-            # Check caught monster dead
-            if enc["e_hp"] <= 0:
-                mon_name = enc["e_name"]
-                exp_gain = enc["e_level"] * 12
-                gold_gain = enc["e_level"] * 5
-                add_exp(p, exp_gain)
-                p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
-                # Give squad monster exp too
-                if fighter.get("type") == "monster":
-                    squad = _get_monster_squad(uid)
-                    for sm in squad:
-                        if sm["slot"] == fighter["slot"]:
-                            sm["exp"] += exp_gain // 2
-                            new_lv = 1 + sm["exp"] // (sm["level"] * 80)
-                            if new_lv > sm["level"]:
-                                sm["level"] = min(100, new_lv)
-                                bh, _ = _mon_level_stats(MONSTER_BY_KEY[sm["key"]][4], MONSTER_BY_KEY[sm["key"]][5], sm["level"])
-                                sm["max_hp"] = bh; sm["hp"] = min(sm["hp"], bh)
-                            _save_squad_monster(uid, sm)
-                            break
-                await _end_encounter(
-                    f"⚔️ *Wild {mon_name}* fainted!\n💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP\n_(30s cooldown)_")
-                return
+        elif data.startswith(f"enc_skl_{uid}_"):
+            cls      = get_player_class(p)
+            p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
+                        if p.get("level", 1) >= sk.get("unlock", 5)]
+            try:
+                idx = int(data[len(f"enc_skl_{uid}_"):])
+                sk  = p_skills[idx]
+            except (ValueError, IndexError):
+                await query.answer("Skill not available!", show_alert=True); return
+            primary  = cls.get("primary_stat", "STR") if cls else "STR"
+            base_dmg = get_stat(p, primary)
+            wep      = p.get("equipped_weapon")
+            wep_atk  = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
+            dmg      = max(1, int((base_dmg + wep_atk * 0.5) * 1.4 * random.uniform(0.9, 1.1)))
+            enc["e_hp"] = max(0, enc["e_hp"] - dmg)
+            sk_name = sk.get("active", sk.get("name", "Skill"))
+            action_txt = f"You used *{sk_name}* for *{dmg}* damage!"
 
-            # Monster attacks back
+        elif data == f"enc_heal_{uid}":
+            if enc.get("heals_left", 0) <= 0:
+                await query.answer("No heals left!", show_alert=True); return
+            heal = max(10, enc["p_max_hp"] // 7)
+            enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
+            enc["heals_left"] = enc.get("heals_left", 1) - 1
+            action_txt = f"💊 You healed *{heal}* HP! ({enc['heals_left']} heals left)"
             mon_act = _enc_monster_attack(enc)
             dot_txt = _apply_dot_tick(enc)
             if dot_txt: mon_act += f"\n_{dot_txt}_"
             if enc["p_hp"] <= 0:
-                fighter_name = fighter.get("nickname") or "Your monster"
-                await _end_encounter(f"💀 *{fighter_name}* fainted!\n_(30s cooldown — nurse your squad first)_")
+                gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
+                await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold. _(30s cooldown)_")
                 return
             enc["last_action"] = f"{action_txt}\n{mon_act}"
-            await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
-                                          reply_markup=_encounter_battle_markup(enc, p))
-            return
-
-        # Catch button
-        if data == f"enc_catch_{uid}":
-            mon_key = enc["e_key"]
-            mdata   = MONSTER_BY_KEY.get(mon_key)
-            base_rate = enc.get("e_catch_rate", 0.20)
-            hp_pct    = enc["e_hp"] / max(1, enc["e_max_hp"])
-            hp_mod    = 1.8 - hp_pct   # lower HP = better chance (max ~1.8)
-            inv       = sjl(p.get("inventory"), [])
-            stone_mod = 2.0 if "Capture Stone" in inv else 1.0
-            if stone_mod == 2.0:
-                inv.remove("Capture Stone"); p["inventory"] = json.dumps(inv)
-            catch_chance = min(0.95, base_rate * hp_mod * stone_mod)
-            if random.random() < catch_chance:
-                squad = _get_monster_squad(uid)
-                elem_e = ELEMENT_EMOJI.get(mdata[2], "")
-                if len(squad) >= 3:
-                    # Squad full — send to box (like Pokemon PC)
-                    _add_monster_to_box(uid, mon_key, level=enc["e_level"])
-                    await _end_encounter(
-                        f"🎉 *Gotcha!* *{mdata[1]}* {elem_e} was caught!\n"
-                        f"📦 Your squad is full — *{mdata[1]}* was sent to your *Box*.\n"
-                        f"Use /box to manage your stored monsters.\n_(30s cooldown)_")
-                else:
-                    ok, _ = _add_monster_to_squad(uid, mon_key, enc["e_level"])
-                    await _end_encounter(
-                        f"🎉 *Gotcha!* *{mdata[1]}* {elem_e} was caught and added to your squad!\n_(30s cooldown)_")
-            else:
-                # Monster breaks free and attacks
-                mon_act = _enc_monster_attack(enc)
-                enc["last_action"] = f"Oh no! *{enc['e_name']}* broke free!\n{mon_act}"
-                if enc["p_hp"] <= 0:
-                    await _end_encounter(f"💀 *{enc['e_name']}* broke free and knocked you out! _(30s cooldown)_")
-                    return
+            try:
                 await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                              reply_markup=_encounter_battle_markup(enc, p))
+            except Exception:
+                await query.edit_message_text(_encounter_battle_card(enc),
                                               reply_markup=_encounter_battle_markup(enc, p))
             return
 
-        # Switch squad monster
-        if data == f"enc_switch_{uid}":
-            squad = _get_monster_squad(uid)
-            healthy = [sm for sm in squad if sm["hp"] > 0]
-            if not healthy:
-                await query.answer("No healthy squad monsters!", show_alert=True); return
-            fighter = enc.get("active_fighter", {})
-            cur_slot = fighter.get("slot", -1)
-            nxt = next((sm for sm in healthy if sm["slot"] != cur_slot), None)
-            if not nxt:
-                await query.answer("Only one healthy monster!", show_alert=True); return
-            nxt["type"] = "monster"
-            enc["active_fighter"] = nxt
-            enc["p_hp"]    = nxt["hp"]; enc["p_max_hp"] = nxt["max_hp"]
-            mdata = MONSTER_BY_KEY.get(nxt["key"])
-            if mdata and len(mdata) > 7:
-                enc["p_moves"] = mdata[7]
-            enc["last_action"] = f"Switched to *{nxt.get('nickname') or (mdata[1] if mdata else nxt['key'])}*!"
+        elif data == f"enc_catch_{uid}":
+            mon_key  = enc["e_key"]
+            mdata    = MONSTER_BY_KEY.get(mon_key)
+            base_rate = enc.get("e_catch_rate", 0.20)
+            hp_pct    = enc["e_hp"] / max(1, enc["e_max_hp"])
+            hp_mod    = 1.8 - hp_pct  # lower HP = better catch rate
+            catch_chance = min(0.90, base_rate * hp_mod)
+            if random.random() < catch_chance:
+                elem    = enc.get("element", "")
+                elem_e  = ELEMENT_EMOJI.get(elem, "")
+                catch_r = enc.get("e_catch_rate", 0.30)
+                if catch_r < 0.08:
+                    core_item = "Rare Monster Core"
+                else:
+                    core_item = f"Monster Core ({elem.capitalize()})" if elem else "Monster Core (Earth)"
+                add_item(p, core_item)
+                exp_gain  = enc["e_level"] * 15
+                gold_gain = enc["e_level"] * 8
+                add_exp(p, exp_gain)
+                p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
+                await _end_encounter(
+                    f"🎯 *Caught!* *{enc['e_name']}* {elem_e}\n"
+                    f"📦 Received: *{core_item}*\n"
+                    f"💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP\n_(30s cooldown)_")
+            else:
+                mon_act = _enc_monster_attack(enc)
+                enc["last_action"] = f"*{enc['e_name']}* broke free!\n{mon_act}"
+                if enc["p_hp"] <= 0:
+                    gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                    p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
+                    await _end_encounter(f"💀 *{enc['e_name']}* broke free and knocked you out!\nLost {gold_loss} gold.")
+                    return
+                try:
+                    await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                                  reply_markup=_encounter_battle_markup(enc, p))
+                except Exception:
+                    await query.edit_message_text(_encounter_battle_card(enc),
+                                                  reply_markup=_encounter_battle_markup(enc, p))
+            return
+        else:
+            return
+
+        # Monster defeated
+        if enc["e_hp"] <= 0:
+            exp_gain  = enc["e_level"] * 14
+            gold_gain = enc["e_level"] * 7
+            hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
+            close_bonus = ""
+            if hp_pct <= 0.15:
+                exp_gain = int(exp_gain * 2.0); gold_gain = int(gold_gain * 2.0)
+                close_bonus = "\n🔥 *Clutch Victory!* Bonus rewards!"
+            elif hp_pct <= 0.30:
+                exp_gain = int(exp_gain * 1.5); gold_gain = int(gold_gain * 1.5)
+                close_bonus = "\n⚔️ *Close Fight Bonus!*"
+            add_exp(p, exp_gain)
+            p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
+            elem_e = ELEMENT_EMOJI.get(enc.get("element",""), "")
+            await _end_encounter(
+                f"⚔️ *Wild {enc['e_name']}* {elem_e} was defeated!{close_bonus}\n"
+                f"💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP\n"
+                f"_Tip: Use 🎯 Catch when the monster is below 50% HP to get Monster Cores!_\n_(30s cooldown)_")
+            return
+
+        # Monster attacks back
+        mon_act = _enc_monster_attack(enc)
+        dot_txt = _apply_dot_tick(enc)
+        if dot_txt: mon_act += f"\n_{dot_txt}_"
+        if enc["p_hp"] <= 0:
+            gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+            p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
+            await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold. _(30s cooldown)_")
+            return
+        enc["last_action"] = f"{action_txt}\n{mon_act}"
+        try:
             await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                           reply_markup=_encounter_battle_markup(enc, p))
-            return
+        except Exception:
+            try:
+                await query.edit_message_text(_encounter_battle_card(enc),
+                                              reply_markup=_encounter_battle_markup(enc, p))
+            except Exception:
+                pass
+        return
 
 # ── HOLD HANDS ────────────────────────────────────────────────────────────────
 async def holdhands_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
