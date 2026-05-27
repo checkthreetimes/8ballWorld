@@ -224,9 +224,7 @@ def exp_for_level(level):
     elif level <= 90: return level * 120000
     else:             return level * 250000
 
-def max_hp_for_level(level): return 250 + (level - 1) * 50
-
-PERM_HP_BONUS = 200  # permanent flat HP boost applied to all players
+def max_hp_for_level(level): return 600 + (level - 1) * 50
 
 # HP multiplier per class line — warrior = tank, mage = glass cannon
 _CLASS_LINE_HP_MULT = {
@@ -841,13 +839,13 @@ CLASS_TREE = {
         "skills":[
             {"tier":1,"unlock":5,"name":"Mending Aura",
              "passive":"All heals you cast are 25% more effective.",
-             "active":"Holy Light","type":"revive_heal",
-             "desc":"Heal target for WIS x5 HP. Works on defeated players  -  revives them.",
+             "active":"Holy Light","type":"revive_heal","mult":10,
+             "desc":"Heal target for WIS x10 HP. Works on defeated players  -  revives them.",
              "passive_key":"mending_aura"},
             {"tier":1,"unlock":5,"name":"Mend",
-             "passive":"Regen 3 HP every 10 minutes passively.",
-             "active":"Mend","type":"self_heal",
-             "desc":"Restore WIS x2 HP to yourself.",
+             "passive":"Regen 15 HP every 10 minutes passively.",
+             "active":"Mend","type":"self_heal","mult":7,
+             "desc":"Restore WIS x7 HP to yourself.",
              "passive_key":"mend"},
         ]
     },
@@ -864,9 +862,9 @@ CLASS_TREE = {
              "desc":"Grant target 1 hour of damage reduction (15% less damage taken).",
              "passive_key":"divine_grace"},
             {"tier":2,"unlock":10,"name":"Renew",
-             "passive":"Heals you cast leave a regen buff  -  5 HP per 30s for 5 minutes.",
+             "passive":"Heals you cast leave a regen buff  -  20 HP per 30s for 5 minutes.",
              "active":"Renew","type":"regen",
-             "desc":"Apply regen to target: restore WIS HP every 30 seconds for 5 minutes.",
+             "desc":"Apply regen to target: restore WIS x2 HP every 30 seconds for 5 minutes.",
              "passive_key":"renew"},
         ]
     },
@@ -879,8 +877,8 @@ CLASS_TREE = {
         "skills":[
             {"tier":3,"unlock":30,"name":"Sacred Ground",
              "passive":"Players you have healed take 10% less damage for 1 hour after being healed.",
-             "active":"Mass Heal","type":"group_heal",
-             "desc":"Heal all guild members currently in chat for WIS x3 HP each. No potion required.",
+             "active":"Mass Heal","type":"group_heal","mult":8,
+             "desc":"Heal all guild members currently in chat for WIS x8 HP each. No potion required.",
              "passive_key":"sacred_ground"},
         ]
     },
@@ -982,9 +980,9 @@ CLASS_TREE = {
         "stat_bonus":{"WIS":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Natural Growth",
-             "passive":"Regen 5 HP every 5 minutes. 12% chance each attack plants a poison seed on target (15 dmg/30s for 2 min).",
-             "active":"Healing Bloom","type":"revive_heal",
-             "desc":"Bloom restores WIS x4 HP to self or target. Works on defeated allies — revives them.",
+             "passive":"Regen 20 HP every 5 minutes. 12% chance each attack plants a poison seed on target (15 dmg/30s for 2 min).",
+             "active":"Healing Bloom","type":"revive_heal","mult":10,
+             "desc":"Bloom restores WIS x10 HP to self or target. Works on defeated allies — revives them.",
              "passive_key":"natural_growth"},
             {"tier":1,"unlock":5,"name":"Thorn Skin",
              "passive":"Attackers take WIS x0.5 damage when hitting you.",
@@ -1008,8 +1006,8 @@ CLASS_TREE = {
              "passive_key":"garden_aura"},
             {"tier":2,"unlock":10,"name":"Blossoming",
              "passive":"All healing you perform is 20% more effective.",
-             "active":"Bloom Mend","type":"self_heal",
-             "desc":"Restore WIS x3 HP instantly. Remove one active bleed or poison from target.",
+             "active":"Bloom Mend","type":"self_heal","mult":7,
+             "desc":"Restore WIS x7 HP instantly. Remove one active bleed or poison from target.",
              "passive_key":"blossoming"},
         ]
     },
@@ -1036,8 +1034,8 @@ CLASS_TREE = {
         "skills":[
             {"tier":4,"unlock":60,"name":"Verdant Renewal",
              "passive":"Each heal you cast has 20% chance to heal double. Guild members healed by you take 10% less damage for 1 hour.",
-             "active":"Garden of Eden","type":"group_heal",
-             "desc":"Restore WIS x3 HP to all guild members in chat. Grant regen 10 HP/30s for 2 hours.",
+             "active":"Garden of Eden","type":"group_heal","mult":8,
+             "desc":"Restore WIS x8 HP to all guild members in chat. Grant regen 10 HP/30s for 2 hours.",
              "passive_key":"verdant_renewal"},
         ]
     },
@@ -1050,8 +1048,8 @@ CLASS_TREE = {
         "skills":[
             {"tier":5,"unlock":100,"name":"Eternal Bloom",
              "passive":"Cannot be poisoned or diseased. All heals 50% stronger. Allies you've healed gain +5% all stats while in chat.",
-             "active":"Blossom Nova","type":"aoe_heal_dmg",
-             "desc":"Pulse of pure life: heal all allies for WIS x5 HP. Enemies currently poisoned take WIS x8 burst damage.",
+             "active":"Blossom Nova","type":"aoe_heal_dmg","mult":10,
+             "desc":"Pulse of pure life: heal all allies for WIS x10 HP. Enemies currently poisoned take WIS x8 burst damage.",
              "passive_key":"eternal_bloom"},
         ]
     },
@@ -2606,9 +2604,9 @@ def _pet_main_markup():
 # Items that can be found in game
 CONSUMABLES = {
     # Healing
-    "Health Potion":          {"desc":"Restores 150 HP.","sell":75},
-    "Greater Health Potion":  {"desc":"Restores 300 HP.","sell":200},
-    "Grand Restorative Flask":{"desc":"Restores 600 HP.","sell":450},
+    "Health Potion":          {"desc":"Restores 100 HP.","sell":75},
+    "Greater Health Potion":  {"desc":"Restores 200 HP.","sell":200},
+    "Grand Restorative Flask":{"desc":"Restores 500 HP.","sell":450},
     # Revive
     "Scroll of Revival":      {"desc":"Revive a defeated player.","sell":750},
     # Skill items
@@ -2698,9 +2696,9 @@ RECIPES = {
 }
 
 SHOP_POOL = [  # kept for legacy compat
-    {"item":"Health Potion","price":150,"desc":"Restores 150 HP."},
-    {"item":"Greater Health Potion","price":400,"desc":"Restores 300 HP."},
-    {"item":"Grand Restorative Flask","price":900,"desc":"Restores 600 HP."},
+    {"item":"Health Potion","price":150,"desc":"Restores 100 HP."},
+    {"item":"Greater Health Potion","price":400,"desc":"Restores 200 HP."},
+    {"item":"Grand Restorative Flask","price":900,"desc":"Restores 500 HP."},
     {"item":"Scroll of Revival","price":1500,"desc":"Revive a defeated player."},
     {"item":"Iron Shard","price":300,"desc":"Crafting material."},
     {"item":"Enchanting Scroll","price":500,"desc":"Enchant gear."},
@@ -2710,9 +2708,9 @@ _RARITY_PRICES = {"common":350,"uncommon":950,"rare":2800,"epic":7000}
 
 _SHOP_STATIC_TABS = {
     "pot": [
-        {"item":"Health Potion",          "price":150,  "desc":"Restores 150 HP."},
-        {"item":"Greater Health Potion",  "price":400,  "desc":"Restores 300 HP."},
-        {"item":"Grand Restorative Flask","price":900,  "desc":"Restores 600 HP."},
+        {"item":"Health Potion",          "price":150,  "desc":"Restores 100 HP."},
+        {"item":"Greater Health Potion",  "price":400,  "desc":"Restores 200 HP."},
+        {"item":"Grand Restorative Flask","price":900,  "desc":"Restores 500 HP."},
         {"item":"Scroll of Revival",      "price":1500, "desc":"Revive a defeated player."},
     ],
     "mat": [
@@ -4403,7 +4401,7 @@ def calc_max_hp(p):
     temp   = safe_int(p.get("temp_hp_bonus")) if _ts_active(p, "temp_hp_until") else 0
     set_bonuses, _ = get_active_set_bonuses(p)
     set_hp = set_bonuses.get("hp", 0)
-    return base + acc_hp + enc_hp + temp + set_hp + PERM_HP_BONUS
+    return base + acc_hp + enc_hp + temp + set_hp
 
 TIER_THRESHOLDS = {1: 5, 2: 10, 3: 30, 4: 60, 5: 100}
  
@@ -4614,6 +4612,45 @@ def calc_attack_damage(attacker, weather=None):
         if pk == "final_performance":
             _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
             if _hp_pct < 0.25: buff_mod += 0.50
+        # Mage offensive passives
+        if pk == "spell_surge":
+            if random.random() < 0.20: buff_mod += 1.0   # 20% chance double damage
+        if pk == "arcane_pulse":  raw += get_stat(attacker, "INT") * 0.10
+        if pk == "arcane_mastery":
+            attacker["arcane_mastery_count"] = safe_int(attacker.get("arcane_mastery_count")) + 1
+            if attacker["arcane_mastery_count"] >= 3:
+                buff_mod += 2.0; attacker["arcane_mastery_count"] = 0
+        if pk == "eternal_wisdom": buff_mod += 0.20  # partial effect; defense pierce in calc_defense
+        if pk == "mana_overload":  pass  # handled in calc_defense (reflect)
+        if pk == "cursed_blade":   pass  # handled in apply_strike (on-hit debuff)
+        # Priest offensive passives
+        if pk == "holy_fervor":   raw += get_stat(attacker, "WIS") * 0.10
+        if pk == "purge":         pass  # handled in apply_strike
+        if pk == "wrath_of_the_righteous": buff_mod += 0.15
+        if pk == "dark_sense":    buff_mod += 0.05
+        # Archer offensive passives
+        if pk == "keen_sight":    raw += get_stat(attacker, "DEX") * 0.50
+        if pk == "warning_shot":  pass  # handled in apply_strike (debuff on first hit)
+        if pk == "marked_for_death": pass  # gold bonus on kill, not attack damage
+        if pk == "tracker":       pass  # info passive, no combat damage
+        if pk == "pathfinder":    pass  # immunity passive, no damage bonus
+        # Thief passives
+        if pk == "feint":         pass  # handled in apply_strike
+        if pk == "throat_cut":    pass  # handled in apply_strike
+        # Warrior missing passives
+        if pk == "shield_wall":
+            if attacker.get("equipped_shield"): buff_mod += 0.05
+        # Valkyrie
+        if pk == "thunderstrike":
+            attacker["thunderstrike_count"] = safe_int(attacker.get("thunderstrike_count")) + 1
+            if attacker["thunderstrike_count"] >= 5:
+                buff_mod += 0.60; attacker["thunderstrike_count"] = 0
+        # Phantom Dancer
+        if pk == "whirlwind":
+            if random.random() < 0.15: buff_mod += 0.30  # chance to deal bonus dmg
+        # Cursed debuff on attacker: attacker has been cursed, deals 10% less
+        if _ts_active(attacker, "cursed_until"):
+            buff_mod -= 0.10
 
     # Accessory low HP bonus
     if get_accessory_bonus(attacker, "low_hp_dmg_bonus"):
@@ -4667,6 +4704,45 @@ def calc_defense(defender, dmg):
             hp_pct = defender.get("hp", 1) / max(1, defender.get("max_hp", 1))
             if hp_pct > 0.50:
                 dmg = max(1, dmg - 30)
+        # Mage defensive passives
+        if pk == "arcane_shield":
+            if random.random() < 0.10: return 0   # absorb hit entirely
+        if pk == "mana_overload":
+            if random.random() < 0.15:
+                # attacker takes INT-scaled reflect (stored for messaging in apply_strike)
+                defender["mana_overload_reflect"] = max(1, int(get_stat(defender, "INT") * 0.50))
+        if pk == "void_rift":     pass  # already in check_miss as 25% dodge
+        if pk == "eternal_wisdom": pass  # offense side
+        if pk == "undying":
+            today = datetime.now().strftime("%Y-%m-%d")
+            if defender.get("undying_used") != today:
+                test_hp = defender["hp"] - dmg
+                if test_hp <= 0:
+                    defender["undying_used"] = today
+                    dmg = max(0, defender["hp"] - 1)  # survive at 1 HP
+        # Priest defensive passives
+        if pk == "resurrection":
+            today = datetime.now().strftime("%Y-%m-%d")
+            if defender.get("resurrection_used") != today:
+                test_hp = defender["hp"] - dmg
+                if test_hp <= 0:
+                    defender["resurrection_used"] = today
+                    max_hp = calc_max_hp(defender)
+                    dmg = max(0, defender["hp"] - int(max_hp * 0.30))
+        if pk == "sacred_ground":  def_reduction += 0.10
+        if pk == "mend":           pass  # passive regen, not relevant to incoming dmg calc
+        if pk == "divine_grace":   pass  # healer passive, not dmg reduction
+        if pk == "renew":          pass  # regen buff, not dmg reduction
+        if pk == "divine_presence": def_reduction += 0.05   # aura gives some protection
+        if pk == "wrath_of_the_righteous": pass  # attacker passive
+        # Warrior
+        if pk == "shield_wall":
+            if defender.get("equipped_shield"): def_reduction += 0.15
+        # Thief passives
+        if pk == "feint":          pass  # handled in apply_strike
+        if pk == "throat_cut":     pass  # handled in apply_strike
+        # Archer
+        if pk == "warning_shot":   pass  # handled in apply_strike
     # def_reflect active status — extra damage reduction
     if _ts_active(defender, "def_reflect_until"):
         def_reduction += 0.40
@@ -5441,6 +5517,7 @@ def check_miss(attacker, defender):
         if pk == "fog_of_war":    dodge += 0.05
         if pk == "rhythm":        dodge += 0.05
         if pk == "storm_instinct": dodge += 0.05
+        if pk == "nimble":     dodge += min(0.20, get_stat(defender, "AGI") * 0.005)
 
     # Pet passive dodge bonus (defender)
     def_pet = get_active_pet_record(defender.get("user_id"))
@@ -7462,6 +7539,40 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Lifesteal
     healed = apply_lifesteal(a, dmg_after_def)
 
+    # On-hit passive effects
+    if cls_a and dmg_after_def > 0:
+        pk_a = cls_a.get("passive_key","")
+        # Feint: 5% chance target misses their next attack
+        if pk_a == "feint" and random.random() < 0.05:
+            set_status(a, "feint_proc_until", 60)  # flag that feint proc'd
+            set_status(d, "distracted_until", 60)   # defender distracted 1 min
+        # Throat Cut: 5% chance silences target 10s
+        if pk_a == "throat_cut" and random.random() < 0.05:
+            set_status(d, "silenced_until", 10)
+        # Cursed Blade: apply hex debuff to target (10% less damage for 2 min)
+        if pk_a == "cursed_blade":
+            set_status(d, "cursed_until", 120)
+        # Warning Shot: first hit on this target applies AGI debuff
+        if pk_a == "warning_shot":
+            ws_key = f"warning_shot_hit_{a.get('user_id','')}"
+            if not _ts_active(d, ws_key):
+                set_status(d, ws_key, 60)
+                cur_agi = safe_stats(d).get("AGI", 5)
+                sd = safe_stats(d)
+                sd["AGI"] = max(0, cur_agi - 2)
+                d["stats"] = json.dumps(sd)
+        # Purge: strip one active buff from target on hit
+        if pk_a == "purge":
+            for buf in ["blessed_until","def_reflect_until","battle_cry_str_until",
+                        "invincible_until","temp_hp_until"]:
+                if _ts_active(d, buf):
+                    d[buf] = None; break
+        # Mana Overload reflect: if defender set the reflect flag, apply it back
+        if d.get("mana_overload_reflect"):
+            reflect_dmg = d.pop("mana_overload_reflect")
+            a["hp"] = max(1, a["hp"] - reflect_dmg)
+            extra_notes.append(f"⚡ *Mana Overload!* {d['username']} reflects *{reflect_dmg} dmg*!")
+
     # Update recent attackers
     update_recent_attackers(d, au.id)
 
@@ -7563,6 +7674,14 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if cls_a and cls_a.get("passive_key") == "dead_or_alive":
             a["deadeye_kill_bonus"] = safe_int(a.get("deadeye_kill_bonus")) + 2
 
+        # Marked for Death: +25% gold on kill
+        if cls_a and cls_a.get("passive_key") == "marked_for_death":
+            mfd_gold = round(d.get("gold", 0) * 0.05 + 25)  # bonus gold on kill
+            mfd_bonus = round(mfd_gold * 0.25)
+            a["gold"] = a.get("gold", 0) + mfd_bonus
+            if mfd_bonus > 0:
+                extra_notes.append(f"💰 *Marked for Death!* +{mfd_bonus} bonus gold!")
+
         action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}."
 
         if leveled and a["level"] % 10 == 0:
@@ -7645,17 +7764,17 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_priest_healer:
         # Priest line  -  free revive via skill (Holy Light)
-        heal_amount = safe_stats(h).get("WIS",5) * 5
+        heal_amount = safe_stats(h).get("WIS",5) * 8
         if get_player_class(h) and get_player_class(h).get("passive_key") == "mending_aura":
             heal_amount = round(heal_amount * 1.25)
     else:
         # Non-priest  -  requires potion
         if "Grand Restorative Flask" in inv:
-            potion = "Grand Restorative Flask"; heal_amount = 600
+            potion = "Grand Restorative Flask"; heal_amount = 500
         elif "Greater Health Potion" in inv:
-            potion = "Greater Health Potion"; heal_amount = 300
+            potion = "Greater Health Potion"; heal_amount = 200
         elif "Health Potion" in inv:
-            potion = "Health Potion"; heal_amount = 150
+            potion = "Health Potion"; heal_amount = 100
         else:
             await send_group(update,
                 "❌ You need a Health Potion to heal someone!\n"
@@ -7844,7 +7963,7 @@ def _build_stats_pages(p, viewing_name=None):
         page1_lines.append(pet_str)
     page1_lines += [
         "",
-        f"❤️ HP: {p['hp']}/{real_max}  _(+{PERM_HP_BONUS} permanent)_",
+        f"❤️ HP: {p['hp']}/{real_max}",
         f"✨ {exp_cur:,}/{exp_need:,} EXP ({exp_pct}%)",
         f"🏆 Lifetime EXP: {safe_int(p.get('total_exp')):,}",
         f"💬 Messages: {msg_count:,}",
@@ -7864,7 +7983,7 @@ def _build_stats_pages(p, viewing_name=None):
     page2_lines = [
         f"🧙 *{cls_name}*{path_str}",
         "",
-        f"❤️ Max HP: {real_max}  _(+{PERM_HP_BONUS} permanent)_",
+        f"❤️ Max HP: {real_max}",
         f"STR: {eff['STR']}",
         f"AGI: {eff['AGI']}",
         f"INT: {eff['INT']}",
@@ -9072,7 +9191,7 @@ async def allocate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     max_hp = calc_max_hp(p)
     if not context.args or len(context.args) < 2:
         alloc_text = (f"📊 *Stat Allocation*  -  *{sp}* points available\n\n"
-            f"❤️ Max HP: {max_hp}  _(+{PERM_HP_BONUS} permanent)_\n"
+            f"❤️ Max HP: {max_hp}\n"
             f"STR:{get_stat(p,'STR')} AGI:{get_stat(p,'AGI')} INT:{get_stat(p,'INT')} "
             f"WIS:{get_stat(p,'WIS')} DEX:{get_stat(p,'DEX')} LUK:{get_stat(p,'LUK')}\n\n"
             f"📌 STR  -  Attack damage (Warrior)\n"
@@ -9948,7 +10067,7 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_defeated(p):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
             await query.answer("You're defeated — potions won't help!", show_alert=True); return
-        hp_gain = {"Health Potion": 150, "Greater Health Potion": 300, "Grand Restorative Flask": 600}.get(item_name, 150)
+        hp_gain = {"Health Potion": 100, "Greater Health Potion": 200, "Grand Restorative Flask": 500}.get(item_name, 3000)
         p["hp"] = min(calc_max_hp(p), p["hp"] + hp_gain)
         msg += f"❤️ +{hp_gain} HP ({p['hp']}/{calc_max_hp(p)})"
     elif item_name == "Scroll of Revival":
@@ -10166,7 +10285,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+150);  msg += f"❤️ +150 HP ({p['hp']}/{calc_max_hp(p)})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+100);  msg += f"❤️ +100 HP ({p['hp']:,}/{calc_max_hp(p):,})"
     elif item == "Greater Health Potion":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -10175,7 +10294,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+300);  msg += f"❤️ +300 HP ({p['hp']}/{calc_max_hp(p)})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+200);  msg += f"❤️ +200 HP ({p['hp']:,}/{calc_max_hp(p):,})"
     elif item == "Grand Restorative Flask":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -10184,7 +10303,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+600);  msg += f"❤️ +600 HP ({p['hp']}/{calc_max_hp(p)})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+500);  msg += f"❤️ +500 HP ({p['hp']:,}/{calc_max_hp(p):,})"
     elif item == "Scroll of Revival":
         if not is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -17199,7 +17318,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             items[item_name] -= 1
             if items[item_name] <= 0: del items[item_name]
             if "Health Potion" in item_name or "Restorative Flask" in item_name or "Greater Health" in item_name:
-                heal_val = {"Health Potion":150,"Greater Health Potion":300,"Grand Restorative Flask":600}.get(item_name,150)
+                heal_val = {"Health Potion":100,"Greater Health Potion":200,"Grand Restorative Flask":500}.get(item_name,100)
                 arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal_val)
                 log_entry = f"🧪 {atk_name} drinks *{item_name}*! +{heal_val} HP."
             else:
@@ -19306,8 +19425,16 @@ POOL_ITEM_TABLE = [
     ("Phantom Loop",0.002),("Warrior's Band",0.002),("Mage's Coil",0.002),
     ("Stone Heart",0.002),("Beast Fang Chain",0.002),("Traveler's Compass",0.002),
     ("The Storm Torc",0.002),
+    # ── Common shields & claws ──
+    ("Wooden Buckler",0.015),("Battered Iron Shield",0.015),
+    ("Iron Claw Brace",0.015),("Spiked Knuckle Claw",0.015),
+    # ── Uncommon shields & claws ──
+    ("Soldier's Kite Shield",0.007),("Iron Heater Shield",0.007),
+    ("Razor Claw Gauntlet",0.007),("Hunting Claws",0.007),
     # ── Rare shields ──
-    ("Soldier's Kite Shield",0.002),("Knight's Bulwark",0.002),
+    ("Knight's Bulwark",0.002),("Steel Tower Shield",0.002),
+    # ── Rare claws ──
+    ("Assassin's Talon",0.002),("Shadow Rend Claw",0.002),
     # ── Epic weapons ──
     ("Ruinblade",0.0005),("Shadow Death Star",0.0005),
     # ── Epic weapons — new classes ──
@@ -19325,8 +19452,9 @@ POOL_ITEM_TABLE = [
     ("War Knuckle",0.0004),("Cleric's Band",0.0004),("Runed Heart",0.0004),
     ("The Shadow Whisper",0.0004),("Guardian's Talisman",0.0004),
     ("The Crossed Blades Pendant",0.0003),("The Iron and Flame Pendant",0.0003),
-    # ── Epic shields ──
-    ("Holy Pavise",0.0003),
+    # ── Epic shields & claws ──
+    ("Holy Pavise",0.0003),("Aegis of the Devoted",0.0003),
+    ("Phantom Rend",0.0003),("Venomous Fang Claw",0.0003),
     # ── Legendary weapons ──
     ("Grand Inquisitor's Cross",0.00008),("The Final Judgment",0.00008),
     # ── Legendary weapons — new classes ──
@@ -19342,8 +19470,14 @@ POOL_ITEM_TABLE = [
     # ── Legendary accessories ──
     ("Shard of the Void",0.00006),("Ring of the Endless",0.00006),
     ("The Warlord's Ring",0.00005),("The Eternal Ring",0.00005),
-    # ── Legendary shields ──
-    ("The Dead Reckoning",0.00004),
+    # ── Legendary shields & claws ──
+    ("The Dead Reckoning",0.00004),("Celestial Bulwark",0.00004),
+    ("The Death Grasp",0.00004),
+    # ── Legendary accessories (missing) ──
+    ("The Last Stand Locket",0.00005),("The Soul Amulet",0.00005),
+    ("The Divine Shard",0.00005),("The Void Mark",0.00005),
+    # ── Legendary 8-Ball items ──
+    ("Enchanted 8-Ball",0.00008),("Ancient 8-Ball",0.00005),
     # ── Common DEF gear ──
     ("Leather Cap",0.015),("Iron Skullcap",0.015),
     ("Worn Leather Gloves",0.015),("Iron Knuckle Guards",0.015),
@@ -19386,6 +19520,12 @@ POOL_ITEM_TABLE = [
     # ── Mythic DEF gear ──
     ("Crown of the Void",0.000003),("Hands of the Void",0.000003),
     ("Steps of the Void",0.000003),("Face of the Void",0.000003),
+    # ── Mythic shields & claws ──
+    ("The Eternal Oath",0.000003),("Soul Ripper Claw",0.000003),
+    # ── Mythic accessories & 8-Ball ──
+    ("Void 8-Ball",0.000002),
+    # ── Common 8-Ball items ──
+    ("Cracked 8-Ball",0.010),("Magic 8-Ball",0.004),
     # ── Crafting/consumables ──
     ("Iron Shard",0.025),("Enchanting Scroll",0.008),("Scroll of Revival",0.003),
 ]
@@ -21159,7 +21299,7 @@ async def allocate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rec = cls["primary_stat"] + " recommended" if cls else "Free to allocate"
     max_hp = calc_max_hp(p)
     text = (f"📊 *Stat Allocation*  -  *{sp}* points available\n\n"
-            f"❤️ Max HP: {max_hp}  _(+{PERM_HP_BONUS} permanent)_\n"
+            f"❤️ Max HP: {max_hp}\n"
             f"STR:{get_stat(p,'STR')} AGI:{get_stat(p,'AGI')} INT:{get_stat(p,'INT')} "
             f"WIS:{get_stat(p,'WIS')} DEX:{get_stat(p,'DEX')} LUK:{get_stat(p,'LUK')}\n\n"
             f"📌 STR  -  Attack damage (Warrior)\n"
