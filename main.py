@@ -7344,6 +7344,392 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
         reply_markup=markup)
 
+# ── PVP COMBAT HELPERS ────────────────────────────────────────────────────────
+
+def _build_pvp_card_markup(def_id, atk_id, defender_p):
+    """Retaliate / Skills / Heal buttons shown to the player who was just hit."""
+    inv = sjl(defender_p.get("inventory"), [])
+    has_potion = any(i in inv for i in
+                     ["Health Potion", "Greater Health Potion", "Grand Restorative Flask"])
+    is_priest  = get_class_line(defender_p) == "priest"
+    all_skills = sjl(defender_p.get("all_skills"), [])
+    row1 = [InlineKeyboardButton("⚔️ Retaliate", callback_data=f"pvpcard_atk_{def_id}_{atk_id}")]
+    if all_skills:
+        row1.append(InlineKeyboardButton("✨ Skills", callback_data=f"pvpcard_skl_{def_id}_{atk_id}_0"))
+    rows = [row1]
+    if has_potion or is_priest:
+        rows.append([InlineKeyboardButton("💊 Heal", callback_data=f"pvpcard_heal_{def_id}_{atk_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
+    """
+    Full PvP combat resolution. Modifies a and d in-place and saves them.
+    Returns (action_text, lvl_msgs, result_type) where result_type is
+    'miss', 'hit', or 'defeat'.
+    """
+    lvl_msgs = []
+
+    # ── Charged killshot ──────────────────────────────────────────────────────
+    if safe_int(a.get("charging_killshot")):
+        a["charging_killshot"] = 0
+        dmg_after_def = get_stat(a, "AGI") * 4
+        action = (f"🎯 *KILLSHOT FIRED!* *{a['username']}* → *{d['username']}*  -  "
+                  f"AGI×4 = *{dmg_after_def} damage!* Cannot be dodged!")
+        d["hp"] = max(0, d["hp"] - dmg_after_def)
+        update_recent_attackers(d, au_id)
+        if d["hp"] <= 0:
+            d["hp"] = 0
+            d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
+            d["last_defeated_by"] = f"{a['username']} (Killshot)"
+            d["kill_streak"] = 0; d["is_wanted"] = 0
+            d["revenge_target"] = au_id
+            d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
+            asyncio.create_task(_notify_defeat(bot, d, a["username"] + " (Killshot)"))
+            exp_loss = round(d.get("exp", 0) * 0.10)
+            d["exp"] = max(0, d.get("exp", 0) - exp_loss)
+            d["losses"] = d.get("losses", 0) + 1
+            a["wins"] = a.get("wins", 0) + 1
+            a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
+            if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
+                a["max_kill_streak"] = a["kill_streak"]
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            if a.get("kills_today_date") != today_str:
+                a["kills_today"] = 0; a["kills_today_date"] = today_str
+            a["kills_today"] = safe_int(a.get("kills_today")) + 1
+            if a["kills_today"] >= 5:
+                a["is_wanted"] = 1
+            hist_ks = sjl(d.get("pvp_history"), [])
+            hist_ks.insert(0, {"attacker": a["username"], "dmg": "KO",
+                               "ts": datetime.now().strftime("%m/%d %H:%M")})
+            d["pvp_history"] = json.dumps(hist_ks[:5])
+            for _desc, _exp, _gold in track_objective(a, "pvp_win"):
+                a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
+            exp_gain = 60 + a["level"] * 8
+            lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
+            action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}."
+            if leveled and a["level"] % 10 == 0:
+                asyncio.create_task(announce(bot, chat_id,
+                    f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=60))
+        check_titles(a); check_titles(d)
+        save_player(a); save_player(d)
+        if d["hp"] > 0:
+            hp_pct = d["hp"] / max(1, d["max_hp"])
+            bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
+            action += f"\n❤️ {d['username']}: *{d['hp']}/{d['max_hp']}* [{bar}]"
+        if lvl_msgs:
+            action += "\n\n" + "\n".join(lvl_msgs)
+        return action, lvl_msgs, "defeat" if d["hp"] <= 0 else "hit"
+
+    # ── Miss check ────────────────────────────────────────────────────────────
+    if check_miss(a, d):
+        d["dodges"] = d.get("dodges", 0) + 1
+        check_titles(d)
+        cls_d_miss = get_player_class(d)
+        if cls_d_miss:
+            pk_d_miss = cls_d_miss.get("passive_key", "")
+            if pk_d_miss == "shadowstep":
+                cds_d = safe_cds(d); cds_d["shadowstep_primed"] = "1"
+                d["passive_cooldowns"] = json.dumps(cds_d)
+            if pk_d_miss == "deaths_shadow":
+                d["hp"] = min(d["max_hp"], d["hp"] + 10)
+        save_player(d); save_player(a)
+        return f"🌀 *{a['username']}* swings at *{d['username']}*  -  *MISS!*", [], "miss"
+
+    # ── Damage ────────────────────────────────────────────────────────────────
+    dmg = calc_attack_damage(a, w)
+    extra_notes = []
+
+    _a_weap = a.get("equipped_weapon", "")
+    _a_weap_type = WEAPONS.get(_a_weap, {}).get("type", "")
+    if _a_weap_type == "throwing_star":
+        _a_shld = a.get("equipped_shield", "")
+        if SHIELDS.get(_a_shld, {}).get("type", "") != "claw":
+            dmg = round(dmg * 0.75)
+            extra_notes.append("⚠️ _Missing claw  -  75% damage_")
+
+    crit_forced = safe_cds(a).pop("next_crit_skill", None)
+    if crit_forced:
+        a["passive_cooldowns"] = json.dumps(safe_cds(a))
+    if crit_forced or check_crit(a):
+        dmg = apply_crit(a, dmg); crit_note = " 💥 CRIT!"
+    else:
+        crit_note = ""
+
+    cds_a = safe_cds(a)
+    if cds_a.get("shadowstep_primed"):
+        dmg = round(dmg * 1.50)
+        cds_a.pop("shadowstep_primed"); a["passive_cooldowns"] = json.dumps(cds_a)
+        extra_notes.append("🌑 *Shadowstep!* +50% damage after dodge!")
+
+    cls_a = get_player_class(a)
+    if cls_a:
+        pk_a = cls_a.get("passive_key", "")
+        if pk_a == "execute":
+            hp_pct = d["hp"] / max(1, d["max_hp"])
+            if hp_pct < 0.25:
+                dmg *= 2; extra_notes.append("💀 *Execute!* Double damage below 25% HP!")
+        if pk_a == "devotion":
+            charge = safe_int(a.get("devotion_charge"))
+            if charge > 0:
+                dmg += 5; a["devotion_charge"] = 0
+                extra_notes.append("✨ *Devotion charge!* +5 bonus damage!")
+        if pk_a == "battle_cry":
+            set_status(a, "battle_cry_str_until", 900)
+        if pk_a == "warcry":
+            if len(get_recent_attackers(a)) > 1:
+                dmg = round(dmg * 1.20); extra_notes.append("😤 *Warcry!* +20% damage!")
+        if pk_a == "flurry" and random.random() < 0.20:
+            dmg *= 2; extra_notes.append("⚡ *Flurry!* Double hit!")
+        if pk_a == "one_shot" and random.random() < 0.10:
+            dmg *= 5; extra_notes.append("🎯 *ONE-SHOT!* 5x damage!")
+        if pk_a == "mark_first_hit":
+            if safe_int(a.get("mark_first_hit")):
+                dmg = round(dmg * 1.25); a["mark_first_hit"] = 0
+                extra_notes.append("🎯 *First strike bonus!* +25%!")
+        if pk_a == "trailblazer":
+            today = datetime.now().strftime("%Y-%m-%d")
+            cds_tb = safe_cds(a)
+            if cds_tb.get("trailblazer_date") != today:
+                dmg *= 2; cds_tb["trailblazer_date"] = today
+                a["passive_cooldowns"] = json.dumps(cds_tb)
+                extra_notes.append("🌅 *Trailblazer!* First strike of the day  -  double damage!")
+        if pk_a == "steady_aim":
+            if a.get("steady_aim_target") == d["user_id"]:
+                a["steady_aim_stacks"] = min(5, safe_int(a.get("steady_aim_stacks")) + 1)
+            else:
+                a["steady_aim_target"] = d["user_id"]; a["steady_aim_stacks"] = 1
+
+    revenge_bonus_note = ""
+    if safe_int(a.get("revenge_target")) == du_id:
+        rev_exp = a.get("revenge_expires")
+        if rev_exp and datetime.now() < datetime.fromisoformat(rev_exp):
+            dmg = round(dmg * 1.15); revenge_bonus_note = " 🔥 *Revenge!* +15% dmg"
+            a["revenge_target"] = None; a["revenge_expires"] = None
+
+    # Distracted miss
+    if is_distracted(a):
+        if random.random() < 0.30:
+            save_player(a); save_player(d)
+            return f"😵 *{a['username']}* was *Distracted* and missed *{d['username']}*!", [], "miss"
+
+    cls_d = get_player_class(d)
+    if cls_d:
+        pk_d = cls_d.get("passive_key", "")
+        if pk_d == "bulwark" and random.random() < 0.15:
+            extra_notes.append("🛡️ *Bulwark!* Attack completely blocked!"); dmg = 0
+        if pk_d == "defensive_stance":
+            hp_pct_d = d.get("hp", 1) / max(1, d.get("max_hp", 1))
+            if hp_pct_d > 0.50:
+                dmg = max(1, dmg - 30)
+        if pk_d == "devotion":
+            d["devotion_charge"] = safe_int(d.get("devotion_charge")) + 1
+        if pk_d == "nettleskin" and random.random() < 0.10:
+            a["poison_damage"] = max(a.get("poison_damage", 0), 15)
+            set_status(a, "poison_until", 120)
+            extra_notes.append("🌿 *Nettleskin!* Attacker poisoned (15 dmg/30s for 2 min)!")
+        if pk_d == "judgement" and random.random() < 0.30:
+            wis_dmg = max(1, round(safe_stats(d).get("WIS", 5) * 0.50))
+            a["hp"] = max(1, a["hp"] - wis_dmg)
+            extra_notes.append(f"⚖️ *Judgement!* {d['username']} retaliates for *{wis_dmg} holy dmg*!")
+
+    reflect = apply_reflect(d, a, dmg)
+
+    if cls_d and cls_d.get("line") == "priest" and d.get("class_path") == "A":
+        ward_chance = get_proc_chance(0.15, d)
+        if not _ts_active(d, "ward_until") and random.random() < ward_chance:
+            d["ward_until"] = (datetime.now() + timedelta(minutes=2)).isoformat()
+            dmg = round(dmg * 0.60)
+            extra_notes.append("✨ *Holy Ward procs!* Damage reduced by 40%!")
+    if _ts_active(d, "ward_until"):
+        dmg = round(dmg * 0.60); d["ward_until"] = None
+        extra_notes.append("✨ *Holy Ward absorbs the hit!* -40% damage.")
+
+    dmg_after_def = calc_defense(d, dmg) if dmg > 0 else 0
+
+    if _ts_active(d, "holy_field_until"):
+        wis_dmg = round(safe_stats(d).get("WIS", 5) * 2)
+        a["hp"] = max(0, a["hp"] - wis_dmg)
+        reflect_note = f" | ✨ Holy Field reflects {wis_dmg} dmg!"
+    else:
+        reflect_note = ""
+
+    if cls_d and cls_d.get("passive_key") == "unbreakable":
+        if d["hp"] - dmg_after_def <= 0 and not d.get("unbreakable_used"):
+            dmg_after_def = d["hp"] - 1; d["unbreakable_used"] = True
+
+    def_pet_rec = get_active_pet_record(du_id)
+    if def_pet_rec:
+        dmg_after_def, pet_status_type, pet_status_val = apply_pet_defense(def_pet_rec, a, dmg_after_def, extra_notes)
+        if pet_status_type == "stun" and a:
+            set_status(a, "stunned_until", 30)
+        elif pet_status_type == "poison" and a and pet_status_val:
+            a["poison_damage"] = pet_status_val; set_status(a, "poison_until", 60)
+        elif pet_status_type == "lifesteal_to_owner" and d and pet_status_val:
+            d["hp"] = min(calc_max_hp(d), d.get("hp", 0) + pet_status_val)
+
+    d["hp"] = max(0, d["hp"] - dmg_after_def)
+    healed = apply_lifesteal(a, dmg_after_def)
+
+    if cls_a and dmg_after_def > 0:
+        pk_a = cls_a.get("passive_key", "")
+        if pk_a == "feint" and random.random() < 0.05:
+            set_status(a, "feint_proc_until", 60); set_status(d, "distracted_until", 60)
+        if pk_a == "throat_cut" and random.random() < 0.05:
+            set_status(d, "silenced_until", 10)
+        if pk_a == "cursed_blade":
+            set_status(d, "cursed_until", 120)
+        if pk_a == "warning_shot":
+            ws_key = f"warning_shot_hit_{a.get('user_id', '')}"
+            if not _ts_active(d, ws_key):
+                set_status(d, ws_key, 60)
+                cur_agi = safe_stats(d).get("AGI", 5)
+                sd = safe_stats(d); sd["AGI"] = max(0, cur_agi - 2)
+                d["stats"] = json.dumps(sd)
+        if pk_a == "purge":
+            for buf in ["blessed_until", "def_reflect_until", "battle_cry_str_until",
+                        "invincible_until", "temp_hp_until"]:
+                if _ts_active(d, buf):
+                    d[buf] = None; break
+        if pk_a == "curse_touch" and random.random() < 0.08:
+            set_status(d, "weakened_until", 120)
+            extra_notes.append("💜 *Curse Touch!* Weakness applied  -  10% less damage for 2 min!")
+        if pk_a == "shadow_hex" and _ts_active(d, "hexed_until"):
+            bonus_hex = round(dmg_after_def * 0.05)
+            dmg_after_def += bonus_hex; d["hp"] = max(0, d["hp"] - bonus_hex)
+            extra_notes.append(f"🕸️ *Shadow Hex!* +{bonus_hex} on hexed target!")
+        if d.get("mana_overload_reflect"):
+            reflect_dmg = d.pop("mana_overload_reflect")
+            a["hp"] = max(1, a["hp"] - reflect_dmg)
+            extra_notes.append(f"⚡ *Mana Overload!* {d['username']} reflects *{reflect_dmg} dmg*!")
+
+    update_recent_attackers(d, au_id)
+    proc_fired, proc_msg, proc_extra = calc_proc_effect(a, d, dmg_after_def)
+
+    action = f"⚔️ *{a['username']}* → *{d['username']}* for *{dmg_after_def} dmg*{crit_note}{revenge_bonus_note}{reflect_note}"
+    if extra_notes: action += "\n" + "\n".join(extra_notes)
+    if healed:      action += f" | 🩸 +{healed} HP"
+    if proc_fired:  action += f"\n{proc_msg}"
+
+    # Pet auto-attack
+    active_pet = get_active_pet_record(au_id)
+    if active_pet:
+        pet_atk = get_pet_atk_bonus(active_pet)
+        sp_pet  = PET_SPECIES.get(active_pet.get("species"), {})
+        pname   = _pet_display_name(active_pet)
+        pers    = sp_pet.get("personality", "calm")
+        emoji_p = sp_pet.get("emoji", "🐾")
+        if active_pet.get("hunger", 100) < 20:
+            action += f"\n{emoji_p} _{pname} is too hungry to fight!_"
+        elif active_pet.get("mood", 100) < 40:
+            action += f"\n{emoji_p} _{pname} is too sad to join in._"
+        elif pet_atk > 0:
+            d["hp"] = max(0, d["hp"] - pet_atk)
+            battle_msg = PERSONALITY_BATTLE.get(pers, "attacks")
+            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*!"
+
+    # Defeat check
+    if d["hp"] <= 0:
+        d["hp"] = 0
+        d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
+        d["last_defeated_by"] = f"{a['username']} (PvP)"
+        d["kill_streak"] = 0; d["is_wanted"] = 0
+        d["revenge_target"] = au_id
+        d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
+        exp_loss = round(d.get("exp", 0) * 0.10)
+        d["exp"] = max(0, d.get("exp", 0) - exp_loss)
+        d["losses"] = d.get("losses", 0) + 1
+        a["wins"] = a.get("wins", 0) + 1
+        a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
+        if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
+            a["max_kill_streak"] = a["kill_streak"]
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        if a.get("kills_today_date") != today_str:
+            a["kills_today"] = 0; a["kills_today_date"] = today_str
+        a["kills_today"] = safe_int(a.get("kills_today")) + 1
+        if a["kills_today"] >= 5:
+            a["is_wanted"] = 1
+        hist = sjl(d.get("pvp_history"), [])
+        hist.insert(0, {"attacker": a["username"], "dmg": "KO",
+                        "ts": datetime.now().strftime("%m/%d %H:%M")})
+        d["pvp_history"] = json.dumps(hist[:5])
+        for _desc, _exp, _gold in track_objective(a, "pvp_win"):
+            a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
+        asyncio.create_task(_notify_defeat(bot, d, a["username"] + " (PvP)"))
+        if cls_a and cls_a.get("passive_key") == "dead_or_alive":
+            d["defeated_until"] = (datetime.now() + timedelta(hours=12)).isoformat()
+            action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 12 hours!"
+            asyncio.create_task(announce(bot, chat_id,
+                f"🏹 *{a['username']}* took down *{d['username']}* with *Last Shot*! "
+                f"12-hour defeat. Triple rewards earned.", delay=60))
+            a["gold"] = a.get("gold", 0) + 150
+        exp_gain = 60 + a["level"] * 8
+        lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
+        if cls_a and cls_a.get("passive_key") == "conqueror":
+            restore = round(a["max_hp"] * 0.20)
+            a["hp"] = min(a["max_hp"], a["hp"] + restore)
+            set_status(d, "weakened_until", 3600)
+        asyncio.create_task(check_and_claim_bounty(bot, a, d, chat_id))
+        a_guild = get_guild(a.get("guild_id")) if a.get("guild_id") else None
+        d_guild = get_guild(d.get("guild_id")) if d.get("guild_id") else None
+        if a_guild and d_guild and a_guild["guild_id"] != d_guild["guild_id"]:
+            war_gw = get_active_war(a_guild["guild_id"], d_guild["guild_id"])
+            if war_gw:
+                conn_kr = sqlite3.connect(DB_PATH); c_kr = conn_kr.cursor()
+                if str(war_gw["guild1_id"]) == str(a_guild["guild_id"]):
+                    c_kr.execute("UPDATE guild_wars SET kills1=kills1+1 WHERE war_id=?", (war_gw["war_id"],))
+                else:
+                    c_kr.execute("UPDATE guild_wars SET kills2=kills2+1 WHERE war_id=?", (war_gw["war_id"],))
+                conn_kr.commit(); conn_kr.close()
+                action += f"\n⚔️ *Guild War kill!* Score updated for {a_guild['name']}."
+        if cls_a and cls_a.get("passive_key") == "dead_or_alive":
+            a["deadeye_kill_bonus"] = safe_int(a.get("deadeye_kill_bonus")) + 2
+        if cls_a and cls_a.get("passive_key") == "marked_for_death":
+            mfd_gold = round(d.get("gold", 0) * 0.05 + 25)
+            mfd_bonus = round(mfd_gold * 0.25)
+            a["gold"] = a.get("gold", 0) + mfd_bonus
+            if mfd_bonus > 0:
+                extra_notes.append(f"💰 *Marked for Death!* +{mfd_bonus} bonus gold!")
+        action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}."
+        if leveled and a["level"] % 10 == 0:
+            asyncio.create_task(announce(bot, chat_id,
+                f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=60))
+
+    if d["hp"] > 0:
+        hist_nl = sjl(d.get("pvp_history"), [])
+        hist_nl.insert(0, {"attacker": a["username"], "dmg": dmg_after_def,
+                           "ts": datetime.now().strftime("%m/%d %H:%M")})
+        d["pvp_history"] = json.dumps(hist_nl[:5])
+
+    check_titles(a); check_titles(d)
+    save_player(a); save_player(d)
+
+    if d["hp"] > 0:
+        hp_pct = d["hp"] / max(1, d["max_hp"])
+        filled = round(hp_pct * 10)
+        bar = "█" * filled + "░" * (10 - filled)
+        action += f"\n❤️ {d['username']}: *{d['hp']}/{d['max_hp']}* [{bar}]"
+        asyncio.create_task(_notify_attack(bot, d, a["username"], dmg_after_def))
+
+    statuses = get_active_statuses(d)
+    if statuses:
+        action += "\n" + " | ".join(statuses)
+    if lvl_msgs:
+        action += "\n\n" + "\n".join(lvl_msgs)
+
+    return action, lvl_msgs, "defeat" if d["hp"] <= 0 else "hit"
+
+
+def get_player_by_username(username):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM players WHERE LOWER(username)=?", (username.lower(),))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 # ── ATTACK ────────────────────────────────────────────────────────────────────
 async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     au = update.effective_user
@@ -7378,28 +7764,39 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── PvP below ──────────────────────────────────────────────────────────
     chat = chat_id
-    if not update.message.reply_to_message:
-        await send_group(update, "Reply to someone's message with /attack to strike them!", delay=9); return
+    du_id = None
+    du_name = None
 
-    du = update.message.reply_to_message.from_user
-    if du.id == au.id:
+    if update.message.reply_to_message:
+        _du = update.message.reply_to_message.from_user
+        du_id = _du.id; du_name = _du.first_name
+    elif context.args:
+        uname = context.args[0].lstrip("@")
+        found = get_player_by_username(uname)
+        if not found:
+            await send_group(update, f"❌ No player found with username *{uname}*.", delay=9); return
+        du_id = found["user_id"]; du_name = found["username"]
+    else:
+        await send_group(update,
+            "Reply to someone's message with /attack, or use /attack @username to strike them!", delay=9)
+        return
+
+    if du_id == au.id:
         await send_group(update, "You can't attack yourself.", delay=9); return
-    d = get_player(du.id)
+    d = get_player(du_id)
     if not d:
-        await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+        await send_group(update, f"{du_name} hasn't ascended yet!", delay=9); return
     if is_defeated(d):
         await send_group(update, f"💀 {d['username']} is already defeated!", delay=9); return
     if is_invincible(d):
         await send_group(update, f"🛡️ {d['username']} is *Still Recovering*  -  invincible for now.", delay=9); return
-    raid_d, kind_d = in_active_raid(du.id, chat)
+    raid_d, kind_d = in_active_raid(du_id, chat)
     if raid_d:
         await send_group(update, f"⚔️ *{d['username']}* is in a raid right now  -  can't be targeted!", delay=9); return
-    # Block attack if target is in a boss instance
-    t_boss, _ = in_active_boss(du.id, chat_id)
+    t_boss, _ = in_active_boss(du_id, chat_id)
     if t_boss:
         await send_group(update, f"⚔️ *{d['username']}* is in a boss fight  -  can't be targeted!", delay=9); return
 
-    # Block friendly fire within the same guild
     if a.get("guild_id") and str(a.get("guild_id")) == str(d.get("guild_id")):
         g = get_guild(a["guild_id"])
         gname = g["name"] if g else "your Guild"
@@ -7407,8 +7804,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🏰 *{d['username']}* is in *{gname}* — you can't attack your own guild members!",
             delay=9); return
 
-    # Block attack if target has been offline for 1+ hour
-    s_tgt = get_shadow(du.id)
+    s_tgt = get_shadow(du_id)
     target_last_seen = s_tgt.get("last_seen") if s_tgt else None
     if target_last_seen:
         try:
@@ -7418,7 +7814,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await send_group(update, f"💤 *{d['username']}* stepped away from the table *(last seen {away_str} ago)*  -  can't attack offline players.", delay=9)
                 try:
                     await context.bot.send_message(
-                        chat_id=du.id,
+                        chat_id=du_id,
                         text=f"🎱 *{a['username']}* tried to attack you while you were away!\nHead back to the table before someone else takes their shot.",
                         parse_mode="Markdown")
                 except Exception:
@@ -7432,484 +7828,176 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await update.message.delete()
     except: pass
 
-    # ── Charged killshot check ────────────────────────────────────────────────
-    if safe_int(a.get("charging_killshot")):
-        a["charging_killshot"] = 0
-        dmg_after_def = get_stat(a, "AGI") * 4
-        action = (f"🎯 *KILLSHOT FIRED!* *{a['username']}* → *{d['username']}*  -  "
-                  f"AGI×4 = *{dmg_after_def} damage!* Cannot be dodged!")
-        d["hp"] = max(0, d["hp"] - dmg_after_def)
-        update_recent_attackers(d, au.id)
-        lvl_msgs = []
-        if d["hp"] <= 0:
-            d["hp"] = 0
-            d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
-            d["last_defeated_by"] = f"{a['username']} (Killshot)"
-            d["kill_streak"] = 0
-            d["is_wanted"]   = 0
-            d["revenge_target"] = au.id
-            d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
-            asyncio.create_task(_notify_defeat(update.get_bot(), d, a['username'] + " (Killshot)"))
-            exp_loss = round(d.get("exp",0) * 0.10)
-            d["exp"]  = max(0, d.get("exp",0) - exp_loss)
-            d["losses"] = d.get("losses",0) + 1
-            a["wins"]   = a.get("wins",0) + 1
-            # Killstreak for attacker
-            a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
-            if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
-                a["max_kill_streak"] = a["kill_streak"]
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            if a.get("kills_today_date") != today_str:
-                a["kills_today"] = 0; a["kills_today_date"] = today_str
-            a["kills_today"] = safe_int(a.get("kills_today")) + 1
-            if a["kills_today"] >= 5:
-                a["is_wanted"] = 1
-            hist_ks = sjl(d.get("pvp_history"), [])
-            hist_ks.insert(0, {"attacker": a["username"], "dmg": "KO",
-                               "ts": datetime.now().strftime("%m/%d %H:%M")})
-            d["pvp_history"] = json.dumps(hist_ks[:5])
-            for _desc, _exp, _gold in track_objective(a, "pvp_win"):
-                a["gold"] = a.get("gold",0) + _gold; add_exp(a, _exp)
-            exp_gain = 60 + a["level"] * 8
-            lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
-            action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}."
-            if leveled and a["level"] % 10 == 0:
-                asyncio.create_task(announce(update.get_bot(), chat,
-                    f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=60))
-        check_titles(a); check_titles(d)
-        save_player(a); save_player(d)
-        if d["hp"] > 0:
-            hp_pct = d["hp"] / max(1, d["max_hp"])
-            filled = round(hp_pct * 10)
-            bar = "█" * filled + "░" * (10 - filled)
-            action += f"\n❤️ {d['username']}: *{d['hp']}/{d['max_hp']}* [{bar}]"
-        if lvl_msgs:
-            action += "\n\n" + "\n".join(lvl_msgs)
+    action, lvl_msgs, result_type = await _execute_pvp_hit(
+        a, d, au.id, du_id, w, chat, update.get_bot())
+
+    if result_type == "miss":
         try:
-            await update.message.delete()
+            msg = await update.get_bot().send_message(chat_id=chat, text=action, parse_mode="Markdown")
+            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 10))
         except Exception: pass
+        return
+
+    if result_type == "hit":
+        markup = _build_pvp_card_markup(du_id, au.id, d)
+        try:
+            msg = await update.get_bot().send_message(
+                chat_id=chat, text=action[:4096], parse_mode="Markdown", reply_markup=markup)
+            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 45))
+        except Exception: pass
+    else:  # defeat
         try:
             msg = await update.get_bot().send_message(
                 chat_id=chat, text=action[:4096], parse_mode="Markdown")
             asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 20))
         except Exception: pass
+
+
+# ── PVP CARD CALLBACK ─────────────────────────────────────────────────────────
+async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle Retaliate / Skills / Heal buttons on PvP combat cards."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    parts = data.split("_")
+    try:
+        action_type = parts[1]
+        uid         = int(parts[2])
+        target_id   = int(parts[3])
+    except (IndexError, ValueError):
         return
 
-    # ── Miss check ────────────────────────────────────────────────────────────
-    if check_miss(a, d):
-        d["dodges"] = d.get("dodges",0) + 1
-        check_titles(d)
-        # Shadowstep primed: grant bonus damage on next attack after dodging
-        cls_d_miss = get_player_class(d)
-        if cls_d_miss:
-            pk_d_miss = cls_d_miss.get("passive_key","")
-            if pk_d_miss == "shadowstep":
-                cds_d = safe_cds(d); cds_d["shadowstep_primed"] = "1"
-                d["passive_cooldowns"] = json.dumps(cds_d)
-            if pk_d_miss == "deaths_shadow":
-                d["hp"] = min(d["max_hp"], d["hp"] + 10)
-        save_player(d); save_player(a)
-        miss_text = f"🌀 *{a['username']}* swings at *{d['username']}*  -  *MISS!*"
-        try:
-            await update.message.delete()
-        except Exception: pass
-        try:
-            msg = await update.get_bot().send_message(
-                chat_id=chat, text=miss_text, parse_mode="Markdown")
-            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 10))
-        except Exception: pass
+    if query.from_user.id != uid:
+        await query.answer("These aren't your buttons!", show_alert=True)
         return
 
-    # ── Damage ────────────────────────────────────────────────────────────────
-    dmg = calc_attack_damage(a, w)
-    extra_notes = []
+    if not _cb_lock(uid):
+        await query.answer("Still processing...", show_alert=True)
+        return
 
-    # Assassin dual-equip check: throwing_star requires claw in shield slot
-    _a_weap = a.get("equipped_weapon", "")
-    _a_weap_type = WEAPONS.get(_a_weap, {}).get("type", "")
-    if _a_weap_type == "throwing_star":
-        _a_shld = a.get("equipped_shield", "")
-        _a_shld_type = SHIELDS.get(_a_shld, {}).get("type", "")
-        if _a_shld_type != "claw":
-            dmg = round(dmg * 0.75)
-            extra_notes.append("⚠️ _Missing claw  -  75% damage (equip a claw to fight at full power)_")
+    try:
+        a = get_player(uid)
+        d = get_player(target_id)
+        chat_id = query.message.chat_id
 
-    # Crit check
-    crit_forced = safe_cds(a).pop("next_crit_skill", None)
-    if crit_forced:
-        a["passive_cooldowns"] = json.dumps(safe_cds(a))
-    if crit_forced or check_crit(a):
-        dmg = apply_crit(a, dmg)
-        crit_note = " 💥 CRIT!"
-    else:
-        crit_note = ""
-
-    # Shadowstep primed bonus (+50% dmg after being dodged)
-    cds_a = safe_cds(a)
-    if cds_a.get("shadowstep_primed"):
-        dmg = round(dmg * 1.50)
-        cds_a.pop("shadowstep_primed"); a["passive_cooldowns"] = json.dumps(cds_a)
-        extra_notes.append("🌑 *Shadowstep!* +50% damage after dodge!")
-
-    # Attacker class passives
-    cls_a = get_player_class(a)
-    if cls_a:
-        pk_a = cls_a.get("passive_key","")
-
-        # Execute: double damage below 25% HP
-        if pk_a == "execute":
-            hp_pct = d["hp"] / max(1, d["max_hp"])
-            if hp_pct < 0.25:
-                dmg *= 2; extra_notes.append("💀 *Execute!* Double damage below 25% HP!")
-
-        # Devotion charge bonus (+5 dmg if charged)
-        if pk_a == "devotion":
-            charge = safe_int(a.get("devotion_charge"))
-            if charge > 0:
-                dmg += 5; a["devotion_charge"] = 0
-                extra_notes.append("✨ *Devotion charge!* +5 bonus damage!")
-
-        # Battle Cry: refresh passive +50 STR for 15m on every attack
-        if pk_a == "battle_cry":
-            set_status(a, "battle_cry_str_until", 900)
-
-        # Warcry: +20% dmg when multiple recent attackers
-        if pk_a == "warcry":
-            if len(get_recent_attackers(a)) > 1:
-                dmg = round(dmg * 1.20)
-                extra_notes.append("😤 *Warcry!* +20% damage!")
-
-        # Flurry: random double hit
-        if pk_a == "flurry" and random.random() < 0.20:
-            dmg *= 2; extra_notes.append("⚡ *Flurry!* Double hit!")
-
-        # One-shot: random 5x damage
-        if pk_a == "one_shot" and random.random() < 0.10:
-            dmg *= 5; extra_notes.append("🎯 *ONE-SHOT!* 5x damage!")
-
-        # Mark first hit bonus
-        if pk_a == "mark_first_hit":
-            if safe_int(a.get("mark_first_hit")):
-                dmg = round(dmg * 1.25)
-                a["mark_first_hit"] = 0
-                extra_notes.append("🎯 *First strike bonus!* +25%!")
-
-        # Trailblazer: first attack each day deals double damage
-        if pk_a == "trailblazer":
-            today = datetime.now().strftime("%Y-%m-%d")
-            cds_tb = safe_cds(a)
-            if cds_tb.get("trailblazer_date") != today:
-                dmg *= 2
-                cds_tb["trailblazer_date"] = today
-                a["passive_cooldowns"] = json.dumps(cds_tb)
-                extra_notes.append("🌅 *Trailblazer!* First strike of the day  -  double damage!")
-
-        # Steady aim tracking
-        if pk_a == "steady_aim":
-            if a.get("steady_aim_target") == d["user_id"]:
-                a["steady_aim_stacks"] = min(5, safe_int(a.get("steady_aim_stacks")) + 1)
-            else:
-                a["steady_aim_target"] = d["user_id"]
-                a["steady_aim_stacks"] = 1
-
-    # Revenge bonus: +15% damage if target is your revenge target
-    revenge_bonus_note = ""
-    if safe_int(a.get("revenge_target")) == du.id:
-        rev_exp = a.get("revenge_expires")
-        if rev_exp and datetime.now() < datetime.fromisoformat(rev_exp):
-            dmg = round(dmg * 1.15)
-            revenge_bonus_note = " 🔥 *Revenge!* +15% dmg"
-            a["revenge_target"] = None
-            a["revenge_expires"] = None
-
-    # Distracted check: attacker has +30% chance to miss
-    if is_distracted(a):
-        if random.random() < 0.30:
-            extra_notes.append("😵 Distracted  -  shot went wide!")
-            save_player(a); save_player(d)
-            dist_text = f"😵 *{a['username']}* was *Distracted* and missed *{d['username']}*!"
-            try:
-                await update.message.delete()
-            except Exception: pass
-            try:
-                msg = await update.get_bot().send_message(
-                    chat_id=chat, text=dist_text, parse_mode="Markdown")
-                asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 10))
-            except Exception: pass
+        if not a or not d:
+            await query.edit_message_text("Player data not found.")
             return
 
-    # Defender class passives (pre-defense)
-    cls_d = get_player_class(d)
-    if cls_d:
-        pk_d = cls_d.get("passive_key","")
-        # Bulwark: 15% chance to fully block
-        if pk_d == "bulwark" and random.random() < 0.15:
-            extra_notes.append("🛡️ *Bulwark!* Attack completely blocked!")
-            dmg = 0
-        # Defensive Stance: flat -30 when HP > 50%
-        if pk_d == "defensive_stance":
-            hp_pct_d = d.get("hp", 1) / max(1, d.get("max_hp", 1))
-            if hp_pct_d > 0.50:
-                dmg = max(1, dmg - 30)
-        # Devotion defender: gain charge when hit
-        if pk_d == "devotion":
-            d["devotion_charge"] = safe_int(d.get("devotion_charge")) + 1
-        # Nettleskin: 10% chance to poison attacker when hit
-        if pk_d == "nettleskin" and random.random() < 0.10:
-            a["poison_damage"] = max(a.get("poison_damage", 0), 15)
-            set_status(a, "poison_until", 120)
-            extra_notes.append("🌿 *Nettleskin!* Attacker poisoned (15 dmg/30s for 2 min)!")
-        # Judgement (Inquisitor): attackers take WIS-scaled holy damage back
-        if pk_d == "judgement" and random.random() < 0.30:
-            wis_dmg = max(1, round(safe_stats(d).get("WIS", 5) * 0.50))
-            a["hp"] = max(1, a["hp"] - wis_dmg)
-            extra_notes.append(f"⚖️ *Judgement!* {d['username']} retaliates for *{wis_dmg} holy dmg*!")
+        # ── Skill picker ──────────────────────────────────────────────────────
+        if action_type == "skl":
+            page = int(parts[4]) if len(parts) > 4 else 0
+            all_skills = sjl(a.get("all_skills"), [])
+            if not all_skills:
+                await query.answer("No skills unlocked yet!", show_alert=True)
+                return
+            if is_silenced(a):
+                await query.answer("\U0001f910 You are silenced — can't use skills!", show_alert=True)
+                return
+            markup = _build_skill_picker_keyboard(all_skills, uid, page, target_id, show_close=False)
+            try:
+                await query.edit_message_text(
+                    f"\u26a1 Choose a skill to use on *{d['username']}*:",
+                    parse_mode="Markdown", reply_markup=markup)
+            except Exception:
+                pass
+            return
 
-    # Reflect
-    reflect = apply_reflect(d, a, dmg)
+        # ── Heal self ─────────────────────────────────────────────────────────
+        if action_type == "heal":
+            inv = sjl(a.get("inventory"), [])
+            is_priest = get_class_line(a) == "priest"
+            potion = None
+            heal_amount = 0
+            if is_priest:
+                heal_amount = safe_stats(a).get("WIS", 5) * 8
+            else:
+                for pname, pamt in [("Grand Restorative Flask", 500),
+                                    ("Greater Health Potion", 200),
+                                    ("Health Potion", 100)]:
+                    if pname in inv:
+                        potion = pname; heal_amount = pamt; break
+                if not potion:
+                    await query.answer("No potions left!", show_alert=True)
+                    return
+                inv.remove(potion)
+                a["inventory"] = json.dumps(inv)
+            heal_amount += safe_stats(a).get("WIS", 5)
+            old_hp = a["hp"]
+            a["hp"] = min(a["max_hp"], a["hp"] + heal_amount)
+            actual = a["hp"] - old_hp
+            save_player(a)
+            hp_pct = a["hp"] / max(1, a["max_hp"])
+            bar = "\u2588" * round(hp_pct * 10) + "\u2591" * (10 - round(hp_pct * 10))
+            heal_text = (f"\U0001f48a *{a['username']}* heals for *+{actual} HP*!\n"
+                         f"\u2764\ufe0f {a['username']}: *{a['hp']}/{a['max_hp']}* [{bar}]\n"
+                         f"_({d['username']}'s turn to retaliate)_")
+            markup = _build_pvp_card_markup(uid, target_id, a)
+            try:
+                await query.edit_message_text(heal_text, parse_mode="Markdown", reply_markup=markup)
+            except Exception:
+                pass
+            return
 
-    # Holy Ward  -  Priest Path A passive proc on being hit
-    if cls_d and cls_d.get("line") == "priest" and d.get("class_path") == "A":
-        ward_chance = get_proc_chance(0.15, d)
-        if not _ts_active(d, "ward_until") and random.random() < ward_chance:
-            d["ward_until"] = (datetime.now() + timedelta(minutes=2)).isoformat()
-            dmg = round(dmg * 0.60)
-            extra_notes.append("✨ *Holy Ward procs!* Damage reduced by 40%!")
-    # Apply existing ward if active
-    if _ts_active(d, "ward_until"):
-        dmg = round(dmg * 0.60)
-        d["ward_until"] = None
-        extra_notes.append("✨ *Holy Ward absorbs the hit!* -40% damage.")
+        # ── Retaliate ─────────────────────────────────────────────────────────
+        if action_type != "atk":
+            return
 
-    # Apply defense
-    if dmg > 0:
-        dmg_after_def = calc_defense(d, dmg)
-    else:
-        dmg_after_def = 0
+        if is_defeated(a):
+            await query.answer("You're defeated — can't attack!", show_alert=True)
+            return
+        if is_invincible(a):
+            await query.answer("You're invincible — can't attack!", show_alert=True)
+            return
+        if is_vanished(a):
+            await query.answer("You're vanished — can't attack while hidden!", show_alert=True)
+            return
+        if cannot_attack(a):
+            await query.answer("You're stunned or rooted — can't attack!", show_alert=True)
+            return
+        if not _rate_ok(uid):
+            await query.answer("Slow down!", show_alert=True)
+            return
 
-    # Holy field reflect (Page/Squire/Knight/Paladin)
-    if _ts_active(d, "holy_field_until"):
-        wis_dmg = round(safe_stats(d).get("WIS",5) * 2)
-        a["hp"] = max(0, a["hp"] - wis_dmg)
-        reflect_note = f" | ✨ Holy Field reflects {wis_dmg} dmg!"
-    else:
-        reflect_note = ""
+        if is_defeated(d):
+            await query.answer(f"{d['username']} is already defeated!", show_alert=True)
+            try: await query.edit_message_reply_markup(reply_markup=None)
+            except: pass
+            return
+        if is_invincible(d):
+            await query.answer(f"{d['username']} is invincible right now!", show_alert=True)
+            return
+        if a.get("guild_id") and str(a.get("guild_id")) == str(d.get("guild_id")):
+            await query.answer("Can't attack your own guild member!", show_alert=True)
+            return
 
-    # Unbreakable passive (Hero)
-    if cls_d and cls_d.get("passive_key") == "unbreakable":
-        if d["hp"] - dmg_after_def <= 0 and not d.get("unbreakable_used"):
-            dmg_after_def = d["hp"] - 1
-            d["unbreakable_used"] = True
+        w = get_weather()
+        result_text, lvl_msgs, result_type = await _execute_pvp_hit(
+            a, d, uid, target_id, w, chat_id, context.bot)
 
-    # Pet defensive ability (defender's pet may intercept/counter/shield)
-    def_pet_rec = get_active_pet_record(du.id) if hasattr(du, 'id') else None
-    if def_pet_rec:
-        dmg_after_def, pet_status_type, pet_status_val = apply_pet_defense(def_pet_rec, a, dmg_after_def, extra_notes)
-        if pet_status_type == "stun" and a:
-            set_status(a, "stunned_until", 30)
-        elif pet_status_type == "poison" and a and pet_status_val:
-            a["poison_damage"] = pet_status_val
-            set_status(a, "poison_until", 60)
-        elif pet_status_type == "lifesteal_to_owner" and d and pet_status_val:
-            d["hp"] = min(calc_max_hp(d), d.get("hp", 0) + pet_status_val)
+        if result_type == "miss":
+            try:
+                await query.edit_message_text(result_text, parse_mode="Markdown")
+            except Exception:
+                pass
+            return
 
-    # Apply damage
-    d["hp"] = max(0, d["hp"] - dmg_after_def)
+        if result_type == "hit":
+            markup = _build_pvp_card_markup(target_id, uid, d)
+            try:
+                await query.edit_message_text(result_text[:4096], parse_mode="Markdown",
+                                              reply_markup=markup)
+            except Exception:
+                await context.bot.send_message(chat_id, result_text[:4096],
+                                               parse_mode="Markdown", reply_markup=markup)
+        else:
+            try:
+                await query.edit_message_text(result_text[:4096], parse_mode="Markdown")
+            except Exception:
+                await context.bot.send_message(chat_id, result_text[:4096], parse_mode="Markdown")
 
-    # Lifesteal
-    healed = apply_lifesteal(a, dmg_after_def)
-
-    # On-hit passive effects
-    if cls_a and dmg_after_def > 0:
-        pk_a = cls_a.get("passive_key","")
-        # Feint: 5% chance target misses their next attack
-        if pk_a == "feint" and random.random() < 0.05:
-            set_status(a, "feint_proc_until", 60)  # flag that feint proc'd
-            set_status(d, "distracted_until", 60)   # defender distracted 1 min
-        # Throat Cut: 5% chance silences target 10s
-        if pk_a == "throat_cut" and random.random() < 0.05:
-            set_status(d, "silenced_until", 10)
-        # Cursed Blade: apply hex debuff to target (10% less damage for 2 min)
-        if pk_a == "cursed_blade":
-            set_status(d, "cursed_until", 120)
-        # Warning Shot: first hit on this target applies AGI debuff
-        if pk_a == "warning_shot":
-            ws_key = f"warning_shot_hit_{a.get('user_id','')}"
-            if not _ts_active(d, ws_key):
-                set_status(d, ws_key, 60)
-                cur_agi = safe_stats(d).get("AGI", 5)
-                sd = safe_stats(d)
-                sd["AGI"] = max(0, cur_agi - 2)
-                d["stats"] = json.dumps(sd)
-        # Purge: strip one active buff from target on hit
-        if pk_a == "purge":
-            for buf in ["blessed_until","def_reflect_until","battle_cry_str_until",
-                        "invincible_until","temp_hp_until"]:
-                if _ts_active(d, buf):
-                    d[buf] = None; break
-        # Curse Touch: 8% chance to apply Weakness to target
-        if pk_a == "curse_touch" and random.random() < 0.08:
-            set_status(d, "weakened_until", 120)
-            extra_notes.append("💜 *Curse Touch!* Weakness applied  -  10% less damage for 2 min!")
-        # Shadow Hex: if attacker has shadow_hex and target is hexed, +5% damage
-        if pk_a == "shadow_hex" and _ts_active(d, "hexed_until"):
-            bonus_hex = round(dmg_after_def * 0.05)
-            dmg_after_def += bonus_hex; d["hp"] = max(0, d["hp"] - bonus_hex)
-            extra_notes.append(f"🕸️ *Shadow Hex!* +{bonus_hex} on hexed target!")
-        # Mana Overload reflect: if defender set the reflect flag, apply it back
-        if d.get("mana_overload_reflect"):
-            reflect_dmg = d.pop("mana_overload_reflect")
-            a["hp"] = max(1, a["hp"] - reflect_dmg)
-            extra_notes.append(f"⚡ *Mana Overload!* {d['username']} reflects *{reflect_dmg} dmg*!")
-
-    # Update recent attackers
-    update_recent_attackers(d, au.id)
-
-    proc_fired, proc_msg, proc_extra = calc_proc_effect(a, d, dmg_after_def)
-
-    action = f"⚔️ *{a['username']}* → *{d['username']}* for *{dmg_after_def} dmg*{crit_note}{revenge_bonus_note}{reflect_note}"
-    if extra_notes: action += "\n" + "\n".join(extra_notes)
-    if healed:      action += f" | 🩸 +{healed} HP"
-    if proc_fired:  action += f"\n{proc_msg}"
-
-    # ── Pet auto-attack ───────────────────────────────────────────────────────
-    active_pet = get_active_pet_record(au.id)
-    if active_pet:
-        pet_atk = get_pet_atk_bonus(active_pet)
-        sp_pet  = PET_SPECIES.get(active_pet.get("species"), {})
-        pname   = _pet_display_name(active_pet)
-        pers    = sp_pet.get("personality", "calm")
-        emoji_p = sp_pet.get("emoji", "🐾")
-        if active_pet.get("hunger", 100) < 20:
-            action += f"\n{emoji_p} _{pname} is too hungry to fight!_"
-        elif active_pet.get("mood", 100) < 40:
-            action += f"\n{emoji_p} _{pname} is too sad to join in._"
-        elif pet_atk > 0:
-            d["hp"] = max(0, d["hp"] - pet_atk)
-            battle_msg = PERSONALITY_BATTLE.get(pers, "attacks")
-            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*!"
-
-    # Check defeat
-    lvl_msgs = []
-    if d["hp"] <= 0:
-        d["hp"] = 0
-        d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
-        d["last_defeated_by"] = f"{a['username']} (PvP)"
-        d["kill_streak"] = 0
-        d["is_wanted"]   = 0
-        d["revenge_target"] = au.id
-        d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
-        exp_loss = round(d.get("exp",0) * 0.10)
-        d["exp"]  = max(0, d.get("exp",0) - exp_loss)
-        d["losses"] = d.get("losses",0) + 1
-        a["wins"]   = a.get("wins",0) + 1
-        # Killstreak
-        a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
-        if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
-            a["max_kill_streak"] = a["kill_streak"]
-        # Wanted level — track kills today
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        if a.get("kills_today_date") != today_str:
-            a["kills_today"] = 0; a["kills_today_date"] = today_str
-        a["kills_today"] = safe_int(a.get("kills_today")) + 1
-        if a["kills_today"] >= 5:
-            a["is_wanted"] = 1
-        # PvP history for victim
-        hist = sjl(d.get("pvp_history"), [])
-        hist.insert(0, {"attacker": a["username"], "dmg": "KO",
-                        "ts": datetime.now().strftime("%m/%d %H:%M")})
-        d["pvp_history"] = json.dumps(hist[:5])
-        for _desc, _exp, _gold in track_objective(a, "pvp_win"):
-            a["gold"] = a.get("gold",0) + _gold; add_exp(a, _exp)
-        asyncio.create_task(_notify_defeat(update.get_bot(), d, a['username'] + " (PvP)"))
-
-        # Deadeye Last Shot  -  double timer
-        if cls_a and cls_a.get("passive_key") == "dead_or_alive":
-            d["defeated_until"] = (datetime.now() + timedelta(hours=12)).isoformat()
-            action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 12 hours!"
-            asyncio.create_task(announce(update.get_bot(), chat,
-                f"🏹 *{a['username']}* took down *{d['username']}* with *Last Shot*! "
-                f"12-hour defeat. Triple rewards earned.", delay=60))
-            a["gold"] = a.get("gold",0) + 150  # triple gold simplified
-
-        exp_gain = 60 + a["level"] * 8
-        lmsgs, leveled = add_exp(a, exp_gain, w)
-        lvl_msgs = lmsgs
-
-        # Conqueror passive (Warlord)  -  restore 20% HP on kill
-        if cls_a and cls_a.get("passive_key") == "conqueror":
-            restore = round(a["max_hp"] * 0.20)
-            a["hp"] = min(a["max_hp"], a["hp"] + restore)
-            set_status(d, "weakened_until", 3600)
-
-        # Bounty check
-        asyncio.create_task(check_and_claim_bounty(update.get_bot(), a, d, chat))
-
-        # Guild war kill credit
-        a_guild = get_guild(a.get("guild_id")) if a.get("guild_id") else None
-        d_guild = get_guild(d.get("guild_id")) if d.get("guild_id") else None
-        if a_guild and d_guild and a_guild["guild_id"] != d_guild["guild_id"]:
-            war_gw = get_active_war(a_guild["guild_id"], d_guild["guild_id"])
-            if war_gw:
-                conn_kr = sqlite3.connect(DB_PATH); c_kr = conn_kr.cursor()
-                if str(war_gw["guild1_id"]) == str(a_guild["guild_id"]):
-                    c_kr.execute("UPDATE guild_wars SET kills1=kills1+1 WHERE war_id=?", (war_gw["war_id"],))
-                else:
-                    c_kr.execute("UPDATE guild_wars SET kills2=kills2+1 WHERE war_id=?", (war_gw["war_id"],))
-                conn_kr.commit(); conn_kr.close()
-                action += f"\n⚔️ *Guild War kill!* Score updated for {a_guild['name']}."
-
-        # Deadeye kill bonus
-        if cls_a and cls_a.get("passive_key") == "dead_or_alive":
-            a["deadeye_kill_bonus"] = safe_int(a.get("deadeye_kill_bonus")) + 2
-
-        # Marked for Death: +25% gold on kill
-        if cls_a and cls_a.get("passive_key") == "marked_for_death":
-            mfd_gold = round(d.get("gold", 0) * 0.05 + 25)  # bonus gold on kill
-            mfd_bonus = round(mfd_gold * 0.25)
-            a["gold"] = a.get("gold", 0) + mfd_bonus
-            if mfd_bonus > 0:
-                extra_notes.append(f"💰 *Marked for Death!* +{mfd_bonus} bonus gold!")
-
-        action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}."
-
-        if leveled and a["level"] % 10 == 0:
-            asyncio.create_task(announce(update.get_bot(), chat,
-                f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=60))
-
-
-    # PvP history for non-lethal hits
-    if d["hp"] > 0:
-        hist_nl = sjl(d.get("pvp_history"), [])
-        hist_nl.insert(0, {"attacker": a["username"], "dmg": dmg_after_def,
-                           "ts": datetime.now().strftime("%m/%d %H:%M")})
-        d["pvp_history"] = json.dumps(hist_nl[:5])
-
-    check_titles(a); check_titles(d)
-    save_player(a); save_player(d)
-
-    if d["hp"] > 0:
-        hp_pct = d["hp"] / max(1, d["max_hp"])
-        filled = round(hp_pct * 10)
-        bar = "█" * filled + "░" * (10 - filled)
-        action += f"\n❤️ {d['username']}: *{d['hp']}/{d['max_hp']}* [{bar}]"
-        asyncio.create_task(_notify_attack(update.get_bot(), d, a["username"], dmg_after_def))
-
-    statuses = get_active_statuses(d)
-    if statuses:
-        action += "\n" + " | ".join(statuses)
-
-    if lvl_msgs:
-        action += "\n\n" + "\n".join(lvl_msgs)
-
-    try:
-        await update.message.delete()
-    except Exception: pass
-    try:
-        msg = await update.get_bot().send_message(
-            chat_id=chat, text=action[:4096], parse_mode="Markdown")
-        asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 20))
-    except Exception: pass
+    finally:
+        _cb_unlock(uid)
 
 # ── HEAL ──────────────────────────────────────────────────────────────────────
 async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -22323,6 +22411,7 @@ def main():
     app.add_handler(CommandHandler("duel",       duel_cmd))
     app.add_handler(CommandHandler("arena",      arena_cmd))
     app.add_handler(CommandHandler("attack",     attack_cmd))
+    app.add_handler(CallbackQueryHandler(pvp_card_callback,  pattern="^pvpcard_"))
     app.add_handler(CommandHandler("heal",       heal_cmd))
     app.add_handler(CommandHandler("boss",       boss_cmd))
     app.add_handler(CommandHandler("dungeon",          dungeon_cmd))
