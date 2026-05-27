@@ -2606,9 +2606,9 @@ def _pet_main_markup():
 # Items that can be found in game
 CONSUMABLES = {
     # Healing
-    "Health Potion":          {"desc":"Restores 50 HP.","sell":75},
-    "Greater Health Potion":  {"desc":"Restores 100 HP.","sell":200},
-    "Grand Restorative Flask":{"desc":"Restores 200 HP.","sell":450},
+    "Health Potion":          {"desc":"Restores 150 HP.","sell":75},
+    "Greater Health Potion":  {"desc":"Restores 300 HP.","sell":200},
+    "Grand Restorative Flask":{"desc":"Restores 600 HP.","sell":450},
     # Revive
     "Scroll of Revival":      {"desc":"Revive a defeated player.","sell":750},
     # Skill items
@@ -2697,14 +2697,41 @@ RECIPES = {
     "Scale Blade":    {"mats": {"Iron Shard": 7},                "result": "Ranger's Marked Bow"},
 }
 
-SHOP_POOL = [
-    {"item":"Health Potion","price":150,"desc":"Restores 50 HP."},
-    {"item":"Greater Health Potion","price":400,"desc":"Restores 100 HP."},
-    {"item":"Grand Restorative Flask","price":900,"desc":"Restores 200 HP."},
+SHOP_POOL = [  # kept for legacy compat
+    {"item":"Health Potion","price":150,"desc":"Restores 150 HP."},
+    {"item":"Greater Health Potion","price":400,"desc":"Restores 300 HP."},
+    {"item":"Grand Restorative Flask","price":900,"desc":"Restores 600 HP."},
     {"item":"Scroll of Revival","price":1500,"desc":"Revive a defeated player."},
     {"item":"Iron Shard","price":300,"desc":"Crafting material."},
-    {"item":"Enchanting Scroll","price":500,"desc":"Enchant gear. Future use."},
+    {"item":"Enchanting Scroll","price":500,"desc":"Enchant gear."},
 ]
+
+_RARITY_PRICES = {"common":350,"uncommon":950,"rare":2800,"epic":7000}
+
+_SHOP_STATIC_TABS = {
+    "pot": [
+        {"item":"Health Potion",          "price":150,  "desc":"Restores 150 HP."},
+        {"item":"Greater Health Potion",  "price":400,  "desc":"Restores 300 HP."},
+        {"item":"Grand Restorative Flask","price":900,  "desc":"Restores 600 HP."},
+        {"item":"Scroll of Revival",      "price":1500, "desc":"Revive a defeated player."},
+    ],
+    "mat": [
+        {"item":"Iron Shard",        "price":300,  "desc":"Crafting material."},
+        {"item":"Enchanting Scroll", "price":500,  "desc":"Enchant a piece of gear."},
+        {"item":"Fortune Coin",      "price":800,  "desc":"Lucky charm. Increases LUK aura."},
+    ],
+}
+
+SHOP_TABS_ORDER = ["pot","wep","arm","shd","acc","hat","glv","bot","msk","mat"]
+_SHOP_TAB_LABELS = {
+    "pot":"🧪 Potions","wep":"⚔️ Weapons","arm":"🛡️ Armors","shd":"🔰 Shields",
+    "acc":"💍 Access.","hat":"🎩 Hats","glv":"🧤 Gloves","bot":"👢 Boots",
+    "msk":"🎭 Masks","mat":"📦 Mats",
+}
+_SHOP_TAB_SHORT = {
+    "pot":"🧪Pot","wep":"⚔️Wep","arm":"🛡️Arm","shd":"🔰Shd","acc":"💍Acc",
+    "hat":"🎩Hat","glv":"🧤Glv","bot":"👢Bot","msk":"🎭Msk","mat":"📦Mat",
+}
 ENHANCE_COSTS = {1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:18, 9:23, 10:30}
 ENHANCE_RATES = {1:1.00, 2:0.95, 3:0.90, 4:0.85, 5:0.75,
                  6:0.65, 7:0.55, 8:0.45, 9:0.35, 10:0.25}
@@ -2736,15 +2763,87 @@ ENCHANT_EFFECTS = {
     ],
 }
 
-_shop_cache = {"items":None,"date":None}
-def get_daily_shop():
+_shop_cache = {"date": None, "tabs": {}}
+
+def _build_gear_shop_tab(pool, seed_key):
+    today = datetime.now().strftime("%Y-%m-%d")
+    rng = random.Random(today + seed_key)
+    common_unc = [(n,d) for n,d in pool.items() if d.get("rarity") in ("common","uncommon")]
+    rare       = [(n,d) for n,d in pool.items() if d.get("rarity") == "rare"]
+    epic       = [(n,d) for n,d in pool.items() if d.get("rarity") == "epic"]
+    picks = []
+    if common_unc: picks += rng.sample(common_unc, min(2, len(common_unc)))
+    if rare:       picks += rng.sample(rare,        min(2, len(rare)))
+    if epic and rng.random() < 0.40: picks.append(rng.choice(epic))
+    rng.shuffle(picks)
+    result = []
+    for name, data in picks:
+        rarity = data.get("rarity","common")
+        price  = _RARITY_PRICES.get(rarity, 350)
+        if "atk" in data:   desc = f"+{data['atk']} ATK"
+        elif "def" in data: desc = f"+{data['def']} DEF"
+        else:               desc = data.get("desc","")[:45]
+        result.append({"item":name,"price":price,"desc":desc,"rarity":rarity})
+    return result
+
+def get_shop_tab(tab):
     today = datetime.now().strftime("%Y-%m-%d")
     if _shop_cache["date"] != today:
-        random.seed(today)
-        _shop_cache["items"] = random.sample(SHOP_POOL, min(5, len(SHOP_POOL)))
-        random.seed()
         _shop_cache["date"] = today
-    return _shop_cache["items"]
+        _shop_cache["tabs"] = {}
+    if tab not in _shop_cache["tabs"]:
+        _gear_pools = {
+            "wep":WEAPONS,"arm":ARMORS,"shd":SHIELDS,"acc":ACCESSORIES,
+            "hat":HATS,"glv":GLOVES,"bot":BOOTS,"msk":MASKS,
+        }
+        if tab in _SHOP_STATIC_TABS:
+            _shop_cache["tabs"][tab] = _SHOP_STATIC_TABS[tab]
+        elif tab in _gear_pools:
+            _shop_cache["tabs"][tab] = _build_gear_shop_tab(_gear_pools[tab], tab)
+        else:
+            _shop_cache["tabs"][tab] = []
+    return _shop_cache["tabs"][tab]
+
+def get_daily_shop():
+    return get_shop_tab("pot")
+
+def _shop_discount(p):
+    discount = 0
+    if _ts_active(p, "shop_discount_until"): discount = 0.20
+    if p.get("guild_id") and str(p.get("guild_id")) != "None":
+        g = get_guild(p["guild_id"])
+        if g:
+            glvl = safe_int(g.get("level"),1)
+            guild_disc = 0.15 if glvl >= 10 else (0.10 if glvl >= 7 else 0)
+            discount = max(discount, guild_disc)
+    return discount
+
+def _build_shop_view(p, tab, uid, discount=0):
+    items  = get_shop_tab(tab)
+    label  = _SHOP_TAB_LABELS.get(tab, tab)
+    disc_note = f"  🏷️ *{int(discount*100)}% off!*" if discount else ""
+    lines  = [f"🛒 *{label}* | 💰 {p['gold']} gold{disc_note}\n"]
+    if not items:
+        lines.append("_Nothing in stock today — check back tomorrow._")
+    for i, e in enumerate(items):
+        price = round(e["price"] * (1-discount))
+        rem   = RARITY_EMOJI.get(e.get("rarity",""),"⚪")
+        lines.append(f"{rem} *{e['item']}*  —  {price:,}g\n   _{e['desc']}_")
+    # Tab nav (2 rows of 5)
+    half = len(SHOP_TABS_ORDER) // 2
+    def _tab_btn(t):
+        lbl = ("▸ " if t == tab else "") + _SHOP_TAB_SHORT[t]
+        return InlineKeyboardButton(lbl, callback_data=f"shoptab_{uid}_{t}")
+    row1 = [_tab_btn(t) for t in SHOP_TABS_ORDER[:half]]
+    row2 = [_tab_btn(t) for t in SHOP_TABS_ORDER[half:]]
+    buy_rows = []
+    for i, e in enumerate(items):
+        price = round(e["price"] * (1-discount))
+        buy_rows.append([InlineKeyboardButton(
+            f"Buy: {e['item']} ({price:,}g)", callback_data=f"shopbuy_{uid}_{tab}_{i}")])
+    markup = InlineKeyboardMarkup([row1, row2] + buy_rows +
+                                  [[InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]])
+    return "\n".join(lines), markup
 
 # ── ENCOUNTER SYSTEM ──────────────────────────────────────────────────────────
 ENCOUNTER_LOOT = {
@@ -7551,11 +7650,11 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         # Non-priest  -  requires potion
         if "Grand Restorative Flask" in inv:
-            potion = "Grand Restorative Flask"; heal_amount = 200
+            potion = "Grand Restorative Flask"; heal_amount = 600
         elif "Greater Health Potion" in inv:
-            potion = "Greater Health Potion"; heal_amount = 100
+            potion = "Greater Health Potion"; heal_amount = 300
         elif "Health Potion" in inv:
-            potion = "Health Potion"; heal_amount = 50
+            potion = "Health Potion"; heal_amount = 150
         else:
             await send_group(update,
                 "❌ You need a Health Potion to heal someone!\n"
@@ -9367,45 +9466,14 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-    discount = 0
-    if _ts_active(p, "shop_discount_until"): discount = 0.20
-    if p.get("guild_id") and str(p.get("guild_id")) != "None":
-        g = get_guild(p["guild_id"])
-        if g:
-            glvl = safe_int(g.get("level"),1)
-            guild_disc = 0.15 if glvl >= 10 else (0.10 if glvl >= 7 else 0)
-            discount = max(discount, guild_disc)
-
-    if not context.args:
-        shop = get_daily_shop()
-        lines = [f"🛒 *Daily Shop* | 💰 {p['gold']} gold\n"]
-        if discount: lines.append(f"🏷️ Discount active: *{int(discount*100)}% off!*\n")
-        shop_buttons = []
-        for i, entry in enumerate(shop):
-            price = round(entry["price"] * (1-discount))
-            lines.append(f"{i+1}. *{entry['item']}*  -  {price}g\n   _{entry['desc']}_")
-            shop_buttons.append([InlineKeyboardButton(
-                f"Buy {i+1}: {entry['item']}", callback_data=f"shop_b_{user.id}_{i}")])
-        lines.append(f"\n`/shop buy [1-{len(shop)}]` to purchase.")
-        shop_buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")])
-        shop_markup = InlineKeyboardMarkup(shop_buttons)
-        await send_group(update, "\n".join(lines), delay=30, reply_markup=shop_markup); return
-
-    if context.args[0].lower() == "buy":
-        if len(context.args) < 2:
-            await send_group(update, f"Usage: `/shop buy [1-5]`", delay=9); return
-        try: idx = int(context.args[1]) - 1
-        except:
-            await send_group(update, f"Usage: `/shop buy [1-5]`", delay=9); return
-        shop = get_daily_shop()
-        if idx < 0 or idx >= len(shop):
-            await send_group(update, "Invalid number.", delay=9); return
-        entry = shop[idx]; price = round(entry["price"] * (1-discount))
-        if p["gold"] < price:
-            await send_group(update, f"❌ Need {price}g, have {p['gold']}g.", delay=9); return
-        p["gold"] -= price; add_item(p, entry["item"]); save_player(p)
-        await send_group(update,
-            f"✅ Bought *{entry['item']}* for {price}g!\n💰 Remaining: {p['gold']}g", delay=15)
+    discount = _shop_discount(p)
+    tab = "pot"
+    if context.args:
+        arg = context.args[0].lower()
+        if arg in SHOP_TABS_ORDER:
+            tab = arg
+    text, markup = _build_shop_view(p, tab, user.id, discount)
+    await send_group(update, text, delay=60, reply_markup=markup)
 
 # ── INVENTORY / EQUIP / USE / SELL ────────────────────────────────────────────
 INV_SECTIONS = ["Equipped", "Weapons", "Armors", "Shields", "Accessories", "Hats", "Gloves", "Boots", "Masks", "Consumables", "Materials"]
@@ -9879,7 +9947,7 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_defeated(p):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
             await query.answer("You're defeated — potions won't help!", show_alert=True); return
-        hp_gain = {"Health Potion": 50, "Greater Health Potion": 100, "Grand Restorative Flask": 200}.get(item_name, 50)
+        hp_gain = {"Health Potion": 150, "Greater Health Potion": 300, "Grand Restorative Flask": 600}.get(item_name, 150)
         p["hp"] = min(calc_max_hp(p), p["hp"] + hp_gain)
         msg += f"❤️ +{hp_gain} HP ({p['hp']}/{calc_max_hp(p)})"
     elif item_name == "Scroll of Revival":
@@ -10097,7 +10165,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+50);   msg += f"❤️ +50 HP ({p['hp']}/{calc_max_hp(p)})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+150);  msg += f"❤️ +150 HP ({p['hp']}/{calc_max_hp(p)})"
     elif item == "Greater Health Potion":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -10106,7 +10174,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+100);  msg += f"❤️ +100 HP ({p['hp']}/{calc_max_hp(p)})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+300);  msg += f"❤️ +300 HP ({p['hp']}/{calc_max_hp(p)})"
     elif item == "Grand Restorative Flask":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -10115,7 +10183,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+200);  msg += f"❤️ +200 HP ({p['hp']}/{calc_max_hp(p)})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+600);  msg += f"❤️ +600 HP ({p['hp']}/{calc_max_hp(p)})"
     elif item == "Scroll of Revival":
         if not is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -17130,7 +17198,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             items[item_name] -= 1
             if items[item_name] <= 0: del items[item_name]
             if "Health Potion" in item_name or "Restorative Flask" in item_name or "Greater Health" in item_name:
-                heal_val = {"Health Potion":50,"Greater Health Potion":100,"Grand Restorative Flask":200}.get(item_name,50)
+                heal_val = {"Health Potion":150,"Greater Health Potion":300,"Grand Restorative Flask":600}.get(item_name,150)
                 arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal_val)
                 log_entry = f"🧪 {atk_name} drinks *{item_name}*! +{heal_val} HP."
             else:
@@ -20986,62 +21054,61 @@ async def dungeon_diff_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # ── Shop Buy callback ──
-async def shop_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def shop_tab_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    # format: shoptab_{uid}_{tab}
     parts = query.data.split("_")
-    # format: shop_b_{uid}_{idx}
-    if len(parts) < 4:
-        return
-    try:
-        uid = int(parts[2])
-        idx = int(parts[3])
-    except (ValueError, IndexError):
-        return
+    if len(parts) < 3:
+        await query.answer(); return
+    try:    uid = int(parts[1])
+    except: await query.answer(); return
+    tab = parts[2]
     if query.from_user.id != uid:
-        await query.answer("This isn't your shop!", show_alert=True)
-        return
-
+        await query.answer("This isn't your shop!", show_alert=True); return
     p = get_player(uid)
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
+    discount = _shop_discount(p)
+    text, markup = _build_shop_view(p, tab, uid, discount)
+    try:
+        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
+    await query.answer()
 
-    discount = 0
-    if _ts_active(p, "shop_discount_until"): discount = 0.20
-    if p.get("guild_id") and str(p.get("guild_id")) != "None":
-        g = get_guild(p["guild_id"])
-        if g:
-            glvl = safe_int(g.get("level"), 1)
-            guild_disc = 0.15 if glvl >= 10 else (0.10 if glvl >= 7 else 0)
-            discount = max(discount, guild_disc)
-
-    shop = get_daily_shop()
-    if idx < 0 or idx >= len(shop):
-        await query.answer("Invalid item.", show_alert=True); return
-
-    entry = shop[idx]
+async def shop_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    # format: shopbuy_{uid}_{tab}_{idx}
+    parts = query.data.split("_")
+    if len(parts) < 4:
+        await query.answer(); return
+    try:
+        uid = int(parts[1])
+        tab = parts[2]
+        idx = int(parts[3])
+    except (ValueError, IndexError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your shop!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    discount = _shop_discount(p)
+    items = get_shop_tab(tab)
+    if idx < 0 or idx >= len(items):
+        await query.answer("Item no longer available.", show_alert=True); return
+    entry = items[idx]
     price = round(entry["price"] * (1 - discount))
     if p["gold"] < price:
-        await query.answer(f"Not enough gold! Need {price}g, have {p['gold']}g.", show_alert=True); return
-
+        await query.answer(f"Need {price:,}g — you have {p['gold']:,}g.", show_alert=True); return
     p["gold"] -= price
     add_item(p, entry["item"])
     save_player(p)
-
-    # Rebuild the shop display with updated gold
-    lines = [f"🛒 *Daily Shop* | 💰 {p['gold']} gold\n"]
-    if discount: lines.append(f"🏷️ Discount active: *{int(discount*100)}% off!*\n")
-    buttons = []
-    for i, e in enumerate(shop):
-        ep = round(e["price"] * (1 - discount))
-        lines.append(f"{i+1}. *{e['item']}*  -  {ep}g\n   _{e['desc']}_")
-        buttons.append([InlineKeyboardButton(f"Buy {i+1}: {e['item']}", callback_data=f"shop_b_{uid}_{i}")])
-    markup = InlineKeyboardMarkup(buttons)
-    lines.append(f"\n✅ Bought *{entry['item']}* for {price}g!")
-
+    await query.answer(f"✅ Bought {entry['item']} for {price:,}g!")
+    # Rebuild the tab view with updated gold
+    text, markup = _build_shop_view(p, tab, uid, discount)
     try:
-        await query.edit_message_text("\n".join(lines)[:4096], parse_mode="Markdown",
-                                      reply_markup=markup)
+        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
 
@@ -21299,7 +21366,9 @@ def main():
     app.add_handler(CallbackQueryHandler(secrets_callback,  pattern="^secrets"))
     app.add_handler(CallbackQueryHandler(prestige_callback,     pattern="^prestige_"))
     app.add_handler(CallbackQueryHandler(dungeon_diff_callback, pattern="^dungeon_d_"))
-    app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shop_b_"))
+    app.add_handler(CallbackQueryHandler(shop_tab_callback,     pattern="^shoptab_"))
+    app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shopbuy_"))
+    app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shop_b_"))  # legacy
     app.add_handler(CallbackQueryHandler(boss_start_callback,   pattern="^bossstart_"))
     app.add_handler(CallbackQueryHandler(enhance_slot_callback, pattern="^enhance_"))
     app.add_handler(CallbackQueryHandler(enchant_slot_callback, pattern="^enchant_"))
