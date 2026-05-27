@@ -2728,8 +2728,8 @@ _SHOP_TAB_LABELS = {
     "msk":"🎭 Masks","mat":"📦 Mats",
 }
 _SHOP_TAB_SHORT = {
-    "pot":"🧪Pot","wep":"⚔️Wep","arm":"🛡️Arm","shd":"🔰Shd","acc":"💍Acc",
-    "hat":"🎩Hat","glv":"🧤Glv","bot":"👢Bot","msk":"🎭Msk","mat":"📦Mat",
+    "pot":"🧪","wep":"⚔️","arm":"🛡️","shd":"🔰","acc":"💍",
+    "hat":"🎩","glv":"🧤","bot":"👢","msk":"🎭","mat":"📦",
 }
 ENHANCE_COSTS = {1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:18, 9:23, 10:30}
 ENHANCE_RATES = {1:1.00, 2:0.95, 3:0.90, 4:0.85, 5:0.75,
@@ -2785,6 +2785,8 @@ def _build_gear_shop_tab(pool, seed_key):
         item_line = data.get("line") or data.get("class")
         if item_line and item_line in LINE_ARCHETYPE:
             desc = f"{desc} ({LINE_ARCHETYPE[item_line]})"
+        elif ("def" in data or "atk" in data) and not item_line:
+            desc = f"{desc} (All Classes)"
         result.append({"item":name,"price":price,"desc":desc,"rarity":rarity})
     return result
 
@@ -2807,6 +2809,8 @@ def _build_legend_shop_tab():
         item_line = data.get("line") or data.get("class")
         if item_line and item_line in LINE_ARCHETYPE:
             desc = f"{desc} ({LINE_ARCHETYPE[item_line]})"
+        elif ("def" in data or "atk" in data) and not item_line:
+            desc = f"{desc} (All Classes)"
         result.append({"item":name,"price":price,"desc":desc,"rarity":rarity})
     return result
 
