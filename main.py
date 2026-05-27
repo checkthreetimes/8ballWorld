@@ -118,7 +118,9 @@ pending_guild_reqs = {}   # guild_id -> [requests]
 explore_timers     = {}   # user_id -> asyncio task
 active_dungeons    = {}   # user_id -> asyncio task
 _wipe_confirm      = {}   # admin_id -> timestamp
-pending_marriages  = {}   # proposer_id -> {target_id, chat_id, expires}
+pending_marriages       = {}   # proposer_id -> {target_id, chat_id, expires}
+pending_alliance_inv    = {}   # inviter_id  -> {target_id, alliance_id, expires}
+pending_guild_inv       = {}   # inviter_id  -> {target_id, guild_id, expires}
 pending_holdhands  = {}   # proposer_id -> {target_id, chat_id, expires}
 active_encounters  = {}   # user_id -> encounter state
 
@@ -11254,9 +11256,105 @@ async def _alliance_main_menu(update_or_none, p, query=None):
         await send_group(update_or_none, text, reply_markup=markup, permanent=True)
 
 async def alliance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    p = get_player(update.effective_user.id)
+    user = update.effective_user
+    p = get_player(user.id)
     if not p: await send_group(update, "Use /ascend first!", delay=9); return
+
+    # Reply-to invite flow
+    if update.message and update.message.reply_to_message:
+        du = update.message.reply_to_message.from_user
+        if du.is_bot:
+            await send_group(update, "You can't invite a bot to your order!", delay=9); return
+        if du.id == user.id:
+            await send_group(update, "You can't invite yourself!", delay=9); return
+        aid = p.get("alliance_id")
+        if not aid:
+            await send_group(update, "You're not in an order! Use /alliance to create or join one.", delay=9); return
+        a = get_alliance(aid)
+        if not a:
+            await send_group(update, "Order not found.", delay=9); return
+        if a.get("leader_id") != user.id:
+            await send_group(update, "Only the order leader can send invites.", delay=9); return
+        members = sjl(a.get("members"), [])
+        if len(members) >= 30:
+            await send_group(update, "Your order is full (30 members max).", delay=9); return
+        if du.id in members:
+            await send_group(update, f"{du.first_name} is already in your order!", delay=9); return
+        tp = get_player(du.id)
+        if not tp:
+            await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+        if tp.get("alliance_id"):
+            await send_group(update, f"{du.first_name} is already in an order!", delay=9); return
+        pending_alliance_inv[user.id] = {
+            "target_id":  du.id,
+            "alliance_id": aid,
+            "chat_id":    update.effective_chat.id,
+            "expires":    (datetime.now() + timedelta(minutes=5)).isoformat(),
+        }
+        a_name = _social_name(user)
+        d_name = _social_name(du)
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⚔️ Accept",  callback_data=f"ainv_accept_{user.id}"),
+            InlineKeyboardButton("❌ Decline", callback_data=f"ainv_decline_{user.id}"),
+        ]])
+        await send_group(update,
+            f"⚔️ {a_name} invites {d_name} to join *{a['name']}*!\n\n"
+            f"_{du.first_name}, do you accept?_\n_Expires in 5 minutes._",
+            permanent=False, delay=300, reply_markup=markup)
+        return
+
     await _social_hub(update, p)
+
+
+async def alliance_invite_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    action    = parts[1]
+    inviter_id = int(parts[2])
+
+    inv = pending_alliance_inv.get(inviter_id)
+    if not inv:
+        await query.edit_message_text("⚔️ This invite has already expired.", parse_mode="Markdown"); return
+    if datetime.now() > datetime.fromisoformat(inv["expires"]):
+        pending_alliance_inv.pop(inviter_id, None)
+        await query.edit_message_text("⚔️ This invite has expired.", parse_mode="Markdown"); return
+    if query.from_user.id != inv["target_id"]:
+        await query.answer("This invite isn't for you!", show_alert=True); return
+
+    pending_alliance_inv.pop(inviter_id, None)
+
+    if action == "decline":
+        await query.edit_message_text(
+            f"❌ *{query.from_user.first_name}* declined the order invitation.",
+            parse_mode="Markdown"); return
+
+    tp = get_player(inv["target_id"])
+    if not tp:
+        await query.edit_message_text("❌ Player data not found.", parse_mode="Markdown"); return
+    if tp.get("alliance_id"):
+        await query.edit_message_text("❌ You're already in an order!", parse_mode="Markdown"); return
+
+    a = get_alliance(inv["alliance_id"])
+    if not a:
+        await query.edit_message_text("❌ That order no longer exists.", parse_mode="Markdown"); return
+
+    members = sjl(a.get("members"), [])
+    if len(members) >= 30:
+        await query.edit_message_text("❌ That order is now full!", parse_mode="Markdown"); return
+    if inv["target_id"] in members:
+        await query.edit_message_text("❌ You're already a member!", parse_mode="Markdown"); return
+
+    members.append(inv["target_id"])
+    a["members"] = json.dumps(members)
+    save_alliance(a)
+    tp["alliance_id"] = inv["alliance_id"]
+    save_player(tp)
+
+    await query.edit_message_text(
+        f"⚔️ *{query.from_user.first_name}* joined *{a['name']}*!\n\n"
+        f"_Welcome to the order, adventurer._",
+        parse_mode="Markdown")
 
 async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
@@ -11670,9 +11768,105 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    p = get_player(update.effective_user.id)
+    user = update.effective_user
+    p = get_player(user.id)
     if not p: await send_group(update, "Use /ascend first!", delay=9); return
+
+    # Reply-to invite flow
+    if update.message and update.message.reply_to_message:
+        du = update.message.reply_to_message.from_user
+        if du.is_bot:
+            await send_group(update, "You can't invite a bot to your guild!", delay=9); return
+        if du.id == user.id:
+            await send_group(update, "You can't invite yourself!", delay=9); return
+        gid = p.get("guild_id")
+        if not gid or str(gid) in ("None", "", "0"):
+            await send_group(update, "You're not in a guild! Use /guildcreate to start one.", delay=9); return
+        g = get_guild(gid)
+        if not g:
+            await send_group(update, "Guild not found.", delay=9); return
+        if g.get("leader_id") != user.id:
+            await send_group(update, "Only the guild leader can send invites.", delay=9); return
+        members = sjl(g.get("members"), [])
+        if len(members) >= 50:
+            await send_group(update, "Your guild is full (50 members max).", delay=9); return
+        if du.id in members:
+            await send_group(update, f"{du.first_name} is already in your guild!", delay=9); return
+        tp = get_player(du.id)
+        if not tp:
+            await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+        if tp.get("guild_id") and str(tp.get("guild_id")) not in ("None", "", "0"):
+            await send_group(update, f"{du.first_name} is already in a guild!", delay=9); return
+        pending_guild_inv[user.id] = {
+            "target_id": du.id,
+            "guild_id":  gid,
+            "chat_id":   update.effective_chat.id,
+            "expires":   (datetime.now() + timedelta(minutes=5)).isoformat(),
+        }
+        a_name = _social_name(user)
+        d_name = _social_name(du)
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🏰 Accept",  callback_data=f"ginv_accept_{user.id}"),
+            InlineKeyboardButton("❌ Decline", callback_data=f"ginv_decline_{user.id}"),
+        ]])
+        await send_group(update,
+            f"🏰 {a_name} invites {d_name} to join *{g['name']}*!\n\n"
+            f"_{du.first_name}, do you accept?_\n_Expires in 5 minutes._",
+            permanent=False, delay=300, reply_markup=markup)
+        return
+
     await _social_hub(update, p)
+
+
+async def guild_invite_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    action     = parts[1]
+    inviter_id = int(parts[2])
+
+    inv = pending_guild_inv.get(inviter_id)
+    if not inv:
+        await query.edit_message_text("🏰 This invite has already expired.", parse_mode="Markdown"); return
+    if datetime.now() > datetime.fromisoformat(inv["expires"]):
+        pending_guild_inv.pop(inviter_id, None)
+        await query.edit_message_text("🏰 This invite has expired.", parse_mode="Markdown"); return
+    if query.from_user.id != inv["target_id"]:
+        await query.answer("This invite isn't for you!", show_alert=True); return
+
+    pending_guild_inv.pop(inviter_id, None)
+
+    if action == "decline":
+        await query.edit_message_text(
+            f"❌ *{query.from_user.first_name}* declined the guild invitation.",
+            parse_mode="Markdown"); return
+
+    tp = get_player(inv["target_id"])
+    if not tp:
+        await query.edit_message_text("❌ Player data not found.", parse_mode="Markdown"); return
+    if tp.get("guild_id") and str(tp.get("guild_id")) not in ("None", "", "0"):
+        await query.edit_message_text("❌ You're already in a guild!", parse_mode="Markdown"); return
+
+    g = get_guild(inv["guild_id"])
+    if not g:
+        await query.edit_message_text("❌ That guild no longer exists.", parse_mode="Markdown"); return
+
+    members = sjl(g.get("members"), [])
+    if len(members) >= 50:
+        await query.edit_message_text("❌ That guild is now full!", parse_mode="Markdown"); return
+    if inv["target_id"] in members:
+        await query.edit_message_text("❌ You're already a member!", parse_mode="Markdown"); return
+
+    members.append(inv["target_id"])
+    g["members"] = json.dumps(members)
+    save_guild(g)
+    tp["guild_id"] = inv["guild_id"]
+    save_player(tp)
+
+    await query.edit_message_text(
+        f"🏰 *{query.from_user.first_name}* joined *{g['name']}*!\n\n"
+        f"_Welcome to the guild, adventurer._",
+        parse_mode="Markdown")
 
 
 async def guildcreate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -21864,6 +22058,7 @@ def main():
     app.add_handler(CallbackQueryHandler(guildinfo_members_callback,pattern="^ginfoM_"))
     app.add_handler(CallbackQueryHandler(guildinfo_list_callback,   pattern="^ginfoList$"))
     app.add_handler(CallbackQueryHandler(guildrename_callback,      pattern="^grename_"))
+    app.add_handler(CallbackQueryHandler(guild_invite_callback,     pattern="^ginv_(accept|decline)_"))
     app.add_handler(CallbackQueryHandler(bounty_amount_callback,    pattern="^bountyamt_"))
     app.add_handler(CallbackQueryHandler(trade_cat_callback,        pattern="^trdcat_"))
     app.add_handler(CallbackQueryHandler(trade_item_callback,       pattern="^trdi_"))
@@ -21877,6 +22072,7 @@ def main():
     app.add_handler(CommandHandler("rumor",     rumor_cmd))
     app.add_handler(CommandHandler("secrets",   secrets_cmd))
     app.add_handler(CommandHandler("oracle",    oracle_cmd))
+    app.add_handler(CallbackQueryHandler(alliance_invite_callback, pattern="^ainv_(accept|decline)_"))
     app.add_handler(CallbackQueryHandler(alliance_callback, pattern="^alliance"))
     app.add_handler(CallbackQueryHandler(rumor_callback,    pattern="^rumor"))
     app.add_handler(CallbackQueryHandler(secrets_callback,  pattern="^secrets"))
