@@ -20741,46 +20741,58 @@ async def ban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if query.from_user.id != ADMIN_ID:
         await query.answer("Admin only.", show_alert=True); return
     await query.answer()
-    data = query.data  # banpick_pg_N | banpick_sel_UID | banpick_confirm_UID | banpick_cancel
+    data = query.data
 
-    if data == "banpick_cancel":
-        await query.edit_message_text("Cancelled.")
-        return
+    try:
+        if data == "banpick_cancel":
+            await query.edit_message_text("Cancelled.")
+            return
 
-    if data.startswith("banpick_pg_"):
-        page = int(data.split("_")[2])
-        text, markup = _build_ban_picker(page)
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
-        return
+        if data.startswith("banpick_pg_"):
+            page = int(data.split("_")[2])
+            text, markup = _build_ban_picker(page)
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+            return
 
-    if data.startswith("banpick_sel_"):
-        tid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-        c.execute("SELECT username, level FROM players WHERE user_id=?", (tid,))
-        row = c.fetchone(); conn.close()
-        if not row:
-            await query.edit_message_text("❌ Player not found (already banned or deleted)."); return
-        tname, lvl = row
-        markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"✅ Confirm ban {tname}", callback_data=f"banpick_confirm_{tid}")],
-            [InlineKeyboardButton("◀️ Back to list",         callback_data="banpick_pg_0")],
-        ])
-        await query.edit_message_text(
-            f"🔨 Ban *{tname}* (Lv {lvl}, ID: `{tid}`)?\n\n"
-            f"This wipes all their data permanently.",
-            parse_mode="Markdown", reply_markup=markup)
-        return
+        if data.startswith("banpick_sel_"):
+            tid = int(data.split("_")[2])
+            conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+            c.execute("SELECT username, level FROM players WHERE user_id=?", (tid,))
+            row = c.fetchone(); conn.close()
+            if not row:
+                await query.edit_message_text("❌ Player not found (already banned or deleted)."); return
+            tname, lvl = row
+            markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"✅ Confirm ban {tname}", callback_data=f"banpick_confirm_{tid}")],
+                [InlineKeyboardButton("◀️ Back to list", callback_data="banpick_pg_0")],
+            ])
+            # Use HTML to avoid Markdown breaking on special chars in display names
+            await query.edit_message_text(
+                f"🔨 Ban <b>{tname}</b> (Lv {lvl}, ID: <code>{tid}</code>)?\n\n"
+                f"This wipes all their data permanently.",
+                parse_mode="HTML", reply_markup=markup)
+            return
 
-    if data.startswith("banpick_confirm_"):
-        tid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-        c.execute("SELECT username FROM players WHERE user_id=?", (tid,))
-        row = c.fetchone(); conn.close()
-        tname = row[0] if row else f"User#{tid}"
-        _do_ban_wipe(tid, tname)
-        await query.edit_message_text(
-            f"🔨 *{tname}* (ID: `{tid}`) has been banned and wiped from the game.",
-            parse_mode="Markdown")
+        if data.startswith("banpick_confirm_"):
+            tid = int(data.split("_")[2])
+            conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+            c.execute("SELECT username FROM players WHERE user_id=?", (tid,))
+            row = c.fetchone(); conn.close()
+            tname = row[0] if row else f"User#{tid}"
+            _do_ban_wipe(tid, tname)
+            # DM the banned player
+            try:
+                await context.bot.send_message(
+                    chat_id=tid,
+                    text="🚫 You have been banned from 8ball World.")
+            except Exception:
+                pass
+            await query.edit_message_text(
+                f"🔨 <b>{tname}</b> (ID: <code>{tid}</code>) has been banned and wiped from the game.",
+                parse_mode="HTML")
+
+    except Exception as e:
+        await query.answer(f"Error: {e}", show_alert=True)
 
 async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -20818,6 +20830,10 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     _do_ban_wipe(tid, tname)
+    try:
+        await context.bot.send_message(chat_id=tid, text="🚫 You have been banned from 8ball World.")
+    except Exception:
+        pass
     await send_group(update,
         f"🔨 *{tname}* (ID: `{tid}`) has been banned and wiped from the game.\n"
         f"They can no longer use any bot commands.", delay=30)
