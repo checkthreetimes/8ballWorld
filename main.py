@@ -20704,6 +20704,84 @@ def _do_ban_wipe(tid: int, tname: str):
     c.execute("DELETE FROM bounties WHERE target_id=? OR poster_id=?", (tid, tid))
     conn.commit(); conn.close()
 
+_BAN_PAGE_SIZE = 10
+
+def _build_ban_picker(page: int = 0):
+    """Return (text, InlineKeyboardMarkup) for the ban player-picker."""
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("""
+        SELECT user_id, username, level FROM players
+        WHERE user_id NOT IN (SELECT user_id FROM banned_users)
+        ORDER BY level DESC
+    """)
+    rows = c.fetchall(); conn.close()
+    total = len(rows)
+    start = page * _BAN_PAGE_SIZE
+    page_rows = rows[start:start + _BAN_PAGE_SIZE]
+
+    text = f"🔨 *Ban Player — Select a target* (page {page+1})\n_Tap a name to get a confirmation button._\n"
+    buttons = []
+    for uid, uname, lvl in page_rows:
+        buttons.append([InlineKeyboardButton(
+            f"Lv{lvl} {uname}", callback_data=f"banpick_sel_{uid}")])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"banpick_pg_{page-1}"))
+    if start + _BAN_PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"banpick_pg_{page+1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="banpick_cancel")])
+    return text, InlineKeyboardMarkup(buttons)
+
+async def ban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query: return
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("Admin only.", show_alert=True); return
+    await query.answer()
+    data = query.data  # banpick_pg_N | banpick_sel_UID | banpick_confirm_UID | banpick_cancel
+
+    if data == "banpick_cancel":
+        await query.edit_message_text("Cancelled.")
+        return
+
+    if data.startswith("banpick_pg_"):
+        page = int(data.split("_")[2])
+        text, markup = _build_ban_picker(page)
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        return
+
+    if data.startswith("banpick_sel_"):
+        tid = int(data.split("_")[2])
+        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        c.execute("SELECT username, level FROM players WHERE user_id=?", (tid,))
+        row = c.fetchone(); conn.close()
+        if not row:
+            await query.edit_message_text("❌ Player not found (already banned or deleted)."); return
+        tname, lvl = row
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"✅ Confirm ban {tname}", callback_data=f"banpick_confirm_{tid}")],
+            [InlineKeyboardButton("◀️ Back to list",         callback_data="banpick_pg_0")],
+        ])
+        await query.edit_message_text(
+            f"🔨 Ban *{tname}* (Lv {lvl}, ID: `{tid}`)?\n\n"
+            f"This wipes all their data permanently.",
+            parse_mode="Markdown", reply_markup=markup)
+        return
+
+    if data.startswith("banpick_confirm_"):
+        tid = int(data.split("_")[2])
+        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        c.execute("SELECT username FROM players WHERE user_id=?", (tid,))
+        row = c.fetchone(); conn.close()
+        tname = row[0] if row else f"User#{tid}"
+        _do_ban_wipe(tid, tname)
+        await query.edit_message_text(
+            f"🔨 *{tname}* (ID: `{tid}`) has been banned and wiped from the game.",
+            parse_mode="Markdown")
+
 async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != ADMIN_ID:
@@ -20719,7 +20797,6 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Priority 2: numeric user ID
     elif context.args and context.args[0].lstrip("-").isdigit():
         tid = int(context.args[0])
-        # Try to get display name from DB
         conn = sqlite3.connect(DB_PATH); c = conn.cursor()
         c.execute("SELECT username FROM players WHERE user_id=?", (tid,))
         row = c.fetchone()
@@ -20735,11 +20812,11 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update, "❌ No player found with that name or ID.", delay=9); return
         tid = target["user_id"]; tname = target["username"]
     else:
-        await send_group(update,
-            "Usage:\n"
-            "• Reply to their message and type `/ban`\n"
-            "• `/ban DisplayName`\n"
-            "• `/ban 123456789` (user ID)", delay=20); return
+        # No args — show interactive player picker (highest level first)
+        text, markup = _build_ban_picker(0)
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+        return
+
     _do_ban_wipe(tid, tname)
     await send_group(update,
         f"🔨 *{tname}* (ID: `{tid}`) has been banned and wiped from the game.\n"
@@ -22440,6 +22517,7 @@ def main():
     app.add_handler(CommandHandler("ban",       ban_cmd))
     app.add_handler(CommandHandler("unban",     unban_cmd))
     app.add_handler(CommandHandler("banlist",   banlist_cmd))
+    app.add_handler(CallbackQueryHandler(ban_picker_callback, pattern="^banpick_"))
     app.add_handler(CommandHandler("fixgear",   fixgear_cmd))
 
     # Callbacks
