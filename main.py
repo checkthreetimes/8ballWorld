@@ -8210,16 +8210,48 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": chat_id}
 
-    # Post result
-    _fire(context.bot.send_message(chat_id=chat_id,
-                                    text=action_text[:4096], parse_mode="Markdown"))
+    pair = (uid, target_uid)
+    if result_type == "defeat":
+        # Remove any tracked battle card, DM both parties permanently
+        for _p in [pair, (target_uid, uid)]:
+            _old = _pvp_cards.pop(_p, None)
+            if _old:
+                try: await context.bot.delete_message(chat_id=chat_id, message_id=_old)
+                except Exception: pass
+        _fire(send_dm_or_group(context.bot, uid,        chat_id, action_text[:4096], group_delay=0))
+        _fire(send_dm_or_group(context.bot, target_uid, chat_id, action_text[:4096], group_delay=0))
+    else:
+        # Hit or miss — edit existing battle card in-place, else send new one
+        _mid = _pvp_cards.get(pair) or _pvp_cards.get((target_uid, uid))
+        edited = False
+        if _mid:
+            try:
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=_mid,
+                    text=action_text[:4096], parse_mode="Markdown")
+                _pvp_cards[pair] = _mid
+                edited = True
+            except Exception:
+                pass
+        if not edited:
+            for _p in [pair, (target_uid, uid)]:
+                _pvp_cards.pop(_p, None)
+            try:
+                m = await context.bot.send_message(chat_id=chat_id,
+                    text=action_text[:4096], parse_mode="Markdown")
+                _pvp_cards[pair] = m.message_id
+                _mid = m.message_id
+            except Exception:
+                _mid = None
+        if _mid:
+            asyncio.create_task(_auto_delete(context.bot, chat_id, _mid, 20))
 
-    # Refresh picker with updated HP bars
-    markup = _build_target_picker_markup(uid, a.get("guild_id"), 0, "atk")
-    try:
-        await query.edit_message_reply_markup(reply_markup=markup)
-    except Exception:
-        pass
+    # Refresh picker with updated HP bars (only if picker still makes sense)
+    if result_type != "defeat":
+        markup = _build_target_picker_markup(uid, a.get("guild_id"), 0, "atk")
+        try:
+            await query.edit_message_reply_markup(reply_markup=markup)
+        except Exception:
+            pass
 
 async def skill_target_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle skl2_pick_{uid}_{target} and skl2_page_{uid}_{page} callbacks."""
@@ -8408,28 +8440,44 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception: pass
         return
 
+    bot = update.get_bot()
+    pair = (au.id, du_id)
+
     if result_type == "hit":
-        # Delete any stale card from either direction of this fight pair
-        for _pair in [(au.id, du_id), (du_id, au.id)]:
-            _old_mid = _pvp_cards.pop(_pair, None)
-            if _old_mid:
-                try: await update.get_bot().delete_message(chat_id=chat, message_id=_old_mid)
-                except Exception: pass
         markup = _build_pvp_card_markup(du_id, au.id, d)
-        try:
-            msg = await update.get_bot().send_message(
-                chat_id=chat, text=action[:4096], parse_mode="Markdown", reply_markup=markup)
-            _pvp_cards[(au.id, du_id)] = msg.message_id
-            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 60))
-        except Exception: pass
+        # Try to edit existing card in-place (check both directions)
+        _mid = _pvp_cards.get(pair) or _pvp_cards.get((du_id, au.id))
+        edited = False
+        if _mid:
+            try:
+                await bot.edit_message_text(chat_id=chat, message_id=_mid,
+                    text=action[:4096], parse_mode="Markdown", reply_markup=markup)
+                _pvp_cards[pair] = _mid
+                edited = True
+            except Exception:
+                pass
+        if not edited:
+            # No existing card or edit failed — clear stale refs and send fresh
+            for _p in [pair, (du_id, au.id)]:
+                _pvp_cards.pop(_p, None)
+            try:
+                msg = await bot.send_message(chat_id=chat, text=action[:4096],
+                    parse_mode="Markdown", reply_markup=markup)
+                _pvp_cards[pair] = msg.message_id
+                _mid = msg.message_id
+            except Exception:
+                _mid = None
+        if _mid:
+            asyncio.create_task(_auto_delete(bot, chat, _mid, 20))
     else:
-        # Defeat or special result — clean up tracked cards for this pair
-        _pvp_cards.pop((au.id, du_id), None); _pvp_cards.pop((du_id, au.id), None)
-        try:
-            msg = await update.get_bot().send_message(
-                chat_id=chat, text=action[:4096], parse_mode="Markdown")
-            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 20))
-        except Exception: pass
+        # Defeat — delete the card, DM both parties permanently
+        for _p in [pair, (du_id, au.id)]:
+            _old = _pvp_cards.pop(_p, None)
+            if _old:
+                try: await bot.delete_message(chat_id=chat, message_id=_old)
+                except Exception: pass
+        _fire(send_dm_or_group(bot, au.id,  chat, action[:4096], group_delay=0))
+        _fire(send_dm_or_group(bot, du_id, chat, action[:4096], group_delay=0))
 
 
 # ── PVP CARD CALLBACK ─────────────────────────────────────────────────────────
@@ -8545,13 +8593,20 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await query.edit_message_text(result_text[:4096], parse_mode="Markdown",
                                               reply_markup=markup)
+                asyncio.create_task(_auto_delete(context.bot, chat_id, query.message.message_id, 20))
             except Exception:
-                await context.bot.send_message(chat_id, result_text[:4096],
-                                               parse_mode="Markdown", reply_markup=markup)
+                try:
+                    msg = await context.bot.send_message(chat_id, result_text[:4096],
+                        parse_mode="Markdown", reply_markup=markup)
+                    asyncio.create_task(_auto_delete(context.bot, chat_id, msg.message_id, 20))
+                except Exception: pass
         else:
-            try: await query.edit_message_text(result_text[:4096], parse_mode="Markdown")
-            except Exception:
-                await context.bot.send_message(chat_id, result_text[:4096], parse_mode="Markdown")
+            # Defeat — remove card, DM both parties permanently
+            _pvp_cards.pop((uid, target_id), None); _pvp_cards.pop((target_id, uid), None)
+            try: await query.delete_message()
+            except Exception: pass
+            _fire(send_dm_or_group(context.bot, uid,       chat_id, result_text[:4096], group_delay=0))
+            _fire(send_dm_or_group(context.bot, target_id, chat_id, result_text[:4096], group_delay=0))
 
     finally:
         _cb_unlock(uid)
