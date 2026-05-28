@@ -143,6 +143,7 @@ pending_holdhands  = {}   # proposer_id -> {target_id, chat_id, expires}
 active_encounters  = {}   # user_id -> encounter state
 active_wizardry    = {}   # user_id -> wizardry dungeon state
 _pvp_cards         = {}   # (attacker_uid, defender_uid) -> message_id — used to clean up stale cards
+_target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
 
 # ── RATE LIMITER ──────────────────────────────────────────────────────────────
 _cmd_timestamps    = {}   # user_id -> [float timestamps]
@@ -7751,7 +7752,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
                 asyncio.create_task(announce(bot, chat_id,
                     f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
             lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
-            action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}."
+            _defeat_timer_ks = time_until(d.get("defeated_until")) or "6h"
+            action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_ks}*."
             if leveled and a["level"] % 10 == 0:
                 asyncio.create_task(announce(bot, chat_id,
                     f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
@@ -8048,7 +8050,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         if cls_a and cls_a.get("passive_key") == "marked_for_death":
             mfd_bonus = round((d.get("gold", 0) * 0.05 + 25) * 0.25)
             a["gold"] = a.get("gold", 0) + mfd_bonus
-        action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}."
+        _defeat_timer_pvp = time_until(d.get("defeated_until")) or "6h"
+        action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_pvp}*."
         if leveled and a["level"] % 10 == 0:
             asyncio.create_task(announce(bot, chat_id,
                 f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
@@ -8094,6 +8097,192 @@ def get_player_by_username(name):
                      WHERE LOWER(s.username)=?""", (key,))
         row = c.fetchone()
     return dict(row) if row else None
+
+
+# ── TARGET PICKER (shared by /attack and /skill) ──────────────────────────────
+_PICKER_COOLDOWN_SECS = 30   # minimum seconds between picker attacks
+
+def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=8):
+    """Return (page_list, total) of players attackable right now."""
+    c = _db().cursor()
+    c.execute("SELECT * FROM players WHERE user_id != ?", (attacker_uid,))
+    rows = c.fetchall()
+    results = []
+    for row in rows:
+        tp = dict(row)
+        if is_defeated(tp): continue
+        if is_invincible(tp): continue
+        if attacker_guild_id and tp.get("guild_id") and \
+           str(tp.get("guild_id")) == str(attacker_guild_id): continue
+        results.append(tp)
+    results.sort(key=lambda x: (-safe_int(x.get("is_wanted", 0)),
+                                 -x.get("level", 1),
+                                 x.get("username", "")))
+    total = len(results)
+    start = page * per_page
+    return results[start:start + per_page], total
+
+def _build_target_picker_markup(attacker_uid, guild_id, page, mode="atk"):
+    """Build inline keyboard for attack/skill target picker."""
+    players, total = _get_attackable_players(attacker_uid, guild_id, page)
+    per_page = 8
+    rows = []
+    for tp in players:
+        name     = tp.get("username", "?")
+        lvl      = tp.get("level", 1)
+        hp_pct   = round(tp.get("hp", 0) / max(1, tp.get("max_hp", 1)) * 100)
+        wanted   = " 🔴" if safe_int(tp.get("is_wanted")) else ""
+        cb_pfx   = "atk" if mode == "atk" else "skl2"
+        rows.append([InlineKeyboardButton(
+            f"{'⚔️' if mode == 'atk' else '🔮'} {name} (Lv.{lvl}) ❤️{hp_pct}%{wanted}",
+            callback_data=f"{cb_pfx}_pick_{attacker_uid}_{tp['user_id']}"
+        )])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"{'atk' if mode=='atk' else 'skl2'}_page_{attacker_uid}_{page-1}"))
+    if (page + 1) * per_page < total:
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"{'atk' if mode=='atk' else 'skl2'}_page_{attacker_uid}_{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{attacker_uid}")])
+    return InlineKeyboardMarkup(rows)
+
+async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle atk_pick_{uid}_{target} and atk_page_{uid}_{page} callbacks."""
+    query = update.callback_query
+    data  = query.data
+    parts = data.split("_")
+    try:
+        action     = parts[1]   # "pick" or "page"
+        uid        = int(parts[2])
+        fourth     = int(parts[3])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your picker!", show_alert=True); return
+
+    a = get_player(uid)
+    if not a:
+        await query.answer("Use /ascend first!", show_alert=True); return
+
+    if action == "page":
+        markup = _build_target_picker_markup(uid, a.get("guild_id"), fourth, "atk")
+        try:
+            await query.edit_message_reply_markup(reply_markup=markup)
+        except Exception:
+            pass
+        await query.answer()
+        return
+
+    # action == "pick" — fourth is target_uid
+    target_uid = fourth
+    # Spam guard
+    last_pick = _target_pickers.get(uid, {}).get("last_pick")
+    if last_pick:
+        elapsed = (datetime.now() - datetime.fromisoformat(last_pick)).total_seconds()
+        if elapsed < _PICKER_COOLDOWN_SECS:
+            remaining = int(_PICKER_COOLDOWN_SECS - elapsed)
+            await query.answer(f"⏳ Wait {remaining}s before attacking again.", show_alert=True)
+            return
+
+    if is_defeated(a):
+        await query.answer("You're defeated!", show_alert=True); return
+    if is_invincible(a):
+        await query.answer("You're invincible — can't attack!", show_alert=True); return
+    if cannot_attack(a):
+        await query.answer("You're stunned/rooted!", show_alert=True); return
+
+    d = get_player(target_uid)
+    if not d:
+        await query.answer("Target not found!", show_alert=True); return
+    if is_defeated(d):
+        await query.answer(f"{d.get('username','?')} is already defeated!", show_alert=True); return
+    if is_invincible(d):
+        await query.answer(f"{d.get('username','?')} is invincible!", show_alert=True); return
+
+    chat_id = query.message.chat_id
+    w = get_weather()
+    action_text, _, result_type = _execute_pvp_hit(a, d, uid, target_uid, w, chat_id, context.bot)
+    save_player(a); save_player(d)
+
+    _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": chat_id}
+
+    # Post result message (brief, auto-deletes)
+    _fire(context.bot.send_message(chat_id=chat_id,
+                                    text=action_text[:4096], parse_mode="Markdown"))
+
+    # Refresh picker with updated HP bars
+    await query.answer()
+    markup = _build_target_picker_markup(uid, a.get("guild_id"), 0, "atk")
+    try:
+        await query.edit_message_reply_markup(reply_markup=markup)
+    except Exception:
+        pass
+
+async def skill_target_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle skl2_pick_{uid}_{target} and skl2_page_{uid}_{page} callbacks."""
+    query = update.callback_query
+    data  = query.data
+    parts = data.split("_")
+    try:
+        action = parts[1]   # "pick" or "page"
+        uid    = int(parts[2])
+        fourth = int(parts[3])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your picker!", show_alert=True); return
+
+    p = get_player(uid)
+    if not p:
+        await query.answer(); return
+
+    if action == "page":
+        markup = _build_target_picker_markup(uid, p.get("guild_id"), fourth, "skl")
+        try:
+            await query.edit_message_reply_markup(reply_markup=markup)
+        except Exception:
+            pass
+        await query.answer()
+        return
+
+    # action == "pick" — show skill picker for this target
+    target_uid = fourth
+    if is_defeated(p):
+        await query.answer("You're defeated!", show_alert=True); return
+    if is_invincible(p):
+        await query.answer("You're invincible!", show_alert=True); return
+
+    tp = get_player(target_uid)
+    if not tp:
+        await query.answer("Target not found!", show_alert=True); return
+    if is_defeated(tp):
+        await query.answer(f"{tp.get('username','?')} is already defeated!", show_alert=True); return
+
+    cls = get_player_class(p)
+    all_skills = sjl(p.get("all_skills"), [])
+    if not all_skills:
+        await query.answer("No skills unlocked!", show_alert=True); return
+
+    # Filter to offensive/PvP skills only
+    PVP_SKILL_TYPES = {"damage","combo_dmg","freeze_nuke","execute_nuke","holy_nuke",
+                        "fear_kill","nature_nuke","holy_warrior_nuke","godlike_lightning",
+                        "drain","drain_kill","hp_drain","drain_debuff","stun_shot",
+                        "execution_shot","bleed_shot","revive_heal","full_revive","regen",
+                        "dmg_reduction_buff","heal_shield"}
+    pvp_skills = [sk for sk in all_skills if sk.get("type", "damage") in PVP_SKILL_TYPES
+                  and p.get("level", 1) >= sk.get("unlock", 5)]
+    if not pvp_skills:
+        await query.answer("No offensive skills available!", show_alert=True); return
+
+    markup = _build_skill_picker_keyboard(pvp_skills, uid, 0, target_uid)
+    try:
+        await query.edit_message_text(
+            f"🔮 *Choose a skill to use on {tp.get('username','?')}:*",
+            parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
+    await query.answer()
 
 
 # ── ATTACK ────────────────────────────────────────────────────────────────────
@@ -8157,8 +8346,15 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "\u274c No player found. Reply to their message, or use their @handle or display name.", delay=9); return
             du_id = found["user_id"]; du_name = found["username"]
     else:
-        await send_group(update,
-            "Reply to someone's message with /attack, or use /attack @handle or /attack Name.", delay=9)
+        # No target specified — show inline target picker
+        markup = _build_target_picker_markup(au.id, a.get("guild_id"), 0, "atk")
+        players, total = _get_attackable_players(au.id, a.get("guild_id"))
+        if not players:
+            await send_group(update, "⚔️ No players available to attack right now.", delay=9); return
+        msg = await send_group(update,
+            f"⚔️ *Attack — Choose a target* ({total} available)\n"
+            f"_Tap to attack. 30s cooldown between picks._",
+            permanent=True, reply_markup=markup)
         return
 
     if du_id == au.id:
@@ -8682,8 +8878,7 @@ def _build_stats_pages(p, viewing_name=None):
                    f"  {_hun_icon} Hunger: {_phun} | {_mood_icon} Mood: {_pmood}")
 
     page1_lines = [
-        f"🎱 *{name}*{defeated_str}{recovering}",
-        f"🏅 {p['active_title']}",
+        f"🏅 *{name}*  ·  {p['active_title']}{defeated_str}{recovering}",
         f"{tier['name']}  -  Level {p['level']}",
         f"🧙 {cls_name}{path_str}",
         f"🏰 {guild_str}",
@@ -13405,6 +13600,32 @@ async def gbank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Usage: /gbank deposit [amt] | /gbank withdraw [amt]", delay=9)
 
 # ── SKILL ─────────────────────────────────────────────────────────────────────
+async def skills_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the player's unlocked skills and descriptions."""
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    cls = get_player_class(p)
+    if not cls:
+        await send_group(update, "No class yet! Use /class at Level 5.", delay=9); return
+    all_skills = sjl(p.get("all_skills"), [])
+    if not all_skills:
+        await send_group(update, "No skills unlocked yet. Level up or change class!", delay=9); return
+    lines = [f"🔮 *{p['username']}'s Skills* — {cls['name']}\n"]
+    for i, s in enumerate(all_skills, 1):
+        stype = s.get("type", "damage")
+        type_icon = ("⚔️" if stype in ("damage","combo_dmg","freeze_nuke","execute_nuke",
+                                        "holy_nuke","fear_kill","nature_nuke","drain")
+                     else "💚" if stype in ("self_heal","group_heal","revive_heal","full_revive","regen")
+                     else "✨" if stype in ("dmg_reduction_buff","self_heal_buff","heal_shield",
+                                            "self_atk_buff","party_atk_buff","party_full_buff")
+                     else "⚡")
+        unlock_note = f" _(unlocks Lv.{s.get('unlock',5)})_" if p.get("level",1) < s.get("unlock",5) else ""
+        lines.append(f"*{i}.* {type_icon} *{s['name']}*{unlock_note}\n   _{s['desc']}_\n")
+    lines.append("_Use /skill [name or number] in a reply to fire a skill._")
+    await send_group(update, "\n".join(lines), permanent=True)
+
+
 async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
@@ -13703,11 +13924,25 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not replying:
-        lines = [f"🔮 *Your Skills* ({get_player_class(p)['name']}):\n"]
-        for i, s in enumerate(all_skills, 1):
-            lines.append(f"*{i}.* *{s['name']}*  -  {s['desc']}")
-        lines.append("\n_Reply to a message with /skill [name or number] to use a skill._")
-        await send_group(update, "\n".join(lines), delay=20)
+        if is_defeated(p):
+            await send_group(update, _defeated_msg(p), delay=15); return
+        if is_invincible(p):
+            await send_group(update, "🛡️ You're *Still Recovering* — can't use offensive skills.", delay=9); return
+        # Show player picker for skill targeting
+        players, total = _get_attackable_players(user.id, p.get("guild_id"))
+        if total == 0:
+            # No PvP targets — fall back to self-skill list
+            lines = [f"🔮 *Your Skills* ({cls['name']}):\n"]
+            for i, s in enumerate(all_skills, 1):
+                lines.append(f"*{i}.* *{s['name']}*  -  {s['desc']}")
+            lines.append("\n_Reply to a message with /skill [name or number] to use a skill._")
+            await send_group(update, "\n".join(lines), delay=20)
+            return
+        markup = _build_target_picker_markup(user.id, p.get("guild_id"), 0, "skl")
+        await send_group(update,
+            f"🔮 *Skill — Choose a target* ({total} available)\n"
+            f"_Pick a player, then choose which skill to use._",
+            permanent=True, reply_markup=markup)
         return
 
     # Replying to a target  -  pick skill
@@ -16160,10 +16395,28 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rf_buttons = []
         asc_buttons = []
 
-        for item, count in inv_ctr.items():
+        _eq_slots = [p.get("equipped_weapon"), p.get("equipped_armor"),
+                     p.get("equipped_shield"), p.get("equipped_hat"),
+                     p.get("equipped_gloves"), p.get("equipped_boots"),
+                     p.get("equipped_mask"),
+                     p.get("equipped_accessory"), p.get("equipped_accessory_2"),
+                     p.get("equipped_accessory_3"), p.get("equipped_accessory_4")]
+
+        # Items in inventory OR equipped (but must have ≥1 in inventory to sacrifice)
+        candidate_items = set(inv_ctr.keys())
+        for slot_item in _eq_slots:
+            if slot_item:
+                candidate_items.add(slot_item)
+
+        for item in candidate_items:
             if item not in WEAPONS and item not in ARMORS and item not in SHIELDS and \
                item not in HATS and item not in GLOVES and item not in BOOTS and item not in MASKS:
                 continue
+            inv_count = inv_ctr.get(item, 0)
+            if inv_count < 1:
+                continue  # need at least 1 in inventory to sacrifice
+            eq_count = sum(1 for s in _eq_slots if s == item)
+            total_count = inv_count + eq_count
             entry = rd.get(item, {"r": 0, "s": 0})
             if item in WEAPONS: pool = WEAPONS
             elif item in ARMORS: pool = ARMORS
@@ -16179,9 +16432,10 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     asc_buttons.append([InlineKeyboardButton(
                         f"⭐ Ascend {rarity}{item} {stars} → {star_str(entry['s']+1)}",
                         callback_data=f"rfasc_{uid}_{item}")])
-            elif count >= 2:
+            elif total_count >= 2:
+                eq_note = " *(1 equipped)*" if eq_count else ""
                 rf_buttons.append([InlineKeyboardButton(
-                    f"⚒️ Reinforce {rarity}{item} {stars} [{entry['r']}/20] (x{count})",
+                    f"⚒️ Reinforce {rarity}{item} {stars} [{entry['r']}/20] (x{total_count}{eq_note})",
                     callback_data=f"rf_{uid}_{item}")])
 
         all_buttons = rf_buttons + asc_buttons
@@ -16202,7 +16456,15 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     inv = json.loads(p.get("inventory") or "[]")
     _all_reinforceable = list(WEAPONS) + list(ARMORS) + list(SHIELDS) + list(HATS) + list(GLOVES) + list(BOOTS) + list(MASKS)
     item_name = resolve_item_ci(item_typed, _all_reinforceable) or item_typed
-    count = inv.count(item_name)
+    inv_count = inv.count(item_name)
+    _eq_slots_txt = [p.get("equipped_weapon"), p.get("equipped_armor"),
+                     p.get("equipped_shield"), p.get("equipped_hat"),
+                     p.get("equipped_gloves"), p.get("equipped_boots"),
+                     p.get("equipped_mask"),
+                     p.get("equipped_accessory"), p.get("equipped_accessory_2"),
+                     p.get("equipped_accessory_3"), p.get("equipped_accessory_4")]
+    eq_count = sum(1 for s in _eq_slots_txt if s == item_name)
+    count = inv_count + eq_count
 
     # Check if it's a valid reinforceable item
     _rf_pools = (WEAPONS, ARMORS, SHIELDS, HATS, GLOVES, BOOTS, MASKS)
@@ -16211,7 +16473,7 @@ async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ *{item_name}* cannot be reinforced. Only weapons, armors, shields, hats, gloves, boots, and masks can be reinforced.", delay=12)
         return
 
-    if count < 2:
+    if count < 2 or inv_count < 1:
         rd = get_reinforce_data(p)
         entry = rd.get(item_name, {"r": 0, "s": 0})
         await send_group(update,
@@ -16272,9 +16534,18 @@ async def reinforce_item_callback(update: Update, context: ContextTypes.DEFAULT_
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
     inv = sjl(p.get("inventory"), [])
-    if inv.count(item_name) < 2:
-        await query.answer(f"Need 2 copies of {item_name}!", show_alert=True); return
-    if item_name not in WEAPONS and item_name not in ARMORS and item_name not in SHIELDS:
+    inv_count_cb = inv.count(item_name)
+    _eq_cb = [p.get("equipped_weapon"), p.get("equipped_armor"),
+               p.get("equipped_shield"), p.get("equipped_hat"),
+               p.get("equipped_gloves"), p.get("equipped_boots"),
+               p.get("equipped_mask"),
+               p.get("equipped_accessory"), p.get("equipped_accessory_2"),
+               p.get("equipped_accessory_3"), p.get("equipped_accessory_4")]
+    eq_count_cb = sum(1 for s in _eq_cb if s == item_name)
+    if inv_count_cb < 1 or (inv_count_cb + eq_count_cb) < 2:
+        await query.answer(f"Need 2 copies of {item_name} (1 must be in inventory to sacrifice)!", show_alert=True); return
+    if item_name not in WEAPONS and item_name not in ARMORS and item_name not in SHIELDS \
+       and item_name not in HATS and item_name not in GLOVES and item_name not in BOOTS and item_name not in MASKS:
         await query.answer("That item cannot be reinforced!", show_alert=True); return
     rd = get_reinforce_data(p)
     entry = rd.get(item_name, {"r": 0, "s": 0})
@@ -25116,6 +25387,7 @@ def main():
     app.add_handler(CommandHandler("prestige",  prestige_cmd))
     app.add_handler(CommandHandler("allocate",  allocate_cmd))
     app.add_handler(CommandHandler("skill",     skill_cmd))
+    app.add_handler(CommandHandler("skills",    skills_cmd))
     app.add_handler(CommandHandler("title",     title_cmd))
 
     # Activities
@@ -25176,6 +25448,8 @@ def main():
     app.add_handler(CommandHandler("duel",       duel_cmd))
     app.add_handler(CommandHandler("arena",      arena_cmd))
     app.add_handler(CommandHandler("attack",     attack_cmd))
+    app.add_handler(CallbackQueryHandler(attack_picker_callback,       pattern="^atk_"))
+    app.add_handler(CallbackQueryHandler(skill_target_picker_callback, pattern="^skl2_"))
     app.add_handler(CallbackQueryHandler(pvp_card_callback,  pattern="^pvpcard_"))
     app.add_handler(CommandHandler("heal",       heal_cmd))
     app.add_handler(CommandHandler("defend",     defend_cmd))
