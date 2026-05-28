@@ -10621,13 +10621,16 @@ async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Shield DEF is now *{new_def}*" + (f"\n_Unequipped {old}_" if old else ""),
             parse_mode="Markdown")
     elif item_name in ACCESSORIES:
-        old = p.get("equipped_accessory")
-        p["equipped_accessory"] = item_name; inv.remove(item_name)
+        slot = _first_free_acc_slot(p)
+        old = p.get(slot)
+        p[slot] = item_name; inv.remove(item_name)
         if old: inv.append(old)
         p["inventory"] = json.dumps(inv); save_player(p)
         acc = ACCESSORIES[item_name]
+        slot_num = ("","2","3","4")[("equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4").index(slot)]
         await query.edit_message_text(
-            f"💍 *Equipped {item_name}!*\n_{acc['desc']}_" + (f"\n_Unequipped {old}_" if old else ""),
+            f"💍 *Equipped {item_name}*{f' (slot {slot_num})' if slot_num else ''}!\n_{acc['desc']}_"
+            + (f"\n_Unequipped {old}_" if old else ""),
             parse_mode="Markdown")
     elif item_name in HATS or item_name in GLOVES or item_name in BOOTS or item_name in MASKS:
         if item_name in HATS:
