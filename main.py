@@ -8190,7 +8190,16 @@ async def _send_stats_page(target, target_uid: int, page: int, edit: bool = Fals
             await send_group(target, text, delay=9)
         return
 
-    pages = _build_stats_pages(p, viewing_name=caller_name)
+    try:
+        pages = _build_stats_pages(p, viewing_name=caller_name)
+    except Exception as e:
+        err = f"❌ Stats error: {e}"
+        if edit:
+            try: await target.edit_message_text(err)
+            except Exception: pass
+        else:
+            await send_group(target, err, delay=20)
+        return
     PAGE_LABELS = ["Profile", "Stats", "Gear", "Inventory", "Titles"]
     total = len(pages)
     page  = max(1, min(page, total))
@@ -20152,6 +20161,22 @@ POOL_ITEM_TABLE = [
     ("Iron Shard",0.025),("Enchanting Scroll",0.008),("Scroll of Revival",0.003),
 ]
 
+def _roll_pool_bonus(p=None):
+    """Weighted random selection from POOL_ITEM_TABLE — all item types compete fairly."""
+    _all_gear = {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}
+    luk_bonus = (get_stat(p, "LUK") * 0.005) if p else 0
+    names = []
+    weights = []
+    for item_name, base_chance in POOL_ITEM_TABLE:
+        gear_boost = 1.8 if item_name in _all_gear else 1.0
+        w = max(base_chance * gear_boost + luk_bonus, 1e-6)
+        names.append(item_name)
+        weights.append(w)
+    # ~35% chance of any bonus drop per /pool
+    if random.random() > 0.35:
+        return None
+    return random.choices(names, weights=weights, k=1)[0]
+
 POOL_CLASS_FLAVOR = {
     "warrior": [
         "Your grip on the cue is iron.",
@@ -20297,7 +20322,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Secondary item roll from global pool
     if p:
-        bonus_item = roll_loot_table(POOL_ITEM_TABLE, p)
+        bonus_item = _roll_pool_bonus(p)
         if bonus_item:
             add_item(p, bonus_item)
             save_player(p)
@@ -20422,7 +20447,7 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if shot.get("loot"):
             item_found = roll_loot_table(shot["loot"])
             if item_found: add_item(p, item_found)
-        bonus_item = roll_loot_table(POOL_ITEM_TABLE, p)
+        bonus_item = _roll_pool_bonus(p)
         if bonus_item: add_item(p, bonus_item)
         lmsgs, _ = add_exp(p, exp_gain)
         rarity_prefix = {"common":"🎱","uncommon":"🎯","rare":"🔵","epic":"🟣","legendary":"🟡","mythic":"🔴"}.get(shot["rarity"],"🎱")
@@ -20676,10 +20701,13 @@ async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Fresh start!", delay=30)
 
 def is_banned(user_id: int) -> bool:
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-    c.execute("SELECT 1 FROM banned_users WHERE user_id=?", (user_id,))
-    row = c.fetchone(); conn.close()
-    return row is not None
+    try:
+        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        c.execute("SELECT 1 FROM banned_users WHERE user_id=?", (user_id,))
+        row = c.fetchone(); conn.close()
+        return row is not None
+    except Exception:
+        return False  # table missing or DB error — treat as not banned
 
 def _do_ban_wipe(tid: int, tname: str):
     """Record ban in banned_users. Data is preserved so unban fully restores access."""
