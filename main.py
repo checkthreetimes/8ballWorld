@@ -5480,6 +5480,18 @@ async def _announce_turn(bot, chat_id, raid_state):
     uid = current["id"]
     name = current["name"]
 
+    # Auto-skip invincible players — mark acted and advance
+    _skip_p = get_player(uid)
+    if _skip_p and is_invincible(_skip_p):
+        if "acted_this_round" not in raid_state or not isinstance(raid_state["acted_this_round"], set):
+            raid_state["acted_this_round"] = set()
+        raid_state["acted_this_round"].add(uid)
+        await bot.send_message(chat_id=chat_id,
+            text=f"🛡️ *{name}* is Still Recovering — turn skipped.",
+            parse_mode="Markdown")
+        await _advance_raid_turn(bot, chat_id, raid_state)
+        return
+
     # Cancel existing timer if any
     old_task = raid_state.get("turn_task")
     if old_task and not old_task.done():
@@ -7857,12 +7869,6 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
     if is_defeated(a):
         await send_group(update, _defeated_msg(a), delay=15); return
-    if is_invincible(a):
-        await send_group(update, "🛡️ You're *Still Recovering*  -  you can't attack while invincible.", delay=9); return
-    if is_vanished(a):
-        await send_group(update, "👻 You're vanished  -  you can't attack while hidden.", delay=9); return
-    if cannot_attack(a):
-        await send_group(update, "⚡ You're stunned or rooted  -  can't attack right now.", delay=9); return
 
     chat_id = update.effective_chat.id
 
@@ -7872,16 +7878,22 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if boss_dict and au.id in [u["id"] for u in boss_dict["participants"]]:
         await _attack_boss(update, context, a, boss_dict, chat_id); return
 
-    # If attacker is in a group raid
+    # If attacker is in a group raid (invincible players can still raid)
     raid = active_raids.get(chat_id)
     if raid and raid.get("in_progress") and au.id in [u["id"] for u in raid["party"]]:
         await raidstrike_cmd(update, context); return
 
-    # If attacker is in a solo raid
+    # If attacker is in a solo raid (invincible players can still solo raid)
     if au.id in active_soloraids:
         await solostrike_cmd(update, context); return
 
-    # ── PvP below ──────────────────────────────────────────────────────────
+    # PvP: invincibility blocks attacking
+    if is_invincible(a):
+        await send_group(update, "🛡️ You're *Still Recovering*  -  you can't attack while invincible.", delay=9); return
+    if is_vanished(a):
+        await send_group(update, "👻 You're vanished  -  you can't attack while hidden.", delay=9); return
+    if cannot_attack(a):
+        await send_group(update, "⚡ You're stunned or rooted  -  can't attack right now.", delay=9); return
     chat = chat_id
     du_id = None; du_name = None
 
@@ -8728,6 +8740,23 @@ async def raidstrike_cmd(update, context):
         await _handle_wave_clear(context.bot, chat_id, raid, p)
     else:
         await _advance_raid_turn(context.bot, chat_id, raid)
+
+
+async def raidabandon_cmd(update, context):
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    raid = active_raids.get(chat_id)
+    if not raid:
+        await send_group(update, "No active raid to abandon."); return
+    if user.id != raid["party"][0]["id"]:
+        await send_group(update, "Only the raid leader can abandon the raid."); return
+    # Cancel any pending turn timer
+    old_task = raid.get("turn_task")
+    if old_task and not old_task.done():
+        old_task.cancel()
+    active_raids.pop(chat_id, None)
+    await send_group(update,
+        f"🏳️ *{user.first_name}* disbanded the raid. Better luck next time!")
 
 
 async def raidstatus_cmd(update, context):
@@ -23623,6 +23652,7 @@ def main():
     app.add_handler(CommandHandler("raid",          raid_cmd))
     app.add_handler(CommandHandler("raidstart",     raidstart_cmd))
     app.add_handler(CommandHandler("raidstrike",    raidstrike_cmd))
+    app.add_handler(CommandHandler("raidabandon",   raidabandon_cmd))
     app.add_handler(CommandHandler("raidstatus",    raidstatus_cmd))
     app.add_handler(CommandHandler("raidparty",     raidparty_cmd))
     app.add_handler(CommandHandler("soloraid",      soloraid_cmd))
