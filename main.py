@@ -20688,20 +20688,20 @@ def _do_ban_wipe(tid: int, tname: str):
               (tid, tname, datetime.now().isoformat()))
     c.execute("DELETE FROM players WHERE user_id=?", (tid,))
     c.execute("DELETE FROM shadow_profiles WHERE user_id=?", (tid,))
-    c.execute("SELECT id, leader_id, members FROM guilds")
+    c.execute("SELECT guild_id, leader_id, members FROM guilds")
     for gid, leader_id, members_json in c.fetchall():
         try:
             members = json.loads(members_json or "[]")
             if tid in members:
                 members = [m for m in members if m != tid]
-                c.execute("UPDATE guilds SET members=? WHERE id=?", (json.dumps(members), gid))
+                c.execute("UPDATE guilds SET members=? WHERE guild_id=?", (json.dumps(members), gid))
                 if leader_id == tid and members:
-                    c.execute("UPDATE guilds SET leader_id=? WHERE id=?", (members[0], gid))
+                    c.execute("UPDATE guilds SET leader_id=? WHERE guild_id=?", (members[0], gid))
                 elif leader_id == tid:
-                    c.execute("DELETE FROM guilds WHERE id=?", (gid,))
+                    c.execute("DELETE FROM guilds WHERE guild_id=?", (gid,))
         except Exception:
             pass
-    c.execute("DELETE FROM bounties WHERE target_id=? OR poster_id=?", (tid, tid))
+    c.execute("DELETE FROM bounties WHERE target_id=? OR placer_id=?", (tid, tid))
     conn.commit(); conn.close()
 
 _BAN_PAGE_SIZE = 10
