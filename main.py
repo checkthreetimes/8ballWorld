@@ -249,13 +249,13 @@ def exp_for_level(level):
     if level <= 10:   return level * 200
     elif level <= 20: return level * 500
     elif level <= 30: return level * 1000
-    elif level <= 40: return level * 2000
-    elif level <= 50: return level * 4000
-    elif level <= 60: return level * 10000
-    elif level <= 70: return level * 25000
-    elif level <= 80: return level * 60000
-    elif level <= 90: return level * 120000
-    else:             return level * 250000
+    elif level <= 40: return level * 8000
+    elif level <= 50: return level * 25000
+    elif level <= 60: return level * 75000
+    elif level <= 70: return level * 200000
+    elif level <= 80: return level * 500000
+    elif level <= 90: return level * 1200000
+    else:             return level * 3000000
 
 def max_hp_for_level(level): return 600 + (level - 1) * 50
 
