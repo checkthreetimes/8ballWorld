@@ -143,7 +143,27 @@ pending_holdhands  = {}   # proposer_id -> {target_id, chat_id, expires}
 active_encounters  = {}   # user_id -> encounter state
 active_wizardry    = {}   # user_id -> wizardry dungeon state
 _pvp_cards         = {}   # (attacker_uid, defender_uid) -> message_id — used to clean up stale cards
+_pvp_card_tasks    = {}   # (attacker_uid, defender_uid) -> asyncio.Task for auto-delete timer
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
+
+def _pvp_pair_key(a, b):
+    """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
+    if (a, b) in _pvp_cards: return (a, b)
+    if (b, a) in _pvp_cards: return (b, a)
+    return (a, b)
+
+def _reset_card_timer(pair, bot, chat_id, mid, seconds=20):
+    """Cancel any existing auto-delete task for this card and schedule a fresh one."""
+    old = _pvp_card_tasks.pop(pair, None)
+    if old and not old.done():
+        old.cancel()
+    task = asyncio.create_task(_auto_delete(bot, chat_id, mid, seconds))
+    _pvp_card_tasks[pair] = task
+
+def _cancel_card_timer(pair):
+    old = _pvp_card_tasks.pop(pair, None)
+    if old and not old.done():
+        old.cancel()
 
 # ── RATE LIMITER ──────────────────────────────────────────────────────────────
 _cmd_timestamps    = {}   # user_id -> [float timestamps]
@@ -7679,18 +7699,24 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── PVP COMBAT HELPERS ────────────────────────────────────────────────────────
 
 def _build_pvp_card_markup(def_id, atk_id, defender_p):
-    """Retaliate / Skills / Heal buttons shown to the player who was just hit."""
+    """Retaliate / Skills / Heal / Defend buttons shown to the player who was just hit."""
     inv = sjl(defender_p.get("inventory"), [])
     has_potion = any(i in inv for i in
                      ["Health Potion", "Greater Health Potion", "Grand Restorative Flask"])
     is_priest  = get_class_line(defender_p) == "priest"
     all_skills = sjl(defender_p.get("all_skills"), [])
+    shield_available = safe_int(defender_p.get("shield_used")) == 0
     row1 = [InlineKeyboardButton("⚔️ Retaliate", callback_data=f"pvpcard_atk_{def_id}_{atk_id}")]
     if all_skills:
         row1.append(InlineKeyboardButton("✨ Skills", callback_data=f"pvpcard_skl_{def_id}_{atk_id}_0"))
     rows = [row1]
+    row2 = []
     if has_potion or is_priest:
-        rows.append([InlineKeyboardButton("💊 Heal", callback_data=f"pvpcard_heal_{def_id}_{atk_id}")])
+        row2.append(InlineKeyboardButton("💊 Heal", callback_data=f"pvpcard_heal_{def_id}_{atk_id}"))
+    if shield_available:
+        row2.append(InlineKeyboardButton("🛡️ Defend", callback_data=f"pvpcard_def_{def_id}_{atk_id}"))
+    if row2:
+        rows.append(row2)
     return InlineKeyboardMarkup(rows)
 
 
@@ -8108,12 +8134,21 @@ def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=3)
     c.execute("SELECT * FROM players WHERE user_id != ?", (attacker_uid,))
     rows = c.fetchall()
     results = []
+    _now = datetime.now()
     for row in rows:
         tp = dict(row)
         if is_defeated(tp): continue
         if is_invincible(tp): continue
         if attacker_guild_id and tp.get("guild_id") and \
            str(tp.get("guild_id")) == str(attacker_guild_id): continue
+        # Exclude players inactive for more than 1 hour (same rule as reply-based attack)
+        _shadow = get_shadow(tp["user_id"])
+        if _shadow and _shadow.get("last_seen"):
+            try:
+                if (_now - datetime.fromisoformat(_shadow["last_seen"])).total_seconds() > 3600:
+                    continue
+            except Exception:
+                pass
         results.append(tp)
     results.sort(key=lambda x: (-safe_int(x.get("is_wanted", 0)),
                                  -x.get("level", 1),
@@ -8210,31 +8245,31 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": chat_id}
 
-    pair = (uid, target_uid)
+    pair = _pvp_pair_key(uid, target_uid)
     if result_type == "defeat":
-        # Remove any tracked battle card, DM both parties permanently
-        for _p in [pair, (target_uid, uid)]:
-            _old = _pvp_cards.pop(_p, None)
-            if _old:
-                try: await context.bot.delete_message(chat_id=chat_id, message_id=_old)
-                except Exception: pass
+        # Cancel timer, delete card, post permanent to group AND DM
+        _cancel_card_timer(pair)
+        _old = _pvp_cards.pop(pair, None)
+        if _old:
+            try: await context.bot.delete_message(chat_id=chat_id, message_id=_old)
+            except Exception: pass
+        try: await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
+        except Exception: pass
         _fire(send_dm_or_group(context.bot, uid,        chat_id, action_text[:4096], group_delay=0))
         _fire(send_dm_or_group(context.bot, target_uid, chat_id, action_text[:4096], group_delay=0))
     else:
         # Hit or miss — edit existing battle card in-place, else send new one
-        _mid = _pvp_cards.get(pair) or _pvp_cards.get((target_uid, uid))
+        _mid = _pvp_cards.get(pair)
         edited = False
         if _mid:
             try:
                 await context.bot.edit_message_text(chat_id=chat_id, message_id=_mid,
                     text=action_text[:4096], parse_mode="Markdown")
-                _pvp_cards[pair] = _mid
                 edited = True
             except Exception:
                 pass
         if not edited:
-            for _p in [pair, (target_uid, uid)]:
-                _pvp_cards.pop(_p, None)
+            _pvp_cards.pop(pair, None)
             try:
                 m = await context.bot.send_message(chat_id=chat_id,
                     text=action_text[:4096], parse_mode="Markdown")
@@ -8243,7 +8278,7 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
             except Exception:
                 _mid = None
         if _mid:
-            asyncio.create_task(_auto_delete(context.bot, chat_id, _mid, 20))
+            _reset_card_timer(pair, context.bot, chat_id, _mid, 20)
 
     # Refresh picker with updated HP bars (only if picker still makes sense)
     if result_type != "defeat":
@@ -8441,25 +8476,21 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     bot = update.get_bot()
-    pair = (au.id, du_id)
+    pair = _pvp_pair_key(au.id, du_id)
 
     if result_type == "hit":
         markup = _build_pvp_card_markup(du_id, au.id, d)
-        # Try to edit existing card in-place (check both directions)
-        _mid = _pvp_cards.get(pair) or _pvp_cards.get((du_id, au.id))
+        _mid = _pvp_cards.get(pair)
         edited = False
         if _mid:
             try:
                 await bot.edit_message_text(chat_id=chat, message_id=_mid,
                     text=action[:4096], parse_mode="Markdown", reply_markup=markup)
-                _pvp_cards[pair] = _mid
                 edited = True
             except Exception:
                 pass
         if not edited:
-            # No existing card or edit failed — clear stale refs and send fresh
-            for _p in [pair, (du_id, au.id)]:
-                _pvp_cards.pop(_p, None)
+            _pvp_cards.pop(pair, None)
             try:
                 msg = await bot.send_message(chat_id=chat, text=action[:4096],
                     parse_mode="Markdown", reply_markup=markup)
@@ -8468,15 +8499,17 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 _mid = None
         if _mid:
-            asyncio.create_task(_auto_delete(bot, chat, _mid, 20))
+            _reset_card_timer(pair, bot, chat, _mid, 20)
     else:
-        # Defeat — delete the card, DM both parties permanently
-        for _p in [pair, (du_id, au.id)]:
-            _old = _pvp_cards.pop(_p, None)
-            if _old:
-                try: await bot.delete_message(chat_id=chat, message_id=_old)
-                except Exception: pass
-        _fire(send_dm_or_group(bot, au.id,  chat, action[:4096], group_delay=0))
+        # Defeat — cancel timer, delete card, then post permanent message to group AND DM
+        _cancel_card_timer(pair)
+        _old = _pvp_cards.pop(pair, None)
+        if _old:
+            try: await bot.delete_message(chat_id=chat, message_id=_old)
+            except Exception: pass
+        try: await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
+        except Exception: pass
+        _fire(send_dm_or_group(bot, au.id, chat, action[:4096], group_delay=0))
         _fire(send_dm_or_group(bot, du_id, chat, action[:4096], group_delay=0))
 
 
@@ -8552,7 +8585,37 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                          f"❤️ {a['username']}: *{a['hp']}/{a['max_hp']}* [{bar}]\n"
                          f"_({d['username']}'s turn to retaliate)_")
             markup = _build_pvp_card_markup(uid, target_id, a)
-            try: await query.edit_message_text(heal_text, parse_mode="Markdown", reply_markup=markup)
+            try:
+                await query.edit_message_text(heal_text, parse_mode="Markdown", reply_markup=markup)
+                _reset_card_timer(_pvp_pair_key(uid, target_id), context.bot, chat_id, query.message.message_id, 20)
+            except Exception: pass
+            return
+
+        if action_type == "def":
+            if safe_int(a.get("shield_used")) == 1:
+                cur_sh = safe_int(a.get("shield_hp"))
+                if cur_sh > 0:
+                    await query.answer(f"🛡️ Shield active: {cur_sh} HP remaining.", show_alert=True)
+                else:
+                    await query.answer("🛡️ Shield already used this life.", show_alert=True)
+                return
+            if is_defeated(a):
+                await query.answer("You're defeated!", show_alert=True); return
+            max_sh  = max(100, int(calc_max_hp(a) * _SHIELD_CAP_PCT))
+            base_sh = max(100, int(calc_max_hp(a) * 0.25))
+            a["shield_hp"]   = min(max_sh, base_sh)
+            a["shield_used"] = 1
+            save_player(a)
+            bar_n = round(a["shield_hp"] / max(1, max_sh) * 10)
+            bar   = "█" * bar_n + "░" * (10 - bar_n)
+            shield_text = (f"🛡️ *{a['username']}* raises their shield!\n"
+                           f"Shield HP: *{a['shield_hp']}/{max_sh}* [{bar}]\n"
+                           f"_Absorbs incoming damage. One use per life._")
+            markup = _build_pvp_card_markup(uid, target_id, a)
+            pair   = _pvp_pair_key(uid, target_id)
+            try:
+                await query.edit_message_text(shield_text, parse_mode="Markdown", reply_markup=markup)
+                _reset_card_timer(pair, context.bot, chat_id, query.message.message_id, 20)
             except Exception: pass
             return
 
@@ -8588,22 +8651,32 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception: pass
             return
 
+        pair = _pvp_pair_key(uid, target_id)
+
         if result_type == "hit":
             markup = _build_pvp_card_markup(target_id, uid, d)
+            _mid = query.message.message_id
             try:
                 await query.edit_message_text(result_text[:4096], parse_mode="Markdown",
                                               reply_markup=markup)
-                asyncio.create_task(_auto_delete(context.bot, chat_id, query.message.message_id, 20))
+                _pvp_cards[pair] = _mid
             except Exception:
                 try:
                     msg = await context.bot.send_message(chat_id, result_text[:4096],
                         parse_mode="Markdown", reply_markup=markup)
-                    asyncio.create_task(_auto_delete(context.bot, chat_id, msg.message_id, 20))
-                except Exception: pass
+                    _mid = msg.message_id
+                    _pvp_cards[pair] = _mid
+                except Exception:
+                    _mid = None
+            if _mid:
+                _reset_card_timer(pair, context.bot, chat_id, _mid, 20)
         else:
-            # Defeat — remove card, DM both parties permanently
-            _pvp_cards.pop((uid, target_id), None); _pvp_cards.pop((target_id, uid), None)
+            # Defeat — cancel timer, delete card, post permanent to group AND DM
+            _cancel_card_timer(pair)
+            _pvp_cards.pop(pair, None)
             try: await query.delete_message()
+            except Exception: pass
+            try: await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
             except Exception: pass
             _fire(send_dm_or_group(context.bot, uid,       chat_id, result_text[:4096], group_delay=0))
             _fire(send_dm_or_group(context.bot, target_id, chat_id, result_text[:4096], group_delay=0))
