@@ -220,6 +220,17 @@ async def announce(bot, chat_id: int, text: str,
     except Exception:
         return None
 
+async def send_dm_or_group(bot, user_id: int, chat_id: int, text: str,
+                            parse_mode="Markdown", group_delay: int = 20):
+    """Try to DM the player; fall back to group with auto-delete."""
+    try:
+        return await bot.send_message(chat_id=user_id, text=text[:4096], parse_mode=parse_mode)
+    except Exception:
+        msg = await bot.send_message(chat_id=chat_id, text=text[:4096], parse_mode=parse_mode)
+        if group_delay > 0:
+            asyncio.create_task(_auto_delete(bot, chat_id, msg.message_id, group_delay))
+        return msg
+
 # ── SAFE HELPERS ──────────────────────────────────────────────────────────────
 def sjl(v, d):
     if v is None: return d
@@ -4205,10 +4216,10 @@ WDNG_MONSTERS = [
 ]
 
 WDNG_FLOOR_BOSSES = [
-    {"name":"The Gatekeeper",    "hp_mult":3.0, "atk_mult":1.2, "gold":200,  "exp":800,  "floor":5},
-    {"name":"Dungeon Hydra",     "hp_mult":3.5, "atk_mult":1.4, "gold":400,  "exp":1800, "floor":10},
-    {"name":"Shadow Overlord",   "hp_mult":4.0, "atk_mult":1.6, "gold":700,  "exp":3500, "floor":15},
-    {"name":"The Void Sovereign","hp_mult":5.0, "atk_mult":2.0, "gold":1200, "exp":7000, "floor":20},
+    {"name":"The Gatekeeper",    "hp_mult":3.0, "atk_mult":1.2, "gold":500,   "exp":2000,  "floor":5},
+    {"name":"Dungeon Hydra",     "hp_mult":3.5, "atk_mult":1.4, "gold":900,   "exp":4500,  "floor":10},
+    {"name":"Shadow Overlord",   "hp_mult":4.0, "atk_mult":1.6, "gold":1600,  "exp":8000,  "floor":15},
+    {"name":"The Void Sovereign","hp_mult":5.0, "atk_mult":2.0, "gold":3000,  "exp":18000, "floor":20},
 ]
 
 WDNG_TRAPS = [
@@ -4231,6 +4242,29 @@ WDNG_CHEST_LOOT = [
     ("Iron Shard", 0.20), ("Enchanting Scroll", 0.12),
     ("Fortune Coin", 0.06), ("Hawk Eye Medallion", 0.05),
     ("War Master's Clasp", 0.05), ("Scroll of Revival", 0.07),
+]
+WDNG_MONSTER_LOOT = [
+    ("Health Potion",            30), ("Greater Health Potion",    15),
+    ("Monster Core (Fire)",      10), ("Monster Core (Water)",     10),
+    ("Monster Core (Earth)",     10), ("Monster Core (Wind)",      10),
+    ("Monster Core (Lightning)",  8), ("Iron Shard",               12),
+    ("Enchanting Scroll",         8), ("Fortune Coin",              5),
+    ("Scroll of Revival",         3),
+]
+WDNG_MINI_BOSS_LOOT = [
+    ("Greater Health Potion",    20), ("Grand Restorative Flask",  10),
+    ("Monster Core (Fire)",      12), ("Monster Core (Water)",     12),
+    ("Monster Core (Shadow)",     8), ("Rare Monster Core",         5),
+    ("Enchanting Scroll",        15), ("Iron Shard",               15),
+    ("Scroll of Revival",         8), ("Fortune Coin",              8),
+    ("War Master's Clasp",        5), ("Hawk Eye Medallion",        5),
+]
+WDNG_BOSS_LOOT = [
+    ("Grand Restorative Flask",  15), ("Rare Monster Core",        15),
+    ("Scroll of Revival",        12), ("Enchanting Scroll",        15),
+    ("Fortune Coin",             10), ("War Master's Clasp",        8),
+    ("Hawk Eye Medallion",        8), ("The Gambler's Dice",        5),
+    ("The Crossed Blades Pendant", 3),
 ]
 
 WDNG_ROOM_EMOJIS = {
@@ -6592,6 +6626,7 @@ def init_db():
         ("deepest_dungeon_floor", "INTEGER DEFAULT 0"),
         ("shield_hp",             "INTEGER DEFAULT 0"),
         ("last_defend",           "TEXT DEFAULT NULL"),
+        ("shield_used",           "INTEGER DEFAULT 0"),
     ]:
         try:
             _v24conn = sqlite3.connect(DB_PATH)
@@ -6945,7 +6980,7 @@ def save_player(p):
         "tg_username","deepest_dungeon_floor",
         "equipped_accessory_2","equipped_accessory_3","equipped_accessory_4",
         "shop_reroll_date","shop_reroll_count",
-        "shield_hp","last_defend",
+        "shield_hp","last_defend","shield_used",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -7683,7 +7718,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             d["hp"] = 0
             d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
             d["last_defeated_by"] = f"{a['username']} (Killshot)"
-            d["kill_streak"] = 0; d["is_wanted"] = 0
+            _d_was_wanted = safe_int(d.get("is_wanted"))
+            d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0
             d["revenge_target"] = au_id
             d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
             asyncio.create_task(_notify_defeat(bot, d, a["username"] + " (Killshot)"))
@@ -7707,11 +7743,18 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             for _desc, _exp, _gold in track_objective(a, "pvp_win"):
                 a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
             exp_gain = 60 + a["level"] * 8
+            if _d_was_wanted:
+                wanted_gold = 250; wanted_exp = round(exp_gain * 0.5)
+                a["gold"] = a.get("gold", 0) + wanted_gold
+                exp_gain += wanted_exp
+                action += f"\n🔴 *WANTED BOUNTY!* +{wanted_gold}g +{wanted_exp} bonus EXP for taking down a wanted player!"
+                asyncio.create_task(announce(bot, chat_id,
+                    f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
             lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
             action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}."
             if leveled and a["level"] % 10 == 0:
                 asyncio.create_task(announce(bot, chat_id,
-                    f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=60))
+                    f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
         check_titles(a); check_titles(d)
         save_player(a); save_player(d)
         if d["hp"] > 0:
@@ -7944,7 +7987,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         d["hp"] = 0
         d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
         d["last_defeated_by"] = f"{a['username']} (PvP)"
-        d["kill_streak"] = 0; d["is_wanted"] = 0
+        _d_was_wanted = safe_int(d.get("is_wanted"))
+        d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0
         d["revenge_target"] = au_id
         d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
         exp_loss = round(d.get("exp", 0) * 0.10)
@@ -7971,9 +8015,16 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 12 hours!"
             asyncio.create_task(announce(bot, chat_id,
                 f"🏹 *{a['username']}* took down *{d['username']}* with *Last Shot*! "
-                f"12-hour defeat.", delay=60))
+                f"12-hour defeat.", delay=30))
             a["gold"] = a.get("gold", 0) + 150
         exp_gain = 60 + a["level"] * 8
+        if _d_was_wanted:
+            wanted_gold = 250; wanted_exp = round(exp_gain * 0.5)
+            a["gold"] = a.get("gold", 0) + wanted_gold
+            exp_gain += wanted_exp
+            action += f"\n🔴 *WANTED BOUNTY!* +{wanted_gold}g +{wanted_exp} bonus EXP for taking down a wanted player!"
+            asyncio.create_task(announce(bot, chat_id,
+                f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
         lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
         if cls_a and cls_a.get("passive_key") == "conqueror":
             restore = round(a["max_hp"] * 0.20)
@@ -8000,7 +8051,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}."
         if leveled and a["level"] % 10 == 0:
             asyncio.create_task(announce(bot, chat_id,
-                f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=60))
+                f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
 
     if d["hp"] > 0:
         hist_nl = sjl(d.get("pvp_history"), [])
@@ -8312,7 +8363,6 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── DEFEND (damage-absorbing shield) ─────────────────────────────────────────
-_SHIELD_CD_SECS  = 20 * 60        # 20-min cooldown to re-activate
 _SHIELD_CORE_ADD = 150            # HP added per Monster Core consumed
 _SHIELD_CAP_PCT  = 0.50           # shield can't exceed 50 % of max HP
 
@@ -8324,9 +8374,9 @@ async def defend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_defeated(p):
         await send_group(update, _defeated_msg(p), delay=15); return
 
-    arg      = (context.args[0].lower() if context.args else "")
-    max_sh   = max(100, int(calc_max_hp(p) * _SHIELD_CAP_PCT))
-    cur_sh   = safe_int(p.get("shield_hp"))
+    arg    = (context.args[0].lower() if context.args else "")
+    max_sh = max(100, int(calc_max_hp(p) * _SHIELD_CAP_PCT))
+    cur_sh = safe_int(p.get("shield_hp"))
 
     # ── /defend core — consume one Monster Core to recharge shield ──────────
     if arg == "core":
@@ -8346,11 +8396,9 @@ async def defend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🛡️ Shield: *{p['shield_hp']}/{max_sh}* [{bar}]", delay=15)
         return
 
-    # ── /defend — activate or refresh the shield ────────────────────────────
-    last_defend = p.get("last_defend")
-    if last_defend and not check_cooldown(last_defend, _SHIELD_CD_SECS // 60):
-        secs = time_remaining(last_defend, _SHIELD_CD_SECS // 60)
-        # If shield is already up, just show status
+    # ── /defend — activate shield (once per life) ───────────────────────────
+    if safe_int(p.get("shield_used")) == 1:
+        # Shield already used this life — show status if still active, else block
         if cur_sh > 0:
             bar_n = round(cur_sh / max(1, max_sh) * 10)
             bar   = "█" * bar_n + "░" * (10 - bar_n)
@@ -8359,12 +8407,14 @@ async def defend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"HP: *{cur_sh}/{max_sh}* [{bar}]\n"
                 f"_Use `/defend core` to recharge with a Monster Core._", delay=12)
         else:
-            await send_group(update, f"⏳ Shield on cooldown: *{secs}* remaining.", delay=9)
+            await send_group(update,
+                "🛡️ You've already used your shield this life.\n"
+                "_You'll get a new one when you revive._", delay=9)
         return
 
-    base_sh  = max(100, int(calc_max_hp(p) * 0.25))
-    p["shield_hp"]    = min(max_sh, base_sh)
-    p["last_defend"]  = datetime.now().isoformat()
+    base_sh = max(100, int(calc_max_hp(p) * 0.25))
+    p["shield_hp"]  = min(max_sh, base_sh)
+    p["shield_used"] = 1
     save_player(p)
     bar_n = round(p["shield_hp"] / max(1, max_sh) * 10)
     bar   = "█" * bar_n + "░" * (10 - bar_n)
@@ -8372,7 +8422,7 @@ async def defend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🛡️ *Shield Activated!*\n"
         f"HP: *{p['shield_hp']}/{max_sh}* [{bar}]\n\n"
         f"Incoming attacks hit your shield first before your real HP.\n"
-        f"_Recharge with `/defend core` (uses one Monster Core)._",
+        f"_One use per life. Recharge with `/defend core` (Monster Core)._",
         delay=20)
 
 
@@ -8455,6 +8505,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         t["defeated_until"]  = None
         t["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
         t["hp"] = min(real_max_t, heal_amount)
+        t["shield_used"] = 0
 
     h["heals_given"] = h.get("heals_given",0) + 1
     if tu.id != hu.id:
@@ -8516,7 +8567,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"\n🏅 *{h['username']}* earned: *{new_t[0]}*!"
     if leveled and h["level"] % 10 == 0:
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
-            f"🎉 *{h['username']}* reached *Level {h['level']}*! 💊", delay=60))
+            f"🎉 *{h['username']}* reached *Level {h['level']}*! 💊", delay=30))
     await send_group(update, msg, delay=30)
 
 # ── STATS ─────────────────────────────────────────────────────────────────────
@@ -10338,7 +10389,7 @@ async def _handle_drake_strike(update: Update, context: ContextTypes.DEFAULT_TYP
                          + (f" | 🎒 {loot}" if loot else ""))
             if leveled and fp["level"] % 10 == 0:
                 asyncio.create_task(announce(context.bot, chat_id,
-                    f"🎉 *{fp['username']}* reached *Level {fp['level']}*! 🐉", delay=60))
+                    f"🎉 *{fp['username']}* reached *Level {fp['level']}*! 🐉", delay=30))
         await announce(context.bot, chat_id, "\n".join(lines), delay=90)
     else:
         await announce(context.bot, chat_id,
@@ -10864,6 +10915,7 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
             await query.answer("You've been condemned — can't be revived!", show_alert=True); return
         p["defeated_until"] = None; p["hp"] = p["max_hp"] // 2
+        p["shield_used"] = 0
         set_status(p, "invincible_until", 300)
         msg += f"💚 Revived at {p['hp']} HP! 5 minutes invincibility granted."
     elif item_name.startswith("Monster Core (") or item_name == "Rare Monster Core":
@@ -11131,6 +11183,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         p["defeated_until"] = None
         p["hp"] = p["max_hp"] // 2
+        p["shield_used"] = 0
         set_status(p, "invincible_until", 300)
         msg += f"💚 Revived at {p['hp']} HP! 5 minutes invincibility granted."
     elif item.startswith("Monster Core (") or item == "Rare Monster Core":
@@ -13990,6 +14043,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     await send_result(f"☠️ {tp['username']} is condemned — cannot be revived!"); return
                 tp["defeated_until"] = None
                 tp["hp"] = min(calc_max_hp(tp), heal)
+                tp["shield_used"] = 0
                 tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
                 out.append(f"✨ *Holy Light!* *{tp['username']}* revived with *{heal} HP*!\n"
                            f"🛡️ 5 minutes invincibility granted.")
@@ -14015,6 +14069,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             p["inventory"] = json.dumps(inv)
             tp["hp"] = calc_max_hp(tp)
             tp["defeated_until"] = None
+            tp["shield_used"] = 0
             tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
             out.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored! 🛡️ 5 minutes invincibility.")
             save_player(p); save_player(tp)
@@ -14167,6 +14222,7 @@ async def _execute_skill(update, context, p, sk):
                 await send_group(update, f"☠️ *{tp['username']}* is condemned — cannot be revived!", delay=9); return
             tp["defeated_until"] = None
             tp["hp"] = min(calc_max_hp(tp), heal)
+            tp["shield_used"] = 0
             tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
             save_player(tp); save_player(p)
             lines.append(f"✨ *Holy Light!* *{tp['username']}* is revived with *{heal} HP*!\n"
@@ -14210,6 +14266,7 @@ async def _execute_skill(update, context, p, sk):
         p["inventory"] = json.dumps(inv)
         tp["hp"] = calc_max_hp(tp)
         tp["defeated_until"] = None
+        tp["shield_used"] = 0
         tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
         save_player(tp); save_player(p)
         lines.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored!\n"
@@ -16727,12 +16784,28 @@ def _wdng_nav_markup(uid, dirs, can_surface=True):
     return InlineKeyboardMarkup(rows)
 
 
-def _wdng_combat_markup(uid):
-    return InlineKeyboardMarkup([
+def _wdng_combat_markup(uid, p=None, pet_used=False):
+    rows = [
         [InlineKeyboardButton("⚔️ Attack",  callback_data=f"dng_atk_{uid}"),
          InlineKeyboardButton("🧪 Heal",    callback_data=f"dng_heal_{uid}")],
-        [InlineKeyboardButton("🏃 Flee",    callback_data=f"dng_flee_{uid}")],
+    ]
+    if p:
+        cls = get_player_class(p)
+        p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
+                    if p.get("level", 1) >= sk.get("unlock", 5)]
+        skill_btns = [
+            InlineKeyboardButton(sk.get("active", sk.get("name", "Skill")),
+                                 callback_data=f"dng_skl_{uid}_{i}")
+            for i, sk in enumerate(p_skills[:4])
+        ]
+        for i in range(0, len(skill_btns), 2):
+            rows.append(skill_btns[i:i+2])
+    pet_lbl = "🐾 Pet (used)" if pet_used else "🐾 Pet Ability"
+    rows.append([
+        InlineKeyboardButton(pet_lbl,      callback_data=f"dng_pet_{uid}"),
+        InlineKeyboardButton("🏃 Flee",    callback_data=f"dng_flee_{uid}"),
     ])
+    return InlineKeyboardMarkup(rows)
 
 
 def _wdng_hp_bar(hp, max_hp, length=8):
@@ -16780,7 +16853,7 @@ async def _wdng_surface(uid, state, bot, chat_id, reason="surfaced"):
     p["gold"] = safe_int(p.get("gold", 0)) + gold
     for item in loot:
         add_item(p, item)
-    exp_bonus = floors * 120
+    exp_bonus = floors * 300
     add_exp(p, exp_bonus)
     save_player(p)
     active_wizardry.pop(uid, None)
@@ -16850,13 +16923,14 @@ async def _wdng_enter_room(uid, state, bot, chat_id, query=None):
                 "boss": True, "floor_boss": boss_floor,
             }
             state["combat"]["hp"] = state["combat"]["max_hp"]  # ensure full HP
+            state["pet_ability_used"] = False
             save_wdng_state(uid, state)
             ebar = _wdng_hp_bar(state["combat"]["hp"], state["combat"]["max_hp"])
             await _reply(
                 f"🔴 *FLOOR BOSS: {boss_floor['name']}!*\n"
                 f"❤️ {state['combat']['hp']}/{state['combat']['max_hp']} [{ebar}]\n\n"
                 f"_Defeat the boss to advance to floor {floor+1}!_",
-                markup=_wdng_combat_markup(uid)
+                markup=_wdng_combat_markup(uid, p=p)
             )
             return
         # Advance floor
@@ -16901,12 +16975,13 @@ async def _wdng_enter_room(uid, state, bot, chat_id, query=None):
             "atk": mon_atk, "element": mon[4],
             "boss": False, "void_gaze": void_gaze,
         }
+        state["pet_ability_used"] = False
         save_wdng_state(uid, state)
         mbar = _wdng_hp_bar(mon_hp, mon_hp)
         await _reply(
             f"👹 *{mon[0]}* attacks!\n"
             f"❤️ {mon_hp}/{mon_hp} [{mbar}]",
-            markup=_wdng_combat_markup(uid)
+            markup=_wdng_combat_markup(uid, p=p)
         )
         return
 
@@ -16920,12 +16995,13 @@ async def _wdng_enter_room(uid, state, bot, chat_id, query=None):
             "atk": mon_atk, "element": mon[4], "boss": False,
             "mini_boss": True,
         }
+        state["pet_ability_used"] = False
         save_wdng_state(uid, state)
         mbar = _wdng_hp_bar(mon_hp, mon_hp)
         await _reply(
             f"💀 *Elite {mon[0]}* blocks your path!\n"
             f"❤️ {mon_hp}/{mon_hp} [{mbar}]",
-            markup=_wdng_combat_markup(uid)
+            markup=_wdng_combat_markup(uid, p=p)
         )
         return
 
@@ -17112,7 +17188,8 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             return
         w = get_weather()
         dmg = calc_attack_damage(p, w)
-        if check_miss(p, {"DEX": 5, "DEF": 10, "AGI": 5}):
+        missed = check_miss(p, {"DEX": 5, "DEF": 10, "AGI": 5})
+        if missed:
             dmg = 0
         # Void gaze: boss/elite hits twice
         void_hits = 2 if (combat.get("void_gaze") and state["floor"] >= 20) else 1
@@ -17128,42 +17205,72 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 pass
             return
 
+        # Pet auto-attack on every swing
+        pet_info = state.get("pet_info")
+        pet_line = ""
+        if pet_info and pet_info.get("atk", 0) > 0:
+            pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
+            combat["hp"] = max(0, combat["hp"] - pet_dmg)
+            pet_line = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
+
+        # Enchantment procs
+        enc_lines = ""
+        if get_enchant_bonus(p, "burn_proc") and random.random() < 0.10:
+            combat["burning"] = True
+            enc_lines += "\n🔥 Your weapon *ignites* the enemy!"
+        if combat.get("burning"):
+            burn_dmg = max(1, round(combat["max_hp"] * 0.05))
+            combat["hp"] = max(0, combat["hp"] - burn_dmg)
+            enc_lines += f"\n🔥 Burns for *{burn_dmg}*!"
+        if get_enchant_bonus(p, "lifesteal_flat") and dmg > 0:
+            _ls = max(1, round(dmg * 0.15))
+            state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + _ls)
+            enc_lines += f"\n💜 Lifesteal +{_ls} HP!"
+
         combat["hp"] = max(0, combat["hp"] - dmg)
         mbar = _wdng_hp_bar(combat["hp"], combat["max_hp"])
         pbar = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
         header = _wdng_floor_header(state)
 
         if combat["hp"] <= 0:
-            # Monster defeated
             is_boss = combat.get("boss")
             boss_data = combat.get("floor_boss")
-            gold_earned = 0
-            exp_earned = 0
             if is_boss and boss_data:
                 gold_earned = boss_data["gold"]
                 exp_earned  = boss_data["exp"]
                 state["boss_cleared"] = True
             elif combat.get("mini_boss"):
-                gold_earned = state["floor"] * 40
-                exp_earned  = state["floor"] * 80
+                gold_earned = state["floor"] * 80 + random.randint(30, 80)
+                exp_earned  = state["floor"] * 150 + 100
             else:
-                gold_earned = state["floor"] * 15 + random.randint(5, 20)
-                exp_earned  = state["floor"] * 30
+                gold_earned = state["floor"] * 30 + random.randint(20, 60)
+                exp_earned  = state["floor"] * 60 + 50
             state["run_gold"] = state.get("run_gold", 0) + gold_earned
-            add_exp(p, exp_earned)
-            save_player(p)
+            add_exp(p, exp_earned); save_player(p)
+            # Loot drop
+            if is_boss:
+                loot_tbl = WDNG_BOSS_LOOT; drop_ch = 0.95
+            elif combat.get("mini_boss"):
+                loot_tbl = WDNG_MINI_BOSS_LOOT; drop_ch = 0.80
+            else:
+                loot_tbl = WDNG_MONSTER_LOOT
+                drop_ch = min(0.75, 0.55 + get_stat(p, "LUK") * 0.01)
+            loot_line = ""
+            if random.random() < drop_ch:
+                _iw, _wts = zip(*loot_tbl)
+                item_drop = random.choices(_iw, weights=_wts)[0]
+                state.setdefault("run_loot", []).append(item_drop)
+                loot_line = f"\n📦 *Loot:* {item_drop}"
             state.pop("combat", None)
-            grid = state["grid"]
-            pos  = tuple(state["pos"])
-            # Mark room as visited
+            grid = state["grid"]; pos = tuple(state["pos"])
             grid[pos[0]][pos[1]] = "empty"
             dirs = _wdng_avail_dirs(grid, pos)
             save_wdng_state(uid, state)
-            kill_line = f"🏆 *BOSS DEFEATED!*" if is_boss else f"⚔️ *{combat['name']}* defeated!"
+            kill_line = "🏆 *BOSS DEFEATED!*" if is_boss else f"⚔️ *{combat['name']}* defeated!"
             try:
                 await query.edit_message_text(
-                    f"{header}\n\n{kill_line}\n+{gold_earned}g | +{exp_earned} EXP\n\n"
-                    f"❤️ You: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
+                    f"{header}\n\n{kill_line}\n+{gold_earned}g | +{exp_earned} EXP{loot_line}\n\n"
+                    f"❤️ You: {state['p_hp']}/{state['p_max_hp']} [{pbar}]{pet_line}",
                     parse_mode="Markdown",
                     reply_markup=_wdng_nav_markup(uid, dirs)
                 )
@@ -17171,18 +17278,160 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 pass
         else:
             save_wdng_state(uid, state)
+            miss_txt = "_MISS!_ " if missed else ""
             try:
                 await query.edit_message_text(
                     f"{header}\n\n"
                     f"⚔️ *{combat['name']}*\n"
                     f"❤️ {combat['hp']}/{combat['max_hp']} [{mbar}]\n\n"
-                    f"You dealt *{dmg}* dmg. Enemy hits back for *{combat['atk']}*.\n"
-                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
+                    f"{miss_txt}You dealt *{dmg}* dmg. Enemy hits back for *{combat['atk']}*.\n"
+                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]{pet_line}{enc_lines}",
                     parse_mode="Markdown",
-                    reply_markup=_wdng_combat_markup(uid)
+                    reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False))
                 )
             except Exception:
                 pass
+        return
+
+    # ── COMBAT: SKILL ─────────────────────────────────────────────────────────
+    if action == "skl":
+        combat = state.get("combat")
+        if not combat:
+            await query.answer("No enemy!", show_alert=True); return
+        try:
+            sk_idx = int(parts[3])
+        except (IndexError, ValueError):
+            return
+        cls = get_player_class(p)
+        if not cls:
+            await query.answer("No class!", show_alert=True); return
+        p_skills = [sk for sk in cls.get("skills", [])
+                    if p.get("level", 1) >= sk.get("unlock", 5)]
+        if sk_idx >= len(p_skills):
+            await query.answer("Skill unavailable!", show_alert=True); return
+        sk       = p_skills[sk_idx]
+        primary  = cls.get("primary_stat", "STR")
+        base_dmg = get_stat(p, primary)
+        wep      = p.get("equipped_weapon")
+        wep_atk  = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
+        sk_mult  = sk.get("mult", 1.5)
+        dmg      = max(1, int((base_dmg + wep_atk * 0.5) * sk_mult * random.uniform(0.9, 1.1)))
+        combat["hp"] = max(0, combat["hp"] - dmg)
+        # Enemy counter
+        state["p_hp"] = max(0, state["p_hp"] - combat["atk"])
+        if state["p_hp"] <= 0:
+            await _wdng_surface(uid, state, context.bot, chat_id, "died")
+            try:
+                await query.edit_message_text(
+                    f"💀 *{combat['name']}* counter-attacked and defeated you!", parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+        mbar   = _wdng_hp_bar(combat["hp"], combat["max_hp"])
+        pbar   = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
+        header = _wdng_floor_header(state)
+        sk_name = sk.get("active", sk.get("name", "Skill"))
+        if combat["hp"] <= 0:
+            is_boss   = combat.get("boss")
+            boss_data = combat.get("floor_boss")
+            if is_boss and boss_data:
+                gold_earned = boss_data["gold"]; exp_earned = boss_data["exp"]
+                state["boss_cleared"] = True
+            elif combat.get("mini_boss"):
+                gold_earned = state["floor"] * 80 + random.randint(30, 80)
+                exp_earned  = state["floor"] * 150 + 100
+            else:
+                gold_earned = state["floor"] * 30 + random.randint(20, 60)
+                exp_earned  = state["floor"] * 60 + 50
+            state["run_gold"] = state.get("run_gold", 0) + gold_earned
+            add_exp(p, exp_earned); save_player(p)
+            loot_tbl  = WDNG_BOSS_LOOT if is_boss else (WDNG_MINI_BOSS_LOOT if combat.get("mini_boss") else WDNG_MONSTER_LOOT)
+            drop_ch   = 0.95 if is_boss else (0.80 if combat.get("mini_boss") else min(0.75, 0.55 + get_stat(p, "LUK") * 0.01))
+            loot_line = ""
+            if random.random() < drop_ch:
+                _iw, _wts = zip(*loot_tbl)
+                item_drop = random.choices(_iw, weights=_wts)[0]
+                state.setdefault("run_loot", []).append(item_drop)
+                loot_line = f"\n📦 *Loot:* {item_drop}"
+            state.pop("combat", None)
+            grid = state["grid"]; pos = tuple(state["pos"])
+            grid[pos[0]][pos[1]] = "empty"
+            dirs = _wdng_avail_dirs(grid, pos)
+            save_wdng_state(uid, state)
+            kill_line = "🏆 *BOSS DEFEATED!*" if is_boss else f"⚔️ *{combat['name']}* defeated!"
+            try:
+                await query.edit_message_text(
+                    f"{header}\n\n✨ *{sk_name}!*\n{kill_line}\n+{gold_earned}g | +{exp_earned} EXP{loot_line}\n\n"
+                    f"❤️ You: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
+                    parse_mode="Markdown", reply_markup=_wdng_nav_markup(uid, dirs))
+            except Exception:
+                pass
+        else:
+            save_wdng_state(uid, state)
+            try:
+                await query.edit_message_text(
+                    f"{header}\n\n✨ *{sk_name}* hits for *{dmg}* dmg!\n"
+                    f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n\n"
+                    f"Enemy counter-attacks for *{combat['atk']}*.\n"
+                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
+                    parse_mode="Markdown",
+                    reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False)))
+            except Exception:
+                pass
+        return
+
+    # ── COMBAT: PET ABILITY ───────────────────────────────────────────────────
+    if action == "pet":
+        combat = state.get("combat")
+        if not combat:
+            await query.answer("No enemy!", show_alert=True); return
+        if state.get("pet_ability_used"):
+            await query.answer("Pet ability already used this battle!", show_alert=True); return
+        pet_info = state.get("pet_info")
+        if not pet_info:
+            await query.answer("No active pet!", show_alert=True); return
+        state["pet_ability_used"] = True
+        da    = pet_info.get("def_ability", "shield")
+        patk  = pet_info.get("atk", 5)
+        pname = pet_info.get("name", "Pet")
+        if da in ("counter", "stun", "poison"):
+            pet_dmg = max(1, int(patk * 1.8 * random.uniform(0.9, 1.1)))
+            combat["hp"] = max(0, combat["hp"] - pet_dmg)
+            if da == "stun":
+                combat["stunned"] = True
+                action_txt = f"🐾 *{pname}* stuns the enemy for *{pet_dmg}* dmg! ⚡"
+            elif da == "poison":
+                combat["poisoned"] = True
+                action_txt = f"🐾 *{pname}* poisons the enemy for *{pet_dmg}* dmg! ☠️"
+            else:
+                action_txt = f"🐾 *{pname}* counter-strikes for *{pet_dmg}* dmg!"
+        elif da == "lifesteal":
+            pet_dmg = max(1, int(patk * 1.5 * random.uniform(0.9, 1.1)))
+            combat["hp"] = max(0, combat["hp"] - pet_dmg)
+            heal_amt = int(pet_dmg * 0.4)
+            state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + heal_amt)
+            action_txt = f"🐾 *{pname}* drains *{pet_dmg}* dmg and heals you *{heal_amt}* HP! 💜"
+        elif da == "shield":
+            shield_val = max(5, patk * 2)
+            state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + shield_val)
+            action_txt = f"🐾 *{pname}* creates a shield, restoring *{shield_val}* HP! ✨"
+        else:
+            pet_dmg = max(1, int(patk * 1.4 * random.uniform(0.9, 1.1)))
+            combat["hp"] = max(0, combat["hp"] - pet_dmg)
+            action_txt = f"🐾 *{pname}* attacks for *{pet_dmg}* dmg!"
+        mbar   = _wdng_hp_bar(combat["hp"], combat["max_hp"])
+        pbar   = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
+        header = _wdng_floor_header(state)
+        save_wdng_state(uid, state)
+        try:
+            await query.edit_message_text(
+                f"{header}\n\n{action_txt}\n\n"
+                f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
+                f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
+                parse_mode="Markdown",
+                reply_markup=_wdng_combat_markup(uid, p=p, pet_used=True))
+        except Exception:
+            pass
         return
 
     # ── COMBAT: HEAL ─────────────────────────────────────────────────────────
@@ -17217,7 +17466,7 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"{header}\n\n"
                 f"💊 Used {heal_src}. ❤️ +{heal_amt} HP [{pbar}]",
                 parse_mode="Markdown",
-                reply_markup=_wdng_combat_markup(uid) if combat else _wdng_nav_markup(uid, _wdng_avail_dirs(state["grid"], tuple(state["pos"])))
+                reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False)) if combat else _wdng_nav_markup(uid, _wdng_avail_dirs(state["grid"], tuple(state["pos"])))
             )
         except Exception:
             pass
@@ -17265,7 +17514,7 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                     f"❤️ Enemy: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
                     f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
                     parse_mode="Markdown",
-                    reply_markup=_wdng_combat_markup(uid)
+                    reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False))
                 )
             except Exception:
                 pass
@@ -17365,8 +17614,18 @@ async def dungeon_wiz_start(update_or_query, uid: int, p: dict, bot, chat_id: in
         "run_loot":     [],
         "boss_cleared": False,
         "rooms_visited":0,
+        "pet_ability_used": False,
     }
     active_wizardry[uid] = state
+    _dng_pet = get_active_pet_record(uid)
+    if _dng_pet and not _pet_is_on_adventure(_dng_pet):
+        _sp = PET_SPECIES.get(_dng_pet.get("species"), {})
+        state["pet_info"] = {
+            "name":        _dng_pet.get("nickname") or _sp.get("name", "Pet"),
+            "atk":         get_pet_atk_bonus(_dng_pet),
+            "def_ability": _dng_pet.get("def_ability", "shield"),
+        }
+        active_wizardry[uid] = state
 
     dirs   = _wdng_avail_dirs(grid, (0, 0))
     header = _wdng_floor_header(state)
@@ -20447,7 +20706,7 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         recap = _build_dungeon_recap(
             fp, theme, diff, results, total_exp, total_gold,
             items_found, run_failed, lmsgs)
-        await announce(context.bot, chat_id, recap, delay=180)
+        await announce(context.bot, chat_id, recap, delay=60)
         if leveled and fp["level"] % 10 == 0:
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🎉 *{fp['username']}* reached *Level {fp['level']}* "
@@ -24627,7 +24886,7 @@ async def dungeon_diff_callback(update: Update, context: ContextTypes.DEFAULT_TY
         save_player(fp)
         recap = _build_dungeon_recap(fp, theme, diff, results, total_exp, total_gold,
                                      items_found, run_failed, lmsgs)
-        await announce(context.bot, chat_id, recap, delay=180)
+        await announce(context.bot, chat_id, recap, delay=60)
         if leveled and fp["level"] % 10 == 0:
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🎉 *{fp['username']}* reached *Level {fp['level']}* "
