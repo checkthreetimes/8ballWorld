@@ -142,6 +142,7 @@ pending_guild_inv       = {}   # inviter_id  -> {target_id, guild_id, expires}
 pending_holdhands  = {}   # proposer_id -> {target_id, chat_id, expires}
 active_encounters  = {}   # user_id -> encounter state
 active_wizardry    = {}   # user_id -> wizardry dungeon state
+_pvp_cards         = {}   # (attacker_uid, defender_uid) -> message_id — used to clean up stale cards
 
 # ── RATE LIMITER ──────────────────────────────────────────────────────────────
 _cmd_timestamps    = {}   # user_id -> [float timestamps]
@@ -943,7 +944,7 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Resurrection",
              "passive":"Once per day if you reach 0 HP you automatically revive at 30% HP.",
              "active":"Miracle","type":"full_revive",
-             "desc":"Fully restore target to max HP. Grant 2 hours invincibility. Costs one Holy Water Vial.",
+             "desc":"Fully restore target to max HP. Grant 5 minutes invincibility. Costs one Holy Water Vial.",
              "passive_key":"resurrection"},
         ]
     },
@@ -2991,7 +2992,7 @@ def _build_shop_view(p, tab, uid, discount=0):
     items  = get_shop_tab_for_player(tab, p)
     label  = _SHOP_TAB_LABELS.get(tab, tab)
     disc_note = f"  🏷️ *{int(discount*100)}% off!*" if discount else ""
-    lines  = [f"🛒 *{label}* | 💰 {p['gold']} gold{disc_note}\n"]
+    lines  = [f"👤 *{p['username']}*", f"🛒 *{label}* | 💰 {p['gold']} gold{disc_note}\n"]
     if not items:
         lines.append("_Nothing in stock today — check back tomorrow._")
     for i, e in enumerate(items):
@@ -6584,11 +6585,13 @@ def init_db():
         conn_v23b.commit(); conn_v23b.close()
     except Exception: pass
 
-    # ── v24 shop reroll + dungeon floor columns ───────────────────────────────
+    # ── v24 shop reroll + dungeon floor + shield columns ─────────────────────
     for _v24col in [
         ("shop_reroll_date",      "TEXT DEFAULT NULL"),
         ("shop_reroll_count",     "INTEGER DEFAULT 0"),
         ("deepest_dungeon_floor", "INTEGER DEFAULT 0"),
+        ("shield_hp",             "INTEGER DEFAULT 0"),
+        ("last_defend",           "TEXT DEFAULT NULL"),
     ]:
         try:
             _v24conn = sqlite3.connect(DB_PATH)
@@ -6942,6 +6945,7 @@ def save_player(p):
         "tg_username","deepest_dungeon_floor",
         "equipped_accessory_2","equipped_accessory_3","equipped_accessory_4",
         "shop_reroll_date","shop_reroll_count",
+        "shield_hp","last_defend",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -7854,6 +7858,14 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         elif pet_status_type == "lifesteal_to_owner" and pet_status_val:
             d["hp"] = min(calc_max_hp(d), d.get("hp", 0) + pet_status_val)
 
+    # Shield absorbs damage before real HP
+    _d_shield = safe_int(d.get("shield_hp"))
+    if _d_shield > 0 and dmg_after_def > 0:
+        _absorb = min(_d_shield, dmg_after_def)
+        d["shield_hp"] = _d_shield - _absorb
+        dmg_after_def -= _absorb
+        extra_notes.append(f"🛡️ Shield absorbed *{_absorb}*! ({d['shield_hp']} left)")
+
     d_hp_after = max(0, d["hp"] - dmg_after_def)
     d["hp"] = d_hp_after
     healed = apply_lifesteal(a, dmg_after_def)
@@ -8151,13 +8163,22 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if result_type == "hit":
+        # Delete any stale card from either direction of this fight pair
+        for _pair in [(au.id, du_id), (du_id, au.id)]:
+            _old_mid = _pvp_cards.pop(_pair, None)
+            if _old_mid:
+                try: await update.get_bot().delete_message(chat_id=chat, message_id=_old_mid)
+                except Exception: pass
         markup = _build_pvp_card_markup(du_id, au.id, d)
         try:
             msg = await update.get_bot().send_message(
                 chat_id=chat, text=action[:4096], parse_mode="Markdown", reply_markup=markup)
-            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 45))
+            _pvp_cards[(au.id, du_id)] = msg.message_id
+            asyncio.create_task(_auto_delete(update.get_bot(), chat, msg.message_id, 60))
         except Exception: pass
     else:
+        # Defeat or special result — clean up tracked cards for this pair
+        _pvp_cards.pop((au.id, du_id), None); _pvp_cards.pop((du_id, au.id), None)
         try:
             msg = await update.get_bot().send_message(
                 chat_id=chat, text=action[:4096], parse_mode="Markdown")
@@ -8290,6 +8311,71 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _cb_unlock(uid)
 
 
+# ── DEFEND (damage-absorbing shield) ─────────────────────────────────────────
+_SHIELD_CD_SECS  = 20 * 60        # 20-min cooldown to re-activate
+_SHIELD_CORE_ADD = 150            # HP added per Monster Core consumed
+_SHIELD_CAP_PCT  = 0.50           # shield can't exceed 50 % of max HP
+
+async def defend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p    = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if is_defeated(p):
+        await send_group(update, _defeated_msg(p), delay=15); return
+
+    arg      = (context.args[0].lower() if context.args else "")
+    max_sh   = max(100, int(calc_max_hp(p) * _SHIELD_CAP_PCT))
+    cur_sh   = safe_int(p.get("shield_hp"))
+
+    # ── /defend core — consume one Monster Core to recharge shield ──────────
+    if arg == "core":
+        inv  = sjl(p.get("inventory"), [])
+        core = next((i for i in inv if i.startswith("Monster Core (") or i == "Rare Monster Core"), None)
+        if not core:
+            await send_group(update, "⚙️ You have no Monster Cores to charge the shield with.", delay=9); return
+        inv.remove(core)
+        p["inventory"] = json.dumps(inv)
+        added = min(_SHIELD_CORE_ADD, max_sh - cur_sh)
+        p["shield_hp"] = cur_sh + added
+        save_player(p)
+        bar_n = round(p["shield_hp"] / max(1, max_sh) * 10)
+        bar   = "█" * bar_n + "░" * (10 - bar_n)
+        await send_group(update,
+            f"⚙️ *{core}* absorbed into your shield!\n"
+            f"🛡️ Shield: *{p['shield_hp']}/{max_sh}* [{bar}]", delay=15)
+        return
+
+    # ── /defend — activate or refresh the shield ────────────────────────────
+    last_defend = p.get("last_defend")
+    if last_defend and not check_cooldown(last_defend, _SHIELD_CD_SECS // 60):
+        secs = time_remaining(last_defend, _SHIELD_CD_SECS // 60)
+        # If shield is already up, just show status
+        if cur_sh > 0:
+            bar_n = round(cur_sh / max(1, max_sh) * 10)
+            bar   = "█" * bar_n + "░" * (10 - bar_n)
+            await send_group(update,
+                f"🛡️ *Your Shield*\n"
+                f"HP: *{cur_sh}/{max_sh}* [{bar}]\n"
+                f"_Use `/defend core` to recharge with a Monster Core._", delay=12)
+        else:
+            await send_group(update, f"⏳ Shield on cooldown: *{secs}* remaining.", delay=9)
+        return
+
+    base_sh  = max(100, int(calc_max_hp(p) * 0.25))
+    p["shield_hp"]    = min(max_sh, base_sh)
+    p["last_defend"]  = datetime.now().isoformat()
+    save_player(p)
+    bar_n = round(p["shield_hp"] / max(1, max_sh) * 10)
+    bar   = "█" * bar_n + "░" * (10 - bar_n)
+    await send_group(update,
+        f"🛡️ *Shield Activated!*\n"
+        f"HP: *{p['shield_hp']}/{max_sh}* [{bar}]\n\n"
+        f"Incoming attacks hit your shield first before your real HP.\n"
+        f"_Recharge with `/defend core` (uses one Monster Core)._",
+        delay=20)
+
+
 # ── HEAL ──────────────────────────────────────────────────────────────────────
 async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hu = update.effective_user
@@ -8367,7 +8453,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t["hp"] = min(real_max_t, t["hp"] + heal_amount)
     if was_defeated:
         t["defeated_until"]  = None
-        t["invincible_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
+        t["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
         t["hp"] = min(real_max_t, heal_amount)
 
     h["heals_given"] = h.get("heals_given",0) + 1
@@ -8578,6 +8664,7 @@ def _build_stats_pages(p, viewing_name=None):
 
     # Page 2 - Class & Stats
     page2_lines = [
+        f"👤 *{name}*",
         f"🧙 *{cls_name}*{path_str}",
         "",
         f"❤️ Max HP: {real_max}",
@@ -8601,6 +8688,7 @@ def _build_stats_pages(p, viewing_name=None):
     _, active_sets = get_active_set_bonuses(p)
     set_lines = [f"✨ *{sn}*" for sn in active_sets]
     page3_lines = [
+        f"👤 *{name}*",
         f"⚔️ {quick_gear(weap_name)}",
         f"🛡️ {quick_gear(armr_name)}",
         f"🔰 {quick_gear(shld_name)}",
@@ -8615,10 +8703,10 @@ def _build_stats_pages(p, viewing_name=None):
     page3_lines.append("_/gear for full enhancement + enchant details_")
 
     # Page 4 - Inventory
-    page4_lines = ["🎒 *Inventory*", ""] + inv_lines + ["", "_/inventory for paginated full view_"]
+    page4_lines = [f"👤 *{name}*", "🎒 *Inventory*", ""] + inv_lines + ["", "_/inventory for paginated full view_"]
 
     # Page 5 - Titles
-    page5_lines = ["🏅 *Titles*", ""] + ([f"  {t}" for t in title_list] or ["  None"])
+    page5_lines = [f"👤 *{name}*", "🏅 *Titles*", ""] + ([f"  {t}" for t in title_list] or ["  None"])
 
     return [
         "\n".join(page1_lines),
@@ -10776,8 +10864,8 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
             await query.answer("You've been condemned — can't be revived!", show_alert=True); return
         p["defeated_until"] = None; p["hp"] = p["max_hp"] // 2
-        set_status(p, "invincible_until", 3600)
-        msg += f"💚 Revived at {p['hp']} HP! 1 hour invincibility granted."
+        set_status(p, "invincible_until", 300)
+        msg += f"💚 Revived at {p['hp']} HP! 5 minutes invincibility granted."
     elif item_name.startswith("Monster Core (") or item_name == "Rare Monster Core":
         _core_stat_map = {
             "Monster Core (Fire)":      {"STR": 1},
@@ -11043,8 +11131,8 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         p["defeated_until"] = None
         p["hp"] = p["max_hp"] // 2
-        set_status(p, "invincible_until", 3600)
-        msg += f"💚 Revived at {p['hp']} HP! 1 hour invincibility granted."
+        set_status(p, "invincible_until", 300)
+        msg += f"💚 Revived at {p['hp']} HP! 5 minutes invincibility granted."
     elif item.startswith("Monster Core (") or item == "Rare Monster Core":
         _core_stat_map = {
             "Monster Core (Fire)":      {"STR": 1},
@@ -13902,9 +13990,9 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     await send_result(f"☠️ {tp['username']} is condemned — cannot be revived!"); return
                 tp["defeated_until"] = None
                 tp["hp"] = min(calc_max_hp(tp), heal)
-                tp["invincible_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
+                tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
                 out.append(f"✨ *Holy Light!* *{tp['username']}* revived with *{heal} HP*!\n"
-                           f"🛡️ 1 hour invincibility granted.")
+                           f"🛡️ 5 minutes invincibility granted.")
             else:
                 tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
                 out.append(f"💚 Healed *{tp['username']}* for *{heal} HP*! ({tp['hp']}/{tp['max_hp']})")
@@ -13927,8 +14015,8 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             p["inventory"] = json.dumps(inv)
             tp["hp"] = calc_max_hp(tp)
             tp["defeated_until"] = None
-            tp["invincible_until"] = (datetime.now() + timedelta(hours=2)).isoformat()
-            out.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored! 🛡️ 2 hours invincibility.")
+            tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
+            out.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored! 🛡️ 5 minutes invincibility.")
             save_player(p); save_player(tp)
             await send_result("\n".join(out)); return
         if stype == "dmg_reduction_buff":
@@ -13963,17 +14051,27 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 set_status(p, "poison_until", 60)
             elif sk_pet_st == "lifesteal_to_owner" and sk_pet_val:
                 tp["hp"] = min(calc_max_hp(tp), tp.get("hp", 0) + sk_pet_val)
+        _tp_shield = safe_int(tp.get("shield_hp"))
+        if _tp_shield > 0 and dmg > 0:
+            _sk_absorb = min(_tp_shield, dmg)
+            tp["shield_hp"] = _tp_shield - _sk_absorb
+            dmg -= _sk_absorb
+            out.append(f"🛡️ Shield absorbed *{_sk_absorb}*! ({tp['shield_hp']} left)")
         tp["hp"] = max(0, tp["hp"] - dmg)
         out.append(f"💥 *{dmg} damage!* {tp['username']} HP: {tp['hp']}/{tp['max_hp']}")
-        if tp["hp"] == 0:
+        _sk_killed = tp["hp"] == 0
+        if _sk_killed:
             apply_pvp_death(tp, p["username"], sk["name"])
             out.append(f"💀 *{tp['username']}* has been defeated by {sk['name']}!")
-            completed = await check_and_claim_bounty(context.bot, p, tp, chat_id)
-            if completed:
-                out.append(f"🎯 Bounty claimed!")
             for _d, _e, _g in track_objective(p, "pvp_win"):
                 p["gold"] = p.get("gold", 0) + _g; add_exp(p, _e)
         save_player(p); save_player(tp)
+        if _sk_killed:
+            # Claim bounty AFTER save so the re-fetch in check_and_claim_bounty
+            # gets the latest state; gold lands on top without being overwritten
+            _bc = await check_and_claim_bounty(context.bot, p, tp, chat_id)
+            if _bc:
+                out.append(f"🎯 *Bounty claimed!* +{_bc}g")
         await send_result("\n".join(out))
 
 async def _execute_skill(update, context, p, sk):
@@ -14069,10 +14167,10 @@ async def _execute_skill(update, context, p, sk):
                 await send_group(update, f"☠️ *{tp['username']}* is condemned — cannot be revived!", delay=9); return
             tp["defeated_until"] = None
             tp["hp"] = min(calc_max_hp(tp), heal)
-            tp["invincible_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
+            tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
             save_player(tp); save_player(p)
             lines.append(f"✨ *Holy Light!* *{tp['username']}* is revived with *{heal} HP*!\n"
-                         f"🛡️ 1 hour invincibility granted  -  _(Still Recovering)_")
+                         f"🛡️ 5 minutes invincibility granted  -  _(Still Recovering)_")
         else:
             tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
             save_player(tp); save_player(p)
@@ -14112,10 +14210,10 @@ async def _execute_skill(update, context, p, sk):
         p["inventory"] = json.dumps(inv)
         tp["hp"] = calc_max_hp(tp)
         tp["defeated_until"] = None
-        tp["invincible_until"] = (datetime.now() + timedelta(hours=2)).isoformat()
+        tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
         save_player(tp); save_player(p)
         lines.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored!\n"
-                     f"❤️ Full HP restored! 🛡️ 2 hours invincibility granted.\n"
+                     f"❤️ Full HP restored! 🛡️ 5 minutes invincibility granted.\n"
                      f"_(Used: Holy Water Vial)_")
         await send_group(update, "\n".join(lines), delay=20); return
 
@@ -24758,8 +24856,6 @@ def main():
     app.add_handler(CommandHandler("class",     class_cmd))
     app.add_handler(CommandHandler("prestige",  prestige_cmd))
     app.add_handler(CommandHandler("allocate",  allocate_cmd))
-    app.add_handler(CommandHandler("resetstats",  resetstats_cmd))
-    app.add_handler(CommandHandler("resetclass",  resetclass_cmd))
     app.add_handler(CommandHandler("skill",     skill_cmd))
     app.add_handler(CommandHandler("title",     title_cmd))
 
@@ -24794,7 +24890,6 @@ def main():
     # Encounter
     app.add_handler(CommandHandler("encounter",    encounter_cmd))
     app.add_handler(CommandHandler("squad",        squad_cmd))
-    app.add_handler(CommandHandler("box",          box_cmd))
     app.add_handler(CommandHandler("withdraw",     withdraw_cmd))
     app.add_handler(CommandHandler("deposit",      deposit_cmd))
     app.add_handler(CallbackQueryHandler(encounter_callback, pattern="^enc_"))
@@ -24824,6 +24919,7 @@ def main():
     app.add_handler(CommandHandler("attack",     attack_cmd))
     app.add_handler(CallbackQueryHandler(pvp_card_callback,  pattern="^pvpcard_"))
     app.add_handler(CommandHandler("heal",       heal_cmd))
+    app.add_handler(CommandHandler("defend",     defend_cmd))
     app.add_handler(CommandHandler("boss",       boss_cmd))
     app.add_handler(CommandHandler("dungeon",          dungeon_cmd))
     app.add_handler(CommandHandler("dungeonhard",      dungeonhard_cmd))
