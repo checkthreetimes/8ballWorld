@@ -141,6 +141,7 @@ pending_alliance_inv    = {}   # inviter_id  -> {target_id, alliance_id, expires
 pending_guild_inv       = {}   # inviter_id  -> {target_id, guild_id, expires}
 pending_holdhands  = {}   # proposer_id -> {target_id, chat_id, expires}
 active_encounters  = {}   # user_id -> encounter state
+active_wizardry    = {}   # user_id -> wizardry dungeon state
 
 # ── RATE LIMITER ──────────────────────────────────────────────────────────────
 _cmd_timestamps    = {}   # user_id -> [float timestamps]
@@ -4182,6 +4183,70 @@ ROOM_STAT_CHECKS = {
     "boss":     {"primary": "combat_power", "threshold": 0.50},
 }
 
+# ── WIZARDRY DUNGEON ──────────────────────────────────────────────────────────
+WDNG_GRID        = 6
+WDNG_MAX_FLOORS  = 20
+
+WDNG_MONSTERS = [
+    # (name, hp_mult, atk_mult, tier, element)
+    ("Dungeon Rat",       0.4, 0.3, 1, "physical"),
+    ("Cave Slime",        0.5, 0.35, 1, "water"),
+    ("Skeleton Warrior",  0.65, 0.5, 1, "physical"),
+    ("Goblin Scout",      0.55, 0.45, 2, "physical"),
+    ("Shadow Bat",        0.6,  0.5, 2, "shadow"),
+    ("Stone Golem",       0.9,  0.6, 2, "earth"),
+    ("Dungeon Troll",     1.0,  0.7, 3, "physical"),
+    ("Void Wraith",       0.8,  0.8, 3, "void"),
+    ("Flame Elemental",   0.85, 0.75, 3, "fire"),
+    ("Ice Specter",       0.75, 0.85, 4, "ice"),
+    ("Death Knight",      1.1,  0.9, 4, "physical"),
+    ("Arcane Revenant",   1.0,  1.0, 4, "holy"),
+]
+
+WDNG_FLOOR_BOSSES = [
+    {"name":"The Gatekeeper",    "hp_mult":3.0, "atk_mult":1.2, "gold":200,  "exp":800,  "floor":5},
+    {"name":"Dungeon Hydra",     "hp_mult":3.5, "atk_mult":1.4, "gold":400,  "exp":1800, "floor":10},
+    {"name":"Shadow Overlord",   "hp_mult":4.0, "atk_mult":1.6, "gold":700,  "exp":3500, "floor":15},
+    {"name":"The Void Sovereign","hp_mult":5.0, "atk_mult":2.0, "gold":1200, "exp":7000, "floor":20},
+]
+
+WDNG_TRAPS = [
+    ("Spike Pit",      "AGI",  0.08, "⚠️ *Spike Pit!* You take {dmg} damage trying to cross!"),
+    ("Poison Dart",    "DEX",  0.07, "💀 *Poison Dart!* {dmg} damage and a slow burn..."),
+    ("Falling Rocks",  "AGI",  0.12, "🪨 *Falling Rocks!* {dmg} damage raining down!"),
+    ("Magic Seal",     "INT",  0.06, "🔮 *Magic Seal!* {dmg} damage from arcane feedback!"),
+    ("Bear Trap",      "DEX",  0.10, "🐻 *Bear Trap!* Clamped down for {dmg} damage!"),
+]
+
+WDNG_FLOOR_CURSES = [
+    (6,  "🌑 *Floor Curse:* Darkness — monster HP +20%"),
+    (10, "🩸 *Floor Curse:* Bleed Aura — you lose 3% HP per room"),
+    (15, "💀 *Floor Curse:* Death Mark — trap damage +50%"),
+    (20, "👁️ *Floor Curse:* Void Gaze — all enemies hit twice"),
+]
+
+WDNG_CHEST_LOOT = [
+    ("Health Potion", 0.30), ("Greater Health Potion", 0.15),
+    ("Iron Shard", 0.20), ("Enchanting Scroll", 0.12),
+    ("Fortune Coin", 0.06), ("Hawk Eye Medallion", 0.05),
+    ("War Master's Clasp", 0.05), ("Scroll of Revival", 0.07),
+]
+
+WDNG_ROOM_EMOJIS = {
+    "empty": "⬜", "wall": "🟫", "start": "🟢", "exit": "🚪",
+    "player": "🧙", "visited": "🔵", "current": "🟡",
+    "monster": "👹", "trap": "💥", "treasure": "💰",
+    "rest": "🛖", "merchant": "🏪", "altar": "⛪",
+    "mini_boss": "💀", "boss": "🔴", "fog": "⬛",
+}
+
+WDNG_MERCHANT_STOCK = [
+    {"item":"Health Potion",         "price":120},
+    {"item":"Greater Health Potion", "price":280},
+    {"item":"Enchanting Scroll",     "price":350},
+    {"item":"Iron Shard",            "price":200},
+]
+
 KEYWORD_TRIGGERS = [
     {"pattern":r"\b(8ball|8ballin|rack|felt|cue|billiards|pool table|corner pocket|break shot|chalk up)\b",
      "exp":120,"gold_chance":0.30,"cooldown":45,"key":"billiards"},
@@ -4489,8 +4554,8 @@ def get_armor_def(p):
             s_ok = cls_line == "thief" and path == "B"
         else:
             s_ok = cls_line == "warrior" and path == "A"
-    a_val = (a["def"] + get_enhance_bonus(p, a_name) + reinforce_atk_bonus(p, a_name)) if (a and a_ok) else 0
-    s_val = (s["def"] + get_enhance_bonus(p, s_name) + reinforce_atk_bonus(p, s_name)) if (s and s_ok) else 0
+    a_val = (a.get("def", 0) + get_enhance_bonus(p, a_name) + reinforce_atk_bonus(p, a_name)) if (a and a_ok) else 0
+    s_val = (s.get("def", 0) + get_enhance_bonus(p, s_name) + reinforce_atk_bonus(p, s_name)) if (s and s_ok) else 0
     for enc in (get_enchant(p, a_name) if a_name else []):
         if enc.get("type") == "armor_def": a_val += enc["val"]
     for enc in (get_enchant(p, s_name) if s_name else []):
@@ -6861,8 +6926,9 @@ def save_player(p):
         "holding_hands_list",
         "last_encounter","monster_squad",
         "influence","alliance_id","active_quest","last_quest_ts","oracle_last_used",
-        "tg_username",
+        "tg_username","deepest_dungeon_floor",
         "equipped_accessory_2","equipped_accessory_3","equipped_accessory_4",
+        "shop_reroll_date","shop_reroll_count",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -7935,14 +8001,21 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
 
 def get_player_by_username(name):
-    """Look up player by Telegram @handle or display name (case-insensitive)."""
+    """Look up player by Telegram @handle, RPG name, or Telegram display name (case-insensitive)."""
     c = _db().cursor()
     key = name.lower().lstrip("@")
-    # Try @handle first (tg_username column), then display name
+    # 1) Try @handle (tg_username column)
     c.execute("SELECT * FROM players WHERE LOWER(tg_username)=?", (key,))
     row = c.fetchone()
     if not row:
+        # 2) Try RPG display name (username column)
         c.execute("SELECT * FROM players WHERE LOWER(username)=?", (key,))
+        row = c.fetchone()
+    if not row:
+        # 3) Try Telegram display name via shadow_profiles (for users without @handle)
+        c.execute("""SELECT p.* FROM players p
+                     JOIN shadow_profiles s ON s.user_id = p.user_id
+                     WHERE LOWER(s.username)=?""", (key,))
         row = c.fetchone()
     return dict(row) if row else None
 
@@ -16408,6 +16481,783 @@ def _holdhands_duration(since_iso: str) -> str:
         return "a while"
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# WIZARDRY DUNGEON — helper functions
+# ════════════════════════════════════════════════════════════════════════════
+
+def _wdng_generate_floor(floor: int, uid: int) -> list:
+    """Return a 6×6 grid of room types using recursive backtracker maze."""
+    import random as _rnd
+    rng = _rnd.Random(f"{uid}_{floor}_{datetime.now().strftime('%Y-%m-%d')}")
+    G = WDNG_GRID
+    # All walls initially
+    grid = [["wall"] * G for _ in range(G)]
+    visited = [[False] * G for _ in range(G)]
+
+    def carve(r, c):
+        visited[r][c] = True
+        grid[r][c] = "empty"
+        dirs = [(0,2),(0,-2),(2,0),(-2,0)]
+        rng.shuffle(dirs)
+        for dr, dc in dirs:
+            nr, nc = r+dr, c+dc
+            if 0 <= nr < G and 0 <= nc < G and not visited[nr][nc]:
+                grid[r+dr//2][c+dc//2] = "empty"
+                carve(nr, nc)
+
+    carve(0, 0)
+    # Ensure start and exit
+    grid[0][0] = "start"
+    grid[G-1][G-1] = "exit"
+
+    # Scatter room types on empty cells
+    empties = [(r, c) for r in range(G) for c in range(G)
+               if grid[r][c] == "empty" and (r, c) not in ((0,0),(G-1,G-1))]
+    rng.shuffle(empties)
+
+    room_dist = []
+    if floor % 5 == 0:
+        room_dist = [("boss",1),("rest",2),("treasure",2),("merchant",1),
+                     ("trap",3),("monster",len(empties))]
+    else:
+        room_dist = [("mini_boss",1 if floor>3 else 0),("treasure",2),
+                     ("rest",2),("merchant",1),("altar",1),
+                     ("trap",3),("monster",len(empties))]
+
+    idx = 0
+    for rtype, count in room_dist:
+        for _ in range(count):
+            if idx < len(empties):
+                r, c = empties[idx]
+                grid[r][c] = rtype
+                idx += 1
+
+    return grid
+
+
+def _wdng_minimap(grid, pos, revealed) -> str:
+    """Return emoji minimap string. Only show revealed cells + adjacent fog."""
+    G = WDNG_GRID
+    rows = []
+    pr, pc = pos
+    for r in range(G):
+        row = []
+        for c in range(G):
+            if (r, c) == (pr, pc):
+                row.append(WDNG_ROOM_EMOJIS["current"])
+            elif (r, c) in revealed:
+                cell = grid[r][c]
+                row.append(WDNG_ROOM_EMOJIS.get(cell, WDNG_ROOM_EMOJIS["visited"]))
+            else:
+                row.append(WDNG_ROOM_EMOJIS["fog"])
+        rows.append("".join(row))
+    return "\n".join(rows)
+
+
+def _wdng_avail_dirs(grid, pos):
+    """Return list of available directions from pos."""
+    G = WDNG_GRID
+    r, c = pos
+    dirs = []
+    if r > 0 and grid[r-1][c] != "wall": dirs.append("N")
+    if r < G-1 and grid[r+1][c] != "wall": dirs.append("S")
+    if c > 0 and grid[r][c-1] != "wall": dirs.append("W")
+    if c < G-1 and grid[r][c+1] != "wall": dirs.append("E")
+    return dirs
+
+
+def _wdng_dir_label(d):
+    return {"N":"⬆️ North","S":"⬇️ South","E":"➡️ East","W":"⬅️ West"}[d]
+
+
+def _wdng_nav_markup(uid, dirs, can_surface=True):
+    """Build directional navigation inline keyboard."""
+    rows = []
+    # Top row: N
+    if "N" in dirs:
+        rows.append([InlineKeyboardButton("⬆️ N", callback_data=f"dng_mv_{uid}_N")])
+    # Middle row: W  [map]  E
+    mid = []
+    if "W" in dirs:
+        mid.append(InlineKeyboardButton("⬅️ W", callback_data=f"dng_mv_{uid}_W"))
+    mid.append(InlineKeyboardButton("🗺️", callback_data=f"dng_map_{uid}"))
+    if "E" in dirs:
+        mid.append(InlineKeyboardButton("➡️ E", callback_data=f"dng_mv_{uid}_E"))
+    rows.append(mid)
+    # Bottom row: S
+    if "S" in dirs:
+        rows.append([InlineKeyboardButton("⬇️ S", callback_data=f"dng_mv_{uid}_S")])
+    # Action row
+    action = [InlineKeyboardButton("🏃 Surface", callback_data=f"dng_surface_{uid}")]
+    rows.append(action)
+    return InlineKeyboardMarkup(rows)
+
+
+def _wdng_combat_markup(uid):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚔️ Attack",  callback_data=f"dng_atk_{uid}"),
+         InlineKeyboardButton("🧪 Heal",    callback_data=f"dng_heal_{uid}")],
+        [InlineKeyboardButton("🏃 Flee",    callback_data=f"dng_flee_{uid}")],
+    ])
+
+
+def _wdng_hp_bar(hp, max_hp, length=8):
+    filled = max(0, round((hp / max(1, max_hp)) * length))
+    return "█" * filled + "░" * (length - filled)
+
+
+def _wdng_floor_header(state):
+    floor = state["floor"]
+    p_hp  = state["p_hp"]
+    p_mhp = state["p_max_hp"]
+    gold  = state.get("run_gold", 0)
+    bar   = _wdng_hp_bar(p_hp, p_mhp)
+    curses = [c[1] for c in WDNG_FLOOR_CURSES if floor >= c[0]]
+    curse_line = "\n" + "\n".join(curses) if curses else ""
+    return (f"🏰 *Floor {floor}* | ❤️ {p_hp}/{p_mhp} [{bar}] | 💰 {gold}g{curse_line}")
+
+
+def _wdng_monster_for_floor(floor):
+    """Pick a random monster appropriate for this floor tier."""
+    tier = min(4, 1 + (floor - 1) // 5)
+    pool = [m for m in WDNG_MONSTERS if m[3] <= tier]
+    return random.choice(pool)
+
+
+def _wdng_scale(val, floor):
+    """Scale a stat by floor number."""
+    return max(1, round(val * (1 + (floor - 1) * 0.15)))
+
+
+async def _wdng_surface(uid, state, bot, chat_id, reason="surfaced"):
+    """End the run, award banked loot, notify player."""
+    p = get_player(uid)
+    if not p:
+        active_wizardry.pop(uid, None)
+        return
+    gold = state.get("run_gold", 0)
+    loot = state.get("run_loot", [])
+    floors = state["floor"] - 1  # floors actually completed
+
+    # Track deepest floor
+    if floors > safe_int(p.get("deepest_dungeon_floor", 0)):
+        p["deepest_dungeon_floor"] = floors
+
+    p["gold"] = safe_int(p.get("gold", 0)) + gold
+    for item in loot:
+        add_item(p, item)
+    exp_bonus = floors * 120
+    add_exp(p, exp_bonus)
+    save_player(p)
+    active_wizardry.pop(uid, None)
+
+    loot_str = ", ".join(loot) if loot else "none"
+    reason_emoji = {"surfaced":"🏃","died":"💀","completed":"🏆"}.get(reason, "🏁")
+    summary = (
+        f"{reason_emoji} *Dungeon Run Ended*\n\n"
+        f"Floors cleared: *{floors}*\n"
+        f"Gold banked: *{gold}g*\n"
+        f"Items: *{loot_str}*\n"
+        f"EXP bonus: *+{exp_bonus}*"
+    )
+    try:
+        await bot.send_message(chat_id=chat_id, text=summary, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+async def _wdng_enter_room(uid, state, bot, chat_id, query=None):
+    """Process the current room's event and send result to player."""
+    p = get_player(uid)
+    if not p:
+        active_wizardry.pop(uid, None)
+        return
+
+    grid  = state["grid"]
+    pos   = tuple(state["pos"])
+    floor = state["floor"]
+    rtype = grid[pos[0]][pos[1]]
+    state["revealed"].add(pos)
+    state["rooms_visited"] = state.get("rooms_visited", 0) + 1
+
+    # ── Bleed aura curse (floor 10+): lose 3% HP per room ────────────────────
+    if floor >= 10 and rtype != "start":
+        bleed = max(1, round(state["p_max_hp"] * 0.03))
+        state["p_hp"] = max(1, state["p_hp"] - bleed)
+
+    dirs = _wdng_avail_dirs(grid, pos)
+    header = _wdng_floor_header(state)
+
+    async def _reply(text, markup=None):
+        if markup is None:
+            markup = _wdng_nav_markup(uid, dirs)
+        full_text = f"{header}\n\n{text}"[:4096]
+        if query:
+            try:
+                await query.edit_message_text(full_text, parse_mode="Markdown", reply_markup=markup)
+            except Exception:
+                await bot.send_message(chat_id=chat_id, text=full_text,
+                                       parse_mode="Markdown", reply_markup=markup)
+        else:
+            await bot.send_message(chat_id=chat_id, text=full_text,
+                                   parse_mode="Markdown", reply_markup=markup)
+
+    # ── EXIT ──────────────────────────────────────────────────────────────────
+    if rtype == "exit":
+        # Check if this is a boss floor
+        boss_floor = next((b for b in WDNG_FLOOR_BOSSES if b["floor"] == floor), None)
+        if boss_floor and not state.get("boss_cleared"):
+            # Must defeat boss before advancing
+            state["combat"] = {
+                "name": boss_floor["name"],
+                "hp": _wdng_scale(round(p["max_hp"] * boss_floor["hp_mult"]), floor),
+                "max_hp": _wdng_scale(round(p["max_hp"] * boss_floor["hp_mult"]), floor),
+                "atk": _wdng_scale(round(calc_attack_damage(p, get_weather()) * boss_floor["atk_mult"]), floor),
+                "boss": True, "floor_boss": boss_floor,
+            }
+            state["combat"]["hp"] = state["combat"]["max_hp"]  # ensure full HP
+            save_wdng_state(uid, state)
+            ebar = _wdng_hp_bar(state["combat"]["hp"], state["combat"]["max_hp"])
+            await _reply(
+                f"🔴 *FLOOR BOSS: {boss_floor['name']}!*\n"
+                f"❤️ {state['combat']['hp']}/{state['combat']['max_hp']} [{ebar}]\n\n"
+                f"_Defeat the boss to advance to floor {floor+1}!_",
+                markup=_wdng_combat_markup(uid)
+            )
+            return
+        # Advance floor
+        state["floor"] += 1
+        if state["floor"] > WDNG_MAX_FLOORS:
+            await _wdng_surface(uid, state, bot, chat_id, "completed")
+            return
+        state["grid"] = _wdng_generate_floor(state["floor"], uid)
+        state["pos"] = [0, 0]
+        state["revealed"] = {(0, 0)}
+        state["boss_cleared"] = False
+        state["rooms_visited"] = 0
+        grid = state["grid"]
+        dirs = _wdng_avail_dirs(grid, tuple(state["pos"]))
+        save_wdng_state(uid, state)
+        await _reply(
+            f"🚪 *Floor {state['floor']-1} cleared!* Descending...\n\n"
+            f"🏰 *Floor {state['floor']}* — the air grows colder.\n"
+            f"_{_wdng_minimap(grid, tuple(state['pos']), state['revealed'])}_",
+            markup=_wdng_nav_markup(uid, dirs)
+        )
+        return
+
+    # ── START room (just entered floor) ───────────────────────────────────────
+    if rtype == "start":
+        save_wdng_state(uid, state)
+        minimap = _wdng_minimap(grid, pos, state["revealed"])
+        await _reply(f"🟢 *Entrance.* Choose a direction.\n\n_{minimap}_")
+        return
+
+    # ── MONSTER ───────────────────────────────────────────────────────────────
+    if rtype == "monster":
+        if state.get("combat"):
+            # Already in combat here — shouldn't happen but handle gracefully
+            pass
+        mon = _wdng_monster_for_floor(floor)
+        void_gaze = floor >= 20
+        mon_hp = _wdng_scale(round(p["max_hp"] * mon[1]), floor)
+        mon_atk = _wdng_scale(round(calc_attack_damage(p, get_weather()) * mon[2]), floor)
+        state["combat"] = {
+            "name": mon[0], "hp": mon_hp, "max_hp": mon_hp,
+            "atk": mon_atk, "element": mon[4],
+            "boss": False, "void_gaze": void_gaze,
+        }
+        save_wdng_state(uid, state)
+        mbar = _wdng_hp_bar(mon_hp, mon_hp)
+        await _reply(
+            f"👹 *{mon[0]}* attacks!\n"
+            f"❤️ {mon_hp}/{mon_hp} [{mbar}]",
+            markup=_wdng_combat_markup(uid)
+        )
+        return
+
+    # ── MINI-BOSS ─────────────────────────────────────────────────────────────
+    if rtype == "mini_boss":
+        mon = random.choice([m for m in WDNG_MONSTERS if m[3] >= 3])
+        mon_hp = _wdng_scale(round(p["max_hp"] * 2.0), floor)
+        mon_atk = _wdng_scale(round(calc_attack_damage(p, get_weather()) * 1.1), floor)
+        state["combat"] = {
+            "name": f"Elite {mon[0]}", "hp": mon_hp, "max_hp": mon_hp,
+            "atk": mon_atk, "element": mon[4], "boss": False,
+            "mini_boss": True,
+        }
+        save_wdng_state(uid, state)
+        mbar = _wdng_hp_bar(mon_hp, mon_hp)
+        await _reply(
+            f"💀 *Elite {mon[0]}* blocks your path!\n"
+            f"❤️ {mon_hp}/{mon_hp} [{mbar}]",
+            markup=_wdng_combat_markup(uid)
+        )
+        return
+
+    # ── TRAP ──────────────────────────────────────────────────────────────────
+    if rtype == "trap":
+        trap = random.choice(WDNG_TRAPS)
+        cls_line = get_class_line(p)
+        dodge_chance = 0.55 if cls_line == "thief" else (0.40 if cls_line == "archer" else 0.15)
+        trap_dmg = _wdng_scale(round(p["max_hp"] * trap[2]), floor)
+        if floor >= 15:  # Death Mark curse
+            trap_dmg = round(trap_dmg * 1.5)
+        if random.random() < dodge_chance:
+            grid[pos[0]][pos[1]] = "visited_trap"
+            save_wdng_state(uid, state)
+            await _reply(f"💨 *{trap[0]}* — you dodge it cleanly! _(+class perk)_")
+        else:
+            state["p_hp"] = max(0, state["p_hp"] - trap_dmg)
+            grid[pos[0]][pos[1]] = "visited_trap"
+            save_wdng_state(uid, state)
+            if state["p_hp"] <= 0:
+                await _wdng_surface(uid, state, bot, chat_id, "died")
+                return
+            await _reply(trap[3].format(dmg=trap_dmg))
+        return
+
+    # ── TREASURE ──────────────────────────────────────────────────────────────
+    if rtype == "treasure":
+        gold_found = random.randint(floor * 20, floor * 50)
+        state["run_gold"] = state.get("run_gold", 0) + gold_found
+        loot_roll = random.random()
+        item_found = None
+        if loot_roll < 0.45:
+            items, weights = zip(*WDNG_CHEST_LOOT)
+            item_found = random.choices(items, weights=weights)[0]
+            state.setdefault("run_loot", []).append(item_found)
+        grid[pos[0]][pos[1]] = "empty"
+        save_wdng_state(uid, state)
+        item_line = f"\n📦 *Found:* {item_found}!" if item_found else ""
+        await _reply(f"💰 *Treasure Chest!* +{gold_found}g{item_line}")
+        return
+
+    # ── REST SHRINE ───────────────────────────────────────────────────────────
+    if rtype == "rest":
+        cls_line = get_class_line(p)
+        heal_pct = 0.35 if cls_line == "priest" else 0.20
+        heal = round(state["p_max_hp"] * heal_pct)
+        state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + heal)
+        grid[pos[0]][pos[1]] = "empty"
+        save_wdng_state(uid, state)
+        bonus = " _(+Priest perk: double heal!)_" if cls_line == "priest" else ""
+        await _reply(f"🛖 *Rest Shrine.* ❤️ +{heal} HP restored.{bonus}")
+        return
+
+    # ── ALTAR ─────────────────────────────────────────────────────────────────
+    if rtype == "altar":
+        gold_cost = floor * 30
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"🙏 Pray ({gold_cost}g)", callback_data=f"dng_altar_{uid}_{gold_cost}")],
+            [InlineKeyboardButton("⏩ Skip", callback_data=f"dng_skip_{uid}")],
+        ])
+        grid[pos[0]][pos[1]] = "empty"
+        save_wdng_state(uid, state)
+        await _reply(
+            f"⛪ *Ancient Altar.* Offer {gold_cost}g for a blessing?\n"
+            f"_(+5% HP, +10% ATK for 5 rooms)_",
+            markup=markup
+        )
+        return
+
+    # ── MERCHANT ──────────────────────────────────────────────────────────────
+    if rtype == "merchant":
+        btns = []
+        for stock in WDNG_MERCHANT_STOCK:
+            btns.append([InlineKeyboardButton(
+                f"Buy {stock['item']} ({stock['price']}g)",
+                callback_data=f"dng_buy_{uid}_{stock['item'].replace(' ','_')}_{stock['price']}"
+            )])
+        btns.append([InlineKeyboardButton("⏩ Leave", callback_data=f"dng_skip_{uid}")])
+        grid[pos[0]][pos[1]] = "empty"
+        save_wdng_state(uid, state)
+        await _reply(f"🏪 *Dungeon Merchant!* 💰 You have {state.get('run_gold',0)}g", markup=InlineKeyboardMarkup(btns))
+        return
+
+    # ── DEFAULT (empty/already visited) ───────────────────────────────────────
+    grid[pos[0]][pos[1]] = grid[pos[0]][pos[1]]  # unchanged
+    save_wdng_state(uid, state)
+    await _reply(f"⬜ *Empty room.* Nothing here.")
+
+
+def save_wdng_state(uid, state):
+    """Persist wizardry state back to active_wizardry dict."""
+    # Convert pos and revealed to serializable form
+    state["revealed"] = set(map(tuple, state.get("revealed", set())))
+    active_wizardry[uid] = state
+
+
+async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle all dng_* callbacks for the Wizardry dungeon."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    chat_id = query.message.chat_id
+
+    # Parse uid from callback data
+    parts = data.split("_")
+    # dng_<action>_<uid>[_extra...]
+    try:
+        action = parts[1]
+        uid = int(parts[2])
+    except (IndexError, ValueError):
+        return
+
+    if query.from_user.id != uid:
+        await query.answer("Not your dungeon!", show_alert=True)
+        return
+
+    state = active_wizardry.get(uid)
+    if not state:
+        try:
+            await query.edit_message_text("❌ No active dungeon run. Use /encounter → Enter Dungeon.")
+        except Exception:
+            pass
+        return
+
+    p = get_player(uid)
+    if not p:
+        return
+
+    # ── MOVEMENT ──────────────────────────────────────────────────────────────
+    if action == "mv":
+        direction = parts[3] if len(parts) > 3 else None
+        if not direction:
+            return
+        if state.get("combat"):
+            await query.answer("Finish the fight first!", show_alert=True)
+            return
+        grid = state["grid"]
+        r, c = state["pos"]
+        dr_dc = {"N":(-1,0),"S":(1,0),"E":(0,1),"W":(0,-1)}.get(direction)
+        if not dr_dc:
+            return
+        nr, nc = r + dr_dc[0], c + dr_dc[1]
+        G = WDNG_GRID
+        if not (0 <= nr < G and 0 <= nc < G) or grid[nr][nc] == "wall":
+            await query.answer("Can't go that way!", show_alert=True)
+            return
+        state["pos"] = [nr, nc]
+        state["revealed"].add((nr, nc))
+        save_wdng_state(uid, state)
+        await _wdng_enter_room(uid, state, context.bot, chat_id, query)
+        return
+
+    # ── MAP VIEW ──────────────────────────────────────────────────────────────
+    if action == "map":
+        grid = state["grid"]
+        pos  = tuple(state["pos"])
+        minimap = _wdng_minimap(grid, pos, state["revealed"])
+        dirs = _wdng_avail_dirs(grid, pos)
+        header = _wdng_floor_header(state)
+        try:
+            await query.edit_message_text(
+                f"{header}\n\n_{minimap}_",
+                parse_mode="Markdown",
+                reply_markup=_wdng_nav_markup(uid, dirs)
+            )
+        except Exception:
+            pass
+        return
+
+    # ── SURFACE ───────────────────────────────────────────────────────────────
+    if action == "surface":
+        await _wdng_surface(uid, state, context.bot, chat_id, "surfaced")
+        try:
+            await query.edit_message_text("🏃 You surfaced from the dungeon.", parse_mode="Markdown")
+        except Exception:
+            pass
+        return
+
+    # ── COMBAT: ATTACK ────────────────────────────────────────────────────────
+    if action == "atk":
+        combat = state.get("combat")
+        if not combat:
+            await query.answer("No enemy!", show_alert=True)
+            return
+        w = get_weather()
+        dmg = calc_attack_damage(p, w)
+        if check_miss(p, {"DEX": 5, "DEF": 10, "AGI": 5}):
+            dmg = 0
+        # Void gaze: boss/elite hits twice
+        void_hits = 2 if (combat.get("void_gaze") and state["floor"] >= 20) else 1
+        for _ in range(void_hits):
+            state["p_hp"] = max(0, state["p_hp"] - combat["atk"])
+
+        if state["p_hp"] <= 0:
+            await _wdng_surface(uid, state, context.bot, chat_id, "died")
+            try:
+                await query.edit_message_text(
+                    f"💀 *{combat['name']}* defeated you!\nYour run ends here.", parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+
+        combat["hp"] = max(0, combat["hp"] - dmg)
+        mbar = _wdng_hp_bar(combat["hp"], combat["max_hp"])
+        pbar = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
+        header = _wdng_floor_header(state)
+
+        if combat["hp"] <= 0:
+            # Monster defeated
+            is_boss = combat.get("boss")
+            boss_data = combat.get("floor_boss")
+            gold_earned = 0
+            exp_earned = 0
+            if is_boss and boss_data:
+                gold_earned = boss_data["gold"]
+                exp_earned  = boss_data["exp"]
+                state["boss_cleared"] = True
+            elif combat.get("mini_boss"):
+                gold_earned = state["floor"] * 40
+                exp_earned  = state["floor"] * 80
+            else:
+                gold_earned = state["floor"] * 15 + random.randint(5, 20)
+                exp_earned  = state["floor"] * 30
+            state["run_gold"] = state.get("run_gold", 0) + gold_earned
+            add_exp(p, exp_earned)
+            save_player(p)
+            state.pop("combat", None)
+            grid = state["grid"]
+            pos  = tuple(state["pos"])
+            # Mark room as visited
+            grid[pos[0]][pos[1]] = "empty"
+            dirs = _wdng_avail_dirs(grid, pos)
+            save_wdng_state(uid, state)
+            kill_line = f"🏆 *BOSS DEFEATED!*" if is_boss else f"⚔️ *{combat['name']}* defeated!"
+            try:
+                await query.edit_message_text(
+                    f"{header}\n\n{kill_line}\n+{gold_earned}g | +{exp_earned} EXP\n\n"
+                    f"❤️ You: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
+                    parse_mode="Markdown",
+                    reply_markup=_wdng_nav_markup(uid, dirs)
+                )
+            except Exception:
+                pass
+        else:
+            save_wdng_state(uid, state)
+            try:
+                await query.edit_message_text(
+                    f"{header}\n\n"
+                    f"⚔️ *{combat['name']}*\n"
+                    f"❤️ {combat['hp']}/{combat['max_hp']} [{mbar}]\n\n"
+                    f"You dealt *{dmg}* dmg. Enemy hits back for *{combat['atk']}*.\n"
+                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
+                    parse_mode="Markdown",
+                    reply_markup=_wdng_combat_markup(uid)
+                )
+            except Exception:
+                pass
+        return
+
+    # ── COMBAT: HEAL ─────────────────────────────────────────────────────────
+    if action == "heal":
+        inv = sjl(p.get("inventory"), [])
+        potion = None
+        heal_amt = 0
+        cls_line = get_class_line(p)
+        if cls_line == "priest":
+            heal_amt = round(get_stat(p, "WIS") * 6)
+        elif "Grand Restorative Flask" in inv:
+            potion = "Grand Restorative Flask"; heal_amt = 500
+        elif "Greater Health Potion" in inv:
+            potion = "Greater Health Potion"; heal_amt = 200
+        elif "Health Potion" in inv:
+            potion = "Health Potion"; heal_amt = 100
+        else:
+            await query.answer("No potions! (Priests can heal for free)", show_alert=True)
+            return
+        if potion:
+            inv.remove(potion)
+            p["inventory"] = json.dumps(inv)
+            save_player(p)
+        state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + heal_amt)
+        save_wdng_state(uid, state)
+        combat = state.get("combat")
+        header = _wdng_floor_header(state)
+        pbar = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
+        heal_src = f"*{potion}*" if potion else "*Priest Heal*"
+        try:
+            await query.edit_message_text(
+                f"{header}\n\n"
+                f"💊 Used {heal_src}. ❤️ +{heal_amt} HP [{pbar}]",
+                parse_mode="Markdown",
+                reply_markup=_wdng_combat_markup(uid) if combat else _wdng_nav_markup(uid, _wdng_avail_dirs(state["grid"], tuple(state["pos"])))
+            )
+        except Exception:
+            pass
+        return
+
+    # ── COMBAT: FLEE ─────────────────────────────────────────────────────────
+    if action == "flee":
+        flee_chance = 0.45 + (0.15 if get_class_line(p) in ("thief", "archer") else 0)
+        if random.random() < flee_chance:
+            state.pop("combat", None)
+            # Move back to previous direction (stay in room but clear combat)
+            grid = state["grid"]
+            pos  = tuple(state["pos"])
+            grid[pos[0]][pos[1]] = "empty"
+            dirs = _wdng_avail_dirs(grid, pos)
+            save_wdng_state(uid, state)
+            header = _wdng_floor_header(state)
+            try:
+                await query.edit_message_text(
+                    f"{header}\n\n💨 *Fled successfully!*",
+                    parse_mode="Markdown",
+                    reply_markup=_wdng_nav_markup(uid, dirs)
+                )
+            except Exception:
+                pass
+        else:
+            combat = state["combat"]
+            state["p_hp"] = max(0, state["p_hp"] - combat["atk"])
+            if state["p_hp"] <= 0:
+                await _wdng_surface(uid, state, context.bot, chat_id, "died")
+                try:
+                    await query.edit_message_text(
+                        f"💀 Failed to flee and got KO'd by *{combat['name']}*!", parse_mode="Markdown")
+                except Exception:
+                    pass
+                return
+            save_wdng_state(uid, state)
+            header = _wdng_floor_header(state)
+            mbar = _wdng_hp_bar(combat["hp"], combat["max_hp"])
+            pbar = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
+            try:
+                await query.edit_message_text(
+                    f"{header}\n\n"
+                    f"😤 *Couldn't flee!* {combat['name']} hits back!\n"
+                    f"❤️ Enemy: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
+                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
+                    parse_mode="Markdown",
+                    reply_markup=_wdng_combat_markup(uid)
+                )
+            except Exception:
+                pass
+        return
+
+    # ── ALTAR PRAY ───────────────────────────────────────────────────────────
+    if action == "altar":
+        try:
+            gold_cost = int(parts[3])
+        except (IndexError, ValueError):
+            return
+        if state.get("run_gold", 0) < gold_cost:
+            await query.answer(f"Need {gold_cost}g!", show_alert=True)
+            return
+        state["run_gold"] -= gold_cost
+        state["altar_blessing_rooms"] = 5
+        state["altar_atk_bonus"] = 0.10
+        state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + round(state["p_max_hp"] * 0.05))
+        grid = state["grid"]
+        pos  = tuple(state["pos"])
+        dirs = _wdng_avail_dirs(grid, pos)
+        save_wdng_state(uid, state)
+        header = _wdng_floor_header(state)
+        try:
+            await query.edit_message_text(
+                f"{header}\n\n⛪ *Blessed!* +5% HP, +10% ATK for 5 rooms.",
+                parse_mode="Markdown",
+                reply_markup=_wdng_nav_markup(uid, dirs)
+            )
+        except Exception:
+            pass
+        return
+
+    # ── MERCHANT BUY ─────────────────────────────────────────────────────────
+    if action == "buy":
+        # dng_buy_{uid}_{item_with_underscores}_{price}
+        try:
+            price = int(parts[-1])
+            item_name = "_".join(parts[3:-1]).replace("_", " ")
+        except (IndexError, ValueError):
+            return
+        if state.get("run_gold", 0) < price:
+            await query.answer(f"Need {price}g!", show_alert=True)
+            return
+        state["run_gold"] -= price
+        state.setdefault("run_loot", []).append(item_name)
+        grid = state["grid"]
+        pos  = tuple(state["pos"])
+        dirs = _wdng_avail_dirs(grid, pos)
+        save_wdng_state(uid, state)
+        header = _wdng_floor_header(state)
+        try:
+            await query.edit_message_text(
+                f"{header}\n\n🏪 Bought *{item_name}*! (-{price}g)",
+                parse_mode="Markdown",
+                reply_markup=_wdng_nav_markup(uid, dirs)
+            )
+        except Exception:
+            pass
+        return
+
+    # ── SKIP (altar/merchant leave) ───────────────────────────────────────────
+    if action == "skip":
+        grid = state["grid"]
+        pos  = tuple(state["pos"])
+        dirs = _wdng_avail_dirs(grid, pos)
+        save_wdng_state(uid, state)
+        header = _wdng_floor_header(state)
+        try:
+            await query.edit_message_text(
+                f"{header}\n\n⏩ You move on.",
+                parse_mode="Markdown",
+                reply_markup=_wdng_nav_markup(uid, dirs)
+            )
+        except Exception:
+            pass
+        return
+
+
+async def dungeon_wiz_start(update_or_query, uid: int, p: dict, bot, chat_id: int):
+    """Initialize a new Wizardry dungeon run."""
+    if uid in active_wizardry:
+        msg = "⚠️ You're already in a dungeon run! Use the buttons to continue."
+        if hasattr(update_or_query, "answer"):
+            await update_or_query.answer(msg, show_alert=True)
+        return
+
+    grid = _wdng_generate_floor(1, uid)
+    state = {
+        "floor":        1,
+        "grid":         grid,
+        "pos":          [0, 0],
+        "revealed":     {(0, 0)},
+        "p_hp":         p["hp"],
+        "p_max_hp":     calc_max_hp(p),
+        "run_gold":     0,
+        "run_loot":     [],
+        "boss_cleared": False,
+        "rooms_visited":0,
+    }
+    active_wizardry[uid] = state
+
+    dirs   = _wdng_avail_dirs(grid, (0, 0))
+    header = _wdng_floor_header(state)
+    minimap = _wdng_minimap(grid, (0, 0), state["revealed"])
+    text = (
+        f"🏰 *Wizardry Dungeon — Floor 1*\n\n"
+        f"{header}\n\n"
+        f"You stand at the entrance. Darkness lies ahead.\n"
+        f"_{minimap}_\n\n"
+        f"_Use ⬆️⬇️⬅️➡️ to move. 🗺️ shows your minimap. 🏃 Surface to exit and bank your loot._"
+    )
+    markup = _wdng_nav_markup(uid, dirs)
+    if hasattr(update_or_query, "edit_message_text"):
+        try:
+            await update_or_query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        except Exception:
+            await bot.send_message(chat_id=chat_id, text=text[:4096], parse_mode="Markdown", reply_markup=markup)
+    else:
+        await bot.send_message(chat_id=chat_id, text=text[:4096], parse_mode="Markdown", reply_markup=markup)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# END WIZARDRY DUNGEON helpers
+# ════════════════════════════════════════════════════════════════════════════
+
 # ── ENCOUNTER SYSTEM ──────────────────────────────────────────────────────────
 async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -16426,11 +17276,13 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⚔️ Battle — fight an NPC", callback_data=f"enc_mode_{uid}_battle")],
         [InlineKeyboardButton("🌿 Hunt — fight wild monsters", callback_data=f"enc_mode_{uid}_hunt")],
+        [InlineKeyboardButton("🏰 Enter Dungeon — explore & loot", callback_data=f"enc_mode_{uid}_dungeon")],
         [InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")],
     ])
     await send_group(update, "🎱 *Encounter*\nChoose your mode:\n\n"
                     "⚔️ *Battle* — fight NPCs for EXP and gear\n"
-                    "🌿 *Hunt* — fight wild monsters with your class; weaken them to 🎯 catch for *Monster Cores*",
+                    "🌿 *Hunt* — fight wild monsters with your class; weaken them to 🎯 catch for *Monster Cores*\n"
+                    "🏰 *Dungeon* — explore floors, fight monsters, find treasure. Loot banks when you surface.",
                     reply_markup=markup, permanent=True)
 
 async def squad_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -16652,6 +17504,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer()
         if mode == "battle":
             await _start_encounter_battle(query, uid, p)
+        elif mode == "dungeon":
+            await dungeon_wiz_start(query, uid, p, context.bot, query.message.chat_id)
         else:
             await _start_encounter_hunt(query, uid, p)
         return
@@ -20023,9 +20877,43 @@ GUIDE_PAGES = [
         "\n"
         "🎱 _The ball knows. The order watches. Act accordingly._"
     ),
+    (
+        "*Page 14/14 — Wizardry Dungeon* 🏰\n"
+        "\n"
+        "Access via `/encounter` → 🏰 *Enter Dungeon*\n"
+        "\n"
+        "*How it works:*\n"
+        "Navigate a 6×6 dungeon floor using directional buttons (N/S/E/W). Each room holds an event. Reach the 🚪 Exit to descend deeper. Your loot (gold + items) is *banked when you surface* — dying or surfacing early still rewards what you found.\n"
+        "\n"
+        "*Room Types:*\n"
+        "👹 Monster — fight to earn gold & EXP\n"
+        "💀 Elite — stronger monster, bigger reward\n"
+        "🔴 Floor Boss — must defeat to advance (floors 5/10/15/20)\n"
+        "💰 Treasure — free gold + possible item\n"
+        "🛖 Rest Shrine — heals 20% HP (35% for Priests)\n"
+        "⛪ Altar — pay gold for +5% HP & +10% ATK (5 rooms)\n"
+        "🏪 Merchant — buy potions and materials\n"
+        "💥 Trap — AGI/DEX check; Thieves & Archers dodge more often\n"
+        "\n"
+        "*Floor Curses (stack as you go deeper):*\n"
+        "Floor 6: Monster HP +20%\n"
+        "Floor 10: Bleed Aura — lose 3% HP per room\n"
+        "Floor 15: Trap damage +50%\n"
+        "Floor 20: Void Gaze — enemies hit twice\n"
+        "\n"
+        "*Class Perks:*\n"
+        "🗡️ Thief/Archer — 55%/40% trap dodge (vs 15% base)\n"
+        "🙏 Priest — heals double at Rest Shrines, free heal in combat\n"
+        "\n"
+        "*Tips:*\n"
+        "• Use 🗺️ button to view your minimap anytime\n"
+        "• Surface before you die to keep your loot\n"
+        "• Altars are worth it on deep floors\n"
+        "• Deepest floor reached is tracked in /stats\n"
+    ),
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands: Core", "Commands: Social", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands: Core", "Commands: Social", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders", "Wizardry Dungeon"]
 
 async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
     total = len(GUIDE_PAGES)
@@ -23874,6 +24762,7 @@ def main():
     app.add_handler(CommandHandler("withdraw",     withdraw_cmd))
     app.add_handler(CommandHandler("deposit",      deposit_cmd))
     app.add_handler(CallbackQueryHandler(encounter_callback, pattern="^enc_"))
+    app.add_handler(CallbackQueryHandler(dungeon_wiz_callback, pattern="^dng_"))
 
     # Marriage
     app.add_handler(CommandHandler("marry",        marry_cmd))
