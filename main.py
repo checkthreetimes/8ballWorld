@@ -20991,17 +20991,18 @@ async def banlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id != ADMIN_ID:
         await send_group(update, "❌ Admin only.", delay=9); return
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-    c.execute("SELECT username, banned_at FROM banned_users ORDER BY banned_at DESC")
+    c.execute("SELECT user_id, username, banned_at FROM banned_users ORDER BY banned_at DESC")
     rows = c.fetchall(); conn.close()
     if not rows:
-        await send_group(update, "No banned users.", delay=15); return
-    lines = ["🔨 *Banned Users*\n"]
-    for uname, banned_at in rows:
+        await send_group(update, "✅ No banned users.", delay=15); return
+    lines = [f"🔨 *Banned Users* ({len(rows)} total)\n"]
+    for uid, uname, banned_at in rows:
         try:
             dt = datetime.fromisoformat(banned_at).strftime("%Y-%m-%d")
         except Exception:
             dt = "?"
-        lines.append(f"• *{uname}* — banned {dt}")
+        lines.append(f"• *{uname}*  `{uid}`  — {dt}")
+    lines.append("\n_Use /unban to remove someone from this list._")
     await send_group(update, "\n".join(lines), permanent=False, delay=60)
 
 def _calc_max_stat_points(p):
