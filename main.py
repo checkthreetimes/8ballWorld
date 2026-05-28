@@ -6584,6 +6584,19 @@ def init_db():
         conn_v23b.commit(); conn_v23b.close()
     except Exception: pass
 
+    # ── v24 shop reroll + dungeon floor columns ───────────────────────────────
+    for _v24col in [
+        ("shop_reroll_date",      "TEXT DEFAULT NULL"),
+        ("shop_reroll_count",     "INTEGER DEFAULT 0"),
+        ("deepest_dungeon_floor", "INTEGER DEFAULT 0"),
+    ]:
+        try:
+            _v24conn = sqlite3.connect(DB_PATH)
+            _v24conn.execute(f"ALTER TABLE players ADD COLUMN {_v24col[0]} {_v24col[1]}")
+            _v24conn.commit(); _v24conn.close()
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
     conn = sqlite3.connect(DB_PATH)  # reopen for remaining setup
 
     # Clear stale explore locks on startup
