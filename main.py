@@ -20682,26 +20682,10 @@ def is_banned(user_id: int) -> bool:
     return row is not None
 
 def _do_ban_wipe(tid: int, tname: str):
-    """Wipe all game data for tid and record in banned_users. Pure DB operation."""
+    """Record ban in banned_users. Data is preserved so unban fully restores access."""
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO banned_users (user_id, username, banned_at) VALUES (?,?,?)",
               (tid, tname, datetime.now().isoformat()))
-    c.execute("DELETE FROM players WHERE user_id=?", (tid,))
-    c.execute("DELETE FROM shadow_profiles WHERE user_id=?", (tid,))
-    c.execute("SELECT guild_id, leader_id, members FROM guilds")
-    for gid, leader_id, members_json in c.fetchall():
-        try:
-            members = json.loads(members_json or "[]")
-            if tid in members:
-                members = [m for m in members if m != tid]
-                c.execute("UPDATE guilds SET members=? WHERE guild_id=?", (json.dumps(members), gid))
-                if leader_id == tid and members:
-                    c.execute("UPDATE guilds SET leader_id=? WHERE guild_id=?", (members[0], gid))
-                elif leader_id == tid:
-                    c.execute("DELETE FROM guilds WHERE guild_id=?", (gid,))
-        except Exception:
-            pass
-    c.execute("DELETE FROM bounties WHERE target_id=? OR placer_id=?", (tid, tid))
     conn.commit(); conn.close()
 
 _BAN_PAGE_SIZE = 10
@@ -20913,7 +20897,7 @@ async def unban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             await query.edit_message_text(
                 f"Unban <b>{uname}</b>?\nBanned on: {dt}\n\n"
-                f"They'll need to /ascend to rebuild their profile.",
+                f"Their stats and progress are fully restored.",
                 parse_mode="HTML", reply_markup=markup)
         except Exception as e:
             try: await context.bot.send_message(ADMIN_ID, f"[unban sel error] {e}")
@@ -20950,7 +20934,7 @@ async def unban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TY
         conn.commit(); conn.close()
         try:
             await context.bot.send_message(chat_id=tid,
-                text="✅ You have been unbanned from 8ball World. Use /ascend to start again.")
+                text="✅ You have been unbanned from 8ball World. Your account has been fully restored.")
         except Exception:
             pass
         try:
@@ -20995,12 +20979,12 @@ async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit(); conn.close()
     try:
         await context.bot.send_message(chat_id=tid,
-            text="✅ You have been unbanned from 8ball World. Use /ascend to start again.")
+            text="✅ You have been unbanned from 8ball World. Your account has been fully restored.")
     except Exception:
         pass
     await send_group(update,
         f"✅ *{tname}* has been unbanned.\n"
-        f"They can play again but will need to /ascend to rebuild their profile.", delay=20)
+        f"Their stats and progress are fully restored.", delay=20)
 
 async def banlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
