@@ -8028,7 +8028,7 @@ def _build_stats_pages(p, viewing_name=None):
     tier         = get_tier(p["level"])
     w            = get_weather()
     statuses     = get_active_statuses(p)
-    cp           = calc_combat_power(p) if callable(globals().get("calc_combat_power")) else 0
+    cp           = safe_int(calc_combat_power(p)) if callable(globals().get("calc_combat_power")) else 0
     name         = viewing_name or p["username"]
 
     guild_str = "None"
@@ -8119,7 +8119,7 @@ def _build_stats_pages(p, viewing_name=None):
         f"💬 Messages: {msg_count:,}",
         f"💰 Gold: {p['gold']}",
         f"⚔️ Wins: {p['wins']}   Losses: {p.get('losses',0)}",
-        f"🌟 Influence: {p.get('influence',0):,}  ({get_fame_tier(p.get('influence',0))})",
+        f"🌟 Influence: {safe_int(p.get('influence')):,}  ({get_fame_tier(safe_int(p.get('influence')))})",
     ]
     _ks = safe_int(p.get("kill_streak"))
     if _ks >= 3:
@@ -20289,8 +20289,10 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gold_gain = shot["gold"]
 
     if p:
-        lvl_bonus = max(1.0, 1.0 + (p["level"] - 1) * 0.06)
-        exp_gain = int(exp_gain * lvl_bonus)
+        lvl_bonus = max(1.0, 1.0 + (p["level"] - 1) * 0.15)
+        gold_bonus = max(1.0, 1.0 + (p["level"] - 1) * 0.12)
+        exp_gain  = int(exp_gain  * lvl_bonus)
+        gold_gain = int(gold_gain * gold_bonus)
         p["gold"] = p.get("gold", 0) + gold_gain
         p["last_pool"] = datetime.now().isoformat()
         lmsgs, leveled = add_exp(p, exp_gain)
@@ -20441,7 +20443,8 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p["last_pool"] = now.isoformat()
         shot      = roll_pool_shot_with_luk(p)
         exp_gain  = shot["exp"]; gold_gain = shot["gold"]
-        exp_gain = int(exp_gain * max(1.0, 1.0 + (p["level"] - 1) * 0.06))
+        exp_gain  = int(exp_gain  * max(1.0, 1.0 + (p["level"] - 1) * 0.15))
+        gold_gain = int(gold_gain * max(1.0, 1.0 + (p["level"] - 1) * 0.12))
         p["gold"] = p.get("gold",0) + gold_gain
         item_found = None
         if shot.get("loot"):
