@@ -5998,9 +5998,18 @@ def init_db():
         "ALTER TABLE players ADD COLUMN last_quest_ts INTEGER DEFAULT 0",
         "ALTER TABLE players ADD COLUMN oracle_last_used INTEGER DEFAULT 0",
         "ALTER TABLE players ADD COLUMN tg_username TEXT DEFAULT NULL",
+        "ALTER TABLE players ADD COLUMN banned INTEGER DEFAULT 0",
+        "ALTER TABLE shadow_profiles ADD COLUMN banned INTEGER DEFAULT 0",
     ]:
         try: conn.execute(_col_sql)
         except: pass
+
+    conn.execute("""CREATE TABLE IF NOT EXISTS banned_users (
+        user_id INTEGER PRIMARY KEY,
+        username TEXT,
+        banned_at TEXT
+    )""")
+    conn.commit()
 
     # Alliance system table
     conn.execute("""CREATE TABLE IF NOT EXISTS alliances (
@@ -7123,9 +7132,9 @@ async def gear_cmd(update, context):
 async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
-    c.execute("SELECT user_id,username,level,total_exp,class_id FROM players")
+    c.execute("SELECT user_id,username,level,total_exp,class_id FROM players WHERE user_id NOT IN (SELECT user_id FROM banned_users)")
     rpg_rows = c.fetchall()
-    c.execute("SELECT user_id,username,level,total_exp FROM shadow_profiles")
+    c.execute("SELECT user_id,username,level,total_exp FROM shadow_profiles WHERE user_id NOT IN (SELECT user_id FROM banned_users)")
     shd_rows = c.fetchall()
     conn.close()
 
@@ -7156,7 +7165,7 @@ async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if context.args and context.args[0].lower() == "wins":
         conn2 = sqlite3.connect(DB_PATH); conn2.row_factory = sqlite3.Row; c2 = conn2.cursor()
-        c2.execute("SELECT username, wins, losses, level FROM players ORDER BY wins DESC LIMIT 20")
+        c2.execute("SELECT username, wins, losses, level FROM players WHERE user_id NOT IN (SELECT user_id FROM banned_users) ORDER BY wins DESC LIMIT 20")
         rows2 = c2.fetchall(); conn2.close()
         medals2 = {1:"🥇",2:"🥈",3:"🥉"}
         lines2 = ["⚔️ *Top 20  -  PVP Wins*\n"]
@@ -7204,9 +7213,9 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     page = int(query.data.split("_")[-1])
 
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
-    c.execute("SELECT user_id,username,level,total_exp,class_id FROM players")
+    c.execute("SELECT user_id,username,level,total_exp,class_id FROM players WHERE user_id NOT IN (SELECT user_id FROM banned_users)")
     rpg_rows = c.fetchall()
-    c.execute("SELECT user_id,username,level,total_exp FROM shadow_profiles")
+    c.execute("SELECT user_id,username,level,total_exp FROM shadow_profiles WHERE user_id NOT IN (SELECT user_id FROM banned_users)")
     shd_rows = c.fetchall()
     conn.close()
 
@@ -20666,6 +20675,119 @@ async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "All players, guilds, and data cleared.\n"
         "Fresh start!", delay=30)
 
+def is_banned(user_id: int) -> bool:
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("SELECT 1 FROM banned_users WHERE user_id=?", (user_id,))
+    row = c.fetchone(); conn.close()
+    return row is not None
+
+def _do_ban_wipe(tid: int, tname: str):
+    """Wipe all game data for tid and record in banned_users. Pure DB operation."""
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO banned_users (user_id, username, banned_at) VALUES (?,?,?)",
+              (tid, tname, datetime.now().isoformat()))
+    c.execute("DELETE FROM players WHERE user_id=?", (tid,))
+    c.execute("DELETE FROM shadow_profiles WHERE user_id=?", (tid,))
+    c.execute("SELECT id, leader_id, members FROM guilds")
+    for gid, leader_id, members_json in c.fetchall():
+        try:
+            members = json.loads(members_json or "[]")
+            if tid in members:
+                members = [m for m in members if m != tid]
+                c.execute("UPDATE guilds SET members=? WHERE id=?", (json.dumps(members), gid))
+                if leader_id == tid and members:
+                    c.execute("UPDATE guilds SET leader_id=? WHERE id=?", (members[0], gid))
+                elif leader_id == tid:
+                    c.execute("DELETE FROM guilds WHERE id=?", (gid,))
+        except Exception:
+            pass
+    c.execute("DELETE FROM bounties WHERE target_id=? OR poster_id=?", (tid, tid))
+    conn.commit(); conn.close()
+
+async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        await send_group(update, "❌ Admin only.", delay=9); return
+
+    tid = None; tname = None
+
+    # Priority 1: reply to their message
+    if update.message and update.message.reply_to_message:
+        ru = update.message.reply_to_message.from_user
+        tid = ru.id
+        tname = ru.first_name
+    # Priority 2: numeric user ID
+    elif context.args and context.args[0].lstrip("-").isdigit():
+        tid = int(context.args[0])
+        # Try to get display name from DB
+        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        c.execute("SELECT username FROM players WHERE user_id=?", (tid,))
+        row = c.fetchone()
+        if not row:
+            c.execute("SELECT username FROM shadow_profiles WHERE user_id=?", (tid,))
+            row = c.fetchone()
+        conn.close()
+        tname = row[0] if row else f"User#{tid}"
+    # Priority 3: display name or @handle
+    elif context.args:
+        target = get_player_by_username(context.args[0])
+        if not target:
+            await send_group(update, "❌ No player found with that name or ID.", delay=9); return
+        tid = target["user_id"]; tname = target["username"]
+    else:
+        await send_group(update,
+            "Usage:\n"
+            "• Reply to their message and type `/ban`\n"
+            "• `/ban DisplayName`\n"
+            "• `/ban 123456789` (user ID)", delay=20); return
+    _do_ban_wipe(tid, tname)
+    await send_group(update,
+        f"🔨 *{tname}* (ID: `{tid}`) has been banned and wiped from the game.\n"
+        f"They can no longer use any bot commands.", delay=30)
+
+async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        await send_group(update, "❌ Admin only.", delay=9); return
+    if not context.args:
+        await send_group(update, "Usage: `/unban DisplayName` or `/unban 123456789`", delay=15); return
+
+    arg = context.args[0].lstrip("@")
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    if arg.isdigit():
+        c.execute("SELECT user_id, username FROM banned_users WHERE user_id=?", (int(arg),))
+    else:
+        c.execute("SELECT user_id, username FROM banned_users WHERE LOWER(username)=?", (arg.lower(),))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        await send_group(update, "❌ No banned user found with that name.", delay=9); return
+
+    tid, tname = row
+    c.execute("DELETE FROM banned_users WHERE user_id=?", (tid,))
+    conn.commit(); conn.close()
+    await send_group(update,
+        f"✅ *{tname}* has been unbanned.\n"
+        f"They can play again but will need to /ascend to rebuild their profile.", delay=20)
+
+async def banlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        await send_group(update, "❌ Admin only.", delay=9); return
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("SELECT username, banned_at FROM banned_users ORDER BY banned_at DESC")
+    rows = c.fetchall(); conn.close()
+    if not rows:
+        await send_group(update, "No banned users.", delay=15); return
+    lines = ["🔨 *Banned Users*\n"]
+    for uname, banned_at in rows:
+        try:
+            dt = datetime.fromisoformat(banned_at).strftime("%Y-%m-%d")
+        except Exception:
+            dt = "?"
+        lines.append(f"• *{uname}* — banned {dt}")
+    await send_group(update, "\n".join(lines), permanent=False, delay=60)
+
 def _calc_max_stat_points(p):
     lvl = safe_int(p.get("level", 1))
     prestige = safe_int(p.get("prestige_count", 0))
@@ -20865,6 +20987,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
     user = update.effective_user
     if not user or user.is_bot: return
+    if is_banned(user.id): return
     if not _rate_ok(user.id):
         return  # silently drop — no response, no feedback loop
     chat_id = update.effective_chat.id
@@ -22314,6 +22437,9 @@ def main():
     # Admin
     app.add_handler(CommandHandler("wipe",      wipe_cmd))
     app.add_handler(CommandHandler("fixstats",  fixstats_cmd))
+    app.add_handler(CommandHandler("ban",       ban_cmd))
+    app.add_handler(CommandHandler("unban",     unban_cmd))
+    app.add_handler(CommandHandler("banlist",   banlist_cmd))
     app.add_handler(CommandHandler("fixgear",   fixgear_cmd))
 
     # Callbacks
@@ -22396,6 +22522,8 @@ def main():
         """Runs before all command handlers (group=-1). Stamps last_seen and enforces rate limit."""
         if not update.message or not update.effective_user or update.effective_user.is_bot: return
         u = update.effective_user
+        if u.id != ADMIN_ID and is_banned(u.id):
+            raise ApplicationHandlerStop  # banned — silently block all commands
         if u.id != ADMIN_ID and not _rate_ok(u.id):
             raise ApplicationHandlerStop  # silently drop — no reply, no exploit loop
         try:
