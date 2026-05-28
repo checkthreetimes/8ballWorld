@@ -8205,7 +8205,7 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     chat_id = query.message.chat_id
     w = get_weather()
-    action_text, _, result_type = _execute_pvp_hit(a, d, uid, target_uid, w, chat_id, context.bot)
+    action_text, _, result_type = await _execute_pvp_hit(a, d, uid, target_uid, w, chat_id, context.bot)
     save_player(a); save_player(d)
 
     _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": chat_id}
@@ -8265,16 +8265,14 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
     if not all_skills:
         await query.answer("No skills unlocked!", show_alert=True); return
 
-    # Filter to offensive/PvP skills only
-    PVP_SKILL_TYPES = {"damage","combo_dmg","freeze_nuke","execute_nuke","holy_nuke",
-                        "fear_kill","nature_nuke","holy_warrior_nuke","godlike_lightning",
-                        "drain","drain_kill","hp_drain","drain_debuff","stun_shot",
-                        "execution_shot","bleed_shot","revive_heal","full_revive","regen",
-                        "dmg_reduction_buff","heal_shield"}
-    pvp_skills = [sk for sk in all_skills if sk.get("type", "damage") in PVP_SKILL_TYPES
+    # Exclude purely self/group utility types that can't target an enemy
+    SELF_ONLY_TYPES = {"self_heal", "group_heal", "mass_cleanse", "party_def_buff",
+                       "party_atk_buff", "party_full_buff", "ultimate_buff", "self_atk_buff"}
+    pvp_skills = [sk for sk in all_skills
+                  if sk.get("type", "damage") not in SELF_ONLY_TYPES
                   and p.get("level", 1) >= sk.get("unlock", 5)]
     if not pvp_skills:
-        await query.answer("No offensive skills available!", show_alert=True); return
+        await query.answer("No skills available!", show_alert=True); return
 
     # Answer before editing to stop spinner
     await query.answer()
