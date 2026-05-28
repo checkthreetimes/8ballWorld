@@ -15159,14 +15159,17 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"📜 Enchanting Scrolls: {inv.count('Enchanting Scroll')}\n")
         buttons = []
         for slot_label, slot_key, slot_id in [
-                ("⚔️ Weapon",    "equipped_weapon",    "weapon"),
-                ("🛡️ Armor",     "equipped_armor",     "armor"),
-                ("🔰 Shield",    "equipped_shield",    "shield"),
-                ("💍 Accessory", "equipped_accessory", "accessory"),
-                ("🎩 Hat",       "equipped_hat",       "hat"),
-                ("🧤 Gloves",    "equipped_gloves",    "gloves"),
-                ("👢 Boots",     "equipped_boots",     "boots"),
-                ("🎭 Mask",      "equipped_mask",      "mask")]:
+                ("⚔️ Weapon",      "equipped_weapon",      "weapon"),
+                ("🛡️ Armor",       "equipped_armor",       "armor"),
+                ("🔰 Shield",      "equipped_shield",      "shield"),
+                ("💍 Accessory 1", "equipped_accessory",   "accessory"),
+                ("💍 Accessory 2", "equipped_accessory_2", "accessory2"),
+                ("💍 Accessory 3", "equipped_accessory_3", "accessory3"),
+                ("💍 Accessory 4", "equipped_accessory_4", "accessory4"),
+                ("🎩 Hat",         "equipped_hat",         "hat"),
+                ("🧤 Gloves",      "equipped_gloves",      "gloves"),
+                ("👢 Boots",       "equipped_boots",       "boots"),
+                ("🎭 Mask",        "equipped_mask",        "mask")]:
             name = p.get(slot_key)
             if not name: continue
             encs = get_enchant(p, name)
@@ -15184,18 +15187,21 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     slot = context.args[0].lower()
     slot_map = {
-        "weapon":    ("equipped_weapon",    "weapon"),
-        "armor":     ("equipped_armor",     "armor"),
-        "shield":    ("equipped_shield",    "armor"),
-        "accessory": ("equipped_accessory", "accessory"),
-        "hat":       ("equipped_hat",       "armor"),
-        "gloves":    ("equipped_gloves",    "armor"),
-        "boots":     ("equipped_boots",     "armor"),
-        "mask":      ("equipped_mask",      "armor"),
+        "weapon":     ("equipped_weapon",      "weapon"),
+        "armor":      ("equipped_armor",       "armor"),
+        "shield":     ("equipped_shield",      "armor"),
+        "accessory":  ("equipped_accessory",   "accessory"),
+        "accessory2": ("equipped_accessory_2", "accessory"),
+        "accessory3": ("equipped_accessory_3", "accessory"),
+        "accessory4": ("equipped_accessory_4", "accessory"),
+        "hat":        ("equipped_hat",         "armor"),
+        "gloves":     ("equipped_gloves",      "armor"),
+        "boots":      ("equipped_boots",       "armor"),
+        "mask":       ("equipped_mask",        "armor"),
     }
     if slot not in slot_map:
         await send_group(update,
-            "Usage: /enchant weapon | armor | shield | accessory | hat | gloves | boots | mask", delay=9); return
+            "Usage: /enchant weapon | armor | shield | accessory | accessory2 | accessory3 | accessory4 | hat | gloves | boots | mask", delay=9); return
 
     slot_key, effect_pool_key = slot_map[slot]
     item_name = p.get(slot_key)
@@ -15242,14 +15248,17 @@ async def enchant_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
     slot_map = {
-        "weapon":    ("equipped_weapon",    "weapon"),
-        "armor":     ("equipped_armor",     "armor"),
-        "shield":    ("equipped_shield",    "armor"),
-        "accessory": ("equipped_accessory", "accessory"),
-        "hat":       ("equipped_hat",       "armor"),
-        "gloves":    ("equipped_gloves",    "armor"),
-        "boots":     ("equipped_boots",     "armor"),
-        "mask":      ("equipped_mask",      "armor"),
+        "weapon":     ("equipped_weapon",      "weapon"),
+        "armor":      ("equipped_armor",       "armor"),
+        "shield":     ("equipped_shield",      "armor"),
+        "accessory":  ("equipped_accessory",   "accessory"),
+        "accessory2": ("equipped_accessory_2", "accessory"),
+        "accessory3": ("equipped_accessory_3", "accessory"),
+        "accessory4": ("equipped_accessory_4", "accessory"),
+        "hat":        ("equipped_hat",         "armor"),
+        "gloves":     ("equipped_gloves",      "armor"),
+        "boots":      ("equipped_boots",       "armor"),
+        "mask":       ("equipped_mask",        "armor"),
     }
     if slot not in slot_map:
         await query.answer(); return
@@ -16404,7 +16413,8 @@ async def _start_encounter_hunt(query, uid, p):
 
 async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    # Do NOT answer here — each branch answers (or show_alert) itself so we
+    # don't conflict with subsequent query.answer(show_alert=True) calls.
     data  = query.data
     uid   = update.effective_user.id
 
@@ -16416,10 +16426,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if uid != target_uid:
             await query.answer("Not your encounter!", show_alert=True); return
         if _has_starter(uid):
-            await query.edit_message_text("You already have a starter!"); return
+            await query.answer(); await query.edit_message_text("You already have a starter!"); return
         ok, squad = _add_monster_to_squad(uid, mon_key, level=1)
         mdata = MONSTER_BY_KEY[mon_key]
         elem_e = ELEMENT_EMOJI.get(mdata[2], "")
+        await query.answer()
         await query.edit_message_text(
             f"🎉 *{mdata[1]}* {elem_e} joined your squad as your starter!\n"
             f"Use /encounter again to begin your adventure.", parse_mode="Markdown")
@@ -16431,9 +16442,10 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if uid != target_uid:
             await query.answer("Not your encounter!", show_alert=True); return
         p = get_player(uid)
-        if not p: return
+        if not p: await query.answer(); return
         if uid in active_encounters:
             await query.answer("Already in an encounter!", show_alert=True); return
+        await query.answer()
         if mode == "battle":
             await _start_encounter_battle(query, uid, p)
         else:
@@ -16453,16 +16465,20 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # ── All in-combat actions require an active encounter ────────────────────
     enc = active_encounters.get(uid)
     if not enc:
-        await query.edit_message_text("No active encounter."); return
+        await query.answer(); await query.edit_message_text("No active encounter."); return
 
     p = get_player(uid)
-    if not p: return
+    if not p: await query.answer(); return
 
     # Helper: end encounter (win/lose/flee)
     async def _end_encounter(result_text, gave_rewards=False):
         active_encounters.pop(uid, None)
         p["last_encounter"] = datetime.now().isoformat()
         save_player(p)
+        try:
+            await query.answer()
+        except Exception:
+            pass
         try:
             await query.edit_message_text(result_text, parse_mode="Markdown")
         except Exception:
@@ -16487,11 +16503,14 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 enc.setdefault("action_log",[]).append(npc_act)
                 if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
                 try:
+                    await query.answer()
                     await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception:
-                    await query.edit_message_text(_encounter_battle_card(enc),
-                                                  reply_markup=_encounter_battle_markup(enc, p))
+                    try:
+                        await query.edit_message_text(_encounter_battle_card(enc),
+                                                      reply_markup=_encounter_battle_markup(enc, p))
+                    except Exception: pass
         return
 
     # ── BATTLE MODE ACTIONS ─────────────────────────────────────────────────
@@ -16553,11 +16572,14 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             enc.setdefault("action_log",[]).append(npc_act)
             if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
             try:
+                await query.answer()
                 await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                               reply_markup=_encounter_battle_markup(enc, p))
             except Exception:
-                await query.edit_message_text(_encounter_battle_card(enc),
-                                              reply_markup=_encounter_battle_markup(enc, p))
+                try:
+                    await query.edit_message_text(_encounter_battle_card(enc),
+                                                  reply_markup=_encounter_battle_markup(enc, p))
+                except Exception: pass
             return
 
         elif data == f"enc_guard_{uid}":
@@ -16677,6 +16699,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         enc.setdefault("action_log",[]).append(npc_act)
         if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
         try:
+            await query.answer()
             await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                           reply_markup=_encounter_battle_markup(enc, p))
         except Exception:
@@ -16749,11 +16772,14 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             enc.setdefault("action_log",[]).append(mon_act)
             if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
             try:
+                await query.answer()
                 await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                               reply_markup=_encounter_battle_markup(enc, p))
             except Exception:
-                await query.edit_message_text(_encounter_battle_card(enc),
-                                              reply_markup=_encounter_battle_markup(enc, p))
+                try:
+                    await query.edit_message_text(_encounter_battle_card(enc),
+                                                  reply_markup=_encounter_battle_markup(enc, p))
+                except Exception: pass
             return
 
         elif data == f"enc_catch_{uid}":
@@ -16799,11 +16825,14 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     await _end_encounter(f"💀 *{enc['e_name']}* broke free and knocked you out!\nLost {gold_loss} gold.")
                     return
                 try:
+                    await query.answer()
                     await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception:
-                    await query.edit_message_text(_encounter_battle_card(enc),
-                                                  reply_markup=_encounter_battle_markup(enc, p))
+                    try:
+                        await query.edit_message_text(_encounter_battle_card(enc),
+                                                      reply_markup=_encounter_battle_markup(enc, p))
+                    except Exception: pass
             return
 
         elif data == f"enc_guard_{uid}":
@@ -16911,6 +16940,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         enc.setdefault("action_log",[]).append(mon_act)
         if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
         try:
+            await query.answer()
             await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                           reply_markup=_encounter_battle_markup(enc, p))
         except Exception:
