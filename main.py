@@ -7905,8 +7905,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Use a *Scroll of Revival* from your inventory, or ask a Priest.", delay=9)
         return
 
-    cid = h.get("class_id","")
-    is_priest_healer = cid in HEALER_CLASSES
+    is_priest_healer = get_class_line(h) == "priest"
 
     inv = sjl(h.get("inventory"), [])
     potion = None
@@ -7939,13 +7938,15 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if get_accessory_bonus(h, "heal_bonus"):
         heal_amount = round(heal_amount * (1 + get_accessory_bonus(h, "heal_bonus")))
 
-    # Apply
+    # Apply — use calc_max_hp to handle stale max_hp values
+    real_max_t = calc_max_hp(t)
+    t["max_hp"] = real_max_t
     was_defeated = target_is_dead
-    t["hp"] = min(t["max_hp"], t["hp"] + heal_amount)
+    t["hp"] = min(real_max_t, t["hp"] + heal_amount)
     if was_defeated:
         t["defeated_until"]  = None
         t["invincible_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
-        t["hp"] = min(t["max_hp"], heal_amount)
+        t["hp"] = min(real_max_t, heal_amount)
 
     h["heals_given"] = h.get("heals_given",0) + 1
     if tu.id != hu.id:
@@ -8104,6 +8105,7 @@ def _build_stats_pages(p, viewing_name=None):
         f"🎱 *{name}*{defeated_str}{recovering}",
         f"🏅 {p['active_title']}",
         f"{tier['name']}  -  Level {p['level']}",
+        f"🧙 {cls_name}{path_str}",
         f"🏰 {guild_str}",
         f"🌍 {w['name']}",
     ]
@@ -9114,10 +9116,13 @@ def _calc_applied_class_bonuses(p):
 
 
 def _unequip_class_gear(p):
-    """Remove all class-restricted gear from equipped slots and return items to inventory.
+    """Unequip gear whose class restriction doesn't match the player's current class.
+    If the player has no class, all class-restricted gear is unequipped.
     Returns a list of unequipped item names."""
     inv = sjl(p.get("inventory"), [])
     unequipped = []
+    player_line = get_class_line(p)
+    player_gear_line = _GEAR_LINE_MAP.get(player_line, player_line) if player_line else None
     slot_pools = [
         ("equipped_weapon",    WEAPONS),
         ("equipped_armor",     ARMORS),
@@ -9132,7 +9137,11 @@ def _unequip_class_gear(p):
         if not item_name:
             continue
         item_data = pool.get(item_name, {})
-        if item_data.get("class") or item_data.get("line"):
+        item_class = item_data.get("class") or item_data.get("line")
+        if not item_class:
+            continue  # no class restriction — always allowed
+        # Strip if player has no class, or item's class doesn't match player's gear line
+        if not player_line or (item_class != player_gear_line and item_class != player_line):
             inv.append(item_name)
             p[slot_key] = None
             unequipped.append(item_name)
@@ -11246,23 +11255,25 @@ async def _dispatch_secret_quest(uid: int, bot):
     if p.get("active_quest"): return
     if time.time() - p.get("last_quest_ts", 0) < 28800: return
     conn = sqlite3.connect(DB_PATH); c2 = conn.cursor()
-    c2.execute("SELECT user_id, username FROM players WHERE user_id != ? AND level >= 1 ORDER BY RANDOM() LIMIT 10", (uid,))
-    targets = [{"id": r[0], "username": r[1]} for r in c2.fetchall()]; conn.close()
+    c2.execute("SELECT user_id, username, tg_username FROM players WHERE user_id != ? AND level >= 1 ORDER BY RANDOM() LIMIT 10", (uid,))
+    targets = [{"id": r[0], "username": r[1], "tg_username": r[2]} for r in c2.fetchall()]; conn.close()
     qtype = random.choices(["social","chat","targeted"], weights=[35,35,30])[0]
     if qtype == "social" and targets:
         t = random.choice(targets)
+        t_handle = f"@{t['tg_username']}" if t.get("tg_username") else t["username"]
         action, prompt_tpl, exp_r, inf_r = random.choice(_SOCIAL_QUEST_TPL)
         quest = {"type":"social","action":action,"target_id":t["id"],"target_name":t["username"],"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
-        dm = f"🎱 *A secret task has found you.*\n\n_{prompt_tpl.format(target='@'+t['username'])}_\n\n⏳ _Expires in 24 hours_\n💫 Reward: *{exp_r} EXP + {inf_r} Influence*"
+        dm = f"🎱 *A secret task has found you.*\n\n_{prompt_tpl.format(target=t_handle)}_\n\n⏳ _Expires in 24 hours_\n💫 Reward: *{exp_r} EXP + {inf_r} Influence*"
     elif qtype == "chat":
         phrase, exp_r, inf_r = random.choice(_CHAT_QUEST_TPL)
         quest = {"type":"chat","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
         dm = f"🎱 *The oracle has an assignment.*\n\n_Say this in the group:_\n\n*\"{phrase}\"*\n\n⏳ _Expires in 24 hours_\n💫 Reward: *{exp_r} EXP + {inf_r} Influence*"
     elif targets:
         t = random.choice(targets)
+        t_handle = f"@{t['tg_username']}" if t.get("tg_username") else t["username"]
         phrase, exp_r, inf_r = random.choice(_TARGETED_QUEST_TPL)
         quest = {"type":"targeted","phrase":phrase,"target_id":t["id"],"target_name":t["username"],"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
-        dm = f"🎱 *A whisper from the order.*\n\n_Find @{t['username']} and ask them:_\n\n*\"{phrase}\"*\n\n_(Reply to them or mention them)_\n\n⏳ _Expires in 24 hours_\n💫 Reward: *{exp_r} EXP + {inf_r} Influence*"
+        dm = f"🎱 *A whisper from the order.*\n\n_Find {t_handle} and ask them:_\n\n*\"{phrase}\"*\n\n_(Reply to them or mention them)_\n\n⏳ _Expires in 24 hours_\n💫 Reward: *{exp_r} EXP + {inf_r} Influence*"
     else:
         return
     p["active_quest"] = json.dumps(quest); p["last_quest_ts"] = int(time.time()); save_player(p)
@@ -13704,6 +13715,17 @@ async def _execute_skill(update, context, p, sk):
         await send_group(update, f"{d['username']} is already defeated!", delay=9); return
     if is_invincible(d):
         await send_group(update, f"🛡️ {d['username']} is still recovering  -  invincible.", delay=9); return
+    s_tgt = get_shadow(du.id)
+    _tls = s_tgt.get("last_seen") if s_tgt else None
+    if _tls:
+        try:
+            _away = (datetime.now() - datetime.fromisoformat(_tls)).total_seconds()
+            if _away > 3600:
+                _away_str = f"{int(_away // 60)} min" if _away < 7200 else f"{int(_away // 3600)}h"
+                await send_group(update, f"💤 *{d['username']}* stepped away *(last seen {_away_str} ago)*  -  can't use offensive skills on offline players.", delay=9)
+                return
+        except Exception:
+            pass
     if is_silenced(p):
         await send_group(update, "🤐 You are silenced  -  can't use skills!", delay=9); return
 
@@ -19063,11 +19085,6 @@ GUIDE_PAGES = [
     (
         "🎱 *8Ball World  -  Commands: Social* (7/13)\n"
         "\n"
-        "*Bounties*\n"
-        "/bounty  -  Reply to a player. Amount buttons pop up (100–5000g). Stack with others!\n"
-        "/bounties  -  View the active bounty board\n"
-        "_Thief: no fee, up to 10,000g, max 3 contracts. Bounty Hunter: Execution Order skill (2,000g + Marked)._\n"
-        "\n"
         "*Guilds & Orders*\n"
         "/guild  -  Social hub — your guild + secret order together\n"
         "/guildjoin  -  Browse + join a guild\n"
@@ -20742,11 +20759,75 @@ def is_banned(user_id: int) -> bool:
         return False  # table missing or DB error — treat as not banned
 
 def _do_ban_wipe(tid: int, tname: str):
-    """Record ban in banned_users. Data is preserved so unban fully restores access."""
+    """Record ban in banned_users. Remove from guild and clear relationship bonds."""
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO banned_users (user_id, username, banned_at) VALUES (?,?,?)",
               (tid, tname, datetime.now().isoformat()))
     conn.commit(); conn.close()
+
+    p = get_player(tid)
+    if not p:
+        return
+
+    # Remove from guild members list
+    gid = p.get("guild_id")
+    if gid and str(gid) != "None":
+        try:
+            g = get_guild(gid)
+            if g:
+                members = sjl(g.get("members"), [])
+                if tid in members:
+                    members.remove(tid)
+                g["members"] = json.dumps(members)
+                save_guild(g)
+        except Exception:
+            pass
+    p["guild_id"] = None
+
+    # Clear marriages on both sides
+    m_list = sjl(p.get("marriages"), [])
+    if not m_list and p.get("married_to_id"):
+        m_list = [{"id": int(p["married_to_id"]), "name": p.get("married_to_name", "")}]
+    for m in m_list:
+        try:
+            partner = get_player(m["id"])
+            if partner:
+                pm = sjl(partner.get("marriages"), [])
+                pm = [x for x in pm if x.get("id") != tid]
+                partner["marriages"] = json.dumps(pm) if pm else None
+                if not pm:
+                    partner["married_to_id"] = None
+                    partner["married_to_name"] = None
+                    partner["married_at"] = None
+                else:
+                    partner["married_to_id"] = pm[0]["id"]
+                    partner["married_to_name"] = pm[0]["name"]
+                save_player(partner)
+        except Exception:
+            pass
+    p["marriages"] = None
+    p["married_to_id"] = None
+    p["married_to_name"] = None
+    p["married_at"] = None
+
+    # Clear holding hands on both sides
+    try:
+        h_list = _get_holding_hands(p)
+        for h in h_list:
+            try:
+                partner = get_player(h["id"])
+                if partner:
+                    ph = _get_holding_hands(partner)
+                    ph = [x for x in ph if x.get("id") != tid]
+                    _save_holding_hands(partner, ph)
+                    save_player(partner)
+            except Exception:
+                pass
+        _save_holding_hands(p, [])
+    except Exception:
+        pass
+
+    save_player(p)
 
 _BAN_PAGE_SIZE = 10
 
