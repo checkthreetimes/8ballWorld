@@ -8313,6 +8313,9 @@ def _build_stats_pages(p, viewing_name=None):
         else None
     )
 
+    recover_countdown = time_until(p.get("invincible_until"))
+    recover_line = f"🛡️ Still Recovering — invincible for *{recover_countdown}*" if is_invincible(p) and recover_countdown else None
+
     married_str = ""
     _stats_marriages = sjl(p.get("marriages"), [])
     if not _stats_marriages and p.get("married_to_id"):
@@ -8366,6 +8369,8 @@ def _build_stats_pages(p, viewing_name=None):
         page1_lines.append("🔴 *WANTED* — take them down for extra rewards!")
     if defeat_line:
         page1_lines.append(defeat_line)
+    if recover_line:
+        page1_lines.append(recover_line)
 
     # Page 2 - Class & Stats
     page2_lines = [
