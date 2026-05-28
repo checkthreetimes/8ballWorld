@@ -3,7 +3,7 @@
 The World of 8Ball  -  RPG Bot v13
 """
 
-import os, json, random, logging, sqlite3, re, asyncio, time
+import os, json, random, logging, sqlite3, re, asyncio, time, threading
 from datetime import datetime, timedelta
 from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -22,6 +22,21 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=lo
 logger = logging.getLogger(__name__)
 DB_PATH  = os.environ.get("DB_PATH", "/data/8ball.db")
 ADMIN_ID = 15941534
+
+# ── PERSISTENT DB CONNECTION POOL ─────────────────────────────────────────────
+# One reusable connection per thread instead of open/close on every query.
+# WAL mode lets reads happen concurrently with the single writer.
+_db_local = threading.local()
+
+def _db() -> sqlite3.Connection:
+    conn = getattr(_db_local, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        _db_local.conn = conn
+    return conn
 
 # ── CHANGELOG ─────────────────────────────────────────────────────────────────
 CURRENT_VERSION = "v1.21"
@@ -3328,21 +3343,20 @@ def _npc_level_stats(base_hp, base_dmg, level, player_max_hp=0):
     return hp, atk
 
 def _get_monster_squad(uid):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c = _db().cursor()
     c.execute("SELECT slot,monster_key,nickname,level,exp,hp,max_hp FROM monster_squad WHERE user_id=? ORDER BY slot", (uid,))
-    rows = c.fetchall(); conn.close()
-    return [{"slot":r[0],"key":r[1],"nickname":r[2],"level":r[3],"exp":r[4],"hp":r[5],"max_hp":r[6]} for r in rows]
+    return [{"slot":r[0],"key":r[1],"nickname":r[2],"level":r[3],"exp":r[4],"hp":r[5],"max_hp":r[6]} for r in c.fetchall()]
 
 def _save_squad_monster(uid, m):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _db(); c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO monster_squad (user_id,slot,monster_key,nickname,level,exp,hp,max_hp) VALUES(?,?,?,?,?,?,?,?)",
               (uid, m["slot"], m["key"], m.get("nickname"), m["level"], m["exp"], m["hp"], m["max_hp"]))
-    conn.commit(); conn.close()
+    conn.commit()
 
 def _remove_squad_monster(uid, slot):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _db(); c = conn.cursor()
     c.execute("DELETE FROM monster_squad WHERE user_id=? AND slot=?", (uid, slot))
-    conn.commit(); conn.close()
+    conn.commit()
 
 def _add_monster_to_squad(uid, key, level=1):
     squad = _get_monster_squad(uid)
@@ -3355,17 +3369,14 @@ def _add_monster_to_squad(uid, key, level=1):
     return True, _get_monster_squad(uid)
 
 def _has_starter(uid):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c = _db().cursor()
     c.execute("SELECT COUNT(*) FROM monster_squad WHERE user_id=?", (uid,))
-    result = c.fetchone()[0] > 0
-    conn.close()
-    return result
+    return c.fetchone()[0] > 0
 
 def _get_monster_box(uid):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c = _db().cursor()
     c.execute("SELECT id,monster_key,nickname,level,exp,hp,max_hp,caught_at FROM monster_box WHERE user_id=? ORDER BY id", (uid,))
-    rows = c.fetchall(); conn.close()
-    return [{"id":r[0],"key":r[1],"nickname":r[2],"level":r[3],"exp":r[4],"hp":r[5],"max_hp":r[6],"caught_at":r[7]} for r in rows]
+    return [{"id":r[0],"key":r[1],"nickname":r[2],"level":r[3],"exp":r[4],"hp":r[5],"max_hp":r[6],"caught_at":r[7]} for r in c.fetchall()]
 
 def _add_monster_to_box(uid, key, level=1, exp=0, hp=None, max_hp=None, nickname=None):
     mdata = MONSTER_BY_KEY.get(key)
@@ -3373,15 +3384,15 @@ def _add_monster_to_box(uid, key, level=1, exp=0, hp=None, max_hp=None, nickname
     base_hp, _ = _mon_level_stats(mdata[4], mdata[5], level)
     hp     = hp     if hp     is not None else base_hp
     max_hp = max_hp if max_hp is not None else base_hp
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _db(); c = conn.cursor()
     c.execute("INSERT INTO monster_box (user_id,monster_key,nickname,level,exp,hp,max_hp,caught_at) VALUES(?,?,?,?,?,?,?,?)",
               (uid, key, nickname, level, exp, hp, max_hp, datetime.now().isoformat()))
-    conn.commit(); conn.close()
+    conn.commit()
 
 def _remove_box_monster(uid, box_id):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _db(); c = conn.cursor()
     c.execute("DELETE FROM monster_box WHERE id=? AND user_id=?", (box_id, uid))
-    conn.commit(); conn.close()
+    conn.commit()
 
 def _encounter_battle_card(enc):
     """Render the enhanced battle card with pet info and action log."""
@@ -5064,12 +5075,12 @@ async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
     except (KeyError, TypeError, ValueError):
         return 0
 
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; bc = conn.cursor()
+    conn = _db(); bc = conn.cursor()
     bc.execute("SELECT * FROM bounties WHERE target_id=? AND claimed_by IS NULL AND expires_at > ?",
                (target_uid, datetime.now().isoformat()))
     bounties = bc.fetchall()
     if not bounties:
-        conn.close(); return 0
+        return 0
 
     RAILRUNNER_CLASSES = {"bounty_hunter", "sharpshooter", "sniper", "deadeye"}
     is_railrunner = attacker.get("class_id") in RAILRUNNER_CLASSES
@@ -5101,7 +5112,7 @@ async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
                             parse_mode="Markdown")
                     except Exception: pass
 
-    conn.commit(); conn.close()
+    conn.commit()
 
     # Re-fetch attacker from DB to avoid stale dict / race with other saves
     fresh = get_player(attacker_uid)
@@ -5948,6 +5959,8 @@ def check_bleed_tick(p):
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     c    = conn.cursor()
 
     c.execute("""CREATE TABLE IF NOT EXISTS shadow_profiles (
@@ -6241,6 +6254,18 @@ def init_db():
         conn.commit()
     except sqlite3.OperationalError:
         pass
+
+    # ── Performance indexes ───────────────────────────────────────────────────
+    for _idx in [
+        "CREATE INDEX IF NOT EXISTS idx_players_tg_username ON players(tg_username)",
+        "CREATE INDEX IF NOT EXISTS idx_players_guild_id    ON players(guild_id)",
+        "CREATE INDEX IF NOT EXISTS idx_players_is_wanted   ON players(is_wanted)",
+        "CREATE INDEX IF NOT EXISTS idx_bounties_target     ON bounties(target_id)",
+        "CREATE INDEX IF NOT EXISTS idx_bounties_active     ON bounties(target_id, claimed_by, expires_at)",
+        "CREATE INDEX IF NOT EXISTS idx_shadow_last_seen    ON shadow_profiles(last_seen)",
+    ]:
+        conn.execute(_idx)
+    conn.commit()
 
     conn.close()
 
@@ -6607,19 +6632,16 @@ def init_db():
 
 # ── DB HELPERS ────────────────────────────────────────────────────────────────
 def _get(table, user_id):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
+    c = _db().cursor()
     c.execute(f"SELECT * FROM {table} WHERE user_id=?", (user_id,))
     row = c.fetchone()
-    conn.close()
     return dict(row) if row else None
 
 def get_shadow(uid):   return _get("shadow_profiles", uid)
 def get_player(uid):   return _get("players", uid)
 
 def save_shadow(s):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _db(); c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO shadow_profiles
         (user_id,username,level,exp,total_exp,message_count,
          passive_cooldowns,ascended,last_seen,last_pool,pending_items,pet_notify_ts)
@@ -6629,7 +6651,7 @@ def save_shadow(s):
          s.get("passive_cooldowns","{}"),s.get("ascended",0),
          datetime.now().isoformat(),s.get("last_pool"),
          s.get("pending_items","[]"),s.get("pet_notify_ts","{}")))
-    conn.commit(); conn.close()
+    conn.commit()
 
 # Normalizes pool-hall item names → RPG names at save time (catches loot drops too)
 _ITEM_RENAME = {
@@ -6770,7 +6792,7 @@ def save_player(p):
     enc = sjl(p.get("enchants"), {})
     if any(k in _ITEM_RENAME for k in enc):
         p["enchants"] = json.dumps({_ITEM_RENAME.get(k, k): v for k, v in enc.items()})
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _db(); c = conn.cursor()
     # Never wipe tg_username with NULL — preserve existing DB value
     if p.get("tg_username") is None:
         _tg_row = c.execute("SELECT tg_username FROM players WHERE user_id=?", (p.get("user_id"),)).fetchone()
@@ -6820,7 +6842,7 @@ def save_player(p):
     placeholders = ",".join(["?"]*len(fields))
     col_str = ",".join(fields)
     c.execute(f"INSERT OR REPLACE INTO players ({col_str}) VALUES({placeholders})", vals)
-    conn.commit(); conn.close()
+    conn.commit()
 
 def get_or_create_shadow(uid, username):
     s = get_shadow(uid)
@@ -6832,36 +6854,33 @@ def get_or_create_shadow(uid, username):
     return s
 
 def get_guild(gid):
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
-    c = conn.cursor(); c.execute("SELECT * FROM guilds WHERE guild_id=?", (gid,))
-    row = c.fetchone(); conn.close()
+    c = _db().cursor()
+    c.execute("SELECT * FROM guilds WHERE guild_id=?", (gid,))
+    row = c.fetchone()
     return dict(row) if row else None
 
 def get_guild_by_name(name):
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
-    c = conn.cursor()
+    c = _db().cursor()
     c.execute("SELECT * FROM guilds WHERE LOWER(name)=LOWER(?)", (name,))
-    row = c.fetchone(); conn.close()
+    row = c.fetchone()
     return dict(row) if row else None
 
 def get_active_war(gid1, gid2=None):
     """Return active war involving gid1 (optionally against gid2)."""
-    conn_gw = sqlite3.connect(DB_PATH); conn_gw.row_factory = sqlite3.Row
-    c_gw = conn_gw.cursor()
+    c = _db().cursor()
     if gid2:
-        c_gw.execute("""SELECT * FROM guild_wars WHERE active=1 AND expires_at > ?
+        c.execute("""SELECT * FROM guild_wars WHERE active=1 AND expires_at > ?
                         AND ((guild1_id=? AND guild2_id=?) OR (guild1_id=? AND guild2_id=?))""",
                      (datetime.now().isoformat(), gid1, gid2, gid2, gid1))
     else:
-        c_gw.execute("""SELECT * FROM guild_wars WHERE active=1 AND expires_at > ?
+        c.execute("""SELECT * FROM guild_wars WHERE active=1 AND expires_at > ?
                         AND (guild1_id=? OR guild2_id=?)""",
                      (datetime.now().isoformat(), gid1, gid1))
-    row = c_gw.fetchone()
-    conn_gw.close()
+    row = c.fetchone()
     return dict(row) if row else None
 
 def save_guild(g):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _db(); c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO guilds
         (guild_id,name,leader_id,members,level,exp,bank,created_at,war_wins,bank_gold)
         VALUES(?,?,?,?,?,?,?,?,?,?)""",
@@ -6871,7 +6890,7 @@ def save_guild(g):
          g.get("created_at",datetime.now().isoformat()),
          safe_int(g.get("war_wins")),
          safe_int(g.get("bank_gold"))))
-    conn.commit(); conn.close()
+    conn.commit()
 
 def add_guild_exp(g, amount):
     msgs = []; g["exp"] = safe_int(g.get("exp")) + amount
@@ -7067,14 +7086,11 @@ def give_pet_exp(owner_id, raw_amount):
             if pet["level"] == milestone:
                 msg += f"\n🏆 Milestone: Pet reached Level {milestone}!"
     # Save pet
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        c = conn.cursor()
-        c.execute("UPDATE pets SET exp=?, level=? WHERE pet_id=?",
-                  (pet["exp"], pet["level"], pet["pet_id"]))
-        conn.commit()
-    finally:
-        conn.close()
+    conn = _db()
+    c = conn.cursor()
+    c.execute("UPDATE pets SET exp=?, level=? WHERE pet_id=?",
+              (pet["exp"], pet["level"], pet["pet_id"]))
+    conn.commit()
     return msg
 
 def add_shadow_exp(s, amount):
@@ -7382,12 +7398,11 @@ async def gear_cmd(update, context):
 # ── RANK ──────────────────────────────────────────────────────────────────────
 async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    c = _db().cursor()
     c.execute("SELECT user_id,username,level,total_exp,class_id FROM players WHERE user_id NOT IN (SELECT user_id FROM banned_users)")
     rpg_rows = c.fetchall()
     c.execute("SELECT user_id,username,level,total_exp FROM shadow_profiles WHERE user_id NOT IN (SELECT user_id FROM banned_users)")
     shd_rows = c.fetchall()
-    conn.close()
 
     seen = {}
     for row in shd_rows:
@@ -7415,9 +7430,9 @@ async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return f"{prefix} *{e['username']}* - Lv {e['level']} - {cls}"
 
     if context.args and context.args[0].lower() == "wins":
-        conn2 = sqlite3.connect(DB_PATH); conn2.row_factory = sqlite3.Row; c2 = conn2.cursor()
+        c2 = _db().cursor()
         c2.execute("SELECT username, wins, losses, level FROM players WHERE user_id NOT IN (SELECT user_id FROM banned_users) ORDER BY wins DESC LIMIT 20")
-        rows2 = c2.fetchall(); conn2.close()
+        rows2 = c2.fetchall()
         medals2 = {1:"🥇",2:"🥈",3:"🥉"}
         lines2 = ["⚔️ *Top 20  -  PVP Wins*\n"]
         for i2, row2 in enumerate(rows2, 1):
@@ -7463,12 +7478,11 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query.data.startswith("rank_p_"): return
     page = int(query.data.split("_")[-1])
 
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    c = _db().cursor()
     c.execute("SELECT user_id,username,level,total_exp,class_id FROM players WHERE user_id NOT IN (SELECT user_id FROM banned_users)")
     rpg_rows = c.fetchall()
     c.execute("SELECT user_id,username,level,total_exp FROM shadow_profiles WHERE user_id NOT IN (SELECT user_id FROM banned_users)")
     shd_rows = c.fetchall()
-    conn.close()
 
     seen = {}
     for row in shd_rows:
@@ -7854,12 +7868,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         if a_guild and d_guild and a_guild["guild_id"] != d_guild["guild_id"]:
             war_gw = get_active_war(a_guild["guild_id"], d_guild["guild_id"])
             if war_gw:
-                conn_kr = sqlite3.connect(DB_PATH); c_kr = conn_kr.cursor()
+                _db_kw = _db(); c_kr = _db_kw.cursor()
                 if str(war_gw["guild1_id"]) == str(a_guild["guild_id"]):
                     c_kr.execute("UPDATE guild_wars SET kills1=kills1+1 WHERE war_id=?", (war_gw["war_id"],))
                 else:
                     c_kr.execute("UPDATE guild_wars SET kills2=kills2+1 WHERE war_id=?", (war_gw["war_id"],))
-                conn_kr.commit(); conn_kr.close()
+                _db_kw.commit()
                 action += f"\n⚔️ *Guild War kill!* Score updated for {a_guild['name']}."
         if cls_a and cls_a.get("passive_key") == "dead_or_alive":
             a["deadeye_kill_bonus"] = safe_int(a.get("deadeye_kill_bonus")) + 2
@@ -7896,9 +7910,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
 def get_player_by_username(name):
     """Look up player by Telegram @handle or display name (case-insensitive)."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
+    c = _db().cursor()
     key = name.lower().lstrip("@")
     # Try @handle first (tg_username column), then display name
     c.execute("SELECT * FROM players WHERE LOWER(tg_username)=?", (key,))
@@ -7906,7 +7918,6 @@ def get_player_by_username(name):
     if not row:
         c.execute("SELECT * FROM players WHERE LOWER(username)=?", (key,))
         row = c.fetchone()
-    conn.close()
     return dict(row) if row else None
 
 
@@ -15723,8 +15734,8 @@ async def bounty_amount_callback(update: Update, context: ContextTypes.DEFAULT_T
     except Exception: pass
 
 async def bounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
-    rows = conn.execute(
+    c = _db().cursor()
+    rows = c.execute(
         "SELECT b.*, p.username as target_name, p2.username as placer_name "
         "FROM bounties b "
         "LEFT JOIN players p  ON b.target_id  = p.user_id "
@@ -15732,7 +15743,6 @@ async def bounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "WHERE b.claimed_by IS NULL AND b.expires_at > ? "
         "ORDER BY b.reward DESC LIMIT 10",
         (datetime.now().isoformat(),)).fetchall()
-    conn.close()
 
     if not rows:
         await send_group(update, "💰 *Bounty Board*\n\n_No active bounties right now._", delay=15)
@@ -15742,12 +15752,10 @@ async def bounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     placer_ids = [row["placer_id"] for row in rows]
     railrunner_ids = set()
     if placer_ids:
-        rconn = sqlite3.connect(DB_PATH); rconn.row_factory = sqlite3.Row
-        for row in rconn.execute(
+        for row in c.execute(
             f"SELECT user_id FROM players WHERE class_id='bounty_hunter' AND user_id IN ({','.join('?'*len(placer_ids))})",
             placer_ids).fetchall():
             railrunner_ids.add(row["user_id"])
-        rconn.close()
 
     lines = ["💰 *Bounty Board* — Active Contracts\n"]
     for i, row in enumerate(rows, 1):
@@ -22213,6 +22221,102 @@ async def fixgear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "\n\nItems returned to their inventory.", delay=15)
 
 
+async def fixbounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: inspect and fix stuck bounties.
+    /fixbounties              — list ALL unclaimed bounties (including expired)
+    /fixbounties wipe         — delete all expired+unclaimed bounties
+    /fixbounties wipe <name>  — delete all unclaimed bounties on that player
+    /fixbounties claim <name> — force-claim all unclaimed bounties on that player (gold goes to admin)
+    """
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        await send_group(update, "❌ Admin only.", delay=9); return
+
+    conn = _db(); c = conn.cursor()
+    now_iso = datetime.now().isoformat()
+
+    args = context.args or []
+    action = args[0].lower() if args else "list"
+    target_name = " ".join(args[1:]) if len(args) > 1 else None
+
+    # ── Resolve target player ──────────────────────────────────────────────────
+    target_uid = None
+    if target_name:
+        tp = get_player_by_username(target_name)
+        if not tp:
+            tp_c = c.execute("SELECT user_id, username FROM players WHERE username LIKE ?",
+                             (f"%{target_name}%",)).fetchone()
+            tp = dict(tp_c) if tp_c else None
+        if not tp:
+            await send_group(update, f"❌ Player *{target_name}* not found.", delay=9); return
+        target_uid = tp["user_id"]
+
+    if action == "list":
+        rows = c.execute(
+            "SELECT b.bounty_id, b.target_id, b.placer_id, b.reward, b.expires_at, b.claimed_by, "
+            "p.username as target_name, p2.username as placer_name "
+            "FROM bounties b "
+            "LEFT JOIN players p  ON b.target_id  = p.user_id "
+            "LEFT JOIN players p2 ON b.placer_id = p2.user_id "
+            "WHERE b.claimed_by IS NULL "
+            "ORDER BY b.expires_at DESC LIMIT 20"
+        ).fetchall()
+        if not rows:
+            await send_group(update, "✅ No unclaimed bounties in the database.", delay=15); return
+        lines = [f"🎯 *Unclaimed Bounties* ({len(rows)} shown)\n"]
+        for r in rows:
+            exp = r["expires_at"] or "?"
+            expired = exp < now_iso if exp != "?" else False
+            status = "💀 EXPIRED" if expired else "✅ LIVE"
+            lines.append(
+                f"ID `{r['bounty_id']}` | {status}\n"
+                f"  Target: *{r['target_name'] or r['target_id']}*  "
+                f"Placer: *{r['placer_name'] or r['placer_id']}*  "
+                f"Reward: *{r['reward']}g*\n"
+                f"  Expires: {exp[:16]}"
+            )
+        lines.append("\n`/fixbounties wipe` — delete expired\n"
+                     "`/fixbounties wipe <name>` — delete all on player\n"
+                     "`/fixbounties claim <name>` — force-claim all on player")
+        await send_group(update, "\n".join(lines), permanent=True, delay=120); return
+
+    if action == "wipe":
+        if target_uid:
+            deleted = c.execute(
+                "DELETE FROM bounties WHERE target_id=? AND claimed_by IS NULL",
+                (target_uid,)).rowcount
+            conn.commit()
+            await send_group(update,
+                f"🗑️ Wiped *{deleted}* unclaimed bounty(s) on *{tp['username']}*.", delay=15)
+        else:
+            deleted = c.execute(
+                "DELETE FROM bounties WHERE claimed_by IS NULL AND expires_at < ?",
+                (now_iso,)).rowcount
+            conn.commit()
+            await send_group(update,
+                f"🗑️ Deleted *{deleted}* expired unclaimed bounty(s).", delay=15)
+        return
+
+    if action == "claim":
+        if not target_uid:
+            await send_group(update, "Usage: /fixbounties claim <playername>", delay=9); return
+        rows = c.execute(
+            "SELECT * FROM bounties WHERE target_id=? AND claimed_by IS NULL",
+            (target_uid,)).fetchall()
+        if not rows:
+            await send_group(update, f"No unclaimed bounties on that player.", delay=9); return
+        total = sum(r["reward"] for r in rows)
+        c.execute("UPDATE bounties SET claimed_by=? WHERE target_id=? AND claimed_by IS NULL",
+                  (ADMIN_ID, target_uid))
+        conn.commit()
+        await send_group(update,
+            f"✅ Force-claimed *{len(rows)}* bounty(s) on *{tp['username']}* "
+            f"totaling *{total}g*. (Gold not awarded — use this to unstick the board.)", delay=15)
+        return
+
+    await send_group(update, "Unknown action. Use: list | wipe | wipe <name> | claim <name>", delay=9)
+
+
 # ── IDLE REWARD SYSTEM ────────────────────────────────────────────────────────
 def _calc_idle_exp(idle_secs: float) -> int:
     """Compound EXP for being offline. 0 if < 30 min. Caps at 5000 EXP at 72 h."""
@@ -23749,7 +23853,8 @@ def main():
     app.add_handler(CommandHandler("banlist",   banlist_cmd))
     app.add_handler(CallbackQueryHandler(ban_picker_callback,   pattern="^banpick_"))
     app.add_handler(CallbackQueryHandler(unban_picker_callback, pattern="^unbanpick_"))
-    app.add_handler(CommandHandler("fixgear",   fixgear_cmd))
+    app.add_handler(CommandHandler("fixgear",      fixgear_cmd))
+    app.add_handler(CommandHandler("fixbounties",  fixbounties_cmd))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(rank_callback,         pattern="^rank_p_"))
