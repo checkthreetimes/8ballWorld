@@ -8073,11 +8073,26 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _du = update.message.reply_to_message.from_user
         du_id = _du.id; du_name = _du.first_name
     elif context.args:
-        found = get_player_by_username(context.args[0])
+        # Check for text_mention entity first \u2014 this fires for users without @handles.
+        # A text_mention entity has entity.user.id even when the user has no @username.
+        found = None
+        if update.message.entities:
+            for ent in update.message.entities:
+                if ent.type == "text_mention" and ent.user:
+                    found = get_player(ent.user.id)
+                    if not found:
+                        await send_group(update,
+                            f"\u274c *{ent.user.first_name}* hasn't ascended yet!", delay=9); return
+                    du_id = ent.user.id; du_name = ent.user.first_name
+                    break
         if not found:
-            await send_group(update,
-                f"\u274c No player found. Try their display name or @handle.", delay=9); return
-        du_id = found["user_id"]; du_name = found["username"]
+            # Join all args so multi-word display names like "John Smith" work
+            name_arg = " ".join(context.args).strip()
+            found = get_player_by_username(name_arg)
+            if not found:
+                await send_group(update,
+                    "\u274c No player found. Reply to their message, or use their @handle or display name.", delay=9); return
+            du_id = found["user_id"]; du_name = found["username"]
     else:
         await send_group(update,
             "Reply to someone's message with /attack, or use /attack @handle or /attack Name.", delay=9)
@@ -8182,6 +8197,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             all_skills = sjl(a.get("all_skills"), [])
             if not all_skills:
                 await query.answer("No skills unlocked yet!", show_alert=True); return
+            if is_defeated(a):
+                await query.answer("You're defeated — can't use skills!", show_alert=True); return
             if is_invincible(a):
                 await query.answer("You're invincible — can't use offensive skills!", show_alert=True); return
             if is_silenced(a):
@@ -13557,7 +13574,9 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(all_skills) == 1:
             sk = all_skills[0]
         else:
-            # Block invincible attackers before showing the picker
+            # Block defeated and invincible attackers before showing the picker
+            if is_defeated(p):
+                await send_group(update, "☠️ You're *Defeated*  -  you can't use offensive skills while defeated.", delay=9); return
             if is_invincible(p):
                 await send_group(update, "🛡️ You're *Still Recovering*  -  you can't use offensive skills while invincible.", delay=9); return
             # Show numbered selection prompt
@@ -13848,8 +13867,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         stype = sk.get("type", "damage")
         _support_types = {"self_heal", "self_heal_buff", "group_heal", "dmg_reduction_buff",
                           "revive_heal", "regen", "full_revive", "heal_shield", "mass_cleanse"}
-        # Block offensive skills on guild members; also block invincible attackers
+        # Block defeated and invincible attackers on all offensive skills
         if stype not in _support_types:
+            if is_defeated(p):
+                await send_result("☠️ You're *Defeated*  -  you can't use offensive skills while defeated."); return
             if is_invincible(p):
                 await send_result("🛡️ You're *Still Recovering*  -  you can't use offensive skills while invincible."); return
             if p.get("guild_id") and str(p.get("guild_id")) == str(tp.get("guild_id")):
@@ -14191,6 +14212,8 @@ async def _execute_skill(update, context, p, sk):
         await send_group(update, "\n".join(lines), delay=20); return
 
     # ── Offensive skills ──────────────────────────────────────────────────────
+    if is_defeated(p):
+        await send_group(update, "☠️ You're *Defeated*  -  you can't use offensive skills while defeated.", delay=9); return
     if is_invincible(p):
         await send_group(update, "🛡️ You're *Still Recovering*  -  you can't use offensive skills while invincible.", delay=9); return
     if not update.message.reply_to_message:
