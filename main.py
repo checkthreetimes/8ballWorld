@@ -110,6 +110,7 @@ legend_shop_expiry = {}   # chat_id -> datetime when legendary craftsman shop ex
 _pet_notify_ts     = {}   # owner_id -> {"hunger": datetime, "mood": datetime, "train": datetime}
 active_raids       = {}   # chat_id -> raid dict
 active_soloraids   = {}   # user_id -> solo raid dict
+_bg_tasks: set    = set() # keeps create_task refs alive until done
 active_drakes      = {}   # chat_id -> drake dict
 message_counters   = {}   # chat_id -> int
 pending_trades     = {}   # user_id -> trade dict
@@ -728,15 +729,15 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Eagle Eye",
-             "passive":"Never miss when your AGI is higher than target DEF.",
+             "passive":"Never miss when DEX beats target DEX, or AGI beats target DEF. All archer attacks gain DEX-based accuracy.",
              "active":"Aimed Shot","type":"pierce_dodge",
-             "desc":"140% damage. Ignores dodge completely.",
-             "passive_key":"eagle_eye","mult":1.4},
+             "desc":"180% damage. Ignores dodge completely.",
+             "passive_key":"eagle_eye","mult":1.8},
             {"tier":1,"unlock":5,"name":"Warning Shot",
              "passive":"First attack each fight reduces target AGI by 2 for 1 minute.",
              "active":"Warning Shot","type":"dmg_acc_debuff",
-             "desc":"80% damage. Target has 20% increased miss chance for 2 minutes.",
-             "passive_key":"warning_shot","mult":0.8},
+             "desc":"110% damage. Target has 25% increased miss chance for 2 minutes.",
+             "passive_key":"warning_shot","mult":1.1},
         ]
     },
     "scout": {
@@ -752,10 +753,10 @@ CLASS_TREE = {
              "desc":"Target has 30% increased miss chance for 3 minutes.",
              "passive_key":"trailblazer"},
             {"tier":2,"unlock":10,"name":"Keen Sight",
-             "passive":"DEX x0.5 bonus accuracy on all attacks.",
+             "passive":"DEX x0.5 bonus accuracy (doubled for Scouts). Near-zero miss chance at high DEX.",
              "active":"Mark Target","type":"dmg_acc_debuff",
-             "desc":"Reduce target dodge by 15% for 2 minutes.",
-             "passive_key":"keen_sight"},
+             "desc":"120% damage. Reduce target dodge by 20% for 2 minutes.",
+             "passive_key":"keen_sight","mult":1.2},
         ]
     },
     "ranger": {
@@ -768,8 +769,8 @@ CLASS_TREE = {
             {"tier":3,"unlock":30,"name":"Nature's Bond",
              "passive":"-10% damage taken from all sources.",
              "active":"Entangle","type":"root",
-             "desc":"Target cannot /attack for 90 seconds.",
-             "passive_key":"natures_bond"},
+             "desc":"90% damage then roots target — cannot /attack for 90 seconds.",
+             "passive_key":"natures_bond","mult":0.9},
         ]
     },
     "warden": {
@@ -782,8 +783,8 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Guardian Stance",
              "passive":"If a guild member is attacked you have 20% chance to intercept the hit.",
              "active":"Barrage","type":"random_aoe",
-             "desc":"Fire 6 arrows at random active players in chat. Each deals AGI x1.5 damage.",
-             "passive_key":"guardian_stance"},
+             "desc":"Unleash a volley — DEX x4 damage. Ignores dodge.",
+             "passive_key":"guardian_stance","mult":4.0,"stat":"DEX"},
         ]
     },
     "strider": {
@@ -796,8 +797,8 @@ CLASS_TREE = {
             {"tier":5,"unlock":100,"name":"Railfinder",
              "passive":"Cannot be rooted, frozen or stunned by any skill ever.",
              "active":"Storm of Arrows","type":"aoe_recent_attackers",
-             "desc":"AGI x8 split across all players who attacked you in last 30 minutes.",
-             "passive_key":"pathfinder"},
+             "desc":"DEX x6 precision strike — cannot miss, ignores dodge.",
+             "passive_key":"pathfinder","mult":6.0,"stat":"DEX"},
         ]
     },
     "bounty_hunter": {
@@ -829,8 +830,8 @@ CLASS_TREE = {
             {"tier":3,"unlock":30,"name":"Steady Aim",
              "passive":"Each consecutive attack on same target deals +10% more damage (max 50%).",
              "active":"Piercing Shot","type":"pierce_all",
-             "desc":"STR x2 damage. Ignores all defense and passives.",
-             "passive_key":"steady_aim"},
+             "desc":"DEX x2.5 damage. Ignores all defense and passives.",
+             "passive_key":"steady_aim","dex_mult":2.5},
         ]
     },
     "sniper": {
@@ -843,7 +844,7 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Headshot",
              "passive":"Crits deal 300% instead of 200%.",
              "active":"Killshot","type":"charged_shot",
-             "desc":"Charge: next /attack fires AGI x4. Cannot be dodged or blocked.",
+             "desc":"Charge: next /attack fires DEX x5. Cannot be dodged or blocked.",
              "passive_key":"headshot"},
         ]
     },
@@ -4733,7 +4734,11 @@ def calc_attack_damage(attacker, weather=None):
     level_bonus = attacker["level"] // 2
     dex_val   = get_stat(attacker, "DEX")
     luk_val   = get_stat(attacker, "LUK")
-    dex_bonus = dex_val // 3
+    # Archers: DEX feeds attack the same way STR feeds warriors (full DEX//2 bonus on top of primary)
+    if get_class_line(attacker) == "archer":
+        dex_bonus = dex_val // 2
+    else:
+        dex_bonus = dex_val // 3
     luk_bonus = luk_val // 5
 
     raw = base + weapon + perm + acc_atk + stat_bonus + level_bonus + dex_bonus + luk_bonus
@@ -5043,11 +5048,25 @@ async def _notify_attack(bot, victim, attacker_name, dmg):
     except Exception:
         pass
 
+def _fire(coro):
+    """Schedule a coroutine as a tracked background task (prevents GC before completion)."""
+    t = asyncio.create_task(coro)
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+    return t
+
+
 async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
     """Claim ALL active bounties on target (stacked from multiple players)."""
+    try:
+        attacker_uid = int(attacker["user_id"])
+        target_uid   = int(target["user_id"])
+    except (KeyError, TypeError, ValueError):
+        return 0
+
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; bc = conn.cursor()
     bc.execute("SELECT * FROM bounties WHERE target_id=? AND claimed_by IS NULL AND expires_at > ?",
-               (target["user_id"], datetime.now().isoformat()))
+               (target_uid, datetime.now().isoformat()))
     bounties = bc.fetchall()
     if not bounties:
         conn.close(); return 0
@@ -5059,9 +5078,9 @@ async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
 
     for bounty in bounties:
         bc.execute("UPDATE bounties SET claimed_by=? WHERE bounty_id=?",
-                   (attacker["user_id"], bounty["bounty_id"]))
-        reward     = bounty["reward"]
-        self_placed = (bounty["placer_id"] == attacker["user_id"])
+                   (attacker_uid, bounty["bounty_id"]))
+        reward      = bounty["reward"]
+        self_placed = (int(bounty["placer_id"]) == attacker_uid)
         if self_placed and is_railrunner:
             payout = reward + round(reward * 0.25)
             total_reward += payout
@@ -5083,8 +5102,15 @@ async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
                     except Exception: pass
 
     conn.commit(); conn.close()
-    attacker["gold"] = attacker.get("gold", 0) + total_reward
-    save_player(attacker)
+
+    # Re-fetch attacker from DB to avoid stale dict / race with other saves
+    fresh = get_player(attacker_uid)
+    if fresh:
+        fresh["gold"] = fresh.get("gold", 0) + total_reward
+        save_player(fresh)
+    else:
+        attacker["gold"] = attacker.get("gold", 0) + total_reward
+        save_player(attacker)
 
     bounty_count = len(bounties)
     stack_note = f" _(×{bounty_count} bounties stacked!)_" if bounty_count > 1 else ""
@@ -5099,7 +5125,7 @@ async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
     except Exception: pass
     try:
         await bot.send_message(
-            chat_id=target["user_id"],
+            chat_id=target_uid,
             text=f"🎯 The bounty on your head was collected by *{attacker['username']}*! Total: *{total_reward}g*",
             parse_mode="Markdown")
     except Exception: pass
@@ -5189,7 +5215,10 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         dmg = round(get_stat(p, "AGI") * 3)
         lines.append("🌑 *Pierce!* Full damage  -  no defense.")
     elif stype == "pierce_all":
-        dmg = round(get_stat(p, "STR") * sk.get("str_mult", 2))
+        if sk.get("dex_mult"):
+            dmg = round(get_stat(p, "DEX") * sk["dex_mult"])
+        else:
+            dmg = round(get_stat(p, "STR") * sk.get("str_mult", 2))
         lines.append("🏹 *Piercing Shot!* Ignores all defense.")
     elif stype == "charged_shot":
         p["charging_killshot"] = 1
@@ -5401,8 +5430,12 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
     # Charged killshot check
     if safe_int(p.get("charging_killshot")):
         p["charging_killshot"] = 0
-        dmg = get_stat(p, "AGI") * 4
-        lines.append(f"🎯 *KILLSHOT FIRED!* AGI×4 = *{dmg} damage!*")
+        if get_class_line(p) == "archer":
+            dmg = get_stat(p, "DEX") * 5
+            lines.append(f"🎯 *KILLSHOT FIRED!* DEX×5 = *{dmg} damage!*")
+        else:
+            dmg = get_stat(p, "AGI") * 4
+            lines.append(f"🎯 *KILLSHOT FIRED!* AGI×4 = *{dmg} damage!*")
 
     # Apply crit if base damage type
     if dmg > 0 and check_crit(p) and stype not in ("crit_dmg","void_nuke","pierce_all","charged_shot"):
@@ -5769,8 +5802,19 @@ def check_miss(attacker, defender):
     if cls_a:
         pk_a = cls_a.get("passive_key","")
         if pk_a == "eagle_eye":
-            if get_stat(attacker, "AGI") > get_stat(defender, "DEF"):
+            # Never miss if AGI beats defender DEF, or DEX beats defender DEX
+            if (get_stat(attacker, "AGI") > get_stat(defender, "DEF") or
+                    get_stat(attacker, "DEX") > get_stat(defender, "DEX")):
                 return False  # never miss
+
+    # Archer-line: DEX reduces enemy effective dodge (accuracy bonus)
+    if get_class_line(attacker) == "archer":
+        atk_dex = get_stat(attacker, "DEX")
+        dodge -= min(0.20, atk_dex * 0.004)
+        cls_a2 = get_player_class(attacker)
+        if cls_a2 and cls_a2.get("passive_key") == "keen_sight":
+            dodge -= min(0.15, atk_dex * 0.005)
+    dodge = max(0.0, dodge)
 
     did_dodge = random.random() < dodge
     if did_dodge and cls_d:
@@ -7502,9 +7546,14 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     # Charged killshot
     if safe_int(a.get("charging_killshot")):
         a["charging_killshot"] = 0
-        dmg_after_def = get_stat(a, "AGI") * 4
-        action = (f"🎯 *KILLSHOT FIRED!* *{a['username']}* → *{d['username']}*  -  "
-                  f"AGI×4 = *{dmg_after_def} damage!* Cannot be dodged!")
+        if get_class_line(a) == "archer":
+            dmg_after_def = get_stat(a, "DEX") * 5
+            action = (f"🎯 *KILLSHOT FIRED!* *{a['username']}* → *{d['username']}*  -  "
+                      f"DEX×5 = *{dmg_after_def} damage!* Cannot be dodged!")
+        else:
+            dmg_after_def = get_stat(a, "AGI") * 4
+            action = (f"🎯 *KILLSHOT FIRED!* *{a['username']}* → *{d['username']}*  -  "
+                      f"AGI×4 = *{dmg_after_def} damage!* Cannot be dodged!")
         d["hp"] = max(0, d["hp"] - dmg_after_def)
         update_recent_attackers(d, au_id)
         if d["hp"] <= 0:
@@ -7515,7 +7564,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             d["revenge_target"] = au_id
             d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
             asyncio.create_task(_notify_defeat(bot, d, a["username"] + " (Killshot)"))
-            asyncio.create_task(check_and_claim_bounty(bot, a, d, chat_id))
+            _fire(check_and_claim_bounty(bot, a, d, chat_id))
             exp_loss = round(d.get("exp", 0) * 0.10)
             d["exp"] = max(0, d.get("exp", 0) - exp_loss)
             d["losses"] = d.get("losses", 0) + 1
@@ -7799,7 +7848,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             restore = round(a["max_hp"] * 0.20)
             a["hp"] = min(a["max_hp"], a["hp"] + restore)
             set_status(d, "weakened_until", 3600)
-        asyncio.create_task(check_and_claim_bounty(bot, a, d, chat_id))
+        _fire(check_and_claim_bounty(bot, a, d, chat_id))
         a_guild = get_guild(a.get("guild_id")) if a.get("guild_id") else None
         d_guild = get_guild(d.get("guild_id")) if d.get("guild_id") else None
         if a_guild and d_guild and a_guild["guild_id"] != d_guild["guild_id"]:
@@ -14040,7 +14089,10 @@ async def _execute_skill(update, context, p, sk):
         dmg = round(get_stat(p,"AGI") * 3)
         lines.append("🌑 *Pierce!* Ignores dodge and block.")
     elif stype == "pierce_all":
-        dmg = round(get_stat(p,"STR") * sk.get("str_mult",2))
+        if sk.get("dex_mult"):
+            dmg = round(get_stat(p, "DEX") * sk["dex_mult"])
+        else:
+            dmg = round(get_stat(p, "STR") * sk.get("str_mult", 2))
         lines.append("🏹 *Piercing Shot!* Ignores all defense.")
     elif stype == "charged_shot":
         p["charging_killshot"] = 1; save_player(p)
@@ -14057,8 +14109,10 @@ async def _execute_skill(update, context, p, sk):
         save_player(d); save_player(p)
         await send_group(update, "\n".join(lines), delay=15); return
     elif stype == "root":
+        dmg = calc_defense(d, round(base * sk.get("mult", 0.5)))
+        d["hp"] = max(0, d["hp"] - dmg)
         set_status(d, "entangled_until", 90)
-        lines.append(f"🌿 *Entangled!* {d['username']} cannot attack for 90 seconds.")
+        lines.append(f"🌿 *Entangled!* {dmg} damage  -  {d['username']} cannot attack for 90 seconds.")
         save_player(d); save_player(p)
         await send_group(update, "\n".join(lines), delay=15); return
     elif stype == "bleed_crit":
@@ -14295,7 +14349,7 @@ async def _execute_skill(update, context, p, sk):
             asyncio.create_task(_notify_defeat(context.bot, d, f"{p['username']} using {sk['name']}"))
         d["losses"] = d.get("losses",0)+1
         p["wins"]   = p.get("wins",0)+1
-        asyncio.create_task(check_and_claim_bounty(context.bot, p, d, chat_id))
+        _fire(check_and_claim_bounty(context.bot, p, d, chat_id))
         exp_gain = 80 + p["level"]*8
         lmsgs, leveled = add_exp(p, exp_gain, w); lvl_msgs = lmsgs
         lines.append(f"\n💀 *{d['username']}* defeated by *{sk['name']}*! +{exp_gain} EXP")
@@ -18493,7 +18547,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 wp["wins"] = wp.get("wins",0) + 1
                 for _d, _e, _g in track_objective(wp, "arena_win"):
                     wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
-                asyncio.create_task(check_and_claim_bounty(update.get_bot(), wp, lp, chat_id))
+                _fire(check_and_claim_bounty(update.get_bot(), wp, lp, chat_id))
                 exp_gain = 50 + wp["level"] * 5
                 add_exp(wp, exp_gain)
                 save_player(wp); save_player(lp)
@@ -18766,7 +18820,7 @@ async def arena_act_callback(update, context):
             wp["wins"] = wp.get("wins",0) + 1
             for _d, _e, _g in track_objective(wp, "arena_win"):
                 wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
-            asyncio.create_task(check_and_claim_bounty(query.get_bot(), wp, lp, chat_id))
+            _fire(check_and_claim_bounty(query.get_bot(), wp, lp, chat_id))
             exp_gain = 50 + wp["level"] * 5
             add_exp(wp, exp_gain)
             save_player(wp); save_player(lp)
@@ -18917,7 +18971,7 @@ async def arena_act_callback(update, context):
             wp["wins"] = wp.get("wins",0) + 1
             for _d, _e, _g in track_objective(wp, "arena_win"):
                 wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
-            asyncio.create_task(check_and_claim_bounty(query.get_bot(), wp, lp, chat_id))
+            _fire(check_and_claim_bounty(query.get_bot(), wp, lp, chat_id))
             exp_gain = 50 + wp["level"] * 5
             add_exp(wp, exp_gain)
             save_player(wp); save_player(lp)
@@ -22396,7 +22450,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if _bleed_atk_ids:
                     _bleed_atk = get_player(_bleed_atk_ids[-1])
                     if _bleed_atk:
-                        asyncio.create_task(check_and_claim_bounty(context.bot, _bleed_atk, p, chat_id))
+                        _fire(check_and_claim_bounty(context.bot, _bleed_atk, p, chat_id))
             save_player(p)
 
     # Cannot earn EXP while defeated
