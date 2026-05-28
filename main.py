@@ -9257,7 +9257,7 @@ async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cls      = get_player_class(p)
     cls_name = cls["name"] if cls else "Unknown"
     path_str = f" (Path {p['class_path']})" if p.get("class_path") else ""
-    cost     = 300
+    cost     = 20000
 
     if not context.args or context.args[0].lower() != "confirm":
         rscls_markup = InlineKeyboardMarkup([[
@@ -9272,7 +9272,7 @@ async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"  - Remove all class skills\n"
             f"  - Reverse class stat bonuses\n"
             f"  - Keep your level, allocated stat points, gear, and gold\n\n"
-            f"Cost: *{cost}g*\n\n"
+            f"Cost: *{cost:,}g*\n\n"
             f"Tap Confirm or type /resetclass confirm to proceed.",
             delay=20, reply_markup=rscls_markup); return
 
@@ -9328,9 +9328,9 @@ async def resetclass_callback(update, context):
         p = get_player(uid)
         if not p or not p.get("class_id"):
             await query.answer("No class to reset!", show_alert=True); return
-        cost = 300
+        cost = 20000
         if safe_int(p.get("gold")) < cost:
-            await query.answer(f"Not enough gold! Need {cost}g.", show_alert=True); return
+            await query.answer(f"Not enough gold! Need {cost:,}g.", show_alert=True); return
         cls = get_player_class(p)
         cls_name = cls["name"] if cls else "Unknown"
         bonuses = _calc_applied_class_bonuses(p)
@@ -21018,6 +21018,7 @@ async def resetstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
 
+    _rss_cost = 20000
     if not context.args or context.args[0].lower() != "confirm":
         rsstat_markup = InlineKeyboardMarkup([[
             InlineKeyboardButton("✅ Confirm Reset", callback_data=f"rsstat_confirm_{user.id}"),
@@ -21031,9 +21032,14 @@ async def resetstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Current stats: STR:{sd.get('STR',5)} AGI:{sd.get('AGI',5)} "
             f"INT:{sd.get('INT',5)} WIS:{sd.get('WIS',5)} "
             f"DEX:{sd.get('DEX',5)} LUK:{sd.get('LUK',5)}\n\n"
+            f"Cost: *{_rss_cost:,}g*\n\n"
             f"Tap Confirm or type /resetstats confirm to proceed.",
             delay=20, reply_markup=rsstat_markup); return
 
+    if safe_int(p.get("gold")) < _rss_cost:
+        await send_group(update,
+            f"Not enough gold! Need {_rss_cost:,}g, you have {p.get('gold',0):,}g.", delay=9); return
+    p["gold"] = safe_int(p.get("gold")) - _rss_cost
     new_stats, refunded = _do_resetstats(p)
     await send_group(update,
         f"🔄 *Stat Reset Complete!*\n\n"
@@ -21075,6 +21081,10 @@ async def resetstats_callback(update, context):
         p = get_player(uid)
         if not p:
             await query.answer("Player not found!", show_alert=True); return
+        _rss_cost = 20000
+        if safe_int(p.get("gold")) < _rss_cost:
+            await query.answer(f"Not enough gold! Need {_rss_cost:,}g.", show_alert=True); return
+        p["gold"] = safe_int(p.get("gold")) - _rss_cost
         new_stats, refunded = _do_resetstats(p)
         result = (f"🔄 *Stat Reset Complete!*\n\n"
                   f"All allocated stat points have been refunded.\n"
