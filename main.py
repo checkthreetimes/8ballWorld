@@ -3383,8 +3383,8 @@ def _remove_box_monster(uid, box_id):
     conn.commit(); conn.close()
 
 def _encounter_battle_card(enc):
-    """Render the Pokemon-style battle card."""
-    mode = enc["mode"]
+    """Render the enhanced battle card with pet info and action log."""
+    mode   = enc["mode"]
     p_name = enc["p_name"]
     p_hp   = enc["p_hp"]
     p_mhp  = enc["p_max_hp"]
@@ -3394,24 +3394,47 @@ def _encounter_battle_card(enc):
     e_lv   = enc["e_level"]
     elem   = enc.get("element","")
     elem_e = ELEMENT_EMOJI.get(elem,"")
-    last   = enc.get("last_action","")
     p_bar  = _enc_hp_bar(p_hp, p_mhp)
     e_bar  = _enc_hp_bar(e_hp, e_mhp)
     lines  = []
-    lines.append(f"{'⚔️ BATTLE' if mode=='battle' else '🌿 HUNT'} ENCOUNTER")
+    lines.append(f"{'⚔️ NPC BATTLE' if mode=='battle' else '🌿 HUNT'}")
     lines.append("")
     if mode == "battle":
         cls_name = CLASS_TREE.get(enc.get("e_class",""), {}).get("name", enc.get("e_class","NPC").replace("_"," ").title())
         lines.append(f"👤 *{e_name}*  [{cls_name}]  Lv.{e_lv}")
     else:
         lines.append(f"{elem_e} *{e_name}*  Lv.{e_lv}")
-    lines.append(f"HP: {e_hp}/{e_mhp}  [{e_bar}]")
+    lines.append(f"HP: `{e_hp}/{e_mhp}`  [{e_bar}]")
+    # Enemy status effects
+    e_status = []
+    if enc.get("e_burning"): e_status.append("🔥 Burning")
+    if enc.get("e_poisoned"): e_status.append("☠️ Poisoned")
+    if enc.get("e_stunned_turns"): e_status.append("⚡ Stunned")
+    if e_status: lines.append("  ".join(e_status))
     lines.append("")
-    lines.append(f"*{p_name}*")
-    lines.append(f"HP: {p_hp}/{p_mhp}  [{p_bar}]")
-    if last:
+    lines.append(f"👤 *{p_name}*")
+    lines.append(f"HP: `{p_hp}/{p_mhp}`  [{p_bar}]")
+    lines.append(f"💊 Heals: {enc.get('heals_left',0)}")
+    # Player status effects
+    p_status = []
+    if enc.get("p_stunned"): p_status.append("⚡ Stunned")
+    if enc.get("p_weakened"): p_status.append("⬇️ Weakened")
+    if enc.get("p_guarding"): p_status.append("🛡️ Guarding")
+    if p_status: lines.append("  ".join(p_status))
+    # Pet info
+    pet_info = enc.get("pet_info")
+    if pet_info:
+        pname = pet_info.get("name","Pet")
+        plvl  = pet_info.get("level",1)
+        patk  = pet_info.get("atk",0)
+        pbond = pet_info.get("bond_label","")
+        lines.append(f"🐾 *{pname}* Lv{plvl}  ATK+{patk}  {pbond}")
+    # Action log
+    action_log = enc.get("action_log", [])
+    if action_log:
         lines.append("")
-        lines.append(last)
+        for act in action_log[-2:]:  # show last 2 actions
+            lines.append(act)
     return "\n".join(lines)
 
 def _encounter_battle_markup(enc, p=None):
@@ -4237,6 +4260,20 @@ def get_equipped_accessory(p):
     if not name: return None
     return ACCESSORIES.get(name)
 
+def get_all_equipped_accessories(p):
+    """Return list of all equipped accessory names (non-None only)."""
+    names = []
+    for slot in ("equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4"):
+        n = p.get(slot)
+        if n: names.append(n)
+    return names
+
+def _first_free_acc_slot(p):
+    """Return the key of the first empty accessory slot, or 'equipped_accessory' if all full."""
+    for slot in ("equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4"):
+        if not p.get(slot): return slot
+    return "equipped_accessory"  # all full — replace slot 1
+
 def get_enchant(p, item_name):
     raw = sjl(p.get("enchants"), {}).get(item_name)
     if raw is None: return []
@@ -4261,7 +4298,8 @@ def set_enchant(p, item_name, effect):
 
 def get_enchant_bonus(p, stat):
     total = 0
-    for slot_key in ["equipped_weapon","equipped_armor","equipped_shield","equipped_accessory",
+    for slot_key in ["equipped_weapon","equipped_armor","equipped_shield",
+                     "equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4",
                      "equipped_hat","equipped_gloves","equipped_boots","equipped_mask"]:
         name = p.get(slot_key)
         if not name: continue
@@ -4417,25 +4455,27 @@ def gear_line(p, slot_key):
     return " ".join(parts)
 
 def get_accessory_bonus(p, stat):
-    acc = get_equipped_accessory(p)
-    if not acc: return 0
-    effect = acc.get("effect", {})
-
-    # Direct stat match
-    if stat in effect:
-        return effect[stat]
-
-    # all_stats applies to every stat
-    if stat in ("STR","DEF","AGI","INT","WIS","DEX","LUK") and "all_stats" in effect:
-        return effect["all_stats"]
-
-    # primary_stat  -  applies only to the player's primary class stat
-    if "primary_stat" in effect:
-        primary = get_primary_stat(p)
-        if stat == primary:
-            return effect["primary_stat"]
-
-    return 0
+    total = 0
+    _bool_stats = ("revive_once","priest_aoe","spell_double_chance","revive_heal_bonus")
+    for slot in ("equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4"):
+        name = p.get(slot)
+        if not name: continue
+        acc = ACCESSORIES.get(name)
+        if not acc: continue
+        effect = acc.get("effect", {})
+        # Direct stat
+        if stat in effect:
+            if stat in _bool_stats: return effect[stat]  # any one gives the effect
+            total += effect[stat]
+        # all_stats
+        elif stat in ("STR","DEF","AGI","INT","WIS","DEX","LUK") and "all_stats" in effect:
+            total += effect["all_stats"]
+        # primary_stat
+        elif "primary_stat" in effect:
+            primary = get_primary_stat(p)
+            if stat == primary:
+                total += effect["primary_stat"]
+    return total
 
 # Maps new class lines → existing gear category so they can use shared weapon/armor pools
 _GEAR_LINE_MAP = {
@@ -6260,6 +6300,18 @@ def init_db():
     except Exception:
         pass
     _pets_conn.close()
+    # ── Extra accessory slots migration ──────────────────────────────────────
+    try:
+        _acc_conn = sqlite3.connect(DB_PATH)
+        for _col in ["equipped_accessory_2","equipped_accessory_3","equipped_accessory_4"]:
+            try:
+                _acc_conn.execute(f"ALTER TABLE players ADD COLUMN {_col} TEXT DEFAULT NULL")
+                _acc_conn.commit()
+            except Exception:
+                pass
+        _acc_conn.close()
+    except Exception:
+        pass
     # Re-open connection for the v22 consumable rename migration
     try:
         migc = sqlite3.connect(DB_PATH); migc.row_factory = sqlite3.Row; cc = migc.cursor()
@@ -6623,6 +6675,11 @@ def save_player(p):
     if any(k in _ITEM_RENAME for k in enc):
         p["enchants"] = json.dumps({_ITEM_RENAME.get(k, k): v for k, v in enc.items()})
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    # Never wipe tg_username with NULL — preserve existing DB value
+    if p.get("tg_username") is None:
+        _tg_row = c.execute("SELECT tg_username FROM players WHERE user_id=?", (p.get("user_id"),)).fetchone()
+        if _tg_row and _tg_row[0]:
+            p["tg_username"] = _tg_row[0]
     fields = [
         "user_id","username","hp","max_hp","exp","level","total_exp",
         "gold","wins","losses","quests_done","heals_given","dodges",
@@ -6661,6 +6718,7 @@ def save_player(p):
         "last_encounter","monster_squad",
         "influence","alliance_id","active_quest","last_quest_ts","oracle_last_used",
         "tg_username",
+        "equipped_accessory_2","equipped_accessory_3","equipped_accessory_4",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -6848,6 +6906,10 @@ def add_exp(p, amount, weather=None):
     _m_count = len(sjl(p.get("marriages"), []) or ([p.get("married_to_id")] if p.get("married_to_id") else []))
     if _m_count > 0:
         amount = round(amount * (1 + min(0.15, _m_count * 0.03)))
+    # Enchant EXP bonus
+    _enc_exp = get_enchant_bonus(p, "exp_bonus")
+    if _enc_exp > 0:
+        amount = round(amount * (1 + _enc_exp))
     msgs = []; leveled_up = False
     p["exp"]      += max(0, amount)
     p["total_exp"] = safe_int(p.get("total_exp")) + max(0, amount)
@@ -7571,8 +7633,21 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         elif pet_status_type == "lifesteal_to_owner" and pet_status_val:
             d["hp"] = min(calc_max_hp(d), d.get("hp", 0) + pet_status_val)
 
-    d["hp"] = max(0, d["hp"] - dmg_after_def)
+    d_hp_after = max(0, d["hp"] - dmg_after_def)
+    d["hp"] = d_hp_after
     healed = apply_lifesteal(a, dmg_after_def)
+
+    # Burn proc from weapon enchant
+    if get_enchant_bonus(a, "burn_proc") and random.random() < 0.10:
+        set_status(d, "burn_until", 60)
+        set_status(d, "burn_damage", get_enchant_bonus(a, "burn_proc"))
+        extra_notes.append(f"🔥 *{a.get('username','?')}*'s weapon ignites {d.get('username','?')}!")
+
+    # reflect_flat enchant
+    ref = get_enchant_bonus(d, "reflect_flat")
+    if ref > 0 and dmg_after_def > 0:
+        a["hp"] = max(0, a["hp"] - ref)
+        extra_notes.append(f"🔱 *{d.get('username','?')}*'s armor reflects {ref} dmg!")
 
     if cls_a and dmg_after_def > 0:
         pk_a = cls_a.get("passive_key", "")
@@ -7625,6 +7700,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             d["hp"] = max(0, d["hp"] - pet_atk)
             battle_msg = PERSONALITY_BATTLE.get(pers, "attacks")
             action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*!"
+
+    # kill_heal enchant
+    kh = get_enchant_bonus(a, "kill_heal")
+    if kh > 0 and d_hp_after <= 0:
+        a["hp"] = min(calc_max_hp(a), a["hp"] + int(kh))
+        extra_notes.append(f"🧛 *{a.get('username','?')}* drains {int(kh)} HP from the kill!")
 
     if d["hp"] <= 0:
         d["hp"] = 0
@@ -8144,7 +8225,7 @@ def _build_stats_pages(p, viewing_name=None):
     weap_name = p.get("equipped_weapon") or "None"
     armr_name = p.get("equipped_armor") or "None"
     shld_name = p.get("equipped_shield") or "None"
-    acc_name  = p.get("equipped_accessory") or "None"
+    acc_names = [p.get(s) or "None" for s in ("equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4")]
 
     def quick_gear(n):
         if n == "None": return "None"
@@ -8256,7 +8337,10 @@ def _build_stats_pages(p, viewing_name=None):
         f"⚔️ {quick_gear(weap_name)}",
         f"🛡️ {quick_gear(armr_name)}",
         f"🔰 {quick_gear(shld_name)}",
-        f"💍 {quick_gear(acc_name)}",
+        f"💍 {quick_gear(acc_names[0])}",
+        f"💍 {quick_gear(acc_names[1])}",
+        f"💍 {quick_gear(acc_names[2])}",
+        f"💍 {quick_gear(acc_names[3])}",
         "",
     ]
     if set_lines:
@@ -9628,7 +9712,7 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     item_found = roll_loot_table(q.get("loot_table",[]))
     if item_found: add_item(p, item_found)
     luk_val = get_stat(p, "LUK")
-    gold_bonus_pct = luk_val * 0.002
+    gold_bonus_pct = luk_val * 0.002 + get_accessory_bonus(p, "gold_bonus") + get_enchant_bonus(p, "gold_bonus")
     gold = round(q["gold"] * (1 + gold_bonus_pct))
     p["gold"] = p.get("gold",0) + gold
     p["quests_done"] = p.get("quests_done",0) + 1
@@ -10283,14 +10367,16 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🔰 Equipped *{item_name}*!\n{compare}\n"
                 + (f"_Unequipped {old_name}_" if old_name else ""), delay=15)
     elif item_name in ACCESSORIES:
-        old = p.get("equipped_accessory")
-        p["equipped_accessory"] = item_name
+        slot = _first_free_acc_slot(p)
+        old = p.get(slot)
+        p[slot] = item_name
         inv.remove(item_name)
         if old: inv.append(old)
         p["inventory"] = json.dumps(inv); save_player(p)
         acc = ACCESSORIES[item_name]
+        slot_num = ("","2","3","4")[("equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4").index(slot)]
         await send_group(update,
-            f"💍 Equipped *{item_name}*\n_{acc['desc']}_\n"
+            f"💍 Equipped *{item_name}*{f' (slot {slot_num})' if slot_num else ''}\n_{acc['desc']}_\n"
             + (f"_Unequipped {old}_" if old else ""), delay=15)
     elif item_name in HATS or item_name in GLOVES or item_name in BOOTS or item_name in MASKS:
         if item_name in HATS:
@@ -10323,7 +10409,11 @@ async def unequip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
     uid = user.id
     slots = [("⚔️ Weapon", "equipped_weapon"), ("🛡️ Armor", "equipped_armor"),
-             ("🔰 Shield", "equipped_shield"), ("💍 Accessory", "equipped_accessory"),
+             ("🔰 Shield", "equipped_shield"),
+             ("💍 Accessory 1", "equipped_accessory"),
+             ("💍 Accessory 2", "equipped_accessory_2"),
+             ("💍 Accessory 3", "equipped_accessory_3"),
+             ("💍 Accessory 4", "equipped_accessory_4"),
              ("🎩 Hat", "equipped_hat"), ("🧤 Gloves", "equipped_gloves"),
              ("👢 Boots", "equipped_boots"), ("🎭 Mask", "equipped_mask")]
     buttons = []
@@ -21815,6 +21905,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Silent influence: social greetings
     _p_msg = get_player(user.id)
+    # Keep tg_username fresh on every message so /attack @handle always works
+    if _p_msg and getattr(user, "username", None) and _p_msg.get("tg_username") != user.username:
+        _p_msg["tg_username"] = user.username
+        try:
+            _tgu_c = sqlite3.connect(DB_PATH)
+            _tgu_c.execute("UPDATE players SET tg_username=? WHERE user_id=?", (user.username, user.id))
+            _tgu_c.commit(); _tgu_c.close()
+        except Exception:
+            pass
     if _p_msg and update.message.reply_to_message:
         _txt = (update.message.text or "").lower().strip()
         _greets_pos = ["thank you", "thanks", "ty ", "ty!", "thx", " ty"]
