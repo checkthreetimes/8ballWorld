@@ -180,6 +180,8 @@ async def send_group(update: Update, text: str, parse_mode="Markdown",
                      permanent=False, delay=9, reply_markup=None):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
+    name_hdr = f"👤 *{update.effective_user.first_name}*\n"
+    text = name_hdr + text
     key     = (chat_id, user_id)
     old_id  = last_bot_message.get(key)
     results = await asyncio.gather(
@@ -2834,7 +2836,6 @@ _SHOP_STATIC_TABS = {
     "mat": [
         {"item":"Iron Shard",        "price":300,  "desc":"Crafting material."},
         {"item":"Enchanting Scroll", "price":500,  "desc":"Enchant a piece of gear."},
-        {"item":"Fortune Coin",      "price":800,  "desc":"Lucky charm. Increases LUK aura."},
     ],
 }
 
@@ -2944,7 +2945,10 @@ def get_shop_tab(tab):
         if tab in _SHOP_STATIC_TABS:
             _shop_cache["tabs"][tab] = _SHOP_STATIC_TABS[tab]
         elif tab in _gear_pools:
-            _shop_cache["tabs"][tab] = _build_gear_shop_tab(_gear_pools[tab], tab)
+            _built = _build_gear_shop_tab(_gear_pools[tab], tab)
+            if tab == "acc":
+                _built.append({"item":"Fortune Coin", "price":800, "desc":"+12 AGI, +8% crit damage.", "rarity":"rare"})
+            _shop_cache["tabs"][tab] = _built
         elif tab == "legend":
             _shop_cache["tabs"][tab] = _build_legend_shop_tab()
         else:
@@ -2965,8 +2969,25 @@ def _shop_discount(p):
             discount = max(discount, guild_disc)
     return discount
 
+def _get_shop_seed(p):
+    """Return current shop seed for this player (auto-resets daily)."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    if p.get("shop_reroll_date") != today:
+        return 0  # default view, no reroll yet today
+    return safe_int(p.get("shop_reroll_count", 0))
+
+def get_shop_tab_for_player(tab, p):
+    """Return shop items for tab, possibly reshuffled by player's reroll seed."""
+    base = list(get_shop_tab(tab))
+    seed = _get_shop_seed(p)
+    if seed == 0 or len(base) <= 1:
+        return base
+    rng = random.Random(f"{p['user_id']}_{datetime.now().strftime('%Y-%m-%d')}_{seed}")
+    rng.shuffle(base)
+    return base
+
 def _build_shop_view(p, tab, uid, discount=0):
-    items  = get_shop_tab(tab)
+    items  = get_shop_tab_for_player(tab, p)
     label  = _SHOP_TAB_LABELS.get(tab, tab)
     disc_note = f"  🏷️ *{int(discount*100)}% off!*" if discount else ""
     lines  = [f"🛒 *{label}* | 💰 {p['gold']} gold{disc_note}\n"]
@@ -2988,8 +3009,13 @@ def _build_shop_view(p, tab, uid, discount=0):
         price = round(e["price"] * (1-discount))
         buy_rows.append([InlineKeyboardButton(
             f"Buy: {e['item']} ({price:,}g)", callback_data=f"shopbuy_{uid}_{tab}_{i}")])
-    markup = InlineKeyboardMarkup([row1, row2] + buy_rows +
-                                  [[InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]])
+    today = datetime.now().strftime("%Y-%m-%d")
+    reroll_count = safe_int(p.get("shop_reroll_count", 0)) if p.get("shop_reroll_date") == today else 0
+    reroll_label = f"🎲 Reroll (1,000g)" if reroll_count < 3 else "🎲 Rerolled 3×"
+    markup = InlineKeyboardMarkup([row1, row2] + buy_rows + [
+        [InlineKeyboardButton(reroll_label, callback_data=f"shopreroll_{uid}_{tab}")],
+        [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")],
+    ])
     return "\n".join(lines), markup
 
 # ── ENCOUNTER SYSTEM ──────────────────────────────────────────────────────────
@@ -4158,36 +4184,36 @@ ROOM_STAT_CHECKS = {
 
 KEYWORD_TRIGGERS = [
     {"pattern":r"\b(8ball|8ballin|rack|felt|cue|billiards|pool table|corner pocket|break shot|chalk up)\b",
-     "exp":60,"gold_chance":0.30,"cooldown":45,"key":"billiards"},
-    {"pattern":r"🎱","exp":100,"gold_chance":0.20,"cooldown":300,"key":"8ball_emoji"},
+     "exp":120,"gold_chance":0.30,"cooldown":45,"key":"billiards"},
+    {"pattern":r"🎱","exp":200,"gold_chance":0.20,"cooldown":300,"key":"8ball_emoji"},
     {"pattern":r"\b(hello|hi|hey|sup|what'?s up|wassup|yo|heya|hiya|howdy)\b",
-     "exp":30,"gold_chance":0.10,"cooldown":30,"key":"greet"},
+     "exp":60,"gold_chance":0.10,"cooldown":30,"key":"greet"},
     {"pattern":r"\b(good morning|gm|good night|gn|good evening|good afternoon)\b",
-     "exp":35,"gold_chance":0.10,"cooldown":30,"key":"greeting_time"},
+     "exp":70,"gold_chance":0.10,"cooldown":30,"key":"greeting_time"},
     {"pattern":r"\b(lol|lmao|lmfao|haha|hahaha|funny|dead|💀|😂|🤣|bruh|bro|fam)\b",
-     "exp":20,"gold_chance":0.05,"cooldown":45,"key":"humor"},
+     "exp":40,"gold_chance":0.05,"cooldown":45,"key":"humor"},
     {"pattern":r"\b(omg|oh my god|no way|wtf|wth|damn|dang|sheesh|fr fr|facts|bet)\b",
-     "exp":20,"gold_chance":0.05,"cooldown":40,"key":"reaction"},
+     "exp":40,"gold_chance":0.05,"cooldown":40,"key":"reaction"},
     {"pattern":r"\b(thanks|thank you|ty|thx|cheers|appreciated|grateful|respect)\b",
-     "exp":35,"gold_chance":0.10,"cooldown":60,"key":"gratitude"},
+     "exp":70,"gold_chance":0.10,"cooldown":60,"key":"gratitude"},
     {"pattern":r"\b(nice|great|awesome|amazing|sick|fire|goated|legendary|insane|clean)\b",
-     "exp":20,"gold_chance":0.05,"cooldown":40,"key":"hype"},
+     "exp":40,"gold_chance":0.05,"cooldown":40,"key":"hype"},
     {"pattern":r"\b(win|won|victory|gg|good game|let'?s go|lets go|dub|clutch|carry)\b",
-     "exp":35,"gold_chance":0.10,"cooldown":50,"key":"win"},
+     "exp":70,"gold_chance":0.10,"cooldown":50,"key":"win"},
     {"pattern":r"\b(grind|grinding|leveling|farm|farming|rank up|ranked)\b",
-     "exp":20,"gold_chance":0.05,"cooldown":90,"key":"grind"},
+     "exp":40,"gold_chance":0.05,"cooldown":90,"key":"grind"},
     {"pattern":r"\b(food|eat|eating|hungry|snack|lunch|dinner|breakfast|meal|cook)\b",
-     "exp":20,"gold_chance":0.05,"cooldown":45,"key":"food"},
+     "exp":40,"gold_chance":0.05,"cooldown":45,"key":"food"},
     {"pattern":r"\b(work|working|job|office|meeting|shift|hustle)\b",
-     "exp":20,"gold_chance":0.05,"cooldown":60,"key":"work"},
+     "exp":40,"gold_chance":0.05,"cooldown":60,"key":"work"},
     {"pattern":r"\b(music|song|track|album|artist|rapper|beat|vibes|playlist|banger)\b",
-     "exp":20,"gold_chance":0.05,"cooldown":60,"key":"music"},
+     "exp":40,"gold_chance":0.05,"cooldown":60,"key":"music"},
     {"pattern":r"\b(football|soccer|basketball|tennis|gym|workout|run|running|lift)\b",
-     "exp":20,"gold_chance":0.05,"cooldown":60,"key":"sports"},
+     "exp":40,"gold_chance":0.05,"cooldown":60,"key":"sports"},
     {"pattern":r"\b(friend|friends|bro|sis|brother|sister|mate|homie|squad|crew|family)\b",
-     "exp":20,"gold_chance":0.05,"cooldown":50,"key":"social"},
+     "exp":40,"gold_chance":0.05,"cooldown":50,"key":"social"},
     {"pattern":r"\b(dragon|magic|spell|quest|wizard|warrior|dungeon|boss|raid|sword|shield|potion|knight)\b",
-     "exp":30,"gold_chance":0.05,"cooldown":90,"key":"fantasy"},
+     "exp":60,"gold_chance":0.05,"cooldown":90,"key":"fantasy"},
     {"pattern":r".","exp":8,"gold_chance":0.02,"cooldown":10,"key":"passive_trickle"},
 ]
 
@@ -8246,7 +8272,8 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for _d, _e, _g in track_objective(h, "heal_ally"):
             h["gold"] = h.get("gold",0) + _g; add_exp(h, _e)
     new_t = check_titles(h)
-    lmsgs, leveled = add_exp(h, 20)
+    _heal_exp = 50 if (tu.id != hu.id and h.get("guild_id") and str(h.get("guild_id")) == str(t.get("guild_id"))) else 20
+    lmsgs, leveled = add_exp(h, _heal_exp)
     save_player(h)
     if tu.id != hu.id:
         save_player(t)
@@ -10675,7 +10702,28 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += "_(No direct effect)_"
     save_player(p)
     await query.answer()
-    await query.edit_message_text(msg, parse_mode="Markdown")
+    # Rebuild the menu so the player can use more items without re-opening
+    inv_after = sjl(p.get("inventory"), [])
+    remaining = [(k, inv_after.count(k)) for k in dict.fromkeys(inv_after) if k in CONSUMABLES]
+    if remaining:
+        btns = []
+        for _itm, _cnt in remaining:
+            _dc = CONSUMABLES[_itm]
+            btns.append([InlineKeyboardButton(
+                f"🧪 {_itm} x{_cnt}  —  {_dc.get('desc','')[:40]}",
+                callback_data=f"useitem_{uid}_{_itm}")])
+        btns.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+        try:
+            await query.edit_message_text(
+                f"{msg}\n\n🧪 *Use another item:*",
+                parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(btns))
+        except Exception:
+            pass
+    else:
+        try:
+            await query.edit_message_text(f"{msg}\n\n_Bag empty._", parse_mode="Markdown")
+        except Exception:
+            pass
 
 async def settitle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle title equip button: settitle_{uid}_{title_name}"""
@@ -10824,8 +10872,9 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             buttons.append([InlineKeyboardButton(
                 f"🧪 {item} x{count}  —  {d_c.get('desc','')[:40]}",
                 callback_data=f"useitem_{uid}_{item}")])
+        buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
         markup = InlineKeyboardMarkup(buttons)
-        await send_group(update, "🧪 *Use Item — Select a consumable:*", delay=30, reply_markup=markup)
+        await send_group(update, "🧪 *Use Item — Select a consumable:*", delay=60, reply_markup=markup)
         return
     item_typed = " ".join(context.args)
     inv  = sjl(p.get("inventory"), [])
@@ -16979,14 +17028,19 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 else:
                     core_name = _elem_to_core.get(elem, "Earth")
                     core_item = f"Monster Core ({core_name})"
-                add_item(p, core_item)
+                _core_roll = random.random()
+                _core_qty = 3 if _core_roll < 0.05 else (2 if _core_roll < 0.30 else 1)
+                for _ in range(_core_qty):
+                    add_item(p, core_item)
                 exp_gain  = enc["e_level"] * 15
                 gold_gain = enc["e_level"] * 8
                 add_exp(p, exp_gain)
                 p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
+                _core_str = f"*{core_item}* ×{_core_qty}" if _core_qty > 1 else f"*{core_item}*"
+                _bonus_str = " 🍀 *Lucky drop!*" if _core_qty > 1 else ""
                 await _end_encounter(
                     f"🎯 *Caught!* *{enc['e_name']}* {elem_e}\n"
-                    f"📦 Received: *{core_item}*\n"
+                    f"📦 Received: {_core_str}{_bonus_str}\n"
                     f"💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP\n_(30s cooldown)_")
             else:
                 mon_act = _enc_monster_attack(enc)
@@ -23620,6 +23674,41 @@ async def shop_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
+async def shopreroll_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    try:
+        uid = int(parts[1])
+        tab = parts[2]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your shop!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    reroll_count = safe_int(p.get("shop_reroll_count", 0)) if p.get("shop_reroll_date") == today else 0
+
+    if reroll_count >= 3:
+        await query.answer("Already rerolled 3 times today!", show_alert=True); return
+    if safe_int(p.get("gold", 0)) < 1000:
+        await query.answer("Need 1,000g to reroll!", show_alert=True); return
+
+    p["gold"] = safe_int(p.get("gold", 0)) - 1000
+    p["shop_reroll_date"] = today
+    p["shop_reroll_count"] = reroll_count + 1
+    save_player(p)
+
+    discount = _shop_discount(p)
+    text, markup = _build_shop_view(p, tab, uid, discount)
+    await query.answer(f"Shop rerolled! ({reroll_count + 1}/3 today)")
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
+
 
 # ── Allocate Stats callback ──
 async def allocate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -23893,6 +23982,7 @@ def main():
     app.add_handler(CallbackQueryHandler(shop_tab_callback,     pattern="^shoptab_"))
     app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shopbuy_"))
     app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shop_b_"))  # legacy
+    app.add_handler(CallbackQueryHandler(shopreroll_callback,   pattern="^shopreroll_"))
     app.add_handler(CallbackQueryHandler(boss_start_callback,   pattern="^bossstart_"))
     app.add_handler(CallbackQueryHandler(enhance_slot_callback, pattern="^enhance_"))
     app.add_handler(CallbackQueryHandler(enchant_slot_callback, pattern="^enchant_"))
