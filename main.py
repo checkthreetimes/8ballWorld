@@ -117,6 +117,7 @@ pending_duels      = {}   # challenger_id -> {target_id, wager, chat_id, expires
 active_arenas      = {}   # chat_id -> arena state
 pending_guild_reqs = {}   # guild_id -> [requests]
 explore_timers     = {}   # user_id -> asyncio task
+_idle_last_awarded = {}   # user_id -> timestamp — prevents double-awarding on rapid messages
 active_dungeons    = {}   # user_id -> asyncio task
 _wipe_confirm      = {}   # admin_id -> timestamp
 pending_marriages       = {}   # proposer_id -> {target_id, chat_id, expires}
@@ -2368,7 +2369,8 @@ def get_pet_def_proc_chance(pet):
     hunger_ok = pet.get("hunger", 100) >= 20
     mood_ok   = pet.get("mood", 100)   >= 30
     if not hunger_ok or not mood_ok: return 0.0
-    return round(base + level_bonus, 3)
+    bond_bonus = _get_bond_proc_bonus(pet)
+    return round(min(0.80, base + level_bonus + bond_bonus), 3)
 
 def apply_pet_defense(pet, attacker, dmg_after_def, extra_notes):
     """
@@ -2460,6 +2462,9 @@ def get_pet_atk_bonus(pet):
     base = sp.get("base_atk", 0) + pet.get("level", 1) * 2
     passives = get_pet_passives(pet.get("level", 1))
     base += passives.get("atk_flat", 0)
+    base += _get_bond_atk_bonus(pet)
+    evo = pet.get("evolution_stage", 0)
+    if evo > 0: base += evo * 3
     hunger = pet.get("hunger", 100)
     mood   = pet.get("mood", 100)
     if hunger < 20: base = round(base * 0.5)
@@ -2513,13 +2518,16 @@ def get_all_pets(owner_id):
 def save_pet(pet):
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO pets
-        (pet_id,owner_id,species,nickname,level,exp,hunger,mood,last_fed,last_trained,is_active,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (pet_id,owner_id,species,nickname,level,exp,hunger,mood,last_fed,last_trained,
+         is_active,created_at,bond_score,adventure_ends_at,last_battle,evolution_stage)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (pet.get("pet_id"), pet["owner_id"], pet["species"],
          pet.get("nickname"), pet.get("level",1), pet.get("exp",0),
          pet.get("hunger",100), pet.get("mood",100),
          pet.get("last_fed"), pet.get("last_trained"),
-         pet.get("is_active",0), pet.get("created_at", datetime.now().isoformat())))
+         pet.get("is_active",0), pet.get("created_at", datetime.now().isoformat()),
+         pet.get("bond_score",0), pet.get("adventure_ends_at"),
+         pet.get("last_battle"), pet.get("evolution_stage",0)))
     conn.commit(); conn.close()
 
 def _pet_display_name(pet):
@@ -2584,7 +2592,52 @@ def _build_pet_card(pet):
     elif sp_def:
         ab_info = PET_DEF_ABILITIES.get(sp_def, {})
         lines.append(f"🔒 *{ab_info.get('name','Ability')}* unlocks at Level 10")
+    # Bond status
+    bond = pet.get("bond_score", 0)
+    bond_tier, bond_label = _get_bond_tier(bond)
+    bond_bar = "❤️" * min(10, bond // 20) + "🖤" * max(0, 10 - bond // 20)
+    lines.append(f"\n💞 *Bond:* {bond_label}  `{bond}/200`\n{bond_bar}")
+    if bond_tier == 1: lines.append("✨ _Trusted: +5% ability proc chance_")
+    elif bond_tier == 2: lines.append("💫 _Devoted: +10% proc, +2 ATK_")
+    elif bond_tier == 3: lines.append("🌟 _Soul Bond: +15% proc, +3 ATK, +5% crit_")
+    # Evolution stage
+    evo = pet.get("evolution_stage", 0)
+    if evo > 0:
+        lines.append(f"🔮 *Evolution Stage {evo}*")
+    elif lvl >= 15:
+        lines.append(f"🔮 _Ready to evolve! Use the Evolve button._")
+    # Adventure status
+    adv_end = pet.get("adventure_ends_at")
+    if adv_end:
+        try:
+            rem = (datetime.fromisoformat(adv_end) - datetime.now()).total_seconds()
+            if rem > 0:
+                rm = f"{int(rem//3600)}h {int((rem%3600)//60)}m" if rem >= 3600 else f"{int(rem//60)}m"
+                lines.append(f"\n🗺️ *On Adventure* — returns in {rm}")
+        except Exception:
+            pass
     return "\n".join(lines)
+
+def _get_bond_tier(bond_score):
+    """Returns (tier 0-3, label string)."""
+    if bond_score >= 200: return 3, "Soul Bond 🌟"
+    if bond_score >= 150: return 2, "Devoted 💫"
+    if bond_score >= 100: return 1, "Trusted ✨"
+    return 0, "Acquaintance 🤝"
+
+def _get_bond_proc_bonus(pet):
+    tier, _ = _get_bond_tier(pet.get("bond_score", 0))
+    return [0.0, 0.05, 0.10, 0.15][tier]
+
+def _get_bond_atk_bonus(pet):
+    tier, _ = _get_bond_tier(pet.get("bond_score", 0))
+    return [0, 0, 2, 3][tier]
+
+def _pet_is_on_adventure(pet):
+    adv = pet.get("adventure_ends_at")
+    if not adv: return False
+    try: return datetime.fromisoformat(adv) > datetime.now()
+    except Exception: return False
 
 def _pet_list_markup(pets, page=0, page_size=5, uid=0):
     start = page * page_size
@@ -2607,7 +2660,7 @@ def _pet_list_markup(pets, page=0, page_size=5, uid=0):
                  InlineKeyboardButton("❌ Close", callback_data=close_cb)])
     return InlineKeyboardMarkup(rows)
 
-def _pet_view_markup(pet_id, is_active, uid=0):
+def _pet_view_markup(pet_id, is_active, uid=0, pet=None):
     rows = []
     if not is_active:
         rows.append([InlineKeyboardButton("✅ Make Active", callback_data=f"petactivate_{pet_id}")])
@@ -2615,6 +2668,24 @@ def _pet_view_markup(pet_id, is_active, uid=0):
         InlineKeyboardButton("🍖 Feed",  callback_data=f"petfeed_{pet_id}"),
         InlineKeyboardButton("🏋️ Train", callback_data=f"pettrain_{pet_id}"),
     ])
+    # Adventure button — show remaining time if on adventure
+    if pet and _pet_is_on_adventure(pet):
+        try:
+            rem = (datetime.fromisoformat(pet["adventure_ends_at"]) - datetime.now()).total_seconds()
+            rm = f"{int(rem//3600)}h {int((rem%3600)//60)}m" if rem >= 3600 else f"{int(rem//60)}m"
+            rows.append([InlineKeyboardButton(f"🗺️ On Adventure ({rm})", callback_data=f"petadv_status_{pet_id}")])
+        except Exception:
+            rows.append([InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pet_id}")])
+    else:
+        rows.append([InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pet_id}")])
+    # Evolve button if eligible
+    if pet:
+        lvl = pet.get("level", 1)
+        evo = pet.get("evolution_stage", 0)
+        evo_thresholds = [15, 30, 50]
+        next_evo = next((t for t in evo_thresholds if lvl >= t and evo < evo_thresholds.index(t) + 1), None)
+        if next_evo is not None:
+            rows.append([InlineKeyboardButton("🔮 Evolve!", callback_data=f"petevolve_{pet_id}")])
     rows.append([InlineKeyboardButton("📝 Rename", callback_data=f"petrename_{pet_id}")])
     rows.append([
         InlineKeyboardButton("🔙 All Pets", callback_data="petlist_0"),
@@ -3249,10 +3320,10 @@ def _npc_level_stats(base_hp, base_dmg, level, player_max_hp=0):
     hp  = int(base_hp  * (1 + 0.10 * (level - 1)))
     atk = int(base_dmg * (1 + 0.10 * (level - 1)))
     if player_max_hp > 0:
-        # HP: between 100% and 190% of player max HP
-        hp  = max(int(player_max_hp * 1.00), min(hp, int(player_max_hp * 1.90)))
-        # ATK: floor 14%, ceiling 30% of player max HP (raw before DEF mitigation)
-        atk = max(int(player_max_hp * 0.14), min(atk, int(player_max_hp * 0.30)))
+        # HP: between 70% and 130% of player max HP
+        hp  = max(int(player_max_hp * 0.70), min(hp, int(player_max_hp * 1.30)))
+        # ATK: floor 10%, ceiling 22% of player max HP (raw before DEF mitigation)
+        atk = max(int(player_max_hp * 0.10), min(atk, int(player_max_hp * 0.22)))
     return hp, atk
 
 def _get_monster_squad(uid):
@@ -3951,43 +4022,49 @@ DUNGEON_THEMES = [
 
 DUNGEON_LOOT = {
     "normal": {
-        "monster":   [("Health Potion",0.30),("Iron Shard",0.12),
-                      ("Rusty Shiv",0.08),("Wooden Prayer Beads",0.08)],
-        "treasure":  [("Greater Health Potion",0.20),("Iron Shard",0.20),
-                      ("Silk Band",0.08),("Bloodstone Band",0.08),
-                      ("Iron Broadsword",0.06)],
-        "mini_boss": [("Iron Shard",0.40),("Enchanting Scroll",0.10),
-                      ("Grand Restorative Flask",0.15),("Fortune Coin",0.06)],
-        "boss":      [("Iron Shard",0.50),("Enchanting Scroll",0.20),
-                      ("Scroll of Revival",0.10),("War Master's Clasp",0.05)],
+        "monster":   [("Health Potion",0.35),("Greater Health Potion",0.15),
+                      ("Rusty Shiv",0.08),("Wooden Prayer Beads",0.08),
+                      ("Silk Band",0.06)],
+        "treasure":  [("Greater Health Potion",0.25),("Enchanting Scroll",0.12),
+                      ("Silk Band",0.10),("Bloodstone Band",0.10),
+                      ("Iron Broadsword",0.08),("Fortune Coin",0.06)],
+        "mini_boss": [("Greater Health Potion",0.20),("Enchanting Scroll",0.15),
+                      ("Grand Restorative Flask",0.15),("Fortune Coin",0.10),
+                      ("Bloodstone Band",0.08),("Rusty Shiv",0.06)],
+        "boss":      [("Grand Restorative Flask",0.20),("Enchanting Scroll",0.20),
+                      ("Scroll of Revival",0.12),("War Master's Clasp",0.08),
+                      ("Iron Broadsword",0.06),("Fortune Coin",0.08)],
         "completion_bonus": {"exp": 800, "gold": 200},
     },
     "hard": {
-        "monster":   [("Greater Health Potion",0.15),("Iron Shard",0.20),
-                      ("Mushroom Tip Blade",0.07),("Iron Broadsword",0.07)],
-        "treasure":  [("Iron Shard",0.30),("Enchanting Scroll",0.15),
-                      ("Grand Restorative Flask",0.10),("Fortune Coin",0.07),
-                      ("War Master's Clasp",0.05),("Hawk Eye Medallion",0.05)],
-        "mini_boss": [("Iron Shard",0.50),("Enchanting Scroll",0.25),
-                      ("Scroll of Revival",0.10),("Steel Knight Sword",0.05)],
-        "boss":      [("Iron Shard",0.60),("Enchanting Scroll",0.30),
-                      ("Scroll of Revival",0.15),("Warlord's Edge",0.04),
-                      ("Void Channel Staff",0.04),("Twin Strike Ring",0.04)],
+        "monster":   [("Greater Health Potion",0.20),("Grand Restorative Flask",0.10),
+                      ("Mushroom Tip Blade",0.08),("Iron Broadsword",0.08),
+                      ("Enchanting Scroll",0.10),("Fortune Coin",0.06)],
+        "treasure":  [("Grand Restorative Flask",0.15),("Enchanting Scroll",0.20),
+                      ("Fortune Coin",0.10),("War Master's Clasp",0.08),
+                      ("Hawk Eye Medallion",0.08),("Scroll of Revival",0.06)],
+        "mini_boss": [("Grand Restorative Flask",0.18),("Enchanting Scroll",0.25),
+                      ("Scroll of Revival",0.12),("Steel Knight Sword",0.08),
+                      ("War Master's Clasp",0.06),("Fortune Coin",0.08)],
+        "boss":      [("Grand Restorative Flask",0.18),("Enchanting Scroll",0.30),
+                      ("Scroll of Revival",0.18),("Warlord's Edge",0.06),
+                      ("Void Channel Staff",0.06),("Twin Strike Ring",0.06)],
         "completion_bonus": {"exp": 1800, "gold": 450},
     },
     "legendary": {
-        "monster":   [("Iron Shard",0.30),("Enchanting Scroll",0.10),
-                      ("Grand Restorative Flask",0.12),("Scroll of Revival",0.05)],
-        "treasure":  [("Iron Shard",0.40),("Enchanting Scroll",0.25),
-                      ("Scroll of Revival",0.12),("Runed Heart",0.05),
-                      ("The Shadow Whisper",0.04),("Eye of the Void",0.04)],
-        "mini_boss": [("Iron Shard",0.60),("Enchanting Scroll",0.35),
-                      ("Warlord's Edge",0.05),("Void-Touched Robe",0.05),
-                      ("Twin Strike Ring",0.05)],
-        "boss":      [("Iron Shard",0.70),("Enchanting Scroll",0.40),
-                      ("Ruinblade",0.02),("The Mind's Eye",0.02),
-                      ("Shard of the Void",0.02),("The Last Stand Locket",0.02),
-                      ("Ring of the Endless",0.02)],
+        "monster":   [("Grand Restorative Flask",0.18),("Enchanting Scroll",0.15),
+                      ("Scroll of Revival",0.08),("Fortune Coin",0.10),
+                      ("War Master's Clasp",0.06)],
+        "treasure":  [("Grand Restorative Flask",0.15),("Enchanting Scroll",0.30),
+                      ("Scroll of Revival",0.15),("Runed Heart",0.08),
+                      ("The Shadow Whisper",0.05),("Eye of the Void",0.05)],
+        "mini_boss": [("Grand Restorative Flask",0.15),("Enchanting Scroll",0.35),
+                      ("Scroll of Revival",0.15),("Warlord's Edge",0.07),
+                      ("Void-Touched Robe",0.07),("Twin Strike Ring",0.07)],
+        "boss":      [("Grand Restorative Flask",0.15),("Enchanting Scroll",0.40),
+                      ("Scroll of Revival",0.20),("Ruinblade",0.04),
+                      ("The Mind's Eye",0.04),("Shard of the Void",0.04),
+                      ("The Last Stand Locket",0.04),("Ring of the Endless",0.04)],
         "completion_bonus": {"exp": 4000, "gold": 1000},
     },
 }
@@ -6153,20 +6230,35 @@ def init_db():
     # ── Pets table ───────────────────────────────────────────────────────────
     _pets_conn = sqlite3.connect(DB_PATH)
     _pets_conn.execute("""CREATE TABLE IF NOT EXISTS pets (
-        pet_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-        owner_id   INTEGER NOT NULL,
-        species    TEXT NOT NULL,
-        nickname   TEXT,
-        level      INTEGER DEFAULT 1,
-        exp        INTEGER DEFAULT 0,
-        hunger     INTEGER DEFAULT 100,
-        mood       INTEGER DEFAULT 100,
-        last_fed   TEXT,
-        last_trained TEXT,
-        is_active  INTEGER DEFAULT 0,
-        created_at TEXT
+        pet_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id        INTEGER NOT NULL,
+        species         TEXT NOT NULL,
+        nickname        TEXT,
+        level           INTEGER DEFAULT 1,
+        exp             INTEGER DEFAULT 0,
+        hunger          INTEGER DEFAULT 100,
+        mood            INTEGER DEFAULT 100,
+        last_fed        TEXT,
+        last_trained    TEXT,
+        is_active       INTEGER DEFAULT 0,
+        created_at      TEXT,
+        bond_score      INTEGER DEFAULT 0,
+        adventure_ends_at TEXT,
+        last_battle     TEXT,
+        evolution_stage INTEGER DEFAULT 0
     )""")
     _pets_conn.commit()
+    # Migrate existing pets table with new columns
+    try:
+        for col, typedef in [("bond_score","INTEGER DEFAULT 0"), ("adventure_ends_at","TEXT"),
+                              ("last_battle","TEXT"), ("evolution_stage","INTEGER DEFAULT 0")]:
+            try:
+                _pets_conn.execute(f"ALTER TABLE pets ADD COLUMN {col} {typedef}")
+                _pets_conn.commit()
+            except Exception:
+                pass
+    except Exception:
+        pass
     _pets_conn.close()
     # Re-open connection for the v22 consumable rename migration
     try:
@@ -6568,6 +6660,7 @@ def save_player(p):
         "holding_hands_list",
         "last_encounter","monster_squad",
         "influence","alliance_id","active_quest","last_quest_ts","oracle_last_used",
+        "tg_username",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -7884,7 +7977,11 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         t  = h
     else:
         tu = update.message.reply_to_message.from_user
-        t  = get_player(tu.id)
+        if tu.id == hu.id:
+            # Reply to own message — still a self-heal; keep same object
+            t = h
+        else:
+            t = get_player(tu.id)
     if not t:
         await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
 
@@ -16348,9 +16445,16 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 inv = sjl(p.get("inventory"), []); inv.append(gear_drop); p["inventory"] = json.dumps(inv)
             if loot_item:
                 inv = sjl(p.get("inventory"), []); inv.append(loot_item); p["inventory"] = json.dumps(inv)
+            # Pet material drops from hunt
+            pet_mat = None
+            if random.random() < 0.25:
+                _pet_mats = ["Pet Snack","Pet Snack","Pet Snack","Greater Health Potion","Fortune Coin"]
+                pet_mat = random.choice(_pet_mats)
+                inv = sjl(p.get("inventory"), []); inv.append(pet_mat); p["inventory"] = json.dumps(inv)
             loot_line = ""
             if gear_drop: loot_line += f"\n🎁 Found: *{gear_drop}*"
             if loot_item: loot_line += f"\n📦 Loot: *{loot_item}*"
+            if pet_mat:   loot_line += f"\n🐾 Pet mat: *{pet_mat}*"
             await _end_encounter(
                 f"✅ *Victory!*\n*{enc['e_name']}* was defeated!{close_bonus}\n"
                 f"💰 +{gold} gold | ⭐ +{exp} EXP{loot_line}\n_(30s cooldown)_")
@@ -19418,15 +19522,32 @@ async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         markup = _pet_main_markup()
     else:
         text = _build_pet_card(pet)
-        markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🍖 Feed",    callback_data=f"petfeed_{pet['pet_id']}"),
-             InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pet['pet_id']}")],
-            [InlineKeyboardButton("📝 Rename",  callback_data=f"petrename_{pet['pet_id']}"),
-             InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")],
-            [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
-             InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
-            [InlineKeyboardButton("❌ Close",    callback_data=f"close_msg_{user.id}")],
-        ])
+        pid = pet["pet_id"]
+        btn_rows = [
+            [InlineKeyboardButton("🍖 Feed",    callback_data=f"petfeed_{pid}"),
+             InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pid}")],
+        ]
+        # Adventure: show claim if returned, else show start/status
+        adv_end = pet.get("adventure_ends_at")
+        if adv_end:
+            try:
+                rem = (datetime.fromisoformat(adv_end) - datetime.now()).total_seconds()
+                if rem <= 0:
+                    # Adventure done — infer hours from ends_at vs creation date
+                    btn_rows.append([InlineKeyboardButton("🎉 Claim Adventure Rewards!", callback_data=f"petadv_status_{pid}")])
+                else:
+                    rm = f"{int(rem//3600)}h {int((rem%3600)//60)}m" if rem >= 3600 else f"{int(rem//60)}m"
+                    btn_rows.append([InlineKeyboardButton(f"🗺️ On Adventure ({rm})", callback_data=f"petadv_status_{pid}")])
+            except Exception:
+                btn_rows.append([InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pid}")])
+        else:
+            btn_rows.append([InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pid}")])
+        btn_rows.append([InlineKeyboardButton("⚔️ Pet Battle", callback_data=f"petbattle_pick_{pid}"),
+                         InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")])
+        btn_rows.append([InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
+                         InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")])
+        btn_rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")])
+        markup = InlineKeyboardMarkup(btn_rows)
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
         reply_markup=markup)
@@ -19625,7 +19746,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not row: await query.answer("Pet not found.", show_alert=True); return
         pet = dict(row); _decay_pet(pet)
         await query.edit_message_text(_build_pet_card(pet), parse_mode="Markdown",
-            reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id))
+            reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet))
         await query.answer(); return
 
     if data.startswith("petactivate_"):
@@ -19642,7 +19763,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sp = PET_SPECIES.get(pet["species"],{})
         await query.answer(f"✅ {sp.get('name','Pet')} is now your active companion!")
         await query.edit_message_text(_build_pet_card(pet), parse_mode="Markdown",
-            reply_markup=_pet_view_markup(pid, True, uid=user.id)); return
+            reply_markup=_pet_view_markup(pid, True, uid=user.id, pet=pet)); return
 
     if data.startswith("petfeed_"):
         pid = int(data.split("_")[1])
@@ -19666,13 +19787,14 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("No Pet Snacks and not enough gold (need 10g).", show_alert=True); return
         pet["hunger"] = min(100, pet.get("hunger",0) + 30)
         pet["mood"]   = min(100, pet.get("mood",0)   + 10)
+        pet["bond_score"] = min(200, pet.get("bond_score",0) + 3)
         pet["last_fed"] = datetime.now().isoformat()
         save_pet(pet)
         feed_msg = PERSONALITY_FEED.get(pers, "eats happily.")
         await query.answer(f"🍖 Fed {pname}!")
         await query.edit_message_text(
             f"🍖 *{pname}* {feed_msg}\n{cost_note}\n\n" + _build_pet_card(pet),
-            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id)); return
+            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet)); return
 
     if data.startswith("pettrain_"):
         pid = int(data.split("_")[1])
@@ -19698,6 +19820,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         gain = 30 + pet.get("level",1) * 5
         pet["exp"] += gain
         pet["mood"] = min(100, pet.get("mood",100) + 5)
+        pet["bond_score"] = min(200, pet.get("bond_score",0) + 5)
         pet["last_trained"] = datetime.now().isoformat()
         # Level up
         lvl_ups = []
@@ -19711,7 +19834,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(f"🏋️ {pname} trained! +{gain} EXP")
         await query.edit_message_text(
             f"🏋️ *{pname}* {train_msg}\n+{gain} EXP gained!{lvl_note}\n\n" + _build_pet_card(pet),
-            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id)); return
+            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet)); return
 
     if data.startswith("petrelease_"):
         pid = int(data.split("_")[1])
@@ -19764,6 +19887,260 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Type /petrename <name> in chat to rename {pname}!\nExample: /petrename Shadow",
             show_alert=True)
         return
+
+    # ── Pet Adventures ────────────────────────────────────────────────────────
+    if data.startswith("petadv_pick_"):
+        pid = int(data.split("_")[2])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); _decay_pet(pet)
+        if _pet_is_on_adventure(pet):
+            await query.answer("Your pet is already on an adventure!", show_alert=True); return
+        pname = _pet_display_name(pet)
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⏱️ 1 Hour  (+50 EXP)", callback_data=f"petadv_start_{pid}_1")],
+            [InlineKeyboardButton("⏳ 4 Hours (+200 EXP)", callback_data=f"petadv_start_{pid}_4")],
+            [InlineKeyboardButton("🌙 8 Hours (+450 EXP)", callback_data=f"petadv_start_{pid}_8")],
+            [InlineKeyboardButton("🔙 Back", callback_data=f"petview_{pid}")],
+        ])
+        await query.edit_message_text(
+            f"🗺️ *Send {pname} on an Adventure?*\n\n"
+            f"Your pet will venture out alone and return with EXP, bond points, and possibly rare items.\n\n"
+            f"_Longer adventures yield better rewards!_",
+            parse_mode="Markdown", reply_markup=markup)
+        await query.answer(); return
+
+    if data.startswith("petadv_start_"):
+        parts = data.split("_")
+        pid = int(parts[2]); hours = int(parts[3])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); _decay_pet(pet)
+        if _pet_is_on_adventure(pet):
+            await query.answer("Already on an adventure!", show_alert=True); return
+        pet["adventure_ends_at"] = (datetime.now() + timedelta(hours=hours)).isoformat()
+        save_pet(pet)
+        pname = _pet_display_name(pet)
+        end_str = (datetime.now() + timedelta(hours=hours)).strftime("%H:%M")
+        await query.edit_message_text(
+            f"🗺️ *{pname} has set off on a {hours}-hour adventure!*\n\n"
+            f"They'll return around *{end_str}*.\nUse /pet when they're back to claim rewards!",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")]]))
+        await query.answer(f"🗺️ {pname} is off adventuring!"); return
+
+    if data.startswith("petadv_status_"):
+        pid = int(data.split("_")[2])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); _decay_pet(pet)
+        pname = _pet_display_name(pet)
+        if not _pet_is_on_adventure(pet):
+            # Adventure complete — award rewards
+            exp_map = {1: 50, 4: 200, 8: 450}
+            # Detect duration from how long adventure_ends_at is from created vs now (rough estimate)
+            adv_exp = 200  # default to 4h reward
+            pet["exp"] = pet.get("exp", 0) + adv_exp
+            pet["bond_score"] = min(200, pet.get("bond_score",0) + 15)
+            pet["adventure_ends_at"] = None
+            lvl_ups = []
+            while pet["exp"] >= pet_exp_for_level(pet["level"]):
+                pet["exp"] -= pet_exp_for_level(pet["level"])
+                pet["level"] += 1; lvl_ups.append(pet["level"])
+            # Chance for item drop
+            loot = None
+            if random.random() < 0.35:
+                loot_pool = ["Pet Snack","Pet Snack","Greater Health Potion","Fortune Coin","Enchanting Scroll"]
+                loot = random.choice(loot_pool)
+                p = get_player(user.id)
+                if p:
+                    inv = sjl(p.get("inventory"),[]); inv.append(loot); p["inventory"] = json.dumps(inv); save_player(p)
+            save_pet(pet)
+            lvl_txt = "".join(f"\n🎉 *Level Up!* {pname} is now level {l}!" for l in lvl_ups)
+            loot_txt = f"\n🎁 Found: *{loot}*!" if loot else ""
+            await query.edit_message_text(
+                f"🗺️ *{pname} returned from adventure!*\n\n"
+                f"⭐ +{adv_exp} EXP{lvl_txt}\n💞 +15 Bond{loot_txt}\n\n" + _build_pet_card(pet),
+                parse_mode="Markdown",
+                reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet))
+            await query.answer("🎉 Adventure complete!"); return
+        try:
+            rem = (datetime.fromisoformat(pet["adventure_ends_at"]) - datetime.now()).total_seconds()
+            rm = f"{int(rem//3600)}h {int((rem%3600)//60)}m" if rem >= 3600 else f"{int(rem//60)}m"
+            await query.answer(f"⏳ {pname} returns in {rm}", show_alert=True)
+        except Exception:
+            await query.answer()
+        return
+
+    # ── Pet Adventures: Claim on /pet command ─────────────────────────────────
+    if data.startswith("petadv_claim_"):
+        pid = int(data.split("_")[2]); hours = int(data.split("_")[3])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); _decay_pet(pet)
+        pname = _pet_display_name(pet)
+        exp_map = {1: 50, 4: 200, 8: 450}
+        adv_exp = exp_map.get(hours, 200)
+        pet["exp"] = pet.get("exp", 0) + adv_exp
+        pet["bond_score"] = min(200, pet.get("bond_score",0) + hours * 2 + 9)
+        pet["adventure_ends_at"] = None
+        lvl_ups = []
+        while pet["exp"] >= pet_exp_for_level(pet["level"]):
+            pet["exp"] -= pet_exp_for_level(pet["level"])
+            pet["level"] += 1; lvl_ups.append(pet["level"])
+        loot = None
+        loot_chances = {1: 0.20, 4: 0.35, 8: 0.55}
+        if random.random() < loot_chances.get(hours, 0.35):
+            pools = {
+                1: ["Pet Snack","Pet Snack","Health Potion"],
+                4: ["Pet Snack","Greater Health Potion","Fortune Coin","Enchanting Scroll"],
+                8: ["Enchanting Scroll","Fortune Coin","Grand Restorative Flask","Scroll of Revival","Pet Snack"],
+            }
+            loot = random.choice(pools.get(hours, pools[4]))
+            p = get_player(user.id)
+            if p:
+                inv = sjl(p.get("inventory"),[]); inv.append(loot); p["inventory"] = json.dumps(inv); save_player(p)
+        save_pet(pet)
+        lvl_txt = "".join(f"\n🎉 *Level Up!* {pname} is now level {l}!" for l in lvl_ups)
+        loot_txt = f"\n🎁 Found: *{loot}*!" if loot else ""
+        await query.edit_message_text(
+            f"🗺️ *{pname} returned from a {hours}-hour adventure!*\n\n"
+            f"⭐ +{adv_exp} EXP{lvl_txt}\n💞 +{hours*2+9} Bond{loot_txt}\n\n" + _build_pet_card(pet),
+            parse_mode="Markdown",
+            reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet))
+        await query.answer("🎉 Adventure rewards claimed!"); return
+
+    # ── Pet Battles ───────────────────────────────────────────────────────────
+    if data.startswith("petbattle_pick_"):
+        pid = int(data.split("_")[2])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); _decay_pet(pet)
+        if _pet_is_on_adventure(pet):
+            await query.answer("Your pet is on an adventure — can't battle now!", show_alert=True); return
+        pname = _pet_display_name(pet)
+        # Cooldown: 2 hours
+        last_b = pet.get("last_battle")
+        if last_b:
+            try:
+                el = (datetime.now() - datetime.fromisoformat(last_b)).total_seconds()
+                if el < 7200:
+                    await query.answer(f"⏳ {pname} needs rest. Battle cooldown: {int((7200-el)//60)} min.", show_alert=True); return
+            except Exception: pass
+        # Find eligible opponents (players with active pets)
+        conn2 = sqlite3.connect(DB_PATH); conn2.row_factory = sqlite3.Row; c2 = conn2.cursor()
+        c2.execute("""SELECT p.owner_id, p.pet_id, p.species, p.nickname, p.level
+                      FROM pets p WHERE p.is_active=1 AND p.owner_id!=? ORDER BY RANDOM() LIMIT 5""", (user.id,))
+        candidates = [dict(r) for r in c2.fetchall()]; conn2.close()
+        if not candidates:
+            await query.answer("No opponents found! Other players need active pets to battle.", show_alert=True); return
+        rows = []
+        for opp in candidates[:4]:
+            osp = PET_SPECIES.get(opp["species"],{})
+            oname = opp.get("nickname") or osp.get("name","Pet")
+            rows.append([InlineKeyboardButton(
+                f"{osp.get('emoji','🐾')} {oname} Lv{opp['level']}",
+                callback_data=f"petbattle_fight_{pid}_{opp['pet_id']}")])
+        rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"petview_{pid}")])
+        await query.edit_message_text(
+            f"⚔️ *{pname} wants to battle!*\n\nChoose an opponent:",
+            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+        await query.answer(); return
+
+    if data.startswith("petbattle_fight_"):
+        parts = data.split("_")
+        my_pid = int(parts[2]); opp_pid = int(parts[3])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (my_pid, user.id))
+        my_row = c.fetchone()
+        c.execute("SELECT * FROM pets WHERE pet_id=?", (opp_pid,))
+        opp_row = c.fetchone(); conn.close()
+        if not my_row or not opp_row:
+            await query.answer("Pet not found.", show_alert=True); return
+        my_pet = dict(my_row); _decay_pet(my_pet)
+        opp_pet = dict(opp_row); _decay_pet(opp_pet)
+        if _pet_is_on_adventure(my_pet):
+            await query.answer("Your pet is on an adventure!", show_alert=True); return
+        # Resolve battle
+        my_sp  = PET_SPECIES.get(my_pet["species"],{})
+        opp_sp = PET_SPECIES.get(opp_pet["species"],{})
+        my_score  = (my_sp.get("base_atk",5) + my_pet["level"] * 2 + my_pet.get("bond_score",0) // 10
+                     + my_sp.get("base_def",3) + random.randint(1,20))
+        opp_score = (opp_sp.get("base_atk",5) + opp_pet["level"] * 2 + opp_pet.get("bond_score",0) // 10
+                     + opp_sp.get("base_def",3) + random.randint(1,20))
+        i_won = my_score > opp_score
+        my_exp_gain  = 100 if i_won else 40
+        opp_exp_gain = 40  if i_won else 100
+        my_bond_gain  = 10 if i_won else 5
+        opp_bond_gain = 5  if i_won else 10
+        my_pet["exp"] = my_pet.get("exp",0) + my_exp_gain
+        my_pet["bond_score"] = min(200, my_pet.get("bond_score",0) + my_bond_gain)
+        my_pet["last_battle"] = datetime.now().isoformat()
+        opp_pet["exp"] = opp_pet.get("exp",0) + opp_exp_gain
+        opp_pet["bond_score"] = min(200, opp_pet.get("bond_score",0) + opp_bond_gain)
+        # Level up both
+        for bp in (my_pet, opp_pet):
+            while bp["exp"] >= pet_exp_for_level(bp["level"]):
+                bp["exp"] -= pet_exp_for_level(bp["level"])
+                bp["level"] += 1
+        save_pet(my_pet); save_pet(opp_pet)
+        my_pname  = _pet_display_name(my_pet)
+        opp_pname = _pet_display_name(opp_pet)
+        my_e  = my_sp.get("emoji","🐾"); opp_e = opp_sp.get("emoji","🐾")
+        result_txt = "🏆 *Victory!*" if i_won else "💔 *Defeat!*"
+        await query.edit_message_text(
+            f"⚔️ *Pet Battle!*\n\n"
+            f"{my_e} *{my_pname}* (Score: {my_score})\nvs\n{opp_e} *{opp_pname}* (Score: {opp_score})\n\n"
+            f"{result_txt}\n"
+            f"⭐ +{my_exp_gain} EXP  |  💞 +{my_bond_gain} Bond",
+            parse_mode="Markdown",
+            reply_markup=_pet_view_markup(my_pid, bool(my_pet.get("is_active")), uid=user.id, pet=my_pet))
+        await query.answer(result_txt.replace("*","")); return
+
+    # ── Pet Evolution ─────────────────────────────────────────────────────────
+    if data.startswith("petevolve_"):
+        pid = int(data.split("_")[1])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); _decay_pet(pet)
+        lvl = pet.get("level", 1)
+        evo = pet.get("evolution_stage", 0)
+        evo_thresholds = [15, 30, 50]
+        eligible = next((t for t in evo_thresholds if lvl >= t and evo < evo_thresholds.index(t) + 1), None)
+        if eligible is None:
+            await query.answer("Not ready to evolve yet.", show_alert=True); return
+        new_evo = evo + 1
+        pet["evolution_stage"] = new_evo
+        pet["bond_score"] = min(200, pet.get("bond_score",0) + 20)
+        save_pet(pet)
+        sp = PET_SPECIES.get(pet["species"], {})
+        pname = _pet_display_name(pet)
+        evo_labels = ["", "✦", "✦✦", "✦✦✦"]
+        evo_flavors = [
+            "",
+            "Your bond has awakened a deeper power!",
+            "A radiant transformation! Your pet has grown tremendously!",
+            "The ultimate form — forged by an unbreakable soul bond!"
+        ]
+        await query.edit_message_text(
+            f"🔮 *{pname} evolved to Stage {new_evo}!* {evo_labels[new_evo]}\n\n"
+            f"_{evo_flavors[new_evo]}_\n\n"
+            f"• +3 ATK per stage\n• +20 Bond\n\n" + _build_pet_card(pet),
+            parse_mode="Markdown",
+            reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet))
+        await query.answer(f"🔮 Evolved to Stage {new_evo}!"); return
 
     await query.answer()
 
@@ -21340,6 +21717,51 @@ async def fixgear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "\n\nItems returned to their inventory.", delay=15)
 
 
+# ── IDLE REWARD SYSTEM ────────────────────────────────────────────────────────
+def _calc_idle_exp(idle_secs: float) -> int:
+    """Compound EXP for being offline. 0 if < 30 min. Caps at 5000 EXP at 72 h."""
+    if idle_secs < 1800:
+        return 0
+    idle_hours = min(idle_secs / 3600, 72.0)
+    exp = int((idle_hours / 72.0) ** 1.2 * 5000)
+    return max(50, min(5000, exp))
+
+async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
+    """Award idle EXP to shadow + RPG player, send DM. Call before updating last_seen."""
+    global _idle_last_awarded
+    now_ts = time.time()
+    if _idle_last_awarded.get(uid, 0) > now_ts - 60:
+        return  # already awarded within last 60 s (rapid messages)
+    try:
+        idle_secs = (datetime.now() - datetime.fromisoformat(prev_seen_iso)).total_seconds()
+        idle_exp = _calc_idle_exp(idle_secs)
+        if idle_exp <= 0:
+            return
+        _idle_last_awarded[uid] = now_ts
+        ih = idle_secs / 3600
+        away_str = (f"{int(ih)}h {int((idle_secs % 3600) / 60)}m"
+                    if ih >= 1 else f"{int(idle_secs / 60)}m")
+        s = get_shadow(uid)
+        if s:
+            add_shadow_exp(s, idle_exp)
+            save_shadow(s)
+        p = get_player(uid)
+        if p and not is_defeated(p):
+            add_exp(p, idle_exp)
+            save_player(p)
+        try:
+            await bot.send_message(
+                uid,
+                f"🎱 *Welcome back!*\n\n"
+                f"You were away for *{away_str}*.\n"
+                f"💫 Idle reward: *+{idle_exp:,} EXP*\n"
+                f"_(Compounds up to 5,000 EXP over 3 days)_",
+                parse_mode="Markdown")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
 # ── PASSIVE MESSAGE HANDLER ───────────────────────────────────────────────────
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
@@ -21487,6 +21909,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     p = get_player(user.id) if s.get("ascended") else None
     asyncio.create_task(check_pet_notifications(p, context.bot))
+
+    # Idle reward — fire before updating last_seen, group context only
+    _prev_seen = s.get("last_seen")
+    if _prev_seen and _is_group:
+        asyncio.create_task(_try_idle_reward(user.id, context.bot, _prev_seen))
 
     # Update last_seen regardless of context so DM-only players build and consume the timer
     s["message_count"] = s.get("message_count",0) + 1
@@ -22874,7 +23301,7 @@ def main():
     app.add_handler(CallbackQueryHandler(petshop_callback,    pattern="^(petshop|pbuy_)"))
     app.add_handler(CallbackQueryHandler(hatch_egg_callback,  pattern="^hatch_egg$"))
     app.add_handler(CallbackQueryHandler(pet_main_callback,
-        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petrelease_|petrename_)"))
+        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petrelease_|petrename_|petadv_|petevolve_|petbattle_)"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
@@ -22886,12 +23313,24 @@ def main():
             raise ApplicationHandlerStop  # banned — silently block all commands
         if u.id != ADMIN_ID and not _rate_ok(u.id):
             raise ApplicationHandlerStop  # silently drop — no reply, no exploit loop
+        _is_grp = update.effective_chat and update.effective_chat.type in ("group", "supergroup")
         try:
-            _lc = sqlite3.connect(DB_PATH)
+            _lc = sqlite3.connect(DB_PATH); _lc.row_factory = sqlite3.Row
+            _row = _lc.execute(
+                "SELECT last_seen FROM shadow_profiles WHERE user_id=?", (u.id,)).fetchone()
+            if _row and _row["last_seen"] and _is_grp:
+                asyncio.create_task(_try_idle_reward(u.id, context.bot, _row["last_seen"]))
             _lc.execute("UPDATE shadow_profiles SET last_seen=? WHERE user_id=?",
                         (datetime.now().isoformat(), u.id))
             _lc.commit(); _lc.close()
         except Exception: pass
+        # Keep tg_username fresh so /attack @handle works reliably
+        if getattr(u, "username", None):
+            try:
+                _pu = sqlite3.connect(DB_PATH)
+                _pu.execute("UPDATE players SET tg_username=? WHERE user_id=?", (u.username, u.id))
+                _pu.commit(); _pu.close()
+            except Exception: pass
     app.add_handler(MessageHandler(filters.COMMAND, _cmd_pre_filter), group=-1)
 
     explore_timers.clear()
