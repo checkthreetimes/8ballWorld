@@ -8059,6 +8059,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             all_skills = sjl(a.get("all_skills"), [])
             if not all_skills:
                 await query.answer("No skills unlocked yet!", show_alert=True); return
+            if is_invincible(a):
+                await query.answer("You're invincible — can't use offensive skills!", show_alert=True); return
             if is_silenced(a):
                 await query.answer("You are silenced — can't use skills!", show_alert=True); return
             markup = _build_skill_picker_keyboard(all_skills, uid, page, target_id, show_close=False)
@@ -13409,6 +13411,9 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(all_skills) == 1:
             sk = all_skills[0]
         else:
+            # Block invincible attackers before showing the picker
+            if is_invincible(p):
+                await send_group(update, "🛡️ You're *Still Recovering*  -  you can't use offensive skills while invincible.", delay=9); return
             # Show numbered selection prompt
             target_uid = update.message.reply_to_message.from_user.id
             markup = _build_skill_picker_keyboard(all_skills, user.id, 0, target_uid)
@@ -13697,8 +13702,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         stype = sk.get("type", "damage")
         _support_types = {"self_heal", "self_heal_buff", "group_heal", "dmg_reduction_buff",
                           "revive_heal", "regen", "full_revive", "heal_shield", "mass_cleanse"}
-        # Block offensive skills on guild members
+        # Block offensive skills on guild members; also block invincible attackers
         if stype not in _support_types:
+            if is_invincible(p):
+                await send_result("🛡️ You're *Still Recovering*  -  you can't use offensive skills while invincible."); return
             if p.get("guild_id") and str(p.get("guild_id")) == str(tp.get("guild_id")):
                 g_s = get_guild(p["guild_id"])
                 gname_s = g_s["name"] if g_s else "your Guild"
