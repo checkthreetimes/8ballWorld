@@ -20162,20 +20162,49 @@ POOL_ITEM_TABLE = [
 ]
 
 def _roll_pool_bonus(p=None):
-    """Weighted random selection from POOL_ITEM_TABLE — all item types compete fairly."""
-    _all_gear = {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}
-    luk_bonus = (get_stat(p, "LUK") * 0.005) if p else 0
-    names = []
-    weights = []
-    for item_name, base_chance in POOL_ITEM_TABLE:
-        gear_boost = 1.8 if item_name in _all_gear else 1.0
-        w = max(base_chance * gear_boost + luk_bonus, 1e-6)
-        names.append(item_name)
-        weights.append(w)
-    # ~35% chance of any bonus drop per /pool
-    if random.random() > 0.35:
+    """Roll a bonus equip drop from /pool. All item types (weapons, armor, hats, gloves,
+    boots, masks, shields, accessories) compete equally within each rarity tier.
+    LUK improves both drop rate and rarity chances."""
+    luk = get_stat(p, "LUK") if p else 0
+
+    # ~70% base drop chance, LUK pushes it toward 90%
+    drop_chance = min(0.70 + luk * 0.004, 0.90)
+    if random.random() > drop_chance:
         return None
-    return random.choices(names, weights=weights, k=1)[0]
+
+    # Rarity distribution — LUK shifts weight toward higher tiers
+    luk_boost = luk * 0.003
+    rarity_weights = [
+        ("common",    max(0.005, 0.38 - luk_boost * 4)),
+        ("uncommon",  0.30),
+        ("rare",      min(0.20 + luk_boost, 0.38)),
+        ("epic",      min(0.07 + luk_boost, 0.18)),
+        ("legendary", min(0.025 + luk_boost * 0.5, 0.10)),
+        ("mythic",    min(0.005 + luk_boost * 0.2, 0.04)),
+    ]
+    rarities, rw = zip(*rarity_weights)
+    chosen_rarity = random.choices(rarities, weights=rw, k=1)[0]
+
+    # Pick any equippable item of that rarity — all slots compete equally
+    _pools = [WEAPONS, ARMORS, SHIELDS, ACCESSORIES, HATS, GLOVES, BOOTS, MASKS]
+    candidates = [
+        name for pool in _pools
+        for name, data in pool.items()
+        if data.get("rarity") == chosen_rarity
+    ]
+
+    if not candidates:
+        # Rarity tier is empty — fall back to next tier down
+        for fallback in ("epic", "rare", "uncommon", "common"):
+            candidates = [
+                name for pool in _pools
+                for name, data in pool.items()
+                if data.get("rarity") == fallback
+            ]
+            if candidates:
+                break
+
+    return random.choice(candidates) if candidates else None
 
 POOL_CLASS_FLAVOR = {
     "warrior": [
