@@ -3438,46 +3438,44 @@ def _encounter_battle_card(enc):
     return "\n".join(lines)
 
 def _encounter_battle_markup(enc, p=None):
-    uid = enc["uid"]
+    uid  = enc["uid"]
     mode = enc["mode"]
-    if mode == "battle":
-        rows = [
-            [InlineKeyboardButton("⚔️ Attack", callback_data=f"enc_atk_{uid}"),
-             InlineKeyboardButton("💊 Heal",   callback_data=f"enc_heal_{uid}")],
+    heals = enc.get("heals_left", 0)
+    pet_cd = enc.get("pet_ability_used", False)
+    rows = []
+    # Row 1: Attack + Guard
+    rows.append([
+        InlineKeyboardButton("⚔️ Attack",   callback_data=f"enc_atk_{uid}"),
+        InlineKeyboardButton("🛡️ Guard",    callback_data=f"enc_guard_{uid}"),
+    ])
+    # Row 2: Heal + Pet Special
+    heal_label = f"💊 Heal ({heals})" if heals > 0 else "💊 No Heals"
+    pet_label  = "🐾 Pet Strike" if not pet_cd else "🐾 Pet (used)"
+    rows.append([
+        InlineKeyboardButton(heal_label,  callback_data=f"enc_heal_{uid}"),
+        InlineKeyboardButton(pet_label,   callback_data=f"enc_pet_{uid}"),
+    ])
+    # Class skills
+    if p:
+        cls = get_player_class(p)
+        p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
+                    if p.get("level", 1) >= sk.get("unlock", 5)]
+        skill_btns = [
+            InlineKeyboardButton(sk.get("active", sk.get("name","Skill")),
+                                 callback_data=f"enc_skl_{uid}_{i}")
+            for i, sk in enumerate(p_skills[:4])
         ]
-        if p:
-            cls = get_player_class(p)
-            p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
-                        if p.get("level", 1) >= sk.get("unlock", 5)]
-            skill_btns = [
-                InlineKeyboardButton(sk.get("active", sk.get("name","Skill")),
-                                     callback_data=f"enc_skl_{uid}_{i}")
-                for i, sk in enumerate(p_skills[:4])
-            ]
-            for i in range(0, len(skill_btns), 2):
-                rows.append(skill_btns[i:i+2])
-        rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"enc_flee_{uid}")])
-    else:  # hunt — player fights directly, can catch when monster is weak
-        rows = [
-            [InlineKeyboardButton("⚔️ Attack", callback_data=f"enc_atk_{uid}"),
-             InlineKeyboardButton("💊 Heal",   callback_data=f"enc_heal_{uid}")],
-        ]
-        if p:
-            cls = get_player_class(p)
-            p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
-                        if p.get("level", 1) >= sk.get("unlock", 5)]
-            skill_btns = [
-                InlineKeyboardButton(sk.get("active", sk.get("name","Skill")),
-                                     callback_data=f"enc_skl_{uid}_{i}")
-                for i, sk in enumerate(p_skills[:4])
-            ]
-            for i in range(0, len(skill_btns), 2):
-                rows.append(skill_btns[i:i+2])
+        for i in range(0, len(skill_btns), 2):
+            rows.append(skill_btns[i:i+2])
+    # Bottom row
+    if mode == "hunt":
         bottom = []
         if enc["e_hp"] / max(1, enc["e_max_hp"]) <= 0.5:
             bottom.append(InlineKeyboardButton("🎯 Catch", callback_data=f"enc_catch_{uid}"))
         bottom.append(InlineKeyboardButton("🏃 Flee", callback_data=f"enc_flee_{uid}"))
         rows.append(bottom)
+    else:
+        rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"enc_flee_{uid}")])
     return InlineKeyboardMarkup(rows)
 
 def _pick_random_npc(p_level):
@@ -3602,8 +3600,35 @@ def _enc_npc_attack(enc, p):
         ls = int(dmg * 0.3)
         enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + ls)
         extra = f" (+{ls} HP drained)"
+    # Guard reduction
+    if enc.pop("p_guarding", False):
+        dmg = max(1, int(dmg * 0.60))
+        extra += " 🛡️ Guard reduced damage!"
     enc["p_hp"] = max(0, enc["p_hp"] - dmg)
     enc["last_dmg"] = dmg
+    # Pet defensive proc
+    pet_info = enc.get("pet_info")
+    if pet_info and pet_info.get("def_ability"):
+        _pet_rec = get_active_pet_record(enc["uid"]) if enc.get("uid") else None
+        if _pet_rec:
+            _proc_chance = get_pet_def_proc_chance(_pet_rec)
+            if _proc_chance > 0 and random.random() < _proc_chance:
+                da = pet_info["def_ability"]
+                pname = pet_info["name"]
+                if da == "intercept":
+                    restore = int(dmg * 0.5)
+                    enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + restore)
+                    return f"*{enc['e_name']}* used *{atk_name}* — {dmg} dmg!\n🛡️ *{pname}* intercepts, restoring {restore} HP!{extra}"
+                elif da == "counter":
+                    counter_dmg = int(dmg * 0.6)
+                    enc["e_hp"] = max(0, enc["e_hp"] - counter_dmg)
+                    return f"*{enc['e_name']}* used *{atk_name}* — {dmg} dmg!\n⚔️ *{pname}* counter-strikes for {counter_dmg}!{extra}"
+                elif da == "shield":
+                    block = int(dmg * 0.4)
+                    enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + block)
+                    return f"*{enc['e_name']}* used *{atk_name}* — {dmg} dmg!\n✨ *{pname}*'s shield absorbs {block} dmg!{extra}"
+                elif da in ("stun","poison"):
+                    return f"*{enc['e_name']}* used *{atk_name}* — {dmg} dmg!\n{'⚡' if da=='stun' else '☠️'} *{pname}* retaliates!{extra}"
     return f"*{enc['e_name']}* used *{atk_name}* — {dmg} dmg!{extra}"
 
 def _enc_monster_attack(enc):
@@ -16302,14 +16327,31 @@ async def _start_encounter_battle(query, uid, p):
     n_hp, n_atk = _npc_level_stats(npc[4], npc[5], n_level, p_mhp)
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     cls_name = CLASS_TREE.get(npc[1], {}).get("name", npc[1].replace("_"," ").title())
+    # Load pet info for enc
+    _enc_pet = get_active_pet_record(uid)
+    _pet_info = None
+    if _enc_pet and not _pet_is_on_adventure(_enc_pet):
+        _sp = PET_SPECIES.get(_enc_pet.get("species"), {})
+        _, _bond_label = _get_bond_tier(_enc_pet.get("bond_score", 0))
+        _pet_info = {
+            "pet_id": _enc_pet["pet_id"],
+            "name": _enc_pet.get("nickname") or _sp.get("name","Pet"),
+            "level": _enc_pet.get("level",1),
+            "atk": get_pet_atk_bonus(_enc_pet),
+            "bond_label": _bond_label,
+            "species": _enc_pet.get("species"),
+            "def_ability": _sp.get("def_ability"),
+        }
     enc = {
         "uid": uid, "mode": "battle", "p_name": p.get("username", "You"),
         "p_hp": p_hp, "p_max_hp": p_mhp,
         "e_name": npc[0], "e_class": npc[1],
         "e_hp": n_hp, "e_max_hp": n_hp, "e_atk": n_atk, "e_level": n_level,
         "e_gold_range": npc[6], "e_exp_range": npc[7], "e_loot_key": npc[8],
-        "last_action": f"*{npc[0]}* [{cls_name}] Lv.{n_level} steps forward!",
+        "action_log": [f"*{npc[0]}* [{cls_name}] Lv.{n_level} steps forward!"],
         "heals_left": 2,
+        "pet_info": _pet_info,
+        "pet_ability_used": False,
     }
     active_encounters[uid] = enc
     card = _encounter_battle_card(enc)
@@ -16326,14 +16368,31 @@ async def _start_encounter_hunt(query, uid, p):
     m_atk = max(int(p_mhp * 0.11), min(m_atk, int(p_mhp * 0.26)))
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     elem_e = ELEMENT_EMOJI.get(monster[2], "")
+    # Load pet info for enc
+    _enc_pet = get_active_pet_record(uid)
+    _pet_info = None
+    if _enc_pet and not _pet_is_on_adventure(_enc_pet):
+        _sp = PET_SPECIES.get(_enc_pet.get("species"), {})
+        _, _bond_label = _get_bond_tier(_enc_pet.get("bond_score", 0))
+        _pet_info = {
+            "pet_id": _enc_pet["pet_id"],
+            "name": _enc_pet.get("nickname") or _sp.get("name","Pet"),
+            "level": _enc_pet.get("level",1),
+            "atk": get_pet_atk_bonus(_enc_pet),
+            "bond_label": _bond_label,
+            "species": _enc_pet.get("species"),
+            "def_ability": _sp.get("def_ability"),
+        }
     enc = {
         "uid": uid, "mode": "hunt", "p_name": p.get("username", "You"),
         "p_hp": p_hp, "p_max_hp": p_mhp,
         "e_name": monster[1], "e_key": monster[0], "element": monster[2],
         "e_hp": m_hp, "e_max_hp": m_hp, "e_atk": m_atk, "e_level": m_level,
         "e_catch_rate": monster[6],
-        "last_action": f"A wild *{monster[1]}* {elem_e} (Lv.{m_level}) appears!",
+        "action_log": [f"A wild *{monster[1]}* {elem_e} (Lv.{m_level}) appears!"],
         "heals_left": 2,
+        "pet_info": _pet_info,
+        "pet_ability_used": False,
     }
     active_encounters[uid] = enc
     card = _encounter_battle_card(enc)
@@ -16381,7 +16440,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # ── All in-combat actions: parse owner uid from callback data ───────────
     # All combat buttons embed the owner's uid: enc_atk_{uid}, enc_flee_{uid}, etc.
     # Validate ownership first so random clickers can't corrupt the battle card.
-    _enc_combat_match = re.match(r"enc_(?:atk|skl|heal|flee|mv|catch|switch)_(\d+)", data)
+    _enc_combat_match = re.match(r"enc_(?:atk|skl|heal|flee|mv|catch|switch|guard|pet)_(\d+)", data)
     if _enc_combat_match:
         owner_uid = int(_enc_combat_match.group(1))
         if query.from_user.id != owner_uid:
@@ -16415,14 +16474,15 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if random.random() < flee_chance:
             await _end_encounter("🏃 *You fled safely!*\n_(30s cooldown)_")
         else:
-            enc["last_action"] = "Failed to flee!"
             npc_act = _enc_npc_attack(enc, p) if enc["mode"] == "battle" else _enc_monster_attack(enc)
             if enc["p_hp"] <= 0:
                 gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
                 await _end_encounter(f"💀 *You were knocked out trying to flee!*\nLost {gold_loss} gold.")
             else:
-                enc["last_action"] = f"Flee failed! {npc_act}"
+                enc.setdefault("action_log",[]).append(f"🏃 Flee failed!")
+                enc.setdefault("action_log",[]).append(npc_act)
+                if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
                 try:
                     await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
@@ -16441,12 +16501,17 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 wep     = p.get("equipped_weapon")
                 wep_atk = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
                 dmg     = max(1, int((str_val + wep_atk) * random.uniform(0.85, 1.15)))
-                if enc.pop("p_weakened", False):
-                    dmg = max(1, int(dmg * 0.75))
-                    action_txt = f"You attacked for *{dmg}* damage! _(weakened)_"
-                else:
-                    action_txt = f"You attacked for *{dmg}* damage!"
                 enc["e_hp"] = max(0, enc["e_hp"] - dmg)
+                pet_extra = ""
+                pet_info = enc.get("pet_info")
+                if pet_info and pet_info.get("atk", 0) > 0:
+                    pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
+                    enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
+                    pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
+                if enc.pop("p_weakened", False):
+                    action_txt = f"You attacked for *{dmg}* damage! _(weakened)_{pet_extra}"
+                else:
+                    action_txt = f"You attacked for *{dmg}* damage!{pet_extra}"
 
         elif data.startswith(f"enc_skl_{uid}_"):
             cls      = get_player_class(p)
@@ -16481,7 +16546,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
                 await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold. _(30s cooldown)_")
                 return
-            enc["last_action"] = f"{action_txt}\n{npc_act}"
+            enc.setdefault("action_log",[]).append(action_txt)
+            enc.setdefault("action_log",[]).append(npc_act)
+            if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
             try:
                 await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                               reply_markup=_encounter_battle_markup(enc, p))
@@ -16489,6 +16556,48 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await query.edit_message_text(_encounter_battle_card(enc),
                                               reply_markup=_encounter_battle_markup(enc, p))
             return
+
+        elif data == f"enc_guard_{uid}":
+            enc["p_guarding"] = True
+            action_txt = "🛡️ You brace for impact! *(40% damage reduction next hit)*"
+
+        elif data == f"enc_pet_{uid}":
+            if enc.get("pet_ability_used"):
+                await query.answer("Pet ability already used this battle!", show_alert=True); return
+            pet_info = enc.get("pet_info")
+            if not pet_info:
+                await query.answer("No active pet!", show_alert=True); return
+            enc["pet_ability_used"] = True
+            da = pet_info.get("def_ability","shield")
+            patk = pet_info.get("atk", 5)
+            pname = pet_info.get("name","Pet")
+            # Offensive use of pet ability
+            if da in ("counter","stun","poison"):
+                pet_dmg = max(1, int(patk * 1.8 * random.uniform(0.9, 1.1)))
+                enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
+                if da == "stun":
+                    enc["e_stunned_turns"] = 1
+                    action_txt = f"🐾 *{pname}* stuns the enemy for *{pet_dmg}* dmg! ⚡ Enemy stunned!"
+                elif da == "poison":
+                    enc["e_poisoned"] = True
+                    action_txt = f"🐾 *{pname}* poisons the enemy for *{pet_dmg}* dmg! ☠️ Poisoned!"
+                else:
+                    action_txt = f"🐾 *{pname}* counter-strikes for *{pet_dmg}* dmg!"
+            elif da == "lifesteal":
+                pet_dmg = max(1, int(patk * 1.5 * random.uniform(0.9, 1.1)))
+                enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
+                heal_amt = int(pet_dmg * 0.4)
+                enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal_amt)
+                action_txt = f"🐾 *{pname}* drains *{pet_dmg}* dmg and heals you *{heal_amt}* HP! 💜"
+            elif da == "shield":
+                shield_hp = max(5, patk * 2)
+                enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + shield_hp)
+                action_txt = f"🐾 *{pname}* creates a shield, restoring *{shield_hp}* HP! ✨"
+            else:
+                pet_dmg = max(1, int(patk * 1.4 * random.uniform(0.9,1.1)))
+                enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
+                action_txt = f"🐾 *{pname}* attacks for *{pet_dmg}* dmg!"
+
         else:
             return
 
@@ -16561,7 +16670,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
             await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold. _(30s cooldown)_")
             return
-        enc["last_action"] = f"{action_txt}\n{npc_act}"
+        enc.setdefault("action_log",[]).append(action_txt)
+        enc.setdefault("action_log",[]).append(npc_act)
+        if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
         try:
             await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                           reply_markup=_encounter_battle_markup(enc, p))
@@ -16587,7 +16698,16 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 dmg     = max(1, int((str_val + wep_atk) * random.uniform(0.85, 1.15)))
                 enc["e_hp"] = max(0, enc["e_hp"] - dmg)
                 elem_e = ELEMENT_EMOJI.get(enc.get("element",""), "")
-                action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage!"
+                pet_extra = ""
+                pet_info = enc.get("pet_info")
+                if pet_info and pet_info.get("atk", 0) > 0:
+                    pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
+                    enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
+                    pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
+                if enc.pop("p_weakened", False):
+                    action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage! _(weakened)_{pet_extra}"
+                else:
+                    action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage!{pet_extra}"
 
         elif data.startswith(f"enc_skl_{uid}_"):
             cls      = get_player_class(p)
@@ -16622,7 +16742,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
                 await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold. _(30s cooldown)_")
                 return
-            enc["last_action"] = f"{action_txt}\n{mon_act}"
+            enc.setdefault("action_log",[]).append(action_txt)
+            enc.setdefault("action_log",[]).append(mon_act)
+            if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
             try:
                 await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                               reply_markup=_encounter_battle_markup(enc, p))
@@ -16665,7 +16787,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     f"💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP\n_(30s cooldown)_")
             else:
                 mon_act = _enc_monster_attack(enc)
-                enc["last_action"] = f"*{enc['e_name']}* broke free!\n{mon_act}"
+                enc.setdefault("action_log",[]).append(f"*{enc['e_name']}* broke free!")
+                enc.setdefault("action_log",[]).append(mon_act)
+                if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
                 if enc["p_hp"] <= 0:
                     gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
                     p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
@@ -16678,13 +16802,54 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     await query.edit_message_text(_encounter_battle_card(enc),
                                                   reply_markup=_encounter_battle_markup(enc, p))
             return
+
+        elif data == f"enc_guard_{uid}":
+            enc["p_guarding"] = True
+            action_txt = "🛡️ You brace for impact! *(40% damage reduction next hit)*"
+
+        elif data == f"enc_pet_{uid}":
+            if enc.get("pet_ability_used"):
+                await query.answer("Pet ability already used this battle!", show_alert=True); return
+            pet_info = enc.get("pet_info")
+            if not pet_info:
+                await query.answer("No active pet!", show_alert=True); return
+            enc["pet_ability_used"] = True
+            da = pet_info.get("def_ability","shield")
+            patk = pet_info.get("atk", 5)
+            pname = pet_info.get("name","Pet")
+            if da in ("counter","stun","poison"):
+                pet_dmg = max(1, int(patk * 1.8 * random.uniform(0.9, 1.1)))
+                enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
+                if da == "stun":
+                    enc["e_stunned_turns"] = 1
+                    action_txt = f"🐾 *{pname}* stuns the enemy for *{pet_dmg}* dmg! ⚡ Enemy stunned!"
+                elif da == "poison":
+                    enc["e_poisoned"] = True
+                    action_txt = f"🐾 *{pname}* poisons the enemy for *{pet_dmg}* dmg! ☠️ Poisoned!"
+                else:
+                    action_txt = f"🐾 *{pname}* counter-strikes for *{pet_dmg}* dmg!"
+            elif da == "lifesteal":
+                pet_dmg = max(1, int(patk * 1.5 * random.uniform(0.9, 1.1)))
+                enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
+                heal_amt = int(pet_dmg * 0.4)
+                enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal_amt)
+                action_txt = f"🐾 *{pname}* drains *{pet_dmg}* dmg and heals you *{heal_amt}* HP! 💜"
+            elif da == "shield":
+                shield_hp = max(5, patk * 2)
+                enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + shield_hp)
+                action_txt = f"🐾 *{pname}* creates a shield, restoring *{shield_hp}* HP! ✨"
+            else:
+                pet_dmg = max(1, int(patk * 1.4 * random.uniform(0.9,1.1)))
+                enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
+                action_txt = f"🐾 *{pname}* attacks for *{pet_dmg}* dmg!"
+
         else:
             return
 
         # Monster defeated
         if enc["e_hp"] <= 0:
-            exp_gain  = enc["e_level"] * 14
-            gold_gain = enc["e_level"] * 7
+            exp_gain  = enc["e_level"] * 18
+            gold_gain = enc["e_level"] * 9
             hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
             close_bonus = ""
             if hp_pct <= 0.15:
@@ -16695,11 +16860,39 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 close_bonus = "\n⚔️ *Close Fight Bonus!*"
             add_exp(p, exp_gain)
             p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
-            elem_e = ELEMENT_EMOJI.get(enc.get("element",""), "")
+            # Element-based loot drops
+            elem = enc.get("element","")
+            elem_e = ELEMENT_EMOJI.get(elem, "")
+            _elem_mats = {
+                "fire":      ["Pet Snack","Enchanting Scroll","Grand Restorative Flask"],
+                "water":     ["Pet Snack","Fortune Coin","Greater Health Potion"],
+                "earth":     ["Pet Snack","Pet Snack","Fortune Coin"],
+                "wind":      ["Pet Snack","Enchanting Scroll","Fortune Coin"],
+                "lightning": ["Pet Snack","Enchanting Scroll","Grand Restorative Flask"],
+                "shadow":    ["Pet Snack","Scroll of Revival","Fortune Coin"],
+                "holy":      ["Pet Snack","Scroll of Revival","Grand Restorative Flask"],
+                "void":      ["Pet Snack","Scroll of Revival","Enchanting Scroll"],
+                "nature":    ["Pet Snack","Pet Snack","Fortune Coin"],
+            }
+            hunt_loot = None
+            if random.random() < 0.40:
+                pool = _elem_mats.get(elem, ["Pet Snack","Fortune Coin","Greater Health Potion"])
+                hunt_loot = random.choice(pool)
+                add_item(p, hunt_loot)
+            loot_txt = f"\n🎁 Drop: *{hunt_loot}*" if hunt_loot else ""
+            # Pet EXP from hunt
+            pet_info = enc.get("pet_info")
+            pet_exp_txt = ""
+            if pet_info:
+                _pet_owner = get_active_pet_record(uid)
+                if _pet_owner:
+                    pet_exp = enc["e_level"] * 8
+                    give_pet_exp(uid, pet_exp)
+                    pet_exp_txt = f"\n🐾 *{pet_info['name']}* +{pet_exp} EXP"
             await _end_encounter(
-                f"⚔️ *Wild {enc['e_name']}* {elem_e} was defeated!{close_bonus}\n"
-                f"💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP\n"
-                f"_Tip: Use 🎯 Catch when the monster is below 50% HP to get Monster Cores!_\n_(30s cooldown)_")
+                f"⚔️ *{enc['e_name']}* {elem_e} defeated!{close_bonus}\n"
+                f"💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP{loot_txt}{pet_exp_txt}\n"
+                f"_Use 🎯 Catch to get Monster Cores next time!_\n_(30s cooldown)_")
             return
 
         # Monster attacks back
@@ -16711,7 +16904,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
             await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold. _(30s cooldown)_")
             return
-        enc["last_action"] = f"{action_txt}\n{mon_act}"
+        enc.setdefault("action_log",[]).append(action_txt)
+        enc.setdefault("action_log",[]).append(mon_act)
+        if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
         try:
             await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                           reply_markup=_encounter_battle_markup(enc, p))
@@ -21906,14 +22101,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Silent influence: social greetings
     _p_msg = get_player(user.id)
     # Keep tg_username fresh on every message so /attack @handle always works
-    if _p_msg and getattr(user, "username", None) and _p_msg.get("tg_username") != user.username:
-        _p_msg["tg_username"] = user.username
+    if getattr(user, "username", None):
         try:
             _tgu_c = sqlite3.connect(DB_PATH)
             _tgu_c.execute("UPDATE players SET tg_username=? WHERE user_id=?", (user.username, user.id))
             _tgu_c.commit(); _tgu_c.close()
         except Exception:
             pass
+        if _p_msg:
+            _p_msg["tg_username"] = user.username
+    # Also capture tg_username for anyone being replied to
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        _ru = update.message.reply_to_message.from_user
+        if getattr(_ru, "username", None):
+            try:
+                _tgr_c = sqlite3.connect(DB_PATH)
+                _tgr_c.execute("UPDATE players SET tg_username=? WHERE user_id=?", (_ru.username, _ru.id))
+                _tgr_c.commit(); _tgr_c.close()
+            except Exception:
+                pass
     if _p_msg and update.message.reply_to_message:
         _txt = (update.message.text or "").lower().strip()
         _greets_pos = ["thank you", "thanks", "ty ", "ty!", "thx", " ty"]
@@ -23440,6 +23646,15 @@ def main():
                 _pu.execute("UPDATE players SET tg_username=? WHERE user_id=?", (u.username, u.id))
                 _pu.commit(); _pu.close()
             except Exception: pass
+        # Also capture tg_username for anyone being replied to
+        if update.message and update.message.reply_to_message and update.message.reply_to_message.from_user:
+            _rtu = update.message.reply_to_message.from_user
+            if getattr(_rtu, "username", None):
+                try:
+                    _ptr = sqlite3.connect(DB_PATH)
+                    _ptr.execute("UPDATE players SET tg_username=? WHERE user_id=?", (_rtu.username, _rtu.id))
+                    _ptr.commit(); _ptr.close()
+                except Exception: pass
     app.add_handler(MessageHandler(filters.COMMAND, _cmd_pre_filter), group=-1)
 
     explore_timers.clear()
