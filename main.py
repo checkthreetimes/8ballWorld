@@ -7503,6 +7503,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             d["revenge_target"] = au_id
             d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
             asyncio.create_task(_notify_defeat(bot, d, a["username"] + " (Killshot)"))
+            asyncio.create_task(check_and_claim_bounty(bot, a, d, chat_id))
             exp_loss = round(d.get("exp", 0) * 0.10)
             d["exp"] = max(0, d.get("exp", 0) - exp_loss)
             d["losses"] = d.get("losses", 0) + 1
@@ -22357,6 +22358,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 asyncio.create_task(announce(context.bot, chat_id,
                     f"🩸 *{p['username']}* bled out and is defeated for 6 hours!",
                     delay=30))
+                _bleed_atk_ids = get_recent_attackers(p)
+                if _bleed_atk_ids:
+                    _bleed_atk = get_player(_bleed_atk_ids[-1])
+                    if _bleed_atk:
+                        asyncio.create_task(check_and_claim_bounty(context.bot, _bleed_atk, p, chat_id))
             save_player(p)
 
     # Cannot earn EXP while defeated
