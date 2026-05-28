@@ -382,14 +382,14 @@ CLASS_TREE = {
         "stat_bonus":{"STR":3},
         "skills":[
             {"tier":2,"unlock":10,"name":"Bloodlust",
-             "passive":"Each hit landed restores 20% of damage dealt (min 15 HP).",
+             "passive":"Each hit landed restores 25% of damage dealt (min 20 HP).",
              "active":"Triple Strike","type":"multihit",
-             "desc":"Hit three times. Second hit 70%, third hit 50%. Each has independent crit. If all three crit, Bloodlust heal triples.",
-             "passive_key":"bloodlust","hits":3,"mults":[1.0, 0.70, 0.50]},
+             "desc":"Hit three times at full, 95%, and 75% power. Each hit has independent crit. If all three crit, Bloodlust heal triples.",
+             "passive_key":"bloodlust","hits":3,"mults":[1.20, 0.95, 0.75]},
             {"tier":2,"unlock":10,"name":"Battle Cry",
-             "passive":"Gain +50 STR for 15 minutes on every attack. No kill required.",
+             "passive":"Gain +80 STR for 15 minutes on every attack. No kill required.",
              "active":"Battle Cry","type":"self_heal_buff",
-             "desc":"Restore 20% of your max HP and gain +50 STR for 2 minutes.",
+             "desc":"Restore 25% of your max HP and gain +80 STR for 3 minutes.",
              "passive_key":"battle_cry"},
         ]
     },
@@ -3606,6 +3606,15 @@ def _enc_npc_attack(enc, p):
         extra += " 🛡️ Guard reduced damage!"
     enc["p_hp"] = max(0, enc["p_hp"] - dmg)
     enc["last_dmg"] = dmg
+    # Player armor enchant: reflect_flat — bounce damage back to NPC
+    _p_uid = enc.get("uid")
+    if _p_uid:
+        _pp = get_player(_p_uid)
+        if _pp:
+            _ref = get_enchant_bonus(_pp, "reflect_flat")
+            if _ref and _ref > 0:
+                enc["e_hp"] = max(0, enc["e_hp"] - _ref)
+                extra += f"\n🔄 Reflected *{_ref}* damage back!"
     # Pet defensive proc
     pet_info = enc.get("pet_info")
     if pet_info and pet_info.get("def_ability"):
@@ -4583,7 +4592,7 @@ def get_stat(p, stat):
     set_bonuses, _ = get_active_set_bonuses(p)
     set_stat  = set_bonuses.get(stat, 0)
     set_all   = set_bonuses.get("all_stats", 0)
-    battle_cry_bonus = 50 if stat == "STR" and _ts_active(p, "battle_cry_str_until") else 0
+    battle_cry_bonus = 80 if stat == "STR" and _ts_active(p, "battle_cry_str_until") else 0
     if stat in ("STR","AGI","INT","WIS","DEX","LUK"):
         return base + acc + all_s + blessed_bonus + title_bonus + all_title + set_stat + set_all + battle_cry_bonus
     return base + acc + all_s + blessed_bonus
@@ -5164,9 +5173,15 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
     if stype == "damage":
         dmg = round(base * sk.get("mult", 1.0))
     elif stype == "multihit":
-        hits = sk.get("hits", 2); mult = sk.get("mult", 0.8)
-        dmg  = sum(round(calc_attack_damage(p, w) * mult) for _ in range(hits))
-        lines.append(f"⚡ {hits}-hit combo! Total: {dmg}")
+        mults_list = sk.get("mults") or [sk.get("mult", 0.8)] * sk.get("hits", 2)
+        hit_parts = []
+        dmg = 0
+        for _m in mults_list:
+            _h = round(calc_attack_damage(p, w) * _m)
+            if check_crit(p): _h = apply_crit(p, _h); hit_parts.append(f"💥{_h}")
+            else: hit_parts.append(str(_h))
+            dmg += _h
+        lines.append(f"⚡ {len(mults_list)}-hit combo! " + " + ".join(hit_parts) + f" = *{dmg}*")
     elif stype == "crit_dmg":
         dmg = round(base * sk.get("mult", 1.8) * 2)
         lines.append("💥 *Guaranteed Critical!*")
@@ -5813,7 +5828,7 @@ def apply_lifesteal(attacker, dmg):
     if pk == "soul_pact":
         healed = round(dmg * 0.20)
     if pk == "bloodlust":
-        healed = max(15, round(dmg * 0.20))
+        healed = max(20, round(dmg * 0.25))
     # New class passives
     if pk == "verdant_renewal":  healed += round(dmg * 0.15)
     if pk == "eternal_bloom":    healed += round(dmg * 0.10)
@@ -8182,6 +8197,23 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             if was_defeated:
                 msg += f"\n✨ *{t['username']}* is revived! *1 hour invincibility* granted  -  _(Still Recovering)_"
+            # Divine Shard: priest_aoe — also heal 1 nearby guild member
+            if get_accessory_bonus(h, "priest_aoe"):
+                _aoe_heal = max(1, heal_amount // 2)
+                _aoe_healed = []
+                _gid = h.get("guild_id")
+                if _gid:
+                    _g = get_guild(_gid)
+                    _gmembers = [m for m in sjl(_g.get("members"), []) if m != hu.id and m != tu.id] if _g else []
+                    random.shuffle(_gmembers)
+                    for _mid in _gmembers[:2]:
+                        _mp = get_player(_mid)
+                        if _mp and not is_defeated(_mp):
+                            _mp["hp"] = min(calc_max_hp(_mp), _mp["hp"] + _aoe_heal)
+                            save_player(_mp)
+                            _aoe_healed.append(_mp["username"])
+                if _aoe_healed:
+                    msg += f"\n✨ *Divine Shard* radiates — also heals {', '.join(_aoe_healed)} for *{_aoe_heal} HP*!"
     else:
         msg = (
             f"💊 *{h['username']}* uses *{potion}* to heal *{t['username']}* for *{heal_amount} HP*!\n"
@@ -9922,6 +9954,10 @@ async def explore_zone_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     loot_item = item_name_r; break
         gold_r = round(zone["gold"] * random.uniform(0.7, 1.3)) if success else 0
         exp_r  = round(zone["exp"]  * random.uniform(0.7, 1.3)) if success else round(zone["exp"] * 0.1)
+        _expl_bonus = get_accessory_bonus(p2, "explore_bonus")
+        if success and _expl_bonus:
+            gold_r = round(gold_r * (1 + _expl_bonus))
+            exp_r  = round(exp_r  * (1 + _expl_bonus))
         if success:
             msg = (f"🗺️ *{p2['username']}* returns from *{zone['name']}*.\n\n"
                    f"💰 +{gold_r} gold | ✨ +{exp_r} EXP"
@@ -13144,10 +13180,10 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
                 lines.append(f"💚 Healed self for *{heal} HP*!")
             elif stype == "self_heal_buff":
-                heal = round(p["max_hp"] * 0.20)
+                heal = round(p["max_hp"] * 0.25)
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
-                set_status(p, "battle_cry_str_until", 120)
-                lines.append(f"💪 *Battle Cry!* +{heal} HP restored. +50 STR for 2 minutes!")
+                set_status(p, "battle_cry_str_until", 180)
+                lines.append(f"💪 *Battle Cry!* +{heal} HP restored. +80 STR for 3 minutes!")
             elif stype == "self_atk_buff":
                 set_status(p, "blessed_until", 120)
                 lines.append("⚔️ *War Cry!* +30% ATK for 2 minutes!")
@@ -13464,11 +13500,13 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         stype = sk.get("type", "damage")
         out = [f"⚡ *{p['username']}* uses *{sk['name']}* on *{boss_dict['data']['name']}*!"]
         if stype in ("self_heal", "self_heal_buff"):
-            heal = round(p["max_hp"] * 0.20) if stype == "self_heal_buff" else round(get_stat(p, "WIS") * sk.get("mult", 3.0))
+            heal = round(p["max_hp"] * 0.25) if stype == "self_heal_buff" else round(get_stat(p, "WIS") * sk.get("mult", 3.0))
             p["hp"] = min(p["max_hp"], p["hp"] + heal)
             if stype == "self_heal_buff":
-                set_status(p, "battle_cry_str_until", 120)
-            out.append(f"💚 Healed self for *{heal} HP*!")
+                set_status(p, "battle_cry_str_until", 180)
+                out.append(f"💪 *Battle Cry!* +{heal} HP restored. +80 STR for 3 minutes!")
+            else:
+                out.append(f"💚 Healed self for *{heal} HP*!")
             dmg = 0
         else:
             mult = sk.get("mult", 1.0) or 1.0
@@ -13951,9 +13989,15 @@ async def _execute_skill(update, context, p, sk):
     if stype == "damage":
         dmg = round(base * sk.get("mult",1.0))
     elif stype == "multihit":
-        hits = sk.get("hits",2); mult = sk.get("mult",0.8)
-        dmg  = sum(round(calc_attack_damage(p, w)*mult) for _ in range(hits))
-        lines.append(f"⚡ {hits}-hit combo! Total: {dmg}")
+        mults_list = sk.get("mults") or [sk.get("mult", 0.8)] * sk.get("hits", 2)
+        hit_parts = []
+        dmg = 0
+        for _m in mults_list:
+            _h = round(calc_attack_damage(p, w) * _m)
+            if check_crit(p): _h = apply_crit(p, _h); hit_parts.append(f"*{_h}*💥")
+            else: hit_parts.append(str(_h))
+            dmg += _h
+        lines.append(f"⚡ {len(mults_list)}-hit combo! " + " + ".join(hit_parts) + f" = *{dmg}*")
     elif stype == "crit_dmg":
         dmg = round(base * sk.get("mult",1.8) * 2)
         lines.append("💥 *Guaranteed Critical!*")
@@ -14183,6 +14227,13 @@ async def _execute_skill(update, context, p, sk):
         stat_key = sk.get("stat", get_primary_stat(p))
         dmg = round(get_stat(p, stat_key) * sk.get("mult", 1.5))
         lines.append(f"💥 *{sk['name']}!* {dmg} damage!")
+
+    # Void Mark: spell_double_chance — double damage on proc
+    if stype in ("spell", "bounce_spell"):
+        _dbl = get_accessory_bonus(p, "spell_double_chance") or 0
+        if _dbl and random.random() < _dbl:
+            dmg *= 2
+            lines.append(f"✨ *Void Echo!* Spell resonates — damage doubled!")
 
     # Apply defense
     if stype not in ("pierce_all","void_nuke","holy_dmg"):
@@ -16530,10 +16581,18 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
                     enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
                     pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
+                # Player weapon enchant effects
+                _enc_extras = ""
+                if get_enchant_bonus(p, "burn_proc") and random.random() < 0.10:
+                    enc["e_burning"] = True; _enc_extras += "\n🔥 Your weapon *ignites* the enemy!"
+                if get_enchant_bonus(p, "lifesteal_flat"):
+                    _ls = max(1, round(dmg * 0.15))
+                    enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _ls)
+                    _enc_extras += f"\n💜 Lifesteal +{_ls} HP!"
                 if enc.pop("p_weakened", False):
-                    action_txt = f"You attacked for *{dmg}* damage! _(weakened)_{pet_extra}"
+                    action_txt = f"You attacked for *{dmg}* damage! _(weakened)_{pet_extra}{_enc_extras}"
                 else:
-                    action_txt = f"You attacked for *{dmg}* damage!{pet_extra}"
+                    action_txt = f"You attacked for *{dmg}* damage!{pet_extra}{_enc_extras}"
 
         elif data.startswith(f"enc_skl_{uid}_"):
             cls      = get_player_class(p)
@@ -16628,6 +16687,10 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         # Check enemy dead
         if enc["e_hp"] <= 0:
+            # kill_heal enchant: restore HP on kill
+            _kh = get_enchant_bonus(p, "kill_heal")
+            if _kh:
+                enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _kh)
             e_level = enc.get("e_level", 1)
             gold_r = enc.get("e_gold_range", (5, 15))
             gold   = (random.randint(*gold_r) if isinstance(gold_r, tuple) else random.randint(5, 30)) + e_level * 6
@@ -16730,10 +16793,17 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
                     enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
                     pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
+                _enc_extras = ""
+                if get_enchant_bonus(p, "burn_proc") and random.random() < 0.10:
+                    enc["e_burning"] = True; _enc_extras += "\n🔥 Your weapon *ignites* the enemy!"
+                if get_enchant_bonus(p, "lifesteal_flat"):
+                    _ls = max(1, round(dmg * 0.15))
+                    enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _ls)
+                    _enc_extras += f"\n💜 Lifesteal +{_ls} HP!"
                 if enc.pop("p_weakened", False):
-                    action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage! _(weakened)_{pet_extra}"
+                    action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage! _(weakened)_{pet_extra}{_enc_extras}"
                 else:
-                    action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage!{pet_extra}"
+                    action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage!{pet_extra}{_enc_extras}"
 
         elif data.startswith(f"enc_skl_{uid}_"):
             cls      = get_player_class(p)
@@ -16880,6 +16950,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         # Monster defeated
         if enc["e_hp"] <= 0:
+            _kh = get_enchant_bonus(p, "kill_heal")
+            if _kh: enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _kh)
             exp_gain  = enc["e_level"] * 18
             gold_gain = enc["e_level"] * 9
             hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
