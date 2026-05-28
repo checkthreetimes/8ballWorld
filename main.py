@@ -20859,12 +20859,125 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔨 *{tname}* (ID: `{tid}`) has been banned and wiped from the game.\n"
         f"They can no longer use any bot commands.", delay=30)
 
+def _build_unban_picker():
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("SELECT user_id, username, banned_at FROM banned_users ORDER BY banned_at DESC")
+    rows = c.fetchall(); conn.close()
+    return rows
+
+def _build_unban_markup(rows):
+    buttons = []
+    for uid, uname, banned_at in rows:
+        try:
+            dt = datetime.fromisoformat(banned_at).strftime("%m/%d/%y")
+        except Exception:
+            dt = "?"
+        buttons.append([InlineKeyboardButton(
+            f"{uname}  (banned {dt})", callback_data=f"unbanpick_sel_{uid}")])
+    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="unbanpick_cancel")])
+    return InlineKeyboardMarkup(buttons)
+
+async def unban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query: return
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("Admin only.", show_alert=True); return
+
+    data = query.data
+
+    if data == "unbanpick_cancel":
+        await query.answer()
+        try: await query.edit_message_text("Cancelled.")
+        except Exception: pass
+        return
+
+    if data.startswith("unbanpick_sel_"):
+        await query.answer()
+        tid = int(data.split("_")[2])
+        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        c.execute("SELECT username, banned_at FROM banned_users WHERE user_id=?", (tid,))
+        row = c.fetchone(); conn.close()
+        if not row:
+            try: await query.edit_message_text("❌ User not found in ban list.")
+            except Exception: pass
+            return
+        uname, banned_at = row
+        try:
+            dt = datetime.fromisoformat(banned_at).strftime("%Y-%m-%d")
+        except Exception:
+            dt = "?"
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Yes, unban them", callback_data=f"unbanpick_confirm_{tid}")],
+            [InlineKeyboardButton("◀️ Back",            callback_data="unbanpick_back")],
+        ])
+        try:
+            await query.edit_message_text(
+                f"Unban <b>{uname}</b>?\nBanned on: {dt}\n\n"
+                f"They'll need to /ascend to rebuild their profile.",
+                parse_mode="HTML", reply_markup=markup)
+        except Exception as e:
+            try: await context.bot.send_message(ADMIN_ID, f"[unban sel error] {e}")
+            except Exception: pass
+        return
+
+    if data == "unbanpick_back":
+        await query.answer()
+        rows = _build_unban_picker()
+        if not rows:
+            try: await query.edit_message_text("No banned players.")
+            except Exception: pass
+            return
+        try:
+            await query.edit_message_text(
+                "🔓 *Unban Player — Select a player to unban*",
+                parse_mode="Markdown", reply_markup=_build_unban_markup(rows))
+        except Exception: pass
+        return
+
+    if data.startswith("unbanpick_confirm_"):
+        await query.answer()
+        tid = int(data.split("_")[2])
+        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        c.execute("SELECT username FROM banned_users WHERE user_id=?", (tid,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            try: await query.edit_message_text("❌ Already unbanned or not found.")
+            except Exception: pass
+            return
+        uname = row[0]
+        c.execute("DELETE FROM banned_users WHERE user_id=?", (tid,))
+        conn.commit(); conn.close()
+        try:
+            await context.bot.send_message(chat_id=tid,
+                text="✅ You have been unbanned from 8ball World. Use /ascend to start again.")
+        except Exception:
+            pass
+        try:
+            await query.edit_message_text(
+                f"✅ <b>{uname}</b> has been unbanned.",
+                parse_mode="HTML")
+        except Exception as e:
+            try: await context.bot.send_message(ADMIN_ID, f"[unban confirm error] {e}")
+            except Exception: pass
+        return
+
+    await query.answer()
+
 async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != ADMIN_ID:
         await send_group(update, "❌ Admin only.", delay=9); return
+
+    # No args — show interactive picker
     if not context.args:
-        await send_group(update, "Usage: `/unban DisplayName` or `/unban 123456789`", delay=15); return
+        rows = _build_unban_picker()
+        if not rows:
+            await send_group(update, "No banned players.", delay=15); return
+        await update.message.reply_text(
+            "🔓 *Unban Player — Select a player to unban*",
+            parse_mode="Markdown", reply_markup=_build_unban_markup(rows))
+        return
 
     arg = context.args[0].lstrip("@")
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
@@ -20880,6 +20993,11 @@ async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tid, tname = row
     c.execute("DELETE FROM banned_users WHERE user_id=?", (tid,))
     conn.commit(); conn.close()
+    try:
+        await context.bot.send_message(chat_id=tid,
+            text="✅ You have been unbanned from 8ball World. Use /ascend to start again.")
+    except Exception:
+        pass
     await send_group(update,
         f"✅ *{tname}* has been unbanned.\n"
         f"They can play again but will need to /ascend to rebuild their profile.", delay=20)
@@ -22554,7 +22672,8 @@ def main():
     app.add_handler(CommandHandler("ban",       ban_cmd))
     app.add_handler(CommandHandler("unban",     unban_cmd))
     app.add_handler(CommandHandler("banlist",   banlist_cmd))
-    app.add_handler(CallbackQueryHandler(ban_picker_callback, pattern="^banpick_"))
+    app.add_handler(CallbackQueryHandler(ban_picker_callback,   pattern="^banpick_"))
+    app.add_handler(CallbackQueryHandler(unban_picker_callback, pattern="^unbanpick_"))
     app.add_handler(CommandHandler("fixgear",   fixgear_cmd))
 
     # Callbacks
