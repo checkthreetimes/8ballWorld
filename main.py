@@ -8100,9 +8100,9 @@ def get_player_by_username(name):
 
 
 # ── TARGET PICKER (shared by /attack and /skill) ──────────────────────────────
-_PICKER_COOLDOWN_SECS = 30   # minimum seconds between picker attacks
+_PICKER_COOLDOWN_SECS = 3    # minimum seconds between picker attacks
 
-def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=8):
+def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=3):
     """Return (page_list, total) of players attackable right now."""
     c = _db().cursor()
     c.execute("SELECT * FROM players WHERE user_id != ?", (attacker_uid,))
@@ -8125,7 +8125,7 @@ def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=8)
 def _build_target_picker_markup(attacker_uid, guild_id, page, mode="atk"):
     """Build inline keyboard for attack/skill target picker."""
     players, total = _get_attackable_players(attacker_uid, guild_id, page)
-    per_page = 8
+    per_page = 3
     rows = []
     for tp in players:
         name     = tp.get("username", "?")
@@ -8181,8 +8181,8 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
     if last_pick:
         elapsed = (datetime.now() - datetime.fromisoformat(last_pick)).total_seconds()
         if elapsed < _PICKER_COOLDOWN_SECS:
-            remaining = int(_PICKER_COOLDOWN_SECS - elapsed)
-            await query.answer(f"⏳ Wait {remaining}s before attacking again.", show_alert=True)
+            remaining = round(_PICKER_COOLDOWN_SECS - elapsed, 1)
+            await query.answer(f"⏳ Wait {remaining}s", show_alert=False)
             return
 
     if is_defeated(a):
@@ -8200,6 +8200,9 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
     if is_invincible(d):
         await query.answer(f"{d.get('username','?')} is invincible!", show_alert=True); return
 
+    # Answer immediately so Telegram stops the loading spinner
+    await query.answer()
+
     chat_id = query.message.chat_id
     w = get_weather()
     action_text, _, result_type = _execute_pvp_hit(a, d, uid, target_uid, w, chat_id, context.bot)
@@ -8207,12 +8210,11 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": chat_id}
 
-    # Post result message (brief, auto-deletes)
+    # Post result
     _fire(context.bot.send_message(chat_id=chat_id,
                                     text=action_text[:4096], parse_mode="Markdown"))
 
     # Refresh picker with updated HP bars
-    await query.answer()
     markup = _build_target_picker_markup(uid, a.get("guild_id"), 0, "atk")
     try:
         await query.edit_message_reply_markup(reply_markup=markup)
@@ -8259,7 +8261,6 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
     if is_defeated(tp):
         await query.answer(f"{tp.get('username','?')} is already defeated!", show_alert=True); return
 
-    cls = get_player_class(p)
     all_skills = sjl(p.get("all_skills"), [])
     if not all_skills:
         await query.answer("No skills unlocked!", show_alert=True); return
@@ -8275,6 +8276,8 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
     if not pvp_skills:
         await query.answer("No offensive skills available!", show_alert=True); return
 
+    # Answer before editing to stop spinner
+    await query.answer()
     markup = _build_skill_picker_keyboard(pvp_skills, uid, 0, target_uid)
     try:
         await query.edit_message_text(
@@ -8282,7 +8285,6 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
             parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
-    await query.answer()
 
 
 # ── ATTACK ────────────────────────────────────────────────────────────────────
@@ -8347,13 +8349,12 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             du_id = found["user_id"]; du_name = found["username"]
     else:
         # No target specified — show inline target picker
-        markup = _build_target_picker_markup(au.id, a.get("guild_id"), 0, "atk")
         players, total = _get_attackable_players(au.id, a.get("guild_id"))
         if not players:
             await send_group(update, "⚔️ No players available to attack right now.", delay=9); return
-        msg = await send_group(update,
-            f"⚔️ *Attack — Choose a target* ({total} available)\n"
-            f"_Tap to attack. 30s cooldown between picks._",
+        markup = _build_target_picker_markup(au.id, a.get("guild_id"), 0, "atk")
+        await send_group(update,
+            f"⚔️ *Choose a target* ({total} available)\n_3s cooldown between hits. Close when done._",
             permanent=True, reply_markup=markup)
         return
 
@@ -13940,8 +13941,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         markup = _build_target_picker_markup(user.id, p.get("guild_id"), 0, "skl")
         await send_group(update,
-            f"🔮 *Skill — Choose a target* ({total} available)\n"
-            f"_Pick a player, then choose which skill to use._",
+            f"🔮 *Choose a target* ({total} available)\n_Pick a player, then choose your skill. Close when done._",
             permanent=True, reply_markup=markup)
         return
 
