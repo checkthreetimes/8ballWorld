@@ -14650,7 +14650,16 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         out.append(f"💥 *{dmg} damage!* {tp['username']} HP: {tp['hp']}/{tp['max_hp']}")
         _sk_killed = tp["hp"] == 0
         if _sk_killed:
-            apply_pvp_death(tp, p["username"], sk["name"])
+            apply_pvp_death(tp, p["username"], sk["name"], killer_id=uid)
+            p["wins"] = p.get("wins", 0) + 1
+            p["kill_streak"] = safe_int(p.get("kill_streak")) + 1
+            if p["kill_streak"] > safe_int(p.get("max_kill_streak")):
+                p["max_kill_streak"] = p["kill_streak"]
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            if p.get("kills_today_date") != today_str:
+                p["kills_today"] = 0; p["kills_today_date"] = today_str
+            p["kills_today"] = safe_int(p.get("kills_today")) + 1
+            if p["kills_today"] >= 5: p["is_wanted"] = 1
             out.append(f"💀 *{tp['username']}* has been defeated by {sk['name']}!")
             for _d, _e, _g in track_objective(p, "pvp_win"):
                 p["gold"] = p.get("gold", 0) + _g; add_exp(p, _e)
@@ -24738,8 +24747,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tick_dmg = check_bleed_tick(p)
         if tick_dmg:
             if p["hp"] <= 0:
+                p["hp"] = 0
                 p["defeated_until"] = (datetime.now()+timedelta(minutes=30)).isoformat()
                 p["last_defeated_by"] = "Bleed damage (DoT)"
+                p["losses"] = p.get("losses", 0) + 1
+                p["kill_streak"] = 0
                 asyncio.create_task(_notify_defeat(context.bot, p, "Bleed damage (you bled out)"))
                 asyncio.create_task(announce(context.bot, chat_id,
                     f"🩸 *{p['username']}* bled out and is defeated for 30 minutes!",
@@ -24748,6 +24760,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if _bleed_atk_ids:
                     _bleed_atk = get_player(_bleed_atk_ids[-1])
                     if _bleed_atk:
+                        _bleed_atk["wins"] = _bleed_atk.get("wins", 0) + 1
+                        _bleed_atk["kill_streak"] = safe_int(_bleed_atk.get("kill_streak")) + 1
+                        if _bleed_atk["kill_streak"] > safe_int(_bleed_atk.get("max_kill_streak")):
+                            _bleed_atk["max_kill_streak"] = _bleed_atk["kill_streak"]
+                        _today = datetime.now().strftime("%Y-%m-%d")
+                        if _bleed_atk.get("kills_today_date") != _today:
+                            _bleed_atk["kills_today"] = 0; _bleed_atk["kills_today_date"] = _today
+                        _bleed_atk["kills_today"] = safe_int(_bleed_atk.get("kills_today")) + 1
+                        if _bleed_atk["kills_today"] >= 5: _bleed_atk["is_wanted"] = 1
+                        save_player(_bleed_atk)
                         _fire(check_and_claim_bounty(context.bot, _bleed_atk, p, chat_id))
             save_player(p)
 
