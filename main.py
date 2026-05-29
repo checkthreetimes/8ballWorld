@@ -3511,7 +3511,7 @@ def _encounter_battle_card(enc):
     lines.append("")
     lines.append(f"👤 *{p_name}*")
     lines.append(f"HP: `{p_hp}/{p_mhp}`  [{p_bar}]")
-    lines.append(f"💊 Heals: {enc.get('heals_left',0)}")
+    lines.append(f"🧪 Potions: use button to consume from inventory")
     # Player status effects
     p_status = []
     if enc.get("p_stunned"): p_status.append("⚡ Stunned")
@@ -3537,7 +3537,6 @@ def _encounter_battle_card(enc):
 def _encounter_battle_markup(enc, p=None):
     uid  = enc["uid"]
     mode = enc["mode"]
-    heals = enc.get("heals_left", 0)
     pet_cd = enc.get("pet_ability_used", False)
     rows = []
     # Row 1: Attack + Guard
@@ -3545,12 +3544,11 @@ def _encounter_battle_markup(enc, p=None):
         InlineKeyboardButton("⚔️ Attack",   callback_data=f"enc_atk_{uid}"),
         InlineKeyboardButton("🛡️ Guard",    callback_data=f"enc_guard_{uid}"),
     ])
-    # Row 2: Heal + Pet Special
-    heal_label = f"💊 Heal ({heals})" if heals > 0 else "💊 No Heals"
-    pet_label  = "🐾 Pet Strike" if not pet_cd else "🐾 Pet (used)"
+    # Row 2: Potion + Pet Special
+    pet_label = "🐾 Pet Strike" if not pet_cd else "🐾 Pet (used)"
     rows.append([
-        InlineKeyboardButton(heal_label,  callback_data=f"enc_heal_{uid}"),
-        InlineKeyboardButton(pet_label,   callback_data=f"enc_pet_{uid}"),
+        InlineKeyboardButton("🧪 Use Potion", callback_data=f"enc_heal_{uid}"),
+        InlineKeyboardButton(pet_label,       callback_data=f"enc_pet_{uid}"),
     ])
     # Class skills — use all accumulated skills, same as PvP
     if p:
@@ -18817,7 +18815,6 @@ async def _start_encounter_battle(query, uid, p):
         "e_hp": n_hp, "e_max_hp": n_hp, "e_atk": n_atk, "e_level": n_level,
         "e_gold_range": npc[6], "e_exp_range": npc[7], "e_loot_key": npc[8],
         "action_log": [f"*{npc[0]}* [{cls_name}] Lv.{n_level} steps forward!"],
-        "heals_left": 2,
         "pet_info": _pet_info,
         "pet_ability_used": False,
     }
@@ -18858,7 +18855,6 @@ async def _start_encounter_hunt(query, uid, p):
         "e_hp": m_hp, "e_max_hp": m_hp, "e_atk": m_atk, "e_level": m_level,
         "e_catch_rate": monster[6],
         "action_log": [f"A wild *{monster[1]}* {elem_e} (Lv.{m_level}) appears!"],
-        "heals_left": 2,
         "pet_info": _pet_info,
         "pet_ability_used": False,
     }
@@ -19051,12 +19047,16 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # Damage skills fall through to the normal NPC-attack-back flow below
 
         elif data == f"enc_heal_{uid}":
-            if enc.get("heals_left", 0) <= 0:
-                await query.answer("No heals left!", show_alert=True); return
-            heal = max(10, enc["p_max_hp"] // 7)
-            enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
-            enc["heals_left"] = enc.get("heals_left", 1) - 1
-            action_txt = f"💊 You healed *{heal}* HP! ({enc['heals_left']} heals left)"
+            _inv = sjl(p.get("inventory"), [])
+            _potion, _heal = None, 0
+            if "Grand Restorative Flask" in _inv:   _potion, _heal = "Grand Restorative Flask", 4000
+            elif "Greater Health Potion" in _inv:   _potion, _heal = "Greater Health Potion", 1500
+            elif "Health Potion" in _inv:           _potion, _heal = "Health Potion", 800
+            else:
+                await query.answer("No potions in inventory!", show_alert=True); return
+            _inv.remove(_potion); p["inventory"] = json.dumps(_inv); save_player(p)
+            enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _heal)
+            action_txt = f"🧪 Used *{_potion}*! +{_heal} HP! ({enc['p_hp']}/{enc['p_max_hp']})"
             npc_act = _enc_npc_attack(enc, p)
             dot_txt = _apply_dot_tick(enc)
             if dot_txt: npc_act += f"\n_{dot_txt}_"
@@ -19293,12 +19293,16 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # Damage skills fall through to the normal monster-attack-back flow below
 
         elif data == f"enc_heal_{uid}":
-            if enc.get("heals_left", 0) <= 0:
-                await query.answer("No heals left!", show_alert=True); return
-            heal = max(10, enc["p_max_hp"] // 7)
-            enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
-            enc["heals_left"] = enc.get("heals_left", 1) - 1
-            action_txt = f"💊 You healed *{heal}* HP! ({enc['heals_left']} heals left)"
+            _inv = sjl(p.get("inventory"), [])
+            _potion, _heal = None, 0
+            if "Grand Restorative Flask" in _inv:   _potion, _heal = "Grand Restorative Flask", 4000
+            elif "Greater Health Potion" in _inv:   _potion, _heal = "Greater Health Potion", 1500
+            elif "Health Potion" in _inv:           _potion, _heal = "Health Potion", 800
+            else:
+                await query.answer("No potions in inventory!", show_alert=True); return
+            _inv.remove(_potion); p["inventory"] = json.dumps(_inv); save_player(p)
+            enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _heal)
+            action_txt = f"🧪 Used *{_potion}*! +{_heal} HP! ({enc['p_hp']}/{enc['p_max_hp']})"
             mon_act = _enc_monster_attack(enc)
             dot_txt = _apply_dot_tick(enc)
             if dot_txt: mon_act += f"\n_{dot_txt}_"
