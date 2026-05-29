@@ -7536,41 +7536,41 @@ async def gear_cmd(update, context):
 
     lines.append("")
 
-    # Accessory
-    acc_name = p.get("equipped_accessory")
-    if acc_name and acc_name in ACCESSORIES:
-        acc = ACCESSORIES[acc_name]
-        enc = get_enchant(p, acc_name)
-        rarity = RARITY_EMOJI.get(acc["rarity"], "")
-        lines.append(f"💍 *Accessory*")
-        lines.append(f"{rarity} {acc_name}")
-        lines.append(f"_{acc['desc']}_")
-        for k, v in acc.get("effect", {}).items():
-            if k == "all_stats":
-                lines.append(f"+{v} to all stats")
-            elif k in ("STR","AGI","INT","WIS","DEX","LUK","DEF"):
-                lines.append(f"+{v} {k}")
-            elif k == "atk":
-                lines.append(f"+{v} ATK")
-            elif k == "hp":
-                lines.append(f"+{v} max HP")
-            elif k == "dodge_bonus":
-                lines.append(f"+{int(v*100)}% dodge chance")
-            elif k == "crit_bonus":
-                lines.append(f"+{int(v*100)}% crit chance")
-            elif k == "heal_bonus":
-                lines.append(f"+{int(v*100)}% healing received")
-            elif k == "gold_bonus":
-                lines.append(f"+{int(v*100)}% gold earned")
-            elif k == "lifesteal_flat":
-                lines.append(f"+{v} HP lifesteal per hit")
-            elif k == "block_chance":
-                lines.append(f"+{int(v*100)}% block chance")
-        all_encs = get_all_enchants(p, acc_name)
-        for e in all_encs:
-            lines.append(f"✨ *{e['id'].capitalize()}*  -  _{e['desc']}_")
-    else:
-        lines.append(f"💍 *Accessory*  -  None")
+    # All 4 Accessory slots
+    for _slot_num, _slot_key in enumerate(
+            ("equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4"), 1):
+        acc_name = p.get(_slot_key)
+        if acc_name and acc_name in ACCESSORIES:
+            acc = ACCESSORIES[acc_name]
+            rarity = RARITY_EMOJI.get(acc["rarity"], "")
+            lines.append(f"💍 *Accessory {_slot_num}*")
+            lines.append(f"{rarity} {acc_name}")
+            lines.append(f"_{acc['desc']}_")
+            for k, v in acc.get("effect", {}).items():
+                if k == "all_stats":
+                    lines.append(f"+{v} to all stats")
+                elif k in ("STR","AGI","INT","WIS","DEX","LUK","DEF"):
+                    lines.append(f"+{v} {k}")
+                elif k == "atk":
+                    lines.append(f"+{v} ATK")
+                elif k == "hp":
+                    lines.append(f"+{v} max HP")
+                elif k == "dodge_bonus":
+                    lines.append(f"+{int(v*100)}% dodge chance")
+                elif k == "crit_bonus":
+                    lines.append(f"+{int(v*100)}% crit chance")
+                elif k == "heal_bonus":
+                    lines.append(f"+{int(v*100)}% healing received")
+                elif k == "gold_bonus":
+                    lines.append(f"+{int(v*100)}% gold earned")
+                elif k == "lifesteal_flat":
+                    lines.append(f"+{v} HP lifesteal per hit")
+                elif k == "block_chance":
+                    lines.append(f"+{int(v*100)}% block chance")
+            for e in get_all_enchants(p, acc_name):
+                lines.append(f"✨ *{e['id'].capitalize()}*  -  _{e['desc']}_")
+        else:
+            lines.append(f"💍 *Accessory {_slot_num}*  -  None")
 
     lines.append("")
 
@@ -8186,6 +8186,7 @@ def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=3)
     _now = datetime.now()
     for row in rows:
         tp = dict(row)
+        if tp.get("hp", 1) <= 0: continue   # expired defeat timer but never revived
         if is_defeated(tp): continue
         if is_invincible(tp): continue
         if attacker_guild_id and tp.get("guild_id") and \
@@ -11087,7 +11088,6 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         weap = p.get("equipped_weapon") or "None"
         armr = p.get("equipped_armor")  or "None"
         shld = p.get("equipped_shield") or "None"
-        acc_e = p.get("equipped_accessory") or "None"
 
         def _gear_summary_line(slot, name, pool):
             if name == "None": return f"{slot}: _None_"
@@ -11105,14 +11105,17 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  _gear_summary_line("⚔️ Weapon",  weap, WEAPONS),
                  _gear_summary_line("🛡️ Armor",   armr, ARMORS),
                  _gear_summary_line("🔰 Shield",  shld, SHIELDS)]
-        if acc_e != "None":
-            acc_data = ACCESSORIES.get(acc_e, {})
-            rarity = RARITY_EMOJI.get(acc_data.get("rarity",""), "")
-            encs_acc2 = get_enchant(p, acc_e)
-            enc_str = f" ✨×{len(encs_acc2)}" if encs_acc2 else ""
-            lines.append(f"💍 Accessory: {rarity} *{acc_e}*{enc_str}  -  _{acc_data.get('desc','')}_")
-        else:
-            lines.append("💍 Accessory: _None_")
+        for _sn, _sk in enumerate(
+                ("equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4"), 1):
+            acc_n = p.get(_sk)
+            if acc_n:
+                acc_data = ACCESSORIES.get(acc_n, {})
+                rarity = RARITY_EMOJI.get(acc_data.get("rarity",""), "")
+                encs_acc = get_enchant(p, acc_n)
+                enc_str = f" ✨×{len(encs_acc)}" if encs_acc else ""
+                lines.append(f"💍 Accessory {_sn}: {rarity} *{acc_n}*{enc_str}  -  _{acc_data.get('desc','')}_")
+            else:
+                lines.append(f"💍 Accessory {_sn}: _None_")
         for slot_emoji, slot_label, slot_key, pool in [
                 ("🎩","Hat","equipped_hat",HATS),("🧤","Gloves","equipped_gloves",GLOVES),
                 ("👢","Boots","equipped_boots",BOOTS),("🎭","Mask","equipped_mask",MASKS)]:
@@ -14017,7 +14020,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
                 lines.append(f"💚 Healed self for *{heal} HP*!")
             elif stype == "self_heal_buff":
-                heal = round(p["max_hp"] * 0.25)
+                heal = round(p["max_hp"] * sk.get("heal_pct", 0.25))
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
                 set_status(p, "battle_cry_str_until", 180)
                 lines.append(f"💪 *Battle Cry!* +{heal} HP restored. +80 STR for 3 minutes!")
@@ -14355,7 +14358,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         stype = sk.get("type", "damage")
         out = [f"⚡ *{p['username']}* uses *{sk['name']}* on *{boss_dict['data']['name']}*!"]
         if stype in ("self_heal", "self_heal_buff"):
-            heal = round(p["max_hp"] * 0.25) if stype == "self_heal_buff" else round(get_stat(p, "WIS") * sk.get("mult", 3.0))
+            heal = round(p["max_hp"] * sk.get("heal_pct", 0.25)) if stype == "self_heal_buff" else round(get_stat(p, "WIS") * sk.get("mult", 3.0))
             p["hp"] = min(p["max_hp"], p["hp"] + heal)
             if stype == "self_heal_buff":
                 set_status(p, "battle_cry_str_until", 180)
