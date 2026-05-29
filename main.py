@@ -14527,12 +14527,26 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 p["gold"] = p.get("gold", 0) + _g; add_exp(p, _e)
         save_player(p); save_player(tp)
         if _sk_killed:
-            # Claim bounty AFTER save so the re-fetch in check_and_claim_bounty
-            # gets the latest state; gold lands on top without being overwritten
             _bc = await check_and_claim_bounty(context.bot, p, tp, chat_id)
             if _bc:
                 out.append(f"🎯 *Bounty claimed!* +{_bc}g")
-        await send_result("\n".join(out))
+            try:
+                await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown")
+            except Exception:
+                await context.bot.send_message(chat_id, "\n".join(out)[:4096], parse_mode="Markdown")
+        else:
+            # Keep skill picker open so user can use another skill on the same target
+            _self_only_sk = {"self_heal", "group_heal", "mass_cleanse", "party_def_buff",
+                             "party_atk_buff", "party_full_buff", "ultimate_buff", "self_atk_buff"}
+            _rebuildable = [s for s in sjl(p.get("all_skills"), [])
+                            if s.get("type", "damage") not in _self_only_sk
+                            and p.get("level", 1) >= s.get("unlock", 5)]
+            _sk_markup = _build_skill_picker_keyboard(_rebuildable, uid, 0, target_uid) if _rebuildable else None
+            try:
+                await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown",
+                                              reply_markup=_sk_markup)
+            except Exception:
+                await context.bot.send_message(chat_id, "\n".join(out)[:4096], parse_mode="Markdown")
 
 async def _execute_skill(update, context, p, sk):
     """Core skill execution logic."""
@@ -21274,7 +21288,20 @@ GUIDE_PAGES = [
         "🎱 *8Ball World  -  Combat & Raids* (4/13)\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
-        "Reply to any player's message and use /attack to fight them. Winners steal gold and EXP. Losers are defeated for 30 minutes and lose 10% EXP.\n"
+        "Reply to any player's message and use /attack to fight them. Or use /attack with no target to open a live player picker and choose who to hit. Winners steal gold and EXP. Losers are defeated for 30 minutes and lose 10% EXP.\n"
+        "\n"
+        "*Battle Cards*\n"
+        "When you land a hit, a battle card appears in chat with buttons for the defender:\n"
+        "⚔️ Retaliate — strike back  |  ✨ Skills — open your skill menu\n"
+        "💊 Heal — use a potion (or Priest self-heal)  |  🛡️ Defend — raise your shield\n"
+        "The card auto-deletes 20 seconds after the last button press.\n"
+        "\n"
+        "*Skills in PvP*\n"
+        "/skill with no target opens a target picker — tap a player, then choose your skill. The skill menu stays open so you can keep attacking the same target.\n"
+        "\n"
+        "*Shield — /defend*\n"
+        "Use /defend before you're hit to charge up your shield. The shield absorbs incoming damage before your HP takes a hit. Once it's depleted it's gone for that life — it resets on death and revival.\n"
+        "Use /defend core (with a Monster Core in your inventory) to permanently increase your shield's max capacity.\n"
         "\n"
         "*Killstreaks*\n"
         "Every consecutive kill without dying extends your streak (shown in /who with 🔥). Streaks reset on death.\n"
@@ -21306,12 +21333,12 @@ GUIDE_PAGES = [
         "*Defeat & Revival*\n"
         "When your HP hits 0 you are defeated for 30 minutes and lose 10% EXP. Options to recover:\n"
         "• Wait it out (30 minutes)\n"
-        "• Use *Scroll of Revival* from your inventory (/use)\n"
+        "• Use *Scroll of Revival* from your inventory (/use) — grants 5 min invincibility after\n"
         "• Ask a Priest to /heal you  -  they revive for free\n"
         "• 📿 Chalkers can also /heal themselves with no reply to self-revive\n"
         "\n"
         "*Offline Protection*\n"
-        "Players who have been inactive for 30+ minutes cannot be attacked. If someone tries, the attack is blocked and you get a DM warning. Using any command keeps you marked as active.\n"
+        "Players who have been inactive for 1+ hour cannot be attacked or appear in the /attack picker. Using any command keeps you marked as active.\n"
         "\n"
         "*Pets in Combat*\n"
         "Your active pet auto-attacks with you. If attacked, it may trigger its defensive ability (intercept, counter, poison, stun, lifesteal, or shield). Defensive abilities unlock at pet Level 10."
@@ -21386,8 +21413,10 @@ GUIDE_PAGES = [
         "/dungeonlegendary  -  Legendary dungeon (Lv 40+)\n"
         "\n"
         "*Combat*\n"
-        "/attack  -  Attack reply target or active boss\n"
-        "/skill  -  Use your class skill in battle\n"
+        "/attack  -  Reply to attack, or no target for player picker\n"
+        "/skill  -  Target picker → skill picker → stays open to chain attacks\n"
+        "/defend  -  Charge up your shield (absorbs damage before HP)\n"
+        "/defend core  -  Use a Monster Core to increase shield max capacity\n"
         "/duel  -  Reply to challenge. Wager buttons pop up.\n"
         "/arena  -  Reply for turn-based skill combat\n"
         "/heal  -  Heal yourself or reply to heal ally\n"
