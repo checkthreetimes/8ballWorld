@@ -6648,6 +6648,7 @@ def init_db():
         ("shield_hp",             "INTEGER DEFAULT 0"),
         ("last_defend",           "TEXT DEFAULT NULL"),
         ("shield_used",           "INTEGER DEFAULT 0"),
+        ("shield_core_bonus",     "INTEGER DEFAULT 0"),
     ]:
         try:
             _v24conn = sqlite3.connect(DB_PATH)
@@ -7001,7 +7002,7 @@ def save_player(p):
         "tg_username","deepest_dungeon_floor",
         "equipped_accessory_2","equipped_accessory_3","equipped_accessory_4",
         "shop_reroll_date","shop_reroll_count",
-        "shield_hp","last_defend","shield_used",
+        "shield_hp","last_defend","shield_used","shield_core_bonus",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -7746,7 +7747,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
             d["last_defeated_by"] = f"{a['username']} (Killshot)"
             _d_was_wanted = safe_int(d.get("is_wanted"))
-            d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0
+            d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
             d["revenge_target"] = au_id
             d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
             asyncio.create_task(_notify_defeat(bot, d, a["username"] + " (Killshot)"))
@@ -8016,7 +8017,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
         d["last_defeated_by"] = f"{a['username']} (PvP)"
         _d_was_wanted = safe_int(d.get("is_wanted"))
-        d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0
+        d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
         d["revenge_target"] = au_id
         d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
         exp_loss = round(d.get("exp", 0) * 0.10)
@@ -8253,10 +8254,11 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         if _old:
             try: await context.bot.delete_message(chat_id=chat_id, message_id=_old)
             except Exception: pass
+        # One permanent group announcement + silent DM to attacker
         try: await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
         except Exception: pass
-        _fire(send_dm_or_group(context.bot, uid,        chat_id, action_text[:4096], group_delay=0))
-        _fire(send_dm_or_group(context.bot, target_uid, chat_id, action_text[:4096], group_delay=0))
+        try: await context.bot.send_message(chat_id=uid, text=action_text[:4096], parse_mode="Markdown")
+        except Exception: pass
     else:
         # Hit or miss — edit existing battle card in-place, else send new one
         _mid = _pvp_cards.get(pair)
@@ -8509,8 +8511,8 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception: pass
         try: await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
         except Exception: pass
-        _fire(send_dm_or_group(bot, au.id, chat, action[:4096], group_delay=0))
-        _fire(send_dm_or_group(bot, du_id, chat, action[:4096], group_delay=0))
+        try: await bot.send_message(chat_id=au.id, text=action[:4096], parse_mode="Markdown")
+        except Exception: pass
 
 
 # ── PVP CARD CALLBACK ─────────────────────────────────────────────────────────
@@ -8594,23 +8596,24 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if action_type == "def":
             if safe_int(a.get("shield_used")) == 1:
                 cur_sh = safe_int(a.get("shield_hp"))
+                max_sh = _shield_max(a)
                 if cur_sh > 0:
-                    await query.answer(f"🛡️ Shield active: {cur_sh} HP remaining.", show_alert=True)
+                    bar_n = round(cur_sh / max(1, max_sh) * 10)
+                    await query.answer(f"🛡️ {cur_sh}/{max_sh} HP remaining.", show_alert=True)
                 else:
-                    await query.answer("🛡️ Shield already used this life.", show_alert=True)
+                    await query.answer("🛡️ Shield depleted — revive to restore.", show_alert=True)
                 return
             if is_defeated(a):
                 await query.answer("You're defeated!", show_alert=True); return
-            max_sh  = max(100, int(calc_max_hp(a) * _SHIELD_CAP_PCT))
-            base_sh = max(100, int(calc_max_hp(a) * 0.25))
-            a["shield_hp"]   = min(max_sh, base_sh)
+            max_sh = _shield_max(a)
+            a["shield_hp"]   = max_sh   # full bar
             a["shield_used"] = 1
             save_player(a)
             bar_n = round(a["shield_hp"] / max(1, max_sh) * 10)
             bar   = "█" * bar_n + "░" * (10 - bar_n)
             shield_text = (f"🛡️ *{a['username']}* raises their shield!\n"
-                           f"Shield HP: *{a['shield_hp']}/{max_sh}* [{bar}]\n"
-                           f"_Absorbs incoming damage. One use per life._")
+                           f"Shield HP: *{max_sh}/{max_sh}* [{bar}]\n"
+                           f"_Absorbs incoming damage. Depletes and is gone for this life._")
             markup = _build_pvp_card_markup(uid, target_id, a)
             pair   = _pvp_pair_key(uid, target_id)
             try:
@@ -8678,16 +8681,20 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception: pass
             try: await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
             except Exception: pass
-            _fire(send_dm_or_group(context.bot, uid,       chat_id, result_text[:4096], group_delay=0))
-            _fire(send_dm_or_group(context.bot, target_id, chat_id, result_text[:4096], group_delay=0))
+            try: await context.bot.send_message(chat_id=uid, text=result_text[:4096], parse_mode="Markdown")
+            except Exception: pass
 
     finally:
         _cb_unlock(uid)
 
 
 # ── DEFEND (damage-absorbing shield) ─────────────────────────────────────────
-_SHIELD_CORE_ADD = 150            # HP added per Monster Core consumed
-_SHIELD_CAP_PCT  = 0.50           # shield can't exceed 50 % of max HP
+_SHIELD_CORE_ADD  = 150   # capacity added per Monster Core consumed
+_SHIELD_BASE_PCT  = 0.25  # base shield = 25% of max HP
+
+def _shield_max(p):
+    """Effective shield capacity = base (25% max HP) + accumulated core bonuses."""
+    return max(100, int(calc_max_hp(p) * _SHIELD_BASE_PCT)) + safe_int(p.get("shield_core_bonus"))
 
 async def defend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -8698,54 +8705,56 @@ async def defend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, _defeated_msg(p), delay=15); return
 
     arg    = (context.args[0].lower() if context.args else "")
-    max_sh = max(100, int(calc_max_hp(p) * _SHIELD_CAP_PCT))
+    max_sh = _shield_max(p)
     cur_sh = safe_int(p.get("shield_hp"))
 
-    # ── /defend core — consume one Monster Core to recharge shield ──────────
+    # ── /defend core — consume a Monster Core to raise the shield's max ─────
     if arg == "core":
+        if safe_int(p.get("shield_used")) == 1:
+            await send_group(update,
+                "🛡️ Shield already activated — cores only increase capacity *before* you activate.\n"
+                "_Wait until your next life to stack more cores._", delay=12)
+            return
         inv  = sjl(p.get("inventory"), [])
         core = next((i for i in inv if i.startswith("Monster Core (") or i == "Rare Monster Core"), None)
         if not core:
-            await send_group(update, "⚙️ You have no Monster Cores to charge the shield with.", delay=9); return
+            await send_group(update, "⚙️ No Monster Cores in inventory.", delay=9); return
         inv.remove(core)
         p["inventory"] = json.dumps(inv)
-        added = min(_SHIELD_CORE_ADD, max_sh - cur_sh)
-        p["shield_hp"] = cur_sh + added
+        p["shield_core_bonus"] = safe_int(p.get("shield_core_bonus")) + _SHIELD_CORE_ADD
+        new_max = _shield_max(p)
         save_player(p)
-        bar_n = round(p["shield_hp"] / max(1, max_sh) * 10)
-        bar   = "█" * bar_n + "░" * (10 - bar_n)
+        bar_n = round(new_max / max(1, new_max) * 10)
         await send_group(update,
-            f"⚙️ *{core}* absorbed into your shield!\n"
-            f"🛡️ Shield: *{p['shield_hp']}/{max_sh}* [{bar}]", delay=15)
+            f"⚙️ *{core}* charged into shield capacity!\n"
+            f"🛡️ Shield max: *{new_max} HP*  (+{_SHIELD_CORE_ADD})\n"
+            f"_Stack more cores or use /defend to activate at full capacity._", delay=15)
         return
 
-    # ── /defend — activate shield (once per life) ───────────────────────────
+    # ── /defend — activate shield at full capacity (once per life) ──────────
     if safe_int(p.get("shield_used")) == 1:
-        # Shield already used this life — show status if still active, else block
         if cur_sh > 0:
             bar_n = round(cur_sh / max(1, max_sh) * 10)
             bar   = "█" * bar_n + "░" * (10 - bar_n)
             await send_group(update,
-                f"🛡️ *Your Shield*\n"
+                f"🛡️ *Shield Active*\n"
                 f"HP: *{cur_sh}/{max_sh}* [{bar}]\n"
-                f"_Use `/defend core` to recharge with a Monster Core._", delay=12)
+                f"_Absorbs incoming damage. Depletes and is gone for this life._", delay=12)
         else:
             await send_group(update,
-                "🛡️ You've already used your shield this life.\n"
-                "_You'll get a new one when you revive._", delay=9)
+                "🛡️ Shield depleted.\n_You'll get a fresh one when you revive._", delay=9)
         return
 
-    base_sh = max(100, int(calc_max_hp(p) * 0.25))
-    p["shield_hp"]  = min(max_sh, base_sh)
+    p["shield_hp"]   = max_sh   # always activate at full capacity
     p["shield_used"] = 1
     save_player(p)
     bar_n = round(p["shield_hp"] / max(1, max_sh) * 10)
     bar   = "█" * bar_n + "░" * (10 - bar_n)
     await send_group(update,
-        f"🛡️ *Shield Activated!*\n"
-        f"HP: *{p['shield_hp']}/{max_sh}* [{bar}]\n\n"
-        f"Incoming attacks hit your shield first before your real HP.\n"
-        f"_One use per life. Recharge with `/defend core` (Monster Core)._",
+        f"🛡️ *Shield Activated!*  (*{p['shield_hp']} HP*)\n"
+        f"[{'█' * bar_n}{'░' * (10 - bar_n)}]\n\n"
+        f"Incoming attacks drain the shield before your HP.\n"
+        f"_One use per life. Stack cores with `/defend core` before activating._",
         delay=20)
 
 
@@ -8828,7 +8837,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         t["defeated_until"]  = None
         t["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
         t["hp"] = min(real_max_t, heal_amount)
-        t["shield_used"] = 0
+        t["shield_used"] = 0; t["shield_hp"] = 0; t["shield_core_bonus"] = 0
 
     h["heals_given"] = h.get("heals_given",0) + 1
     if tu.id != hu.id:
@@ -9015,9 +9024,21 @@ def _build_stats_pages(p, viewing_name=None):
         page1_lines.append(married_str)
     if pet_str:
         page1_lines.append(pet_str)
+    _sh_hp    = safe_int(p.get("shield_hp"))
+    _sh_used  = safe_int(p.get("shield_used"))
+    _sh_max   = _shield_max(p)
+    if _sh_hp > 0:
+        _sh_bar = "█" * round(_sh_hp / max(1, _sh_max) * 10) + "░" * (10 - round(_sh_hp / max(1, _sh_max) * 10))
+        shield_line = f"🛡️ Shield: *{_sh_hp}/{_sh_max}* [{_sh_bar}]"
+    elif _sh_used == 0:
+        shield_line = f"🛡️ Shield ready — *{_sh_max} HP* _(use /defend)_"
+    else:
+        shield_line = "🛡️ Shield depleted _(revive to restore)_"
+
     page1_lines += [
         "",
         f"❤️ HP: {p['hp']}/{real_max}",
+        shield_line,
         f"✨ {exp_cur:,}/{exp_need:,} EXP ({exp_pct}%)",
         f"🏆 Lifetime EXP: {safe_int(p.get('total_exp')):,}",
         f"💬 Messages: {msg_count:,}",
@@ -11237,7 +11258,7 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
             await query.answer("You've been condemned — can't be revived!", show_alert=True); return
         p["defeated_until"] = None; p["hp"] = p["max_hp"] // 2
-        p["shield_used"] = 0
+        p["shield_used"] = 0; p["shield_hp"] = 0; p["shield_core_bonus"] = 0
         set_status(p, "invincible_until", 300)
         msg += f"💚 Revived at {p['hp']} HP! 5 minutes invincibility granted."
     elif item_name.startswith("Monster Core (") or item_name == "Rare Monster Core":
@@ -11505,7 +11526,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         p["defeated_until"] = None
         p["hp"] = p["max_hp"] // 2
-        p["shield_used"] = 0
+        p["shield_used"] = 0; p["shield_hp"] = 0; p["shield_core_bonus"] = 0
         set_status(p, "invincible_until", 300)
         msg += f"💚 Revived at {p['hp']} HP! 5 minutes invincibility granted."
     elif item.startswith("Monster Core (") or item == "Rare Monster Core":
@@ -14404,7 +14425,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     await send_result(f"☠️ {tp['username']} is condemned — cannot be revived!"); return
                 tp["defeated_until"] = None
                 tp["hp"] = min(calc_max_hp(tp), heal)
-                tp["shield_used"] = 0
+                tp["shield_used"] = 0; tp["shield_hp"] = 0; tp["shield_core_bonus"] = 0
                 tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
                 out.append(f"✨ *Holy Light!* *{tp['username']}* revived with *{heal} HP*!\n"
                            f"🛡️ 5 minutes invincibility granted.")
@@ -14430,7 +14451,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             p["inventory"] = json.dumps(inv)
             tp["hp"] = calc_max_hp(tp)
             tp["defeated_until"] = None
-            tp["shield_used"] = 0
+            tp["shield_used"] = 0; tp["shield_hp"] = 0; tp["shield_core_bonus"] = 0
             tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
             out.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored! 🛡️ 5 minutes invincibility.")
             save_player(p); save_player(tp)
@@ -14583,7 +14604,7 @@ async def _execute_skill(update, context, p, sk):
                 await send_group(update, f"☠️ *{tp['username']}* is condemned — cannot be revived!", delay=9); return
             tp["defeated_until"] = None
             tp["hp"] = min(calc_max_hp(tp), heal)
-            tp["shield_used"] = 0
+            tp["shield_used"] = 0; tp["shield_hp"] = 0; tp["shield_core_bonus"] = 0
             tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
             save_player(tp); save_player(p)
             lines.append(f"✨ *Holy Light!* *{tp['username']}* is revived with *{heal} HP*!\n"
@@ -14627,7 +14648,7 @@ async def _execute_skill(update, context, p, sk):
         p["inventory"] = json.dumps(inv)
         tp["hp"] = calc_max_hp(tp)
         tp["defeated_until"] = None
-        tp["shield_used"] = 0
+        tp["shield_used"] = 0; tp["shield_hp"] = 0; tp["shield_core_bonus"] = 0
         tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
         save_player(tp); save_player(p)
         lines.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored!\n"
