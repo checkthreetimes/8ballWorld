@@ -3550,9 +3550,9 @@ def _encounter_battle_markup(enc, p=None):
         InlineKeyboardButton("🧪 Use Potion", callback_data=f"enc_heal_{uid}"),
         InlineKeyboardButton(pet_label,       callback_data=f"enc_pet_{uid}"),
     ])
-    # Class skills — use all accumulated skills, same as PvP
+    # Class skills — only from the player's current class path
     if p:
-        p_skills = sjl(p.get("all_skills"), [])
+        p_skills = get_combat_skills(p)
         skill_btns = [
             InlineKeyboardButton(sk.get("active", sk.get("name","Skill")),
                                  callback_data=f"enc_skl_{uid}_{i}")
@@ -3633,9 +3633,9 @@ def _enc_process_skill(enc, p, sk):
     dmg = 0
     txt = ""
     if stype == "multihit":
-        hits = sk.get("hits", 2)
-        dmg  = sum(max(1, round(calc_attack_damage(p, w) * sk.get("mult", 0.8))) for _ in range(hits))
-        txt  = f"⚡ *{sk_name}*! {hits}-hit combo for *{dmg}* damage!{pet_extra}"
+        mults_list = sk.get("mults") or [sk.get("mult", 0.8)] * sk.get("hits", 2)
+        dmg  = sum(max(1, round(calc_attack_damage(p, w) * m)) for m in mults_list)
+        txt  = f"⚡ *{sk_name}*! {len(mults_list)}-hit combo for *{dmg}* damage!{pet_extra}"
     elif stype in ("aoe_bleed_multihit", "multihit_crit"):
         hits = sk.get("hits", 4)
         dmg  = sum(max(1, round(base * sk.get("mult", 0.6))) for _ in range(hits))
@@ -3765,6 +3765,11 @@ def _enc_process_skill(enc, p, sk):
         stat_key = sk.get("stat", get_primary_stat(p))
         dmg = max(1, round(get_stat(p, stat_key) * sk.get("mult", 1.5)))
         txt = f"💥 *{sk_name}*! *{dmg}* damage!{pet_extra}"
+
+    # Crit check (skip for types that already guarantee a crit or are % of HP)
+    if dmg > 0 and stype not in ("crit_dmg", "void_nuke", "execute_multihit") and check_crit(p):
+        dmg = apply_crit(p, dmg)
+        txt += " 💥 *CRITICAL HIT!*"
 
     enc["e_hp"] = max(0, enc["e_hp"] - dmg)
     return txt, dmg, False
@@ -4952,7 +4957,38 @@ def get_all_skills(p):
 def get_class_path(p):
     return p.get("class_path")  # "A" or "B" or None
 
-# ── STAT & DAMAGE CALCULATIONS ────────────────────────────────────────────────
+def get_combat_skills(p, skip_types=None):
+    """Return skills for the player's current class path only (base class + path chain up to current class)."""
+    class_id   = p.get("class_id")
+    class_path = p.get("class_path")  # "A" or "B"
+    if not class_id:
+        return []
+    cls  = CLASS_TREE.get(class_id, {})
+    line = cls.get("line")
+    if not line:
+        return []
+    skills = []
+    seen   = set()
+    def _add(sk):
+        if sk["name"] not in seen:
+            seen.add(sk["name"]); skills.append(sk)
+    # Base class (tier 1, no path field)
+    for cid, cdef in CLASS_TREE.items():
+        if cdef.get("line") == line and not cdef.get("path"):
+            for sk in cdef.get("skills", []):
+                _add(sk)
+    # Path chain up to and including current class
+    if class_path:
+        for path_cid in CLASS_PATHS.get(line, {}).get(class_path, []):
+            for sk in CLASS_TREE.get(path_cid, {}).get("skills", []):
+                _add(sk)
+            if path_cid == class_id:
+                break
+    if skip_types:
+        skills = [sk for sk in skills if sk.get("type") not in skip_types]
+    return skills
+
+
 def get_stat(p, stat):
     defaults = {"STR":5,"DEF":0,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5}
     base  = safe_stats(p).get(stat, defaults.get(stat, 5))
@@ -17576,8 +17612,7 @@ def _wdng_combat_markup(uid, p=None, pet_used=False):
          InlineKeyboardButton("🧪 Heal",    callback_data=f"dng_heal_{uid}")],
     ]
     if p:
-        p_skills = [sk for sk in sjl(p.get("all_skills"), [])
-                    if sk.get("type") not in WDNG_SKIP_SKILL_TYPES]
+        p_skills = get_combat_skills(p, skip_types=WDNG_SKIP_SKILL_TYPES)
         skill_btns = [
             InlineKeyboardButton(sk.get("active", sk.get("name", "Skill")),
                                  callback_data=f"dng_skl_{uid}_{i}")
@@ -17984,6 +18019,9 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             return
         w = get_weather()
         dmg = calc_attack_damage(p, w)
+        _dng_crit_note = ""
+        if check_crit(p):
+            dmg = apply_crit(p, dmg); _dng_crit_note = " 💥 *CRIT!*"
         missed = check_miss(p, {"DEX": 5, "DEF": 10, "AGI": 5})
         if missed:
             dmg = 0
@@ -18081,7 +18119,7 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                     f"{header}\n\n"
                     f"⚔️ *{combat['name']}*\n"
                     f"❤️ {combat['hp']}/{combat['max_hp']} [{mbar}]\n\n"
-                    f"{miss_txt}You dealt *{dmg}* dmg. Enemy hits back for *{combat['atk']}*.\n"
+                    f"{miss_txt}You dealt *{dmg}* dmg.{_dng_crit_note} Enemy hits back for *{combat['atk']}*.\n"
                     f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]{pet_line}{enc_lines}",
                     parse_mode="Markdown",
                     reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False))
@@ -18099,8 +18137,7 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             sk_idx = int(parts[3])
         except (IndexError, ValueError):
             return
-        p_skills = [sk for sk in sjl(p.get("all_skills"), [])
-                    if sk.get("type") not in WDNG_SKIP_SKILL_TYPES]
+        p_skills = get_combat_skills(p, skip_types=WDNG_SKIP_SKILL_TYPES)
         if sk_idx >= len(p_skills):
             await query.answer("Skill unavailable!", show_alert=True); return
         sk      = p_skills[sk_idx]
@@ -18975,6 +19012,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             else:
                 _enc_w    = get_weather()
                 dmg       = calc_attack_damage(p, _enc_w)
+                _enc_crit = ""
+                if check_crit(p):
+                    dmg = apply_crit(p, dmg); _enc_crit = " 💥 *CRIT!*"
                 enc["e_hp"] = max(0, enc["e_hp"] - dmg)
                 pet_extra = ""
                 pet_info = enc.get("pet_info")
@@ -18983,7 +19023,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
                     pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
                 # Weapon enchant procs
-                _enc_extras = ""
+                _enc_extras = _enc_crit
                 if get_enchant_bonus(p, "burn_proc") and random.random() < 0.10:
                     enc["e_burning"] = True; _enc_extras += "\n🔥 Your weapon *ignites* the enemy!"
                 if get_enchant_bonus(p, "lifesteal_flat"):
@@ -19013,7 +19053,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     action_txt = f"You attacked for *{dmg}* damage!{pet_extra}{_enc_extras}"
 
         elif data.startswith(f"enc_skl_{uid}_"):
-            p_skills = sjl(p.get("all_skills"), [])
+            p_skills = get_combat_skills(p)
             try:
                 idx = int(data[len(f"enc_skl_{uid}_"):])
                 sk  = p_skills[idx]
@@ -19221,6 +19261,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             else:
                 _hunt_w   = get_weather()
                 dmg       = calc_attack_damage(p, _hunt_w)
+                _hunt_crit = ""
+                if check_crit(p):
+                    dmg = apply_crit(p, dmg); _hunt_crit = " 💥 *CRIT!*"
                 enc["e_hp"] = max(0, enc["e_hp"] - dmg)
                 elem_e = ELEMENT_EMOJI.get(enc.get("element",""), "")
                 pet_extra = ""
@@ -19229,7 +19272,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
                     enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
                     pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
-                _enc_extras = ""
+                _enc_extras = _hunt_crit
                 if get_enchant_bonus(p, "burn_proc") and random.random() < 0.10:
                     enc["e_burning"] = True; _enc_extras += "\n🔥 Your weapon *ignites* the enemy!"
                 if get_enchant_bonus(p, "lifesteal_flat"):
@@ -19259,7 +19302,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage!{pet_extra}{_enc_extras}"
 
         elif data.startswith(f"enc_skl_{uid}_"):
-            p_skills = sjl(p.get("all_skills"), [])
+            p_skills = get_combat_skills(p)
             try:
                 idx = int(data[len(f"enc_skl_{uid}_"):])
                 sk  = p_skills[idx]
