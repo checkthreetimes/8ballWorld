@@ -4239,10 +4239,10 @@ WDNG_MONSTERS = [
 ]
 
 WDNG_FLOOR_BOSSES = [
-    {"name":"The Gatekeeper",    "hp_mult":3.0, "atk_mult":1.2, "gold":500,   "exp":2000,  "floor":5},
-    {"name":"Dungeon Hydra",     "hp_mult":3.5, "atk_mult":1.4, "gold":900,   "exp":4500,  "floor":10},
-    {"name":"Shadow Overlord",   "hp_mult":4.0, "atk_mult":1.6, "gold":1600,  "exp":8000,  "floor":15},
-    {"name":"The Void Sovereign","hp_mult":5.0, "atk_mult":2.0, "gold":3000,  "exp":18000, "floor":20},
+    {"name":"The Gatekeeper",    "hp_mult":3.0, "atk_mult":1.2, "gold":2000,  "exp":6000,  "floor":5},
+    {"name":"Dungeon Hydra",     "hp_mult":3.5, "atk_mult":1.4, "gold":4000,  "exp":14000, "floor":10},
+    {"name":"Shadow Overlord",   "hp_mult":4.0, "atk_mult":1.6, "gold":8000,  "exp":28000, "floor":15},
+    {"name":"The Void Sovereign","hp_mult":5.0, "atk_mult":2.0, "gold":18000, "exp":60000, "floor":20},
 ]
 
 WDNG_TRAPS = [
@@ -5169,6 +5169,8 @@ def apply_pvp_death(p, killer_name="the enemy", cause="PvP", killer_id=None):
     p["defeated_until"]  = (datetime.now() + timedelta(minutes=30)).isoformat()
     p["last_defeated_by"] = f"{killer_name} ({cause})"
     p["kill_streak"]     = 0  # reset streak on death
+    p["shield_hp"]       = 0
+    p["shield_used"]     = 0
     if killer_id:
         p["revenge_target"]  = killer_id
         p["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
@@ -6651,6 +6653,11 @@ def init_db():
         ("last_defend",           "TEXT DEFAULT NULL"),
         ("shield_used",           "INTEGER DEFAULT 0"),
         ("shield_core_bonus",     "INTEGER DEFAULT 0"),
+        ("hug_count",             "INTEGER DEFAULT 0"),
+        ("kiss_count",            "INTEGER DEFAULT 0"),
+        ("poke_count",            "INTEGER DEFAULT 0"),
+        ("slap_count",            "INTEGER DEFAULT 0"),
+        ("pat_count",             "INTEGER DEFAULT 0"),
     ]:
         try:
             _v24conn = sqlite3.connect(DB_PATH)
@@ -7005,6 +7012,7 @@ def save_player(p):
         "equipped_accessory_2","equipped_accessory_3","equipped_accessory_4",
         "shop_reroll_date","shop_reroll_count",
         "shield_hp","last_defend","shield_used","shield_core_bonus",
+        "hug_count","kiss_count","poke_count","slap_count","pat_count",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -7934,11 +7942,16 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     # Shield absorbs damage before real HP
     _d_shield = safe_int(d.get("shield_hp"))
+    _shield_absorbed = 0
+    _dmg_before_shield = dmg_after_def
     if _d_shield > 0 and dmg_after_def > 0:
-        _absorb = min(_d_shield, dmg_after_def)
-        d["shield_hp"] = _d_shield - _absorb
-        dmg_after_def -= _absorb
-        extra_notes.append(f"🛡️ Shield absorbed *{_absorb}*! ({d['shield_hp']} left)")
+        _shield_absorbed = min(_d_shield, dmg_after_def)
+        d["shield_hp"] = _d_shield - _shield_absorbed
+        dmg_after_def -= _shield_absorbed
+        if d["shield_hp"] == 0:
+            extra_notes.append(f"🛡️ Shield *SHATTERED*! (absorbed *{_shield_absorbed}* → {dmg_after_def} to HP)")
+        else:
+            extra_notes.append(f"🛡️ Shield absorbed *{_shield_absorbed}*! ({d['shield_hp']} HP left → {dmg_after_def} to HP)")
 
     d_hp_after = max(0, d["hp"] - dmg_after_def)
     d["hp"] = d_hp_after
@@ -7987,7 +8000,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     update_recent_attackers(d, au_id)
     proc_fired, proc_msg, proc_extra = calc_proc_effect(a, d, dmg_after_def)
 
-    action = f"⚔️ *{a['username']}* → *{d['username']}* for *{dmg_after_def} dmg*{crit_note}{revenge_bonus_note}{reflect_note}"
+    _display_dmg = _dmg_before_shield if _shield_absorbed else dmg_after_def
+    action = f"⚔️ *{a['username']}* → *{d['username']}* for *{_display_dmg} dmg*{crit_note}{revenge_bonus_note}{reflect_note}"
     if extra_notes: action += "\n" + "\n".join(extra_notes)
     if healed:      action += f" | 🦸 +{healed} HP"
     if proc_fired:  action += f"\n{proc_msg}"
@@ -8087,8 +8101,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     if d["hp"] > 0:
         hist_nl = sjl(d.get("pvp_history"), [])
-        hist_nl.insert(0, {"attacker": a["username"], "dmg": dmg_after_def,
-                           "ts": datetime.now().strftime("%m/%d %H:%M")})
+        _hist_entry = {"attacker": a["username"], "dmg": _dmg_before_shield,
+                       "ts": datetime.now().strftime("%m/%d %H:%M")}
+        if _shield_absorbed:
+            _hist_entry["shield"] = _shield_absorbed
+            _hist_entry["hp_dmg"] = dmg_after_def
+        hist_nl.insert(0, _hist_entry)
         d["pvp_history"] = json.dumps(hist_nl[:5])
 
     check_titles(a); check_titles(d)
@@ -15247,7 +15265,14 @@ async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "📜 *PvP History*\n\nNo recent PvP activity.", delay=12); return
     lines = ["📜 *Your Last 5 PvP Hits*\n"]
     for entry in hist:
-        dmg_str = "KO" if entry.get("dmg") == "KO" else f"{entry.get('dmg', '?')} dmg"
+        if entry.get("dmg") == "KO":
+            dmg_str = "💀 KO"
+        else:
+            raw = entry.get("dmg", "?")
+            if entry.get("shield"):
+                dmg_str = f"{raw} dmg _(🛡️ {entry['shield']} absorbed → {entry.get('hp_dmg', 0)} to HP)_"
+            else:
+                dmg_str = f"{raw} dmg"
         lines.append(f"⚔️ *{entry.get('attacker','?')}* — {dmg_str}  _{entry.get('ts','')}_")
     await send_group(update, "\n".join(lines), delay=20)
 
@@ -17309,16 +17334,20 @@ async def _wdng_surface(uid, state, bot, chat_id, reason="surfaced"):
     gold = state.get("run_gold", 0)
     loot = state.get("run_loot", [])
     floors = state["floor"] - 1  # floors actually completed
+    rooms  = state.get("rooms_visited", 0)
 
     # Track deepest floor
     if floors > safe_int(p.get("deepest_dungeon_floor", 0)):
         p["deepest_dungeon_floor"] = floors
 
-    p["gold"] = safe_int(p.get("gold", 0)) + gold
+    # Bonus gold and EXP awarded on surfacing based on floors + rooms cleared
+    surface_gold = floors * 500 + rooms * 150
+    surface_exp  = floors * 1000 + rooms * 250
+    total_gold = gold + surface_gold
+    p["gold"] = safe_int(p.get("gold", 0)) + total_gold
     for item in loot:
         add_item(p, item)
-    exp_bonus = floors * 300
-    add_exp(p, exp_bonus)
+    add_exp(p, surface_exp)
     save_player(p)
     active_wizardry.pop(uid, None)
 
@@ -17327,9 +17356,11 @@ async def _wdng_surface(uid, state, bot, chat_id, reason="surfaced"):
     summary = (
         f"{reason_emoji} *Dungeon Run Ended*\n\n"
         f"Floors cleared: *{floors}*\n"
-        f"Gold banked: *{gold}g*\n"
+        f"Rooms explored: *{rooms}*\n"
+        f"Gold looted: *{gold}g*\n"
+        f"Surface bonus: *+{surface_gold}g* | *+{surface_exp} EXP*\n"
         f"Items: *{loot_str}*\n"
-        f"EXP bonus: *+{exp_bonus}*"
+        f"Total gold earned: *{total_gold}g*"
     )
     try:
         await bot.send_message(chat_id=chat_id, text=summary, parse_mode="Markdown")
@@ -17493,7 +17524,7 @@ async def _wdng_enter_room(uid, state, bot, chat_id, query=None):
 
     # ── TREASURE ──────────────────────────────────────────────────────────────
     if rtype == "treasure":
-        gold_found = random.randint(floor * 20, floor * 50)
+        gold_found = random.randint(floor * 80, floor * 200)
         state["run_gold"] = state.get("run_gold", 0) + gold_found
         loot_roll = random.random()
         item_found = None
@@ -17704,11 +17735,11 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 exp_earned  = boss_data["exp"]
                 state["boss_cleared"] = True
             elif combat.get("mini_boss"):
-                gold_earned = state["floor"] * 80 + random.randint(30, 80)
-                exp_earned  = state["floor"] * 150 + 100
+                gold_earned = state["floor"] * 250 + random.randint(100, 250)
+                exp_earned  = state["floor"] * 500 + 400
             else:
-                gold_earned = state["floor"] * 30 + random.randint(20, 60)
-                exp_earned  = state["floor"] * 60 + 50
+                gold_earned = state["floor"] * 100 + random.randint(50, 150)
+                exp_earned  = state["floor"] * 200 + 200
             state["run_gold"] = state.get("run_gold", 0) + gold_earned
             add_exp(p, exp_earned); save_player(p)
             # Loot drop
@@ -19107,7 +19138,7 @@ async def pat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"🫸 {a} pats {d} with their free hand. The other one's occupied. 🤝"]
     await send_group(update, random.choice(pats), permanent=True)
     pp2 = get_player(user.id)
-    if pp2: _add_influence(pp2, 1); save_player(pp2)
+    if pp2: _add_influence(pp2, 1); pp2["pat_count"] = safe_int(pp2.get("pat_count", 0)) + 1; save_player(pp2)
 
 
 async def hug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -19137,7 +19168,7 @@ async def hug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"🫂 {a} pulls {d} close. They're already holding hands — this tracks. 🤝"]
     await send_group(update, random.choice(hugs), permanent=True)
     ph = get_player(user.id)
-    if ph: _add_influence(ph, 2); save_player(ph)
+    if ph: _add_influence(ph, 2); ph["hug_count"] = safe_int(ph.get("hug_count", 0)) + 1; save_player(ph)
 
 
 async def slap_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -19179,7 +19210,7 @@ async def slap_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ] + weapon_slaps
     await send_group(update, random.choice(slaps), permanent=True)
     ps = get_player(user.id)
-    if ps: _add_influence(ps, -1); save_player(ps)
+    if ps: _add_influence(ps, -1); ps["slap_count"] = safe_int(ps.get("slap_count", 0)) + 1; save_player(ps)
 
 
 async def poke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -19200,7 +19231,7 @@ async def poke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await send_group(update, random.choice(pokes), permanent=True)
     pa = get_player(user.id)
-    if pa: _add_influence(pa, 1); save_player(pa)
+    if pa: _add_influence(pa, 1); pa["poke_count"] = safe_int(pa.get("poke_count", 0)) + 1; save_player(pa)
 
 
 async def wave_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -19254,72 +19285,136 @@ async def kiss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, random.choice(rejects), permanent=True); return
     await send_group(update, random.choice(kisses), permanent=True)
     pk = get_player(user.id)
-    if pk: _add_influence(pk, 2); save_player(pk)
+    if pk: _add_influence(pk, 2); pk["kiss_count"] = safe_int(pk.get("kiss_count", 0)) + 1; save_player(pk)
 
 
 # ── BONDS BOARD ───────────────────────────────────────────────────────────────
-async def bonds_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+_BONDS_PAGES = 6
+_BONDS_TITLES = ["💍 Marriages", "🤝 Holding Hands", "🫂 Hugs", "💋 Kisses", "👉 Pokes", "👋 Slaps"]
+
+def _bonds_fetch_rows():
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(
+        return conn.execute(
             "SELECT user_id, username, marriages, holding_hands_list, "
             "married_to_id, married_to_name, married_at, "
-            "holding_hands_with_id, holding_hands_with_name, holding_hands_since "
+            "holding_hands_with_id, holding_hands_with_name, holding_hands_since, "
+            "hug_count, kiss_count, poke_count, slap_count, pat_count "
             "FROM players"
         ).fetchall()
     finally:
         conn.close()
 
-    seen_marriages = set()
-    married_lines  = []
-    for row in rows:
-        marriages = sjl(row["marriages"], [])
-        if not marriages and row["married_to_id"]:
-            marriages = [{"id": row["married_to_id"], "name": row["married_to_name"], "date": row["married_at"]}]
-        for m in marriages:
-            pair = tuple(sorted([row["user_id"], m["id"]]))
-            if pair in seen_marriages:
-                continue
-            seen_marriages.add(pair)
-            when = ""
-            if m.get("date"):
-                try:
-                    when = f"  _(since {datetime.fromisoformat(m['date']).strftime('%b %d, %Y')})_"
-                except Exception:
-                    pass
-            married_lines.append(f"💍 *{row['username']}* × *{m['name']}*{when}")
+def _bonds_build_page(rows, page):
+    """Build text for a given bonds page (1-indexed)."""
+    title = _BONDS_TITLES[page - 1]
+    lines = [f"*{title}*\n"]
 
-    seen_hands   = set()
-    holding_lines = []
-    for row in rows:
-        h_list = sjl(row["holding_hands_list"], [])
-        if not h_list and row["holding_hands_with_id"]:
-            h_list = [{"id": row["holding_hands_with_id"], "name": row["holding_hands_with_name"], "since": row["holding_hands_since"]}]
-        for h in h_list:
-            pair = tuple(sorted([row["user_id"], h["id"]]))
-            if pair in seen_hands:
-                continue
-            seen_hands.add(pair)
-            dur = _holdhands_duration(h.get("since",""))
-            holding_lines.append(f"🤝 *{row['username']}* × *{h['name']}*  _({dur})_")
+    if page == 1:
+        seen = set()
+        entries = []
+        for row in rows:
+            marriages = sjl(row["marriages"], [])
+            if not marriages and row["married_to_id"]:
+                marriages = [{"id": row["married_to_id"], "name": row["married_to_name"], "date": row["married_at"]}]
+            for m in marriages:
+                pair = tuple(sorted([row["user_id"], m["id"]]))
+                if pair in seen: continue
+                seen.add(pair)
+                when = ""
+                if m.get("date"):
+                    try: when = f"  _(since {datetime.fromisoformat(m['date']).strftime('%b %d, %Y')})_"
+                    except Exception: pass
+                entries.append(f"💍 *{row['username']}* × *{m['name']}*{when}")
+        lines += entries if entries else ["_No married couples yet._"]
 
-    lines = ["💍 *Bonds Board*\n"]
-    if married_lines:
-        lines.append("*Married Couples*")
-        lines += married_lines
-    else:
-        lines.append("_No married couples yet._")
-    lines.append("")
-    if holding_lines:
-        lines.append("*Holding Hands*")
-        lines += holding_lines
-    else:
-        lines.append("_Nobody is holding hands right now._")
+    elif page == 2:
+        seen = set()
+        entries = []
+        for row in rows:
+            h_list = sjl(row["holding_hands_list"], [])
+            if not h_list and row["holding_hands_with_id"]:
+                h_list = [{"id": row["holding_hands_with_id"], "name": row["holding_hands_with_name"], "since": row["holding_hands_since"]}]
+            for h in h_list:
+                pair = tuple(sorted([row["user_id"], h["id"]]))
+                if pair in seen: continue
+                seen.add(pair)
+                dur = _holdhands_duration(h.get("since", ""))
+                entries.append(f"🤝 *{row['username']}* × *{h['name']}*  _({dur})_")
+        lines += entries if entries else ["_Nobody is holding hands right now._"]
 
-    markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{update.effective_user.id}")
-    ]])
-    await send_group(update, "\n".join(lines), permanent=True, reply_markup=markup)
+    elif page == 3:
+        top = sorted(rows, key=lambda r: safe_int(r["hug_count"]), reverse=True)[:15]
+        top = [r for r in top if safe_int(r["hug_count"]) > 0]
+        if top:
+            for i, row in enumerate(top, 1):
+                lines.append(f"{i}. *{row['username']}* — {safe_int(row['hug_count'])} hugs")
+        else:
+            lines.append("_Nobody has given a hug yet._")
+
+    elif page == 4:
+        top = sorted(rows, key=lambda r: safe_int(r["kiss_count"]), reverse=True)[:15]
+        top = [r for r in top if safe_int(r["kiss_count"]) > 0]
+        if top:
+            for i, row in enumerate(top, 1):
+                lines.append(f"{i}. *{row['username']}* — {safe_int(row['kiss_count'])} kisses")
+        else:
+            lines.append("_Nobody has given a kiss yet._")
+
+    elif page == 5:
+        top = sorted(rows, key=lambda r: safe_int(r["poke_count"]), reverse=True)[:15]
+        top = [r for r in top if safe_int(r["poke_count"]) > 0]
+        if top:
+            for i, row in enumerate(top, 1):
+                lines.append(f"{i}. *{row['username']}* — {safe_int(row['poke_count'])} pokes")
+        else:
+            lines.append("_Nobody has poked anyone yet._")
+
+    elif page == 6:
+        top = sorted(rows, key=lambda r: safe_int(r["slap_count"]), reverse=True)[:15]
+        top = [r for r in top if safe_int(r["slap_count"]) > 0]
+        if top:
+            for i, row in enumerate(top, 1):
+                lines.append(f"{i}. *{row['username']}* — {safe_int(row['slap_count'])} slaps")
+        else:
+            lines.append("_Nobody has slapped anyone yet._")
+
+    return "\n".join(lines)
+
+def _bonds_markup(uid, page):
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton(f"◀ {_BONDS_TITLES[page-2]}", callback_data=f"bonds_p_{uid}_{page-1}"))
+    nav.append(InlineKeyboardButton(f"· {page}/{_BONDS_PAGES} ·", callback_data="noop"))
+    if page < _BONDS_PAGES:
+        nav.append(InlineKeyboardButton(f"{_BONDS_TITLES[page]} ▶", callback_data=f"bonds_p_{uid}_{page+1}"))
+    close = [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
+    return InlineKeyboardMarkup([nav, close])
+
+async def bonds_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    rows = _bonds_fetch_rows()
+    text = _bonds_build_page(rows, 1)
+    await send_group(update, text, permanent=True, reply_markup=_bonds_markup(uid, 1))
+
+async def bonds_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    try:
+        uid = int(parts[2]); page = int(parts[3])
+    except (IndexError, ValueError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("Not your bonds board!", show_alert=True); return
+    if not (1 <= page <= _BONDS_PAGES):
+        return
+    rows = _bonds_fetch_rows()
+    text = _bonds_build_page(rows, page)
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_bonds_markup(uid, page))
+    except Exception:
+        pass
 
 
 async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -21200,7 +21295,7 @@ async def rankwins_cmd(update, context):
 GUIDE_PAGES = [
     # Page 1 - Getting Started
     (
-        "🎱 *8Ball World  -  Getting Started* (1/13)\n"
+        "🎱 *8Ball World  -  Getting Started* (1/14)\n"
         "\n"
         "Welcome to 8Ball World  -  a fantasy RPG built inside Telegram.\n"
         "\n"
@@ -21219,7 +21314,7 @@ GUIDE_PAGES = [
     ),
     # Page 2 - Character Building
     (
-        "🎱 *8Ball World  -  Building Your Character* (2/13)\n"
+        "🎱 *8Ball World  -  Building Your Character* (2/14)\n"
         "\n"
         "Use /class at Level 5 to pick your starting class. Browse with arrows to see each class's Path A and Path B.\n"
         "\n"
@@ -21265,7 +21360,7 @@ GUIDE_PAGES = [
     ),
     # Page 3 - Daily Activities
     (
-        "🎱 *8Ball World  -  Daily Activities* (3/13)\n"
+        "🎱 *8Ball World  -  Daily Activities* (3/14)\n"
         "\n"
         "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
         "\n"
@@ -21294,7 +21389,7 @@ GUIDE_PAGES = [
     ),
     # Page 4 - Combat & Raids
     (
-        "🎱 *8Ball World  -  Combat & Raids* (4/13)\n"
+        "🎱 *8Ball World  -  Combat & Raids* (4/14)\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
         "Reply to any player's message and use /attack to fight them. Or use /attack with no target to open a live player picker and choose who to hit. Winners steal gold and EXP. Losers are defeated for 30 minutes and lose 10% EXP.\n"
@@ -21354,7 +21449,7 @@ GUIDE_PAGES = [
     ),
     # Page 5 - Gear & Economy
     (
-        "🎱 *8Ball World  -  Gear & Economy* (5/13)\n"
+        "🎱 *8Ball World  -  Gear & Economy* (5/14)\n"
         "\n"
         "*Gear Slots*\n"
         "⚔️ Weapon, 🛡️ Armor, 🔰 Shield, 💍 Accessory, 🎩 Hat, 🧤 Gloves, 👢 Boots, 🎭 Mask.\n"
@@ -21397,7 +21492,7 @@ GUIDE_PAGES = [
     ),
     # Page 6 - Command Reference (Core)
     (
-        "🎱 *8Ball World  -  Commands: Core* (6/13)\n"
+        "🎱 *8Ball World  -  Commands: Core* (6/14)\n"
         "\n"
         "*Character*\n"
         "/ascend  -  Create your RPG character (DM only)\n"
@@ -21461,7 +21556,7 @@ GUIDE_PAGES = [
     ),
     # Page 7 - Command Reference (Social)
     (
-        "🎱 *8Ball World  -  Commands: Social* (7/13)\n"
+        "🎱 *8Ball World  -  Commands: Social* (7/14)\n"
         "\n"
         "*Guilds & Orders*\n"
         "/guild  -  Social hub — your guild + secret order together\n"
@@ -21503,7 +21598,7 @@ GUIDE_PAGES = [
     ),
     # Page 7 - Guilds & Advanced
     (
-        "🎱 *8Ball World  -  Guilds & Advanced Systems* (8/13)\n"
+        "🎱 *8Ball World  -  Guilds & Advanced Systems* (8/14)\n"
         "\n"
         "*Social Hub*\n"
         "/guild — Opens your combined Social Standing card showing your Guild and Secret Order in one view. Use this as your main social dashboard.\n"
@@ -21547,7 +21642,7 @@ GUIDE_PAGES = [
     ),
     # Page 8 - Pets
     (
-        "🎱 *8Ball World  -  Pets* (9/13)\n"
+        "🎱 *8Ball World  -  Pets* (9/14)\n"
         "\n"
         "*Getting a Pet*\n"
         "Buy eggs from the Pet Shop (/petshop) or find them in dungeons and quests.\n"
@@ -21599,7 +21694,7 @@ GUIDE_PAGES = [
     ),
     # Page 9 - Marriage & Social
     (
-        "🎱 *8Ball World  -  Marriage & Social* (10/13)\n"
+        "🎱 *8Ball World  -  Marriage & Social* (10/14)\n"
         "\n"
         "*Getting Married*\n"
         "Reply to any player's message and type /marry to propose.\n"
@@ -21645,7 +21740,7 @@ GUIDE_PAGES = [
 
     # Page 10 - Encounters & Monsters
     (
-        "🎱 *8Ball World  -  Encounters & Monsters* (11/13)\n"
+        "🎱 *8Ball World  -  Encounters & Monsters* (11/14)\n"
         "\n"
         "Use /encounter to begin. Choose *Battle* or *Hunt*.\n"
         "\n"
@@ -21680,7 +21775,7 @@ GUIDE_PAGES = [
     ),
     # Page 11 - Influence & Fame
     (
-        "🎱 *8Ball World  -  Influence & Fame* (12/13)\n"
+        "🎱 *8Ball World  -  Influence & Fame* (12/14)\n"
         "\n"
         "Influence is a silent measure of your standing in the order. It grows through kindness, shrinks through cruelty, and tells the world exactly how you carry yourself.\n"
         "\n"
@@ -21715,7 +21810,7 @@ GUIDE_PAGES = [
     ),
     # Page 12 - Secret Orders
     (
-        "🎱 *8Ball World  -  Secret Orders* (13/13)\n"
+        "🎱 *8Ball World  -  Secret Orders* (13/14)\n"
         "\n"
         "Orders are cross-guild alliances of up to 30 members — a tier above Guilds. They span multiple guilds, operate in the shadows, share an influence pool, and unlock perks that grow over time.\n"
         "\n"
@@ -21750,7 +21845,7 @@ GUIDE_PAGES = [
         "🎱 _The ball knows. The order watches. Act accordingly._"
     ),
     (
-        "*Page 14/14 — Wizardry Dungeon* 🏰\n"
+        "🎱 *8Ball World  -  Wizardry Dungeon* (14/14)\n"
         "\n"
         "Access via `/encounter` → 🏰 *Enter Dungeon*\n"
         "\n"
@@ -25646,6 +25741,7 @@ def main():
     app.add_handler(CommandHandler("wave",         wave_cmd))
     app.add_handler(CommandHandler("kiss",         kiss_cmd))
     app.add_handler(CommandHandler("bonds",        bonds_cmd))
+    app.add_handler(CallbackQueryHandler(bonds_page_callback,  pattern="^bonds_p_"))
     app.add_handler(CallbackQueryHandler(marry_callback,       pattern="^marry_(accept|decline)_"))
     app.add_handler(CallbackQueryHandler(divorce_callback,     pattern="^divorce_(confirm|cancel)_"))
     app.add_handler(CallbackQueryHandler(holdhands_callback,   pattern="^hh_(accept|decline)_"))
