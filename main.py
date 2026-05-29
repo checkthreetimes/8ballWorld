@@ -3423,8 +3423,8 @@ def _npc_level_stats(base_hp, base_dmg, level, player_max_hp=0):
     if player_max_hp > 0:
         # HP: between 70% and 130% of player max HP
         hp  = max(int(player_max_hp * 0.70), min(hp, int(player_max_hp * 1.30)))
-        # ATK: floor 10%, ceiling 22% of player max HP (raw before DEF mitigation)
-        atk = max(int(player_max_hp * 0.10), min(atk, int(player_max_hp * 0.22)))
+        # ATK: floor 6%, ceiling 14% of player max HP (raw before DEF mitigation)
+        atk = max(int(player_max_hp * 0.06), min(atk, int(player_max_hp * 0.14)))
     return hp, atk
 
 def _get_monster_squad(uid):
@@ -4977,13 +4977,18 @@ def get_combat_skills(p, skip_types=None):
         if cdef.get("line") == line and not cdef.get("path"):
             for sk in cdef.get("skills", []):
                 _add(sk)
-    # Path chain up to and including current class
+    # Path chain up to and including current class.
+    # Guard: only iterate if class_id is actually IN the chain — prevents
+    # edge cases (e.g. class_id=base class but class_path set) from adding
+    # all tier skills beyond what the player has earned.
     if class_path:
-        for path_cid in CLASS_PATHS.get(line, {}).get(class_path, []):
-            for sk in CLASS_TREE.get(path_cid, {}).get("skills", []):
-                _add(sk)
-            if path_cid == class_id:
-                break
+        path_chain = CLASS_PATHS.get(line, {}).get(class_path, [])
+        if class_id in path_chain:
+            for path_cid in path_chain:
+                for sk in CLASS_TREE.get(path_cid, {}).get("skills", []):
+                    _add(sk)
+                if path_cid == class_id:
+                    break
     if skip_types:
         skills = [sk for sk in skills if sk.get("type") not in skip_types]
     return skills
@@ -17656,8 +17661,8 @@ def _wdng_scale(val, floor):
     return max(1, round(val * (1 + (floor - 1) * 0.15)))
 
 def _wdng_scale_atk(val, floor):
-    """Scale monster ATK by floor (steeper, 25%/floor — floor 1 weak, floor 20 brutal)."""
-    return max(1, round(val * (1 + (floor - 1) * 0.25)))
+    """Scale monster ATK by floor (10%/floor — fair ramp from easy to tough)."""
+    return max(1, round(val * (1 + (floor - 1) * 0.10)))
 
 
 async def _wdng_surface(uid, state, bot, chat_id, reason="surfaced"):
@@ -18027,8 +18032,10 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             dmg = 0
         # Void gaze: boss/elite hits twice
         void_hits = 2 if (combat.get("void_gaze") and state["floor"] >= 20) else 1
+        _def_pct  = min(0.40, get_stat(p, "DEF") * 0.004)
+        _dng_atk  = max(1, round(combat["atk"] * (1 - _def_pct)))
         for _ in range(void_hits):
-            state["p_hp"] = max(0, state["p_hp"] - combat["atk"])
+            state["p_hp"] = max(0, state["p_hp"] - _dng_atk)
 
         if state["p_hp"] <= 0:
             await _wdng_surface(uid, state, context.bot, chat_id, "died")
@@ -18119,7 +18126,7 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                     f"{header}\n\n"
                     f"⚔️ *{combat['name']}*\n"
                     f"❤️ {combat['hp']}/{combat['max_hp']} [{mbar}]\n\n"
-                    f"{miss_txt}You dealt *{dmg}* dmg.{_dng_crit_note} Enemy hits back for *{combat['atk']}*.\n"
+                    f"{miss_txt}You dealt *{dmg}* dmg.{_dng_crit_note} Enemy hits back for *{_dng_atk}*.\n"
                     f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]{pet_line}{enc_lines}",
                     parse_mode="Markdown",
                     reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False))
@@ -18313,7 +18320,9 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
         # Enemy counter (unless stunned)
         if enemy_counter:
-            state["p_hp"] = max(0, state["p_hp"] - combat["atk"])
+            _def_pct2 = min(0.40, get_stat(p, "DEF") * 0.004)
+            _dng_atk2 = max(1, round(combat["atk"] * (1 - _def_pct2)))
+            state["p_hp"] = max(0, state["p_hp"] - _dng_atk2)
             if state["p_hp"] <= 0:
                 await _wdng_surface(uid, state, context.bot, chat_id, "died")
                 try:
@@ -18365,7 +18374,7 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             save_wdng_state(uid, state)
             if enemy_counter:
-                counter_line = f"\nEnemy counter-attacks for *{combat['atk']}*.\nYour HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]"
+                counter_line = f"\nEnemy counter-attacks for *{_dng_atk2}*.\nYour HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]"
             else:
                 counter_line = f"\n_(Stunned — no counter this turn!)_ HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]"
             try:
@@ -18534,7 +18543,9 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 pass
         else:
             combat = state["combat"]
-            state["p_hp"] = max(0, state["p_hp"] - combat["atk"])
+            _def_pct3 = min(0.40, get_stat(p, "DEF") * 0.004)
+            _dng_atk3 = max(1, round(combat["atk"] * (1 - _def_pct3)))
+            state["p_hp"] = max(0, state["p_hp"] - _dng_atk3)
             if state["p_hp"] <= 0:
                 await _wdng_surface(uid, state, context.bot, chat_id, "died")
                 try:
