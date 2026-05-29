@@ -3560,7 +3560,7 @@ def _encounter_battle_markup(enc, p=None):
         skill_btns = [
             InlineKeyboardButton(sk.get("active", sk.get("name","Skill")),
                                  callback_data=f"enc_skl_{uid}_{i}")
-            for i, sk in enumerate(p_skills[:4])
+            for i, sk in enumerate(p_skills)
         ]
         for i in range(0, len(skill_btns), 2):
             rows.append(skill_btns[i:i+2])
@@ -3681,6 +3681,8 @@ def _enc_npc_attack(enc, p):
         set_status(p, "battle_cry_str_until", 900)
     if enc.get("p_exposed"):
         dmg = int(dmg * 1.2); enc["p_exposed"] = False
+    if enc.pop("e_weakened", False):
+        dmg = max(1, int(dmg * 0.75))
     extra = ""
     if effect == "heal_self" and random.random() < 0.25:
         heal = enc["e_max_hp"] // 8
@@ -3767,6 +3769,8 @@ def _enc_monster_attack(enc):
         if _mon_pk == "defensive_stance":
             if enc["p_hp"] > enc["p_max_hp"] * 0.50:
                 dmg = max(1, dmg - 30)
+        if enc.pop("e_weakened", False):
+            dmg = max(1, int(dmg * 0.75))
         enc["p_hp"] = max(0, enc["p_hp"] - dmg)
         eff = _apply_move_effect(enc, move_key) if mv.get("effect") else ""
         return f"*{enc['e_name']}* used *{mv['name']}* — {dmg} damage!{eff}"
@@ -18751,10 +18755,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if enc.pop("p_stunned", False):
                 action_txt = "⚡ You're stunned and lose your turn!"
             else:
-                str_val = get_stat(p, "STR")
-                wep     = p.get("equipped_weapon")
-                wep_atk = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
-                dmg     = max(1, int((str_val + wep_atk) * random.uniform(0.85, 1.15)))
+                _enc_w    = get_weather()
+                dmg       = calc_attack_damage(p, _enc_w)
                 enc["e_hp"] = max(0, enc["e_hp"] - dmg)
                 pet_extra = ""
                 pet_info = enc.get("pet_info")
@@ -18762,7 +18764,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
                     enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
                     pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
-                # Player weapon enchant effects
+                # Weapon enchant procs
                 _enc_extras = ""
                 if get_enchant_bonus(p, "burn_proc") and random.random() < 0.10:
                     enc["e_burning"] = True; _enc_extras += "\n🔥 Your weapon *ignites* the enemy!"
@@ -18770,6 +18772,23 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     _ls = max(1, round(dmg * 0.15))
                     enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _ls)
                     _enc_extras += f"\n💜 Lifesteal +{_ls} HP!"
+                # Class passive procs
+                _enc_cls = get_player_class(p)
+                _enc_pk  = _enc_cls.get("passive_key", "") if _enc_cls else ""
+                _enc_path = p.get("class_path", "A")
+                _enc_line = get_class_line(p)
+                if dmg > 0:
+                    if _enc_line == "warrior" and _enc_path == "A" and random.random() < 0.10:
+                        enc["e_burning"] = True; _enc_extras += "\n⚔️ *Blessed Strike!* Holy fire ignites!"
+                    elif _enc_line == "mage" and _enc_path == "A" and random.random() < 0.12:
+                        enc["e_burning"] = True; _enc_extras += "\n🔥 *Arcane Burn!* Magical fire clings!"
+                    elif _enc_line == "thief" and _enc_path == "A" and random.random() < 0.15:
+                        enc["e_poisoned"] = True; _enc_extras += "\n🐍 *Poison Strike!* The blade was coated in poison!"
+                    elif _enc_line == "archer" and _enc_path == "A" and random.random() < 0.12:
+                        enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 1
+                        _enc_extras += "\n🏹 *Pin Down!* Enemy distracted — stunned 1 turn!"
+                    if _enc_pk == "curse_touch" and random.random() < 0.08:
+                        enc["e_weakened"] = True; _enc_extras += "\n💜 *Curse Touch!* Enemy weakened!"
                 if enc.pop("p_weakened", False):
                     action_txt = f"You attacked for *{dmg}* damage! _(weakened)_{pet_extra}{_enc_extras}"
                 else:
@@ -18784,14 +18803,62 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 sk  = p_skills[idx]
             except (ValueError, IndexError):
                 await query.answer("Skill not available!", show_alert=True); return
-            primary  = cls.get("primary_stat", "STR") if cls else "STR"
-            base_dmg = get_stat(p, primary)
-            wep      = p.get("equipped_weapon")
-            wep_atk  = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
-            dmg      = max(1, int((base_dmg + wep_atk * 0.5) * 1.4 * random.uniform(0.9, 1.1)))
-            enc["e_hp"]  = max(0, enc["e_hp"] - dmg)
-            sk_name      = sk.get("active", sk.get("name", "Skill"))
-            action_txt   = f"You used *{sk_name}* for *{dmg}* damage!"
+            sk_name  = sk.get("active", sk.get("name", "Skill"))
+            stype    = sk.get("type", "damage")
+            _sk_w    = get_weather()
+            base     = calc_attack_damage(p, _sk_w)
+            # Healing / support skills
+            _heal_types = {"self_heal", "self_heal_buff", "group_heal", "revive_heal",
+                           "regen", "heal_shield", "mass_cleanse", "dmg_reduction_buff",
+                           "party_atk_buff", "party_def_buff", "party_full_buff",
+                           "ultimate_buff", "aoe_heal_dmg"}
+            if stype in _heal_types or stype.endswith("heal"):
+                wis  = get_stat(p, "WIS")
+                heal = max(1, round(wis * sk.get("mult", sk.get("wis_mult", 50))))
+                enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
+                action_txt = f"💚 *{sk_name}*! You healed *{heal} HP*! ({enc['p_hp']}/{enc['p_max_hp']})"
+                # Skip enemy NPC turn for pure heals
+                npc_act = _enc_npc_attack(enc, p)
+                dot_txt = _apply_dot_tick(enc)
+                if dot_txt: npc_act += f"\n_{dot_txt}_"
+                if enc["p_hp"] <= 0:
+                    gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                    p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
+                    await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold. _(30s cooldown)_")
+                    return
+                enc.setdefault("action_log", []).append(action_txt)
+                enc.setdefault("action_log", []).append(npc_act)
+                if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
+                save_player(p)
+                context.user_data["encounter"] = enc
+                try:
+                    await query.answer()
+                    await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                                  reply_markup=_encounter_battle_markup(enc, p))
+                except Exception:
+                    try:
+                        await query.edit_message_text(_encounter_battle_card(enc),
+                                                      reply_markup=_encounter_battle_markup(enc, p))
+                    except Exception: pass
+                return
+            # Damage skills
+            if stype == "multihit":
+                hits = sk.get("hits", 2)
+                dmg  = sum(max(1, round(calc_attack_damage(p, _sk_w) * sk.get("mult", 0.8))) for _ in range(hits))
+                action_txt = f"⚡ *{sk_name}*! {hits}-hit combo for *{dmg}* damage!"
+            elif stype == "crit_dmg":
+                dmg = max(1, round(base * sk.get("mult", 1.8) * 2))
+                action_txt = f"💥 *{sk_name}*! Guaranteed Critical for *{dmg}* damage!"
+            elif stype == "pierce_dmg":
+                dmg = max(1, round(get_stat(p, "AGI") * 3))
+                action_txt = f"🌑 *{sk_name}*! Pierce for *{dmg}* damage! _(ignores dodge)_"
+            elif stype == "pierce_all":
+                dmg = max(1, round(get_stat(p, "STR") * sk.get("str_mult", 2)))
+                action_txt = f"🏹 *{sk_name}*! Piercing for *{dmg}* damage!"
+            else:
+                dmg = max(1, round(base * sk.get("mult", 1.0)))
+                action_txt = f"⚡ *{sk_name}*! *{dmg}* damage!"
+            enc["e_hp"] = max(0, enc["e_hp"] - dmg)
 
         elif data == f"enc_heal_{uid}":
             if enc.get("heals_left", 0) <= 0:
@@ -18962,10 +19029,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if enc.pop("p_stunned", False):
                 action_txt = "⚡ You're stunned and lose your turn!"
             else:
-                str_val = get_stat(p, "STR")
-                wep     = p.get("equipped_weapon")
-                wep_atk = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
-                dmg     = max(1, int((str_val + wep_atk) * random.uniform(0.85, 1.15)))
+                _hunt_w   = get_weather()
+                dmg       = calc_attack_damage(p, _hunt_w)
                 enc["e_hp"] = max(0, enc["e_hp"] - dmg)
                 elem_e = ELEMENT_EMOJI.get(enc.get("element",""), "")
                 pet_extra = ""
@@ -18981,6 +19046,23 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     _ls = max(1, round(dmg * 0.15))
                     enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _ls)
                     _enc_extras += f"\n💜 Lifesteal +{_ls} HP!"
+                # Class passive procs
+                _hunt_cls  = get_player_class(p)
+                _hunt_pk   = _hunt_cls.get("passive_key", "") if _hunt_cls else ""
+                _hunt_path = p.get("class_path", "A")
+                _hunt_line = get_class_line(p)
+                if dmg > 0:
+                    if _hunt_line == "warrior" and _hunt_path == "A" and random.random() < 0.10:
+                        enc["e_burning"] = True; _enc_extras += "\n⚔️ *Blessed Strike!* Holy fire ignites!"
+                    elif _hunt_line == "mage" and _hunt_path == "A" and random.random() < 0.12:
+                        enc["e_burning"] = True; _enc_extras += "\n🔥 *Arcane Burn!* Magical fire clings!"
+                    elif _hunt_line == "thief" and _hunt_path == "A" and random.random() < 0.15:
+                        enc["e_poisoned"] = True; _enc_extras += "\n🐍 *Poison Strike!* The blade was coated in poison!"
+                    elif _hunt_line == "archer" and _hunt_path == "A" and random.random() < 0.12:
+                        enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 1
+                        _enc_extras += "\n🏹 *Pin Down!* Enemy distracted — stunned 1 turn!"
+                    if _hunt_pk == "curse_touch" and random.random() < 0.08:
+                        enc["e_weakened"] = True; _enc_extras += "\n💜 *Curse Touch!* Enemy weakened!"
                 if enc.pop("p_weakened", False):
                     action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage! _(weakened)_{pet_extra}{_enc_extras}"
                 else:
@@ -18995,14 +19077,59 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 sk  = p_skills[idx]
             except (ValueError, IndexError):
                 await query.answer("Skill not available!", show_alert=True); return
-            primary  = cls.get("primary_stat", "STR") if cls else "STR"
-            base_dmg = get_stat(p, primary)
-            wep      = p.get("equipped_weapon")
-            wep_atk  = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
-            dmg      = max(1, int((base_dmg + wep_atk * 0.5) * 1.4 * random.uniform(0.9, 1.1)))
+            sk_name  = sk.get("active", sk.get("name", "Skill"))
+            stype    = sk.get("type", "damage")
+            _hsk_w   = get_weather()
+            base     = calc_attack_damage(p, _hsk_w)
+            _heal_types = {"self_heal", "self_heal_buff", "group_heal", "revive_heal",
+                           "regen", "heal_shield", "mass_cleanse", "dmg_reduction_buff",
+                           "party_atk_buff", "party_def_buff", "party_full_buff",
+                           "ultimate_buff", "aoe_heal_dmg"}
+            if stype in _heal_types or stype.endswith("heal"):
+                wis  = get_stat(p, "WIS")
+                heal = max(1, round(wis * sk.get("mult", sk.get("wis_mult", 50))))
+                enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
+                action_txt = f"💚 *{sk_name}*! You healed *{heal} HP*! ({enc['p_hp']}/{enc['p_max_hp']})"
+                mon_act = _enc_monster_attack(enc)
+                dot_txt = _apply_dot_tick(enc)
+                if dot_txt: mon_act += f"\n_{dot_txt}_"
+                if enc["p_hp"] <= 0:
+                    gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                    p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
+                    await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold. _(30s cooldown)_")
+                    return
+                enc.setdefault("action_log", []).append(action_txt)
+                enc.setdefault("action_log", []).append(mon_act)
+                if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
+                save_player(p)
+                context.user_data["encounter"] = enc
+                try:
+                    await query.answer()
+                    await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                                  reply_markup=_encounter_battle_markup(enc, p))
+                except Exception:
+                    try:
+                        await query.edit_message_text(_encounter_battle_card(enc),
+                                                      reply_markup=_encounter_battle_markup(enc, p))
+                    except Exception: pass
+                return
+            if stype == "multihit":
+                hits = sk.get("hits", 2)
+                dmg  = sum(max(1, round(calc_attack_damage(p, _hsk_w) * sk.get("mult", 0.8))) for _ in range(hits))
+                action_txt = f"⚡ *{sk_name}*! {hits}-hit combo for *{dmg}* damage!"
+            elif stype == "crit_dmg":
+                dmg = max(1, round(base * sk.get("mult", 1.8) * 2))
+                action_txt = f"💥 *{sk_name}*! Guaranteed Critical for *{dmg}* damage!"
+            elif stype == "pierce_dmg":
+                dmg = max(1, round(get_stat(p, "AGI") * 3))
+                action_txt = f"🌑 *{sk_name}*! Pierce for *{dmg}* damage! _(ignores dodge)_"
+            elif stype == "pierce_all":
+                dmg = max(1, round(get_stat(p, "STR") * sk.get("str_mult", 2)))
+                action_txt = f"🏹 *{sk_name}*! Piercing for *{dmg}* damage!"
+            else:
+                dmg = max(1, round(base * sk.get("mult", 1.0)))
+                action_txt = f"⚡ *{sk_name}*! *{dmg}* damage!"
             enc["e_hp"] = max(0, enc["e_hp"] - dmg)
-            sk_name = sk.get("active", sk.get("name", "Skill"))
-            action_txt = f"You used *{sk_name}* for *{dmg}* damage!"
 
         elif data == f"enc_heal_{uid}":
             if enc.get("heals_left", 0) <= 0:
