@@ -248,9 +248,10 @@ async def reply_to_dm(update, context, text: str, parse_mode="Markdown"):
     user = update.effective_user
     chat = update.effective_chat
     is_group = chat.type in ("group", "supergroup")
-    if is_group:
-        try: await update.message.delete()
-        except Exception: pass
+    # Always try to delete the user's command (works in groups with admin perm
+    # and in private chats within 48h per Telegram API)
+    try: await update.message.delete()
+    except Exception: pass
     try:
         await context.bot.send_message(chat_id=user.id, text=text[:4096], parse_mode=parse_mode)
         if is_group:
@@ -15206,7 +15207,7 @@ async def cooldowns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
              f"🎁 Daily:   {time_remaining(p.get('last_daily'), 86400)}",
              f"🗺️ Quest:   {time_remaining(p.get('last_quest'), 3600)}",
              f"🏋️ Train:   {time_remaining(p.get('last_train'), 1800)}",
-             f"🎱 Pool:    {time_remaining(pool_ts, 60)}"]
+             f"🎱 Pool:    {time_remaining(pool_ts, 8)}"]
     today = datetime.now().strftime("%Y-%m-%d")
     exp_count = safe_int(p.get("explore_count_today")) if p.get("explore_date")==today else 0
     lines.append(f"🗺️ Explore: {exp_count}/2 today")
