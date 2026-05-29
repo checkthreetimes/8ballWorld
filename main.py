@@ -8615,14 +8615,10 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if is_defeated(a):
                 await query.answer("You're defeated!", show_alert=True); return
             max_sh = _shield_max(a)
-            a["shield_hp"]   = max_sh   # full bar
+            a["shield_hp"]   = max_sh
             a["shield_used"] = 1
             save_player(a)
-            bar_n = round(a["shield_hp"] / max(1, max_sh) * 10)
-            bar   = "█" * bar_n + "░" * (10 - bar_n)
-            shield_text = (f"🛡️ *{a['username']}* raises their shield!\n"
-                           f"Shield HP: *{max_sh}/{max_sh}* [{bar}]\n"
-                           f"_Absorbs incoming damage. Depletes and is gone for this life._")
+            shield_text = f"🛡️ *{a['username']}* raises their shield! *{max_sh} HP*"
             markup = _build_pvp_card_markup(uid, target_id, a)
             pair   = _pvp_pair_key(uid, target_id)
             try:
@@ -8728,50 +8724,36 @@ async def defend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if arg == "core":
         if safe_int(p.get("shield_used")) == 1:
             await send_group(update,
-                "🛡️ Shield already activated — cores only increase capacity *before* you activate.\n"
-                "_Wait until your next life to stack more cores._", delay=12)
+                "🛡️ Shield already active — cores must be added before activation.", delay=9)
             return
         inv  = sjl(p.get("inventory"), [])
         core = next((i for i in inv if i.startswith("Monster Core (") or i == "Rare Monster Core"), None)
         if not core:
-            await send_group(update, "⚙️ No Monster Cores in inventory.", delay=9); return
+            await send_group(update, "No Monster Cores in inventory.", delay=9); return
         inv.remove(core)
         p["inventory"] = json.dumps(inv)
         p["shield_core_bonus"] = safe_int(p.get("shield_core_bonus")) + _SHIELD_CORE_ADD
         new_max = _shield_max(p)
         save_player(p)
-        bar_n = round(new_max / max(1, new_max) * 10)
         await send_group(update,
-            f"⚙️ *{core}* charged into shield capacity!\n"
-            f"🛡️ Shield max: *{new_max} HP*  (+{_SHIELD_CORE_ADD})\n"
-            f"_Stack more cores or use /defend to activate at full capacity._", delay=15)
+            f"⚙️ Core absorbed — shield max raised to *{new_max} HP*.", delay=12)
         return
 
     # ── /defend — activate shield at full capacity (once per life) ──────────
     if safe_int(p.get("shield_used")) == 1:
         if cur_sh > 0:
-            bar_n = round(cur_sh / max(1, max_sh) * 10)
-            bar   = "█" * bar_n + "░" * (10 - bar_n)
             await send_group(update,
-                f"🛡️ *Shield Active*\n"
-                f"HP: *{cur_sh}/{max_sh}* [{bar}]\n"
-                f"_Absorbs incoming damage. Depletes and is gone for this life._", delay=12)
+                f"🛡️ Shield active — *{cur_sh}/{max_sh} HP*", delay=9)
         else:
             await send_group(update,
-                "🛡️ Shield depleted.\n_You'll get a fresh one when you revive._", delay=9)
+                "🛡️ Shield depleted. Resets on revival.", delay=9)
         return
 
-    p["shield_hp"]   = max_sh   # always activate at full capacity
+    p["shield_hp"]   = max_sh
     p["shield_used"] = 1
     save_player(p)
-    bar_n = round(p["shield_hp"] / max(1, max_sh) * 10)
-    bar   = "█" * bar_n + "░" * (10 - bar_n)
     await send_group(update,
-        f"🛡️ *Shield Activated!*  (*{p['shield_hp']} HP*)\n"
-        f"[{'█' * bar_n}{'░' * (10 - bar_n)}]\n\n"
-        f"Incoming attacks drain the shield before your HP.\n"
-        f"_One use per life. Stack cores with `/defend core` before activating._",
-        delay=20)
+        f"🛡️ Shield raised — *{p['shield_hp']} HP*. Absorbs damage before your HP.", delay=12)
 
 
 # ── HEAL ──────────────────────────────────────────────────────────────────────
@@ -9171,7 +9153,26 @@ async def _send_stats_page(target, target_uid: int, page: int, edit: bool = Fals
     if edit:
         await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
     else:
-        await send_group(target, text, permanent=False, delay=120, reply_markup=markup)
+        chat_id = target.effective_chat.id
+        bot = target.get_bot()
+        key = (chat_id, target.effective_user.id)
+        old_id = last_bot_message.get(key)
+        import asyncio as _aio
+        results = await _aio.gather(
+            bot.send_message(chat_id=chat_id, text=text[:4096],
+                             parse_mode="Markdown", reply_markup=markup),
+            bot.delete_message(chat_id=chat_id, message_id=old_id) if old_id else _aio.sleep(0),
+            target.message.delete(),
+            return_exceptions=True,
+        )
+        new_msg = results[0]
+        if isinstance(new_msg, Exception):
+            try:
+                new_msg = await bot.send_message(chat_id=chat_id, text=text[:4096],
+                                                 parse_mode="Markdown", reply_markup=markup)
+            except Exception:
+                return
+        last_bot_message[key] = new_msg.message_id
 
 
 async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
