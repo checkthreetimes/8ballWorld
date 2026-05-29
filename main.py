@@ -243,6 +243,28 @@ async def announce(bot, chat_id: int, text: str,
     except Exception:
         return None
 
+async def reply_to_dm(update, context, text: str, parse_mode="Markdown"):
+    """Send text to the user's DM. If in a group, delete command and post brief notice."""
+    user = update.effective_user
+    chat = update.effective_chat
+    is_group = chat.type in ("group", "supergroup")
+    if is_group:
+        try: await update.message.delete()
+        except Exception: pass
+    try:
+        await context.bot.send_message(chat_id=user.id, text=text[:4096], parse_mode=parse_mode)
+        if is_group:
+            try:
+                notice = await context.bot.send_message(chat_id=chat.id, text="📬 Sent to your DM!", parse_mode="Markdown")
+                asyncio.create_task(_auto_delete(context.bot, chat.id, notice.message_id, 5))
+            except Exception: pass
+    except Exception:
+        # Bot not started in DM — fall back to group with auto-delete
+        try:
+            msg = await context.bot.send_message(chat_id=chat.id, text=text[:4096], parse_mode=parse_mode)
+            asyncio.create_task(_auto_delete(context.bot, chat.id, msg.message_id, 30))
+        except Exception: pass
+
 async def send_dm_or_group(bot, user_id: int, chat_id: int, text: str,
                             parse_mode="Markdown", group_delay: int = 20):
     """Try to DM the player; fall back to group with auto-delete."""
@@ -10468,12 +10490,12 @@ TRAIN_MESSAGES = [
 async def train_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
+        await reply_to_dm(update, context, "Use /ascend first!"); return
     if is_defeated(p):
-        await send_group(update, "💀 Too beaten up to train!", delay=9); return
+        await reply_to_dm(update, context, "💀 Too beaten up to train!"); return
     if not check_cooldown(p.get("last_train"), 1800):
-        await send_group(update,
-            f"⏳ Train again in {time_remaining(p.get('last_train'), 1800)}.", delay=9); return
+        await reply_to_dm(update, context,
+            f"⏳ Train again in {time_remaining(p.get('last_train'), 1800)}."); return
     p["last_train"] = datetime.now().isoformat()
     base = 150 + p["level"] * 5
     cls  = get_player_class(p)
@@ -10498,18 +10520,18 @@ async def train_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
             f"🎉 *{p['username']}* reached *Level {p['level']}* from training! 🏋️",
             delay=60))
-    await send_group(update, msg, delay=30)
+    await reply_to_dm(update, context, msg)
 
 # ── QUEST ─────────────────────────────────────────────────────────────────────
 async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
+        await reply_to_dm(update, context, "Use /ascend first!"); return
     if is_defeated(p):
-        await send_group(update, _defeated_msg(p), delay=15); return
+        await reply_to_dm(update, context, _defeated_msg(p)); return
     if not check_cooldown(p.get("last_quest"), 3600):
-        await send_group(update,
-            f"⏳ Next quest in {time_remaining(p.get('last_quest'), 3600)}.", delay=9); return
+        await reply_to_dm(update, context,
+            f"⏳ Next quest in {time_remaining(p.get('last_quest'), 3600)}."); return
     p["last_quest"] = datetime.now().isoformat()
     w = get_weather()
     if p["level"] <= 3:   pool = [q for q in SOLO_QUESTS if q["tier"]=="Easy"]
@@ -10547,7 +10569,7 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
             f"🎉 *{p['username']}* reached *Level {p['level']}* from a quest! 🗺️",
             delay=60))
-    await send_group(update, msg, delay=45)
+    await reply_to_dm(update, context, msg)
 
 # ── EXPLORE ───────────────────────────────────────────────────────────────────
 async def explore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -17879,16 +17901,54 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if action == "pet":
         combat = state.get("combat")
         if not combat:
-            await query.answer("No enemy!", show_alert=True); return
+            try:
+                await query.edit_message_text(
+                    _wdng_floor_header(state) + "\n\n_No enemy to use pet on._",
+                    parse_mode="Markdown",
+                    reply_markup=_wdng_nav_markup(uid, _wdng_avail_dirs(state["grid"], tuple(state["pos"]))))
+            except Exception: pass
+            return
         if state.get("pet_ability_used"):
-            await query.answer("Pet ability already used this battle!", show_alert=True); return
+            mbar = _wdng_hp_bar(combat["hp"], combat["max_hp"])
+            pbar = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
+            try:
+                await query.edit_message_text(
+                    f"{_wdng_floor_header(state)}\n\n_Pet ability already used this fight._\n\n"
+                    f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
+                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
+                    parse_mode="Markdown",
+                    reply_markup=_wdng_combat_markup(uid, p=p, pet_used=True))
+            except Exception: pass
+            return
+        # Load pet_info fresh if missing from state (e.g. after bot restart mid-run)
         pet_info = state.get("pet_info")
         if not pet_info:
-            await query.answer("No active pet!", show_alert=True); return
+            _fresh_pet = get_active_pet_record(uid)
+            if _fresh_pet and not _pet_is_on_adventure(_fresh_pet):
+                _fsp = PET_SPECIES.get(_fresh_pet.get("species"), {})
+                pet_info = {
+                    "name":        _fresh_pet.get("nickname") or _fsp.get("name", "Pet"),
+                    "atk":         get_pet_atk_bonus(_fresh_pet),
+                    "def_ability": _fresh_pet.get("def_ability", "shield"),
+                }
+                state["pet_info"] = pet_info
+        if not pet_info:
+            mbar = _wdng_hp_bar(combat["hp"], combat["max_hp"])
+            pbar = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
+            try:
+                await query.edit_message_text(
+                    f"{_wdng_floor_header(state)}\n\n_No active pet available._\n\n"
+                    f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
+                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
+                    parse_mode="Markdown",
+                    reply_markup=_wdng_combat_markup(uid, p=p, pet_used=True))
+            except Exception: pass
+            return
         state["pet_ability_used"] = True
         da    = pet_info.get("def_ability", "shield")
         patk  = pet_info.get("atk", 5)
-        pname = pet_info.get("name", "Pet")
+        # Escape Markdown special chars in pet name
+        pname = str(pet_info.get("name", "Pet")).replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
         if da in ("counter", "stun", "poison"):
             pet_dmg = max(1, int(patk * 1.8 * random.uniform(0.9, 1.1)))
             combat["hp"] = max(0, combat["hp"] - pet_dmg)
@@ -17909,7 +17969,7 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         elif da == "shield":
             shield_val = max(5, patk * 2)
             state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + shield_val)
-            action_txt = f"🐾 *{pname}* creates a shield, restoring *{shield_val}* HP! ✨"
+            action_txt = f"🐾 *{pname}* creates a barrier, restoring *{shield_val}* HP! ✨"
         else:
             pet_dmg = max(1, int(patk * 1.4 * random.uniform(0.9, 1.1)))
             combat["hp"] = max(0, combat["hp"] - pet_dmg)
@@ -17918,15 +17978,20 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         pbar   = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
         header = _wdng_floor_header(state)
         save_wdng_state(uid, state)
+        msg_text = (
+            f"{header}\n\n{action_txt}\n\n"
+            f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
+            f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]"
+        )
+        markup = _wdng_combat_markup(uid, p=p, pet_used=True)
         try:
-            await query.edit_message_text(
-                f"{header}\n\n{action_txt}\n\n"
-                f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
-                f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
-                parse_mode="Markdown",
-                reply_markup=_wdng_combat_markup(uid, p=p, pet_used=True))
+            await query.edit_message_text(msg_text, parse_mode="Markdown", reply_markup=markup)
         except Exception:
-            pass
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=msg_text,
+                                               parse_mode="Markdown", reply_markup=markup)
+            except Exception:
+                pass
         return
 
     # ── COMBAT: HEAL ─────────────────────────────────────────────────────────
@@ -23183,9 +23248,9 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Run all ready activities (daily, train, quest, pool, claim, explore) in one shot."""
     user = update.effective_user; p = get_player(user.id)
     if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
+        await reply_to_dm(update, context, "Use /ascend first!"); return
     if is_defeated(p):
-        await send_group(update, "💀 Too beaten up to hustle right now.", delay=9); return
+        await reply_to_dm(update, context, "💀 Too beaten up to hustle right now."); return
 
     now    = datetime.now()
     lines  = []
@@ -23371,17 +23436,18 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg = (f"🗺️ *{pp['username']}* returns from *{_zone_ref['name']}*!\n\n"
                        f"❌ The expedition failed — nothing to show for it.")
             try:
-                await _bot.send_message(chat_id, msg, parse_mode="Markdown")
+                await _bot.send_message(chat_id=_uid, text=msg, parse_mode="Markdown")
             except Exception:
-                pass
+                try: await _bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+                except Exception: pass
 
         _task = asyncio.create_task(_hustle_explore())
         explore_timers[_uid] = _task
 
     if not ran:
         cd_list = "\n".join(f"  {s}" for s in skipped)
-        await send_group(update,
-            f"🎱 *{user.first_name}*  -  nothing ready yet.\n\n{cd_list}", delay=15); return
+        await reply_to_dm(update, context,
+            f"🎱 *{user.first_name}*  -  nothing ready yet.\n\n{cd_list}"); return
 
     save_player(p)
 
@@ -23389,7 +23455,7 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     out += ran
     if skipped:
         out += ["", "⏳ *Still cooling down:*"] + [f"  {s}" for s in skipped]
-    await send_group(update, "\n".join(out), delay=45)
+    await reply_to_dm(update, context, "\n".join(out))
 
 
 # ── RESETSTATS ────────────────────────────────────────────────────────────────
