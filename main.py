@@ -159,6 +159,8 @@ def _reset_card_timer(pair, bot, chat_id, mid, seconds=20):
         old.cancel()
     task = asyncio.create_task(_auto_delete(bot, chat_id, mid, seconds))
     _pvp_card_tasks[pair] = task
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
 def _cancel_card_timer(pair):
     old = _pvp_card_tasks.pop(pair, None)
@@ -909,7 +911,7 @@ CLASS_TREE = {
             {"tier":5,"unlock":100,"name":"Dead or Alive",
              "passive":"Every kill permanently adds +2 to your max damage ceiling. Stacks forever.",
              "active":"Last Shot","type":"execution_shot",
-             "desc":"On kill: target defeated timer doubled to 12 hours. You earn triple gold and EXP. Public announcement names you.",
+             "desc":"On kill: target defeated timer doubled to 1 hour. You earn triple gold and EXP. Public announcement names you.",
              "passive_key":"dead_or_alive"},
         ]
     },
@@ -5159,12 +5161,12 @@ def calc_defense(defender, dmg):
     return final
 
 def apply_pvp_death(p, killer_name="the enemy", cause="PvP", killer_id=None):
-    """Apply full PvP-style death: 6hr defeat, 10% EXP loss, losses++"""
+    """Apply full PvP-style death: 30min defeat, 10% EXP loss, losses++"""
     exp_loss = round(p.get("exp", 0) * 0.10)
     p["exp"]             = max(0, p.get("exp", 0) - exp_loss)
     p["hp"]              = 0
     p["losses"]          = p.get("losses", 0) + 1
-    p["defeated_until"]  = (datetime.now() + timedelta(hours=6)).isoformat()
+    p["defeated_until"]  = (datetime.now() + timedelta(minutes=30)).isoformat()
     p["last_defeated_by"] = f"{killer_name} ({cause})"
     p["kill_streak"]     = 0  # reset streak on death
     if killer_id:
@@ -5185,7 +5187,7 @@ def _defeated_msg(p):
 async def _notify_defeat(bot, p, cause_str):
     """DM the player letting them know what defeated them."""
     try:
-        countdown = time_until(p.get("defeated_until")) or "6 hours"
+        countdown = time_until(p.get("defeated_until")) or "30 minutes"
         await bot.send_message(
             chat_id=p["user_id"],
             text=f"💀 You were defeated by *{cause_str}*!\n⏳ Back in: *{countdown}*\n_Use /heal or ask a Priest to get back sooner._",
@@ -5645,7 +5647,7 @@ def raid_enemy_counter(p, raid_state, lines):
         exp_loss = apply_pvp_death(p, killer_name=enemy["name"], cause="Solo Raid")
         lines.append(
             f"💀 *{enemy['name']}* kills *{p['username']}*! "
-            f"Defeated 6hrs. -{exp_loss} EXP.")
+            f"Defeated 30min. -{exp_loss} EXP.")
         return True
     else:
         lines.append(
@@ -5808,7 +5810,7 @@ async def _enemy_phase(bot, chat_id, raid_state):
         if php == 0:
             exp_loss = apply_pvp_death(p, killer_name=enemy["name"], cause="Raid")
             save_player(p)
-            lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6hr defeat. -{exp_loss} EXP.")
+            lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 30min defeat. -{exp_loss} EXP.")
         else:
             lines.append(f"🩸 *{p['username']}* takes *{edm} dmg!* ({php}/{pmhp} HP)")
             if php <= round(pmhp * 0.30):
@@ -7744,7 +7746,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         update_recent_attackers(d, au_id)
         if d["hp"] <= 0:
             d["hp"] = 0
-            d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
+            d["defeated_until"] = (datetime.now() + timedelta(minutes=30)).isoformat()
             d["last_defeated_by"] = f"{a['username']} (Killshot)"
             _d_was_wanted = safe_int(d.get("is_wanted"))
             d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
@@ -7779,7 +7781,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
                 asyncio.create_task(announce(bot, chat_id,
                     f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
             lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
-            _defeat_timer_ks = time_until(d.get("defeated_until")) or "6h"
+            _defeat_timer_ks = time_until(d.get("defeated_until")) or "30m"
             action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_ks}*."
             if leveled and a["level"] % 10 == 0:
                 asyncio.create_task(announce(bot, chat_id,
@@ -8014,7 +8016,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     if d["hp"] <= 0:
         d["hp"] = 0
-        d["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
+        d["defeated_until"] = (datetime.now() + timedelta(minutes=30)).isoformat()
         d["last_defeated_by"] = f"{a['username']} (PvP)"
         _d_was_wanted = safe_int(d.get("is_wanted"))
         d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
@@ -8040,11 +8042,11 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
         asyncio.create_task(_notify_defeat(bot, d, a["username"] + " (PvP)"))
         if cls_a and cls_a.get("passive_key") == "dead_or_alive":
-            d["defeated_until"] = (datetime.now() + timedelta(hours=12)).isoformat()
-            action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 12 hours!"
+            d["defeated_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
+            action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 1 hour!"
             asyncio.create_task(announce(bot, chat_id,
                 f"🏹 *{a['username']}* took down *{d['username']}* with *Last Shot*! "
-                f"12-hour defeat.", delay=30))
+                f"1-hour defeat.", delay=30))
             a["gold"] = a.get("gold", 0) + 150
         exp_gain = 60 + a["level"] * 8
         if _d_was_wanted:
@@ -8077,7 +8079,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         if cls_a and cls_a.get("passive_key") == "marked_for_death":
             mfd_bonus = round((d.get("gold", 0) * 0.05 + 25) * 0.25)
             a["gold"] = a.get("gold", 0) + mfd_bonus
-        _defeat_timer_pvp = time_until(d.get("defeated_until")) or "6h"
+        _defeat_timer_pvp = time_until(d.get("defeated_until")) or "30m"
         action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_pvp}*."
         if leveled and a["level"] % 10 == 0:
             asyncio.create_task(announce(bot, chat_id,
@@ -8262,19 +8264,23 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
     else:
         # Hit or miss — edit existing battle card in-place, else send new one
         _mid = _pvp_cards.get(pair)
+        markup = _build_pvp_card_markup(target_uid, uid, d)
         edited = False
         if _mid:
             try:
                 await context.bot.edit_message_text(chat_id=chat_id, message_id=_mid,
-                    text=action_text[:4096], parse_mode="Markdown")
+                    text=action_text[:4096], parse_mode="Markdown", reply_markup=markup)
                 edited = True
             except Exception:
                 pass
         if not edited:
-            _pvp_cards.pop(pair, None)
+            _old_mid = _pvp_cards.pop(pair, None)
+            if _old_mid:
+                try: await context.bot.delete_message(chat_id=chat_id, message_id=_old_mid)
+                except Exception: pass
             try:
                 m = await context.bot.send_message(chat_id=chat_id,
-                    text=action_text[:4096], parse_mode="Markdown")
+                    text=action_text[:4096], parse_mode="Markdown", reply_markup=markup)
                 _pvp_cards[pair] = m.message_id
                 _mid = m.message_id
             except Exception:
@@ -8492,7 +8498,10 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         if not edited:
-            _pvp_cards.pop(pair, None)
+            _old_mid = _pvp_cards.pop(pair, None)
+            if _old_mid:
+                try: await bot.delete_message(chat_id=chat, message_id=_old_mid)
+                except Exception: pass
             try:
                 msg = await bot.send_message(chat_id=chat, text=action[:4096],
                     parse_mode="Markdown", reply_markup=markup)
@@ -8649,12 +8658,16 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result_text, lvl_msgs, result_type = await _execute_pvp_hit(
             a, d, uid, target_id, w, chat_id, context.bot)
 
-        if result_type == "miss":
-            try: await query.edit_message_text(result_text, parse_mode="Markdown")
-            except Exception: pass
-            return
-
         pair = _pvp_pair_key(uid, target_id)
+
+        if result_type == "miss":
+            miss_markup = _build_pvp_card_markup(target_id, uid, d)
+            try:
+                await query.edit_message_text(result_text, parse_mode="Markdown",
+                                              reply_markup=miss_markup)
+            except Exception: pass
+            _reset_card_timer(pair, context.bot, chat_id, query.message.message_id, 20)
+            return
 
         if result_type == "hit":
             markup = _build_pvp_card_markup(target_id, uid, d)
@@ -8664,6 +8677,9 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                               reply_markup=markup)
                 _pvp_cards[pair] = _mid
             except Exception:
+                try: await query.delete_message()
+                except Exception: pass
+                _pvp_cards.pop(pair, None)
                 try:
                     msg = await context.bot.send_message(chat_id, result_text[:4096],
                         parse_mode="Markdown", reply_markup=markup)
@@ -8857,7 +8873,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = (
                 f"🙏 *{h['username']}* ({cls_name_h}) channels divine energy and *revives themselves*!\n"
                 f"❤️ HP restored: *{heal_amount}* → {t['hp']}/{t['max_hp']}\n"
-                f"✨ *1 hour invincibility* granted  -  _(Still Recovering)_"
+                f"✨ *5 min invincibility* granted  -  _(Still Recovering)_"
             )
         elif is_self:
             msg = (
@@ -8870,7 +8886,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"❤️ {t['username']}: {t['hp']}/{t['max_hp']} HP"
             )
             if was_defeated:
-                msg += f"\n✨ *{t['username']}* is revived! *1 hour invincibility* granted  -  _(Still Recovering)_"
+                msg += f"\n✨ *{t['username']}* is revived! *5 min invincibility* granted  -  _(Still Recovering)_"
             # Divine Shard: priest_aoe — also heal 1 nearby guild member
             if get_accessory_bonus(h, "priest_aoe"):
                 _aoe_heal = max(1, heal_amount // 2)
@@ -8894,7 +8910,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❤️ {t['username']}: {t['hp']}/{t['max_hp']} HP"
         )
         if was_defeated:
-            msg += f"\n✨ *{t['username']}* is revived! *1 hour invincibility* granted  -  _(Still Recovering)_"
+            msg += f"\n✨ *{t['username']}* is revived! *5 min invincibility* granted  -  _(Still Recovering)_"
     if new_t:
         msg += f"\n🏅 *{h['username']}* earned: *{new_t[0]}*!"
     if leveled and h["level"] % 10 == 0:
@@ -8990,17 +9006,19 @@ def _build_stats_pages(p, viewing_name=None):
     _active_pet = get_active_pet_record(p["user_id"])
     pet_lines = []
     if _active_pet:
-        _sp       = PET_SPECIES.get(_active_pet.get("species"), {})
-        _nick     = _active_pet.get("nickname")
+        _sp           = PET_SPECIES.get(_active_pet.get("species"), {})
+        _nick         = _active_pet.get("nickname")
         _species_name = _sp.get("name", "Pet")
         _display_name = _nick if _nick else _species_name
-        _phun     = _active_pet.get("hunger", 100)
-        _pmood    = _active_pet.get("mood", 100)
-        _pemoji   = _sp.get("emoji", "🐾")
+        _phun         = _active_pet.get("hunger", 100)
+        _pmood        = _active_pet.get("mood", 100)
+        _pemoji       = _sp.get("emoji", "🐾")
+        _hun_icon     = "🍗" if _phun >= 60 else ("😐" if _phun >= 30 else "😫")
+        _mood_icon    = "😊" if _pmood >= 60 else ("😐" if _pmood >= 30 else "😢")
         pet_lines = [
-            f"{_pemoji} *{_display_name}* — Lv {_active_pet.get('level', 1)}",
-            f"  Hunger: {_phun}",
-            f"  Mood: {_pmood}",
+            f"{_pemoji} *{_display_name}* | Lv {_active_pet.get('level', 1)}",
+            f"  {_hun_icon} Hunger: {_phun}",
+            f"  {_mood_icon} Mood: {_pmood}",
         ]
 
     _sh_hp   = safe_int(p.get("shield_hp"))
@@ -9020,7 +9038,7 @@ def _build_stats_pages(p, viewing_name=None):
     # ── Profile header ──
     page1_lines = [
         f"🎱 *{name}*",
-        f"🌟 Level {p['level']} — {tier['name']}",
+        f"🌟 Level {p['level']} | {tier['name']}",
         f"🧙 {cls_name}",
         f"🏰 {guild_str}",
         f"🏅 {p.get('active_title') or '—'}",
@@ -9031,7 +9049,7 @@ def _build_stats_pages(p, viewing_name=None):
     if pet_lines:
         page1_lines += pet_lines
     if married_str:
-        page1_lines.append(married_str)
+        page1_lines += ["", married_str]
 
     # ── Combat / progression ──
     page1_lines += [
@@ -9663,7 +9681,7 @@ async def solostrike_cmd(update, context):
                     asyncio.create_task(_notify_defeat(context.bot, p, enemy["name"] + " (Solo Raid)"))
                     active_soloraids.pop(user.id, None)
                     save_player(p)
-                    lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6hr defeat. -{exp_loss} EXP.")
+                    lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 30min defeat. -{exp_loss} EXP.")
                     await send_group(update, "\n".join(lines), delay=20); return
                 else:
                     lines.append(f"🩸 *{enemy['name']}* hits *{p['username']}* for *{edm}!* "
@@ -12090,7 +12108,7 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
                     exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
                     asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                     save_player(tp)
-                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 6hr defeat. -{exp_loss} EXP.")
+                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 30min defeat. -{exp_loss} EXP.")
                 else:
                     lines.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for *{edm}!* ({php}/{pmhp} HP)")
                 save_player(tp)
@@ -14036,7 +14054,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     boss_dict["data"]["dmg_min"], boss_dict["data"]["dmg_max"]))
                 tp["hp"] = max(0, tp["hp"] - bdmg)
                 if tp["hp"] == 0:
-                    tp["defeated_until"] = (datetime.now() + timedelta(hours=6)).isoformat()
+                    tp["defeated_until"] = (datetime.now() + timedelta(minutes=30)).isoformat()
                     tp["last_defeated_by"] = f"{boss_dict['data']['name']} (Boss)"
                     asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                     lines.append(f"💀 *{boss_dict['data']['name']}* kills *{target['name']}*!")
@@ -15055,14 +15073,14 @@ async def _execute_skill(update, context, p, sk):
         d["hp"] = 0
         # Check Zealot condemn  -  revival blocked
         if stype == "condemn":
-            d["defeated_until"] = (datetime.now()+timedelta(hours=6)).isoformat()
+            d["defeated_until"] = (datetime.now()+timedelta(minutes=30)).isoformat()
             d["last_defeated_by"] = f"{p['username']} (Condemned)"
             asyncio.create_task(_notify_defeat(context.bot, d, p['username'] + " — Condemned (cannot be revived for 2h)"))
             set_status(d, "revival_blocked_until", 7200)
             lines.append(f"☠️ *{d['username']}* is condemned! Cannot be revived for 2 hours.\n"
                          f"Only a *Saint's Absolution* can counter this.")
         else:
-            d["defeated_until"] = (datetime.now()+timedelta(hours=6)).isoformat()
+            d["defeated_until"] = (datetime.now()+timedelta(minutes=30)).isoformat()
             d["last_defeated_by"] = f"{p['username']} using {sk['name']} (Skill)"
             asyncio.create_task(_notify_defeat(context.bot, d, f"{p['username']} using {sk['name']}"))
         d["losses"] = d.get("losses",0)+1
@@ -21196,7 +21214,7 @@ GUIDE_PAGES = [
         "\n"
         "🏹 *Archer* — DEX. Precision and bounty hunting.\n"
         "  Path A (Strider): Ranger — steady aim, nature bond, arrow storm\n"
-        "  Path B (Deadeye): Bounty — contracts, 12-hour kills, escalating damage\n"
+        "  Path B (Deadeye): Bounty — contracts, 1-hour kills, escalating damage\n"
         "\n"
         "📿 *Priest* — WIS. The only class that can revive players.\n"
         "  Path A (Saint): Holy healer — group heals, mass resurrection, EXP aura\n"
@@ -21256,7 +21274,7 @@ GUIDE_PAGES = [
         "🎱 *8Ball World  -  Combat & Raids* (4/13)\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
-        "Reply to any player's message and use /attack to fight them. Winners steal gold and EXP. Losers are defeated for 6 hours and lose 10% EXP.\n"
+        "Reply to any player's message and use /attack to fight them. Winners steal gold and EXP. Losers are defeated for 30 minutes and lose 10% EXP.\n"
         "\n"
         "*Killstreaks*\n"
         "Every consecutive kill without dying extends your streak (shown in /who with 🔥). Streaks reset on death.\n"
@@ -21269,7 +21287,7 @@ GUIDE_PAGES = [
         "\n"
         "*/who Icons*\n"
         "❤️ Healthy (above 50% HP)  |  🟡 Injured (25–50%)  |  🔴 Critical (below 25%)\n"
-        "💀 Defeated — out for 6 hours, cannot be attacked\n"
+        "💀 Defeated — out for 30 minutes, cannot be attacked\n"
         "🛡️ Invincible — immune to all damage AND cannot initiate PvP (from revival items or Priest skills)\n"
         "🔥×N Kill streak  |  🔴 WANTED — 5+ kills today  |  💰 Active bounty on this player\n"
         "\n"
@@ -21286,8 +21304,8 @@ GUIDE_PAGES = [
         "/soloraid  -  Private raid scaled to your level. Great for solo farming.\n"
         "\n"
         "*Defeat & Revival*\n"
-        "When your HP hits 0 you are defeated for 6 hours and lose 10% EXP. Options to recover:\n"
-        "• Wait it out (6 hours)\n"
+        "When your HP hits 0 you are defeated for 30 minutes and lose 10% EXP. Options to recover:\n"
+        "• Wait it out (30 minutes)\n"
         "• Use *Scroll of Revival* from your inventory (/use)\n"
         "• Ask a Priest to /heal you  -  they revive for free\n"
         "• 📿 Chalkers can also /heal themselves with no reply to self-revive\n"
@@ -21316,7 +21334,7 @@ GUIDE_PAGES = [
         "• Health Potion — +100 HP\n"
         "• Greater Health Potion — +200 HP\n"
         "• Grand Restorative Flask — +500 HP\n"
-        "• Scroll of Revival — Full self-revive from defeat (1 hour invincibility after)\n"
+        "• Scroll of Revival — Full self-revive from defeat (5 min invincibility after)\n"
         "• Iron Shard — Used for /enhance and /forge\n"
         "• Enchanting Scroll — Used for /enchant\n"
         "• Monster Core (Element) — Permanent stat boost. Get them by catching in Hunt mode.\n"
@@ -24309,11 +24327,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tick_dmg = check_bleed_tick(p)
         if tick_dmg:
             if p["hp"] <= 0:
-                p["defeated_until"] = (datetime.now()+timedelta(hours=6)).isoformat()
+                p["defeated_until"] = (datetime.now()+timedelta(minutes=30)).isoformat()
                 p["last_defeated_by"] = "Bleed damage (DoT)"
                 asyncio.create_task(_notify_defeat(context.bot, p, "Bleed damage (you bled out)"))
                 asyncio.create_task(announce(context.bot, chat_id,
-                    f"🩸 *{p['username']}* bled out and is defeated for 6 hours!",
+                    f"🩸 *{p['username']}* bled out and is defeated for 30 minutes!",
                     delay=30))
                 _bleed_atk_ids = get_recent_attackers(p)
                 if _bleed_atk_ids:
@@ -24804,7 +24822,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     asyncio.create_task(_notify_defeat(context.bot, p, enemy["name"] + " (Solo Raid)"))
                     active_soloraids.pop(uid, None)
                     save_player(p)
-                    lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6hr defeat. -{exp_loss} EXP.")
+                    lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 30min defeat. -{exp_loss} EXP.")
                     try:
                         await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
                     except Exception: pass
@@ -24948,7 +24966,7 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
                     asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                     save_player(tp)
-                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 6hr defeat. -{exp_loss} EXP.")
+                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 30min defeat. -{exp_loss} EXP.")
                 else:
                     lines.append(f"💥 Boss hits *{target['name']}* for *{bdmg}!* ({php}/{pmhp} HP)")
                 save_player(tp)
@@ -25074,7 +25092,7 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
                     asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                     save_player(tp)
-                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 6hr defeat. -{exp_loss} EXP.")
+                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 30min defeat. -{exp_loss} EXP.")
                 else:
                     lines.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for *{edm}!* ({php}/{pmhp} HP)")
                 save_player(tp)
