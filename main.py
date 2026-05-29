@@ -9013,42 +9013,42 @@ def _build_stats_pages(p, viewing_name=None):
         pet_str = (f"{_pemoji} *{_display_name}* — {_lv_label}\n"
                    f"  {_hun_icon} Hunger: {_phun} | {_mood_icon} Mood: {_pmood}")
 
+    _sh_hp   = safe_int(p.get("shield_hp"))
+    _sh_used = safe_int(p.get("shield_used"))
+    _sh_max  = _shield_max(p)
+    if _sh_hp > 0:
+        _sh_pct = round(_sh_hp / max(1, _sh_max) * 10)
+        _sh_bar = "█" * _sh_pct + "░" * (10 - _sh_pct)
+        shield_line = f"🛡️ {_sh_hp}/{_sh_max} [{_sh_bar}]"
+    elif _sh_used == 0:
+        shield_line = f"🛡️ Ready ({_sh_max} HP)"
+    else:
+        shield_line = "🛡️ Depleted"
+
+    _ks = safe_int(p.get("kill_streak"))
+    _losses = safe_int(p.get("losses"))
+
     page1_lines = [
-        f"🏅 *{name}*  ·  {p['active_title']}{defeated_str}{recovering}",
-        f"{tier['name']}  -  Level {p['level']}",
-        f"🧙 {cls_name}{path_str}",
-        f"🏰 {guild_str}",
-        f"🌍 {w['name']}",
+        f"🏅 *{name}*{defeated_str}{recovering}",
+        f"Lv {p['level']} {tier['name']}  ·  🧙 {cls_name}{path_str}",
+        f"🏰 {guild_str}  ·  🌍 {w['name']}",
     ]
+    if p.get("active_title"):
+        page1_lines.insert(1, f"_{p['active_title']}_")
     if married_str:
         page1_lines.append(married_str)
     if pet_str:
         page1_lines.append(pet_str)
-    _sh_hp    = safe_int(p.get("shield_hp"))
-    _sh_used  = safe_int(p.get("shield_used"))
-    _sh_max   = _shield_max(p)
-    if _sh_hp > 0:
-        _sh_bar = "█" * round(_sh_hp / max(1, _sh_max) * 10) + "░" * (10 - round(_sh_hp / max(1, _sh_max) * 10))
-        shield_line = f"🛡️ Shield: *{_sh_hp}/{_sh_max}* [{_sh_bar}]"
-    elif _sh_used == 0:
-        shield_line = f"🛡️ Shield ready — *{_sh_max} HP* _(use /defend)_"
-    else:
-        shield_line = "🛡️ Shield depleted _(revive to restore)_"
 
     page1_lines += [
         "",
-        f"❤️ HP: {p['hp']}/{real_max}",
-        shield_line,
-        f"✨ {exp_cur:,}/{exp_need:,} EXP ({exp_pct}%)",
-        f"🏆 Lifetime EXP: {safe_int(p.get('total_exp')):,}",
-        f"💬 Messages: {msg_count:,}",
-        f"💰 Gold: {p['gold']}",
-        f"⚔️ Wins: {p['wins']}   Losses: {p.get('losses',0)}",
-        f"🌟 Influence: {safe_int(p.get('influence')):,}  ({get_fame_tier(safe_int(p.get('influence')))})",
+        f"❤️ {p['hp']}/{real_max}  ·  {shield_line}",
+        f"✨ {exp_cur:,}/{exp_need:,} EXP ({exp_pct}%)  ·  🏆 {safe_int(p.get('total_exp')):,} total",
+        f"💰 {p['gold']}g  ·  ⚔️ {p['wins']}W/{_losses}L  ·  🌟 {safe_int(p.get('influence')):,} ({get_fame_tier(safe_int(p.get('influence')))})",
+        f"💬 {msg_count:,} msgs",
     ]
-    _ks = safe_int(p.get("kill_streak"))
     if _ks >= 3:
-        page1_lines.append(f"🔥 Kill Streak: *{_ks}*  (Best: {safe_int(p.get('max_kill_streak'))})")
+        page1_lines.append(f"🔥 Streak: *{_ks}*  (best {safe_int(p.get('max_kill_streak'))})")
     if p.get("is_wanted"):
         page1_lines.append("🔴 *WANTED* — take them down for extra rewards!")
     if defeat_line:
@@ -9058,23 +9058,18 @@ def _build_stats_pages(p, viewing_name=None):
 
     # Page 2 - Class & Stats
     page2_lines = [
-        f"👤 *{name}*",
-        f"🧙 *{cls_name}*{path_str}",
+        f"⚔️ *{name}* — Stats",
+        f"🧙 {cls_name}{path_str}",
         "",
         f"❤️ Max HP: {real_max}",
-        f"STR: {eff['STR']}",
-        f"AGI: {eff['AGI']}",
-        f"INT: {eff['INT']}",
-        f"WIS: {eff['WIS']}",
-        f"DEX: {eff['DEX']}",
-        f"LUK: {eff['LUK']}",
-        f"DEF: {eff['DEF']}  _(stat — reduces damage taken)_",
-        f"🛡️ Armor DEF: {get_armor_def(p)} (from gear)",
+        f"STR {eff['STR']}  ·  AGI {eff['AGI']}  ·  INT {eff['INT']}",
+        f"WIS {eff['WIS']}  ·  DEX {eff['DEX']}  ·  LUK {eff['LUK']}",
+        f"DEF {eff['DEF']}  ·  🛡️ Armor DEF {get_armor_def(p)}",
     ]
     if cp > 0:
         page2_lines += ["", f"⚡ Combat Power: *{cp:,}*"]
     if sp > 0:
-        page2_lines.append(f"💡 {sp} stat pt{'s' if sp != 1 else ''} to spend  -  /allocate")
+        page2_lines.append(f"💡 {sp} stat pt{'s' if sp != 1 else ''} — /allocate")
     if statuses:
         page2_lines += ["", "⚠️ *Active Effects*"] + [f"  {st}" for st in statuses]
 
@@ -9082,7 +9077,8 @@ def _build_stats_pages(p, viewing_name=None):
     _, active_sets = get_active_set_bonuses(p)
     set_lines = [f"✨ *{sn}*" for sn in active_sets]
     page3_lines = [
-        f"👤 *{name}*",
+        f"🎒 *{name}* — Gear",
+        "",
         f"⚔️ {quick_gear(weap_name)}",
         f"🛡️ {quick_gear(armr_name)}",
         f"🔰 {quick_gear(shld_name)}",
@@ -9094,13 +9090,13 @@ def _build_stats_pages(p, viewing_name=None):
     ]
     if set_lines:
         page3_lines += ["🌟 *Active Set Bonuses:*"] + set_lines + [""]
-    page3_lines.append("_/gear for full enhancement + enchant details_")
+    page3_lines.append("_/gear for full details_")
 
     # Page 4 - Inventory
-    page4_lines = [f"👤 *{name}*", "🎒 *Inventory*", ""] + inv_lines + ["", "_/inventory for paginated full view_"]
+    page4_lines = [f"🎒 *{name}* — Inventory", ""] + inv_lines + ["", "_/inventory for paginated full view_"]
 
     # Page 5 - Titles
-    page5_lines = [f"👤 *{name}*", "🏅 *Titles*", ""] + ([f"  {t}" for t in title_list] or ["  None"])
+    page5_lines = [f"🏅 *{name}* — Titles", ""] + ([f"  {t}" for t in title_list] or ["  None"])
 
     return [
         "\n".join(page1_lines),
