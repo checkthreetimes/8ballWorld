@@ -3552,11 +3552,9 @@ def _encounter_battle_markup(enc, p=None):
         InlineKeyboardButton(heal_label,  callback_data=f"enc_heal_{uid}"),
         InlineKeyboardButton(pet_label,   callback_data=f"enc_pet_{uid}"),
     ])
-    # Class skills
+    # Class skills — use all accumulated skills, same as PvP
     if p:
-        cls = get_player_class(p)
-        p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
-                    if p.get("level", 1) >= sk.get("unlock", 5)]
+        p_skills = sjl(p.get("all_skills"), [])
         skill_btns = [
             InlineKeyboardButton(sk.get("active", sk.get("name","Skill")),
                                  callback_data=f"enc_skl_{uid}_{i}")
@@ -3586,6 +3584,192 @@ def _pick_random_monster(p_level):
     if not eligible:
         eligible = ENCOUNTER_MONSTERS[:5]
     return random.choice(eligible)
+
+def _enc_process_skill(enc, p, sk):
+    """Process a skill use in encounter/hunt.
+    Returns (action_txt, dmg, is_support).
+    is_support=True means the skill healed/buffed the player (caller handles NPC turn separately).
+    Modifies enc in-place (e_hp, p_hp, status flags).
+    """
+    sk_name = sk.get("active", sk.get("name", "Skill"))
+    stype   = sk.get("type", "damage")
+    w       = get_weather()
+    base    = calc_attack_damage(p, w)
+
+    # ── Healing / support skills ─────────────────────────────────────────────
+    _heal_types = {"self_heal", "self_heal_buff", "group_heal", "revive_heal",
+                   "regen", "heal_shield", "mass_cleanse", "dmg_reduction_buff",
+                   "party_atk_buff", "party_def_buff", "party_full_buff",
+                   "ultimate_buff", "aoe_heal_dmg"}
+    if stype in _heal_types or stype.endswith("heal"):
+        wis  = get_stat(p, "WIS")
+        heal = max(1, round(wis * sk.get("mult", sk.get("wis_mult", 50))))
+        if stype == "aoe_heal_dmg":
+            # also deals a small damage hit
+            heal = max(1, round(wis * sk.get("mult", 50)))
+            enemy_hit = max(1, round(wis * 3))
+            enc["e_hp"] = max(0, enc["e_hp"] - enemy_hit)
+        enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
+        txt = f"💚 *{sk_name}*! Healed *{heal} HP*! ({enc['p_hp']}/{enc['p_max_hp']})"
+        return txt, 0, True
+
+    # ── Pure defence/buff skills (no damage) ─────────────────────────────────
+    if stype == "def_buff":
+        enc["p_guarding"] = True
+        return f"🛡️ *{sk_name}*! Bracing! (40% damage reduction next hit)", 0, False
+    if stype in ("self_atk_buff",):
+        wis  = get_stat(p, "WIS")
+        heal = max(1, round(wis * 15))
+        enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
+        return f"💪 *{sk_name}*! Attack power surges! +{heal} HP recovery!", 0, True
+
+    # ── Pet joins every skill use ─────────────────────────────────────────────
+    pet_extra = ""
+    pet_info = enc.get("pet_info")
+    if pet_info and pet_info.get("atk", 0) > 0:
+        pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
+        enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
+        pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
+
+    # ── Damage skills ─────────────────────────────────────────────────────────
+    dmg = 0
+    txt = ""
+    if stype == "multihit":
+        hits = sk.get("hits", 2)
+        dmg  = sum(max(1, round(calc_attack_damage(p, w) * sk.get("mult", 0.8))) for _ in range(hits))
+        txt  = f"⚡ *{sk_name}*! {hits}-hit combo for *{dmg}* damage!{pet_extra}"
+    elif stype in ("aoe_bleed_multihit", "multihit_crit"):
+        hits = sk.get("hits", 4)
+        dmg  = sum(max(1, round(base * sk.get("mult", 0.6))) for _ in range(hits))
+        enc["e_poisoned"] = True
+        txt  = f"🌀 *{sk_name}*! {hits}-hit combo (*{dmg}* total)! Enemy bleeding!{pet_extra}"
+    elif stype == "execute_multihit":
+        hits   = sk.get("hits", 8)
+        hp_pct = enc["e_hp"] / max(1, enc["e_max_hp"])
+        mult   = 1.0 if hp_pct <= 0.50 else sk.get("mult", 0.5)
+        dmg    = sum(max(1, round(base * mult)) for _ in range(hits))
+        prefix = "💀 *Execute!* " if hp_pct <= 0.50 else ""
+        txt    = f"{prefix}🌀 *{sk_name}*! {hits} hits = *{dmg}* total!{pet_extra}"
+    elif stype == "crit_dmg":
+        dmg = max(1, round(base * sk.get("mult", 1.8) * 2))
+        txt = f"💥 *{sk_name}*! Guaranteed Critical for *{dmg}* damage!{pet_extra}"
+    elif stype == "bleed_crit":
+        dmg = max(1, round(base * sk.get("mult", 2.0) * 2))
+        enc["e_poisoned"] = True
+        txt = f"🩸 *{sk_name}*! *{dmg}* damage! Enemy bleeding!{pet_extra}"
+    elif stype == "pierce_dmg":
+        dmg = max(1, round(get_stat(p, "AGI") * 3))
+        txt = f"🌑 *{sk_name}*! Pierce for *{dmg}* damage! _(ignores dodge)_{pet_extra}"
+    elif stype == "pierce_all":
+        stat = "DEX" if sk.get("dex_mult") else "STR"
+        mult = sk.get("dex_mult", sk.get("str_mult", 2))
+        dmg  = max(1, round(get_stat(p, stat) * mult))
+        txt  = f"🏹 *{sk_name}*! Piercing for *{dmg}* damage!{pet_extra}"
+    elif stype in ("pierce_dodge", "charged_shot", "execution_shot"):
+        dmg = max(1, round(get_stat(p, "DEX") * sk.get("mult", 2.0)))
+        txt = f"🎯 *{sk_name}*! *{dmg}* damage!{pet_extra}"
+    elif stype == "stun":
+        dmg = max(1, round(base * sk.get("mult", 1.0)))
+        if random.random() < 0.50:
+            enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 1
+            txt = f"⚡ *{sk_name}*! *{dmg}* damage! Enemy stunned 1 turn!{pet_extra}"
+        else:
+            txt = f"⚡ *{sk_name}*! *{dmg}* damage!{pet_extra}"
+    elif stype == "stun_def_dmg":
+        str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
+        dmg = max(1, round((str_v + def_v) * sk.get("mult", 1.0)))
+        if random.random() < 0.40:
+            enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 1
+            txt = f"🛡️ *{sk_name}*! *{dmg}* (STR+DEF) damage! Enemy stunned!{pet_extra}"
+        else:
+            txt = f"🛡️ *{sk_name}*! *{dmg}* damage!{pet_extra}"
+    elif stype == "holy_warrior_nuke":
+        str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
+        dmg   = max(1, round(str_v * 4 + def_v * 4))
+        enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 2
+        txt = f"⚡ *{sk_name}*! STR×4+DEF×4 = *{dmg}* holy damage! Enemy stunned 2 turns!{pet_extra}"
+    elif stype == "godlike_lightning":
+        str_v = get_stat(p, "STR")
+        dmg   = max(1, round(str_v * 8))
+        enc["e_weakened"] = True
+        txt = f"⚡ *{sk_name}*! STR×8 = *{dmg}* divine lightning! Enemy weakened!{pet_extra}"
+    elif stype == "freeze_nuke":
+        int_v = get_stat(p, "INT")
+        dmg   = max(1, round(int_v * 6))
+        enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 2
+        txt = f"🧊 *{sk_name}*! INT×6 = *{dmg}* damage! Enemy stunned 2 turns!{pet_extra}"
+    elif stype == "void_nuke":
+        dmg = max(1, enc["e_hp"] // 2)
+        txt = f"🌑 *{sk_name}*! Enemy loses 50% HP! *{dmg}* damage!{pet_extra}"
+    elif stype in ("drain", "drain_kill", "drain_debuff"):
+        steal = round(enc["e_hp"] * sk.get("drain_pct", 0.30 if stype == "drain" else 0.40))
+        dmg   = max(1, round(base * sk.get("mult", 1.0)))
+        enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + steal)
+        if stype == "drain_debuff": enc["e_weakened"] = True
+        txt = f"🩸 *{sk_name}*! *{dmg}* damage! Drained *{steal} HP* from enemy!{pet_extra}"
+    elif stype in ("aoe_poison_strong", "nature_nuke"):
+        wis = get_stat(p, "WIS")
+        mult = 7 if stype == "nature_nuke" else 1.5
+        dmg = max(1, round(wis * mult))
+        enc["e_poisoned"] = True
+        txt = f"☠️ *{sk_name}*! *{dmg}* damage! Enemy poisoned!{pet_extra}"
+    elif stype == "spell":
+        int_v = get_stat(p, "INT")
+        dmg   = max(1, round(int_v * sk.get("mult", 2.0)))
+        enc["e_burning"] = True
+        txt = f"🔥 *{sk_name}*! INT×{sk.get('mult',2)} = *{dmg}* damage! Enemy burning!{pet_extra}"
+    elif stype == "bounce_spell":
+        int_v = get_stat(p, "INT")
+        dmg   = max(1, round(int_v * sk.get("mult", 2.0)))
+        txt = f"⚡ *{sk_name}*! INT×{sk.get('mult',2)} = *{dmg}* chain lightning!{pet_extra}"
+    elif stype == "holy_dmg":
+        wis = get_stat(p, "WIS")
+        dmg = max(1, wis * 3)
+        txt = f"✨ *{sk_name}*! WIS×3 = *{dmg}* holy damage!{pet_extra}"
+    elif stype == "condemn":
+        wis = get_stat(p, "WIS")
+        dmg = max(1, wis * 8)
+        enc["e_weakened"] = True
+        txt = f"☠️ *{sk_name}*! WIS×8 = *{dmg}* damage! Enemy condemned!{pet_extra}"
+    elif stype == "curse_chain":
+        int_v = get_stat(p, "INT")
+        dmg   = max(1, round(int_v * 1.5))
+        enc["e_weakened"] = True
+        txt = f"💜 *{sk_name}*! INT×1.5 = *{dmg}* damage! Curses applied!{pet_extra}"
+    elif stype == "mass_debuff":
+        int_v = get_stat(p, "INT")
+        dmg   = max(1, round(int_v * 2.5))
+        enc["e_weakened"] = True; enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 1
+        txt = f"💜 *{sk_name}*! INT×2.5 = *{dmg}* damage! Enemy stunned + weakened!{pet_extra}"
+    elif stype == "vanish_dmg":
+        agi = get_stat(p, "AGI")
+        dmg = max(1, round(agi * 4))
+        txt = f"👻 *{sk_name}*! AGI×4 = *{dmg}* burst damage!{pet_extra}"
+    elif stype == "phantom_aoe":
+        agi = get_stat(p, "AGI")
+        dmg = max(1, round(agi * 2.5))
+        txt = f"🌀 *{sk_name}*! AGI×2.5 = *{dmg}* phantom damage!{pet_extra}"
+    elif stype == "intercept_aoe":
+        def_v = get_stat(p, "DEF")
+        dmg   = max(1, round(def_v * 2))
+        enc["p_guarding"] = True
+        txt = f"🛡️ *{sk_name}*! DEF×2 = *{dmg}* damage! Guard active!{pet_extra}"
+    elif stype == "silence":
+        dmg = max(1, round(base * 1.5))
+        enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 1
+        txt = f"🤐 *{sk_name}*! *{dmg}* damage! Enemy silenced (stunned 1 turn)!{pet_extra}"
+    elif stype == "debuff":
+        dmg = max(1, round(base * 0.8))
+        enc["e_weakened"] = True
+        txt = f"💀 *{sk_name}*! *{dmg}* damage! Enemy hexed + weakened!{pet_extra}"
+    else:
+        # Generic fallback: use stat/mult from skill def, primary stat scaling
+        stat_key = sk.get("stat", get_primary_stat(p))
+        dmg = max(1, round(get_stat(p, stat_key) * sk.get("mult", 1.5)))
+        txt = f"💥 *{sk_name}*! *{dmg}* damage!{pet_extra}"
+
+    enc["e_hp"] = max(0, enc["e_hp"] - dmg)
+    return txt, dmg, False
 
 def _enc_monster_level(monster, base_level):
     lo, hi = monster[3]
@@ -17279,10 +17463,11 @@ def _holdhands_duration(since_iso: str) -> str:
 # WIZARDRY DUNGEON — helper functions
 # ════════════════════════════════════════════════════════════════════════════
 
-def _wdng_generate_floor(floor: int, uid: int) -> list:
+def _wdng_generate_floor(floor: int, uid: int, run_seed: int = None) -> list:
     """Return a 6×6 grid of room types using recursive backtracker maze."""
     import random as _rnd
-    rng = _rnd.Random(f"{uid}_{floor}_{datetime.now().strftime('%Y-%m-%d')}")
+    seed_val = f"{run_seed}_{floor}" if run_seed is not None else f"{uid}_{floor}_{datetime.now().strftime('%Y-%m-%d')}"
+    rng = _rnd.Random(seed_val)
     G = WDNG_GRID
     # All walls initially
     grid = [["wall"] * G for _ in range(G)]
@@ -17393,14 +17578,12 @@ def _wdng_combat_markup(uid, p=None, pet_used=False):
          InlineKeyboardButton("🧪 Heal",    callback_data=f"dng_heal_{uid}")],
     ]
     if p:
-        cls = get_player_class(p)
-        p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
-                    if p.get("level", 1) >= sk.get("unlock", 5)
-                    and sk.get("type") not in WDNG_SKIP_SKILL_TYPES]
+        p_skills = [sk for sk in sjl(p.get("all_skills"), [])
+                    if sk.get("type") not in WDNG_SKIP_SKILL_TYPES]
         skill_btns = [
             InlineKeyboardButton(sk.get("active", sk.get("name", "Skill")),
                                  callback_data=f"dng_skl_{uid}_{i}")
-            for i, sk in enumerate(p_skills[:4])
+            for i, sk in enumerate(p_skills)
         ]
         for i in range(0, len(skill_btns), 2):
             rows.append(skill_btns[i:i+2])
@@ -17553,7 +17736,7 @@ async def _wdng_enter_room(uid, state, bot, chat_id, query=None):
         if state["floor"] > WDNG_MAX_FLOORS:
             await _wdng_surface(uid, state, bot, chat_id, "completed")
             return
-        state["grid"] = _wdng_generate_floor(state["floor"], uid)
+        state["grid"] = _wdng_generate_floor(state["floor"], uid, state.get("run_seed"))
         state["pos"] = [0, 0]
         state["revealed"] = {(0, 0)}
         state["boss_cleared"] = False
@@ -17918,12 +18101,8 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             sk_idx = int(parts[3])
         except (IndexError, ValueError):
             return
-        cls = get_player_class(p)
-        if not cls:
-            await query.answer("No class!", show_alert=True); return
-        p_skills = [sk for sk in cls.get("skills", [])
-                    if p.get("level", 1) >= sk.get("unlock", 5)
-                    and sk.get("type") not in WDNG_SKIP_SKILL_TYPES]
+        p_skills = [sk for sk in sjl(p.get("all_skills"), [])
+                    if sk.get("type") not in WDNG_SKIP_SKILL_TYPES]
         if sk_idx >= len(p_skills):
             await query.answer("Skill unavailable!", show_alert=True); return
         sk      = p_skills[sk_idx]
@@ -17932,47 +18111,27 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         sk_mult = sk.get("mult", 1.5)
         header  = _wdng_floor_header(state)
         mbar    = _wdng_hp_bar(combat["hp"], combat["max_hp"])
+        _dng_w  = get_weather()
+        base    = calc_attack_damage(p, _dng_w)
 
         # ── Heal / defensive skills: free action, no enemy counter ────────────
-        if stype in ("self_heal", "group_heal"):
-            heal_amt = round(get_stat(p, "WIS") * sk_mult)
+        _dng_heal_types = {"self_heal", "self_heal_buff", "group_heal", "regen",
+                           "heal_shield", "dmg_reduction_buff", "aoe_heal_dmg"}
+        if stype in _dng_heal_types or stype.endswith("heal"):
+            wis_h = get_stat(p, "WIS")
+            heal_amt = max(1, round(wis_h * sk.get("mult", sk.get("wis_mult", 50))))
+            if stype in ("self_heal_buff", "regen", "def_buff", "heal_shield", "dmg_reduction_buff"):
+                heal_amt = max(heal_amt, round(state["p_max_hp"] * 0.20))
             state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + heal_amt)
+            if stype == "aoe_heal_dmg":
+                _dmg_side = max(1, round(wis_h * 3))
+                combat["hp"] = max(0, combat["hp"] - _dmg_side)
             save_wdng_state(uid, state)
             pbar2 = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
+            icon  = "🛡️" if stype in ("def_buff","heal_shield","dmg_reduction_buff") else "💚"
             try:
                 await query.edit_message_text(
-                    f"{header}\n\n💚 *{sk_name}!* Healed *{heal_amt} HP*! _(Free action — no turn lost)_\n\n"
-                    f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
-                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar2}]",
-                    parse_mode="Markdown",
-                    reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False)))
-            except Exception: pass
-            return
-
-        if stype in ("self_heal_buff", "regen"):
-            heal_pct = sk.get("heal_pct", 0.40)
-            heal_amt = round(state["p_max_hp"] * heal_pct)
-            state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + heal_amt)
-            save_wdng_state(uid, state)
-            pbar2 = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
-            try:
-                await query.edit_message_text(
-                    f"{header}\n\n💚 *{sk_name}!* Restored *{heal_amt} HP*! _(Free action — no turn lost)_\n\n"
-                    f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
-                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar2}]",
-                    parse_mode="Markdown",
-                    reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False)))
-            except Exception: pass
-            return
-
-        if stype in ("def_buff", "heal_shield", "dmg_reduction_buff"):
-            shield_amt = round(state["p_max_hp"] * 0.20)
-            state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + shield_amt)
-            save_wdng_state(uid, state)
-            pbar2 = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
-            try:
-                await query.edit_message_text(
-                    f"{header}\n\n🛡️ *{sk_name}!* Barrier grants *{shield_amt} HP*! _(Free action — no turn lost)_\n\n"
+                    f"{header}\n\n{icon} *{sk_name}!* Healed *{heal_amt} HP*! _(Free action — no turn lost)_\n\n"
                     f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
                     f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar2}]",
                     parse_mode="Markdown",
@@ -17987,52 +18146,83 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         wis_v   = get_stat(p, "WIS")
         dex     = get_stat(p, "DEX")
         def_v   = get_stat(p, "DEF")
-        wep     = p.get("equipped_weapon")
-        wep_atk = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
         enemy_counter = True
         skill_note = f"✨ *{sk_name}!*"
         dmg = 0
 
-        if stype in ("guaranteed_hit", "execute_nuke"):
-            dmg = max(1, round((str_v + wep_atk * 0.3) * sk_mult * random.uniform(0.95, 1.05)))
-            skill_note = (f"⚡ *{sk_name}!* _(Guaranteed hit — STR×{sk_mult})_"
-                          if stype == "guaranteed_hit" else f"💀 *{sk_name}!* _(Crushing blow!)_")
+        if stype in ("guaranteed_hit", "execute_nuke", "fear_kill", "execution_shot"):
+            dmg = max(1, round(base * sk_mult * random.uniform(0.95, 1.05)))
+            label = "Guaranteed hit" if stype == "guaranteed_hit" else "Crushing blow"
+            skill_note = f"⚡ *{sk_name}!* _({label})_"
 
         elif stype == "multihit":
-            mults_list = sk.get("mults") or [sk_mult] * sk.get("hits", 2)
+            hits_list = sk.get("mults") or [sk_mult] * sk.get("hits", 2)
             hit_parts, dmg = [], 0
-            for _m in mults_list:
-                _h = max(1, round((str_v + wep_atk * 0.5) * _m * random.uniform(0.9, 1.1)))
-                hit_parts.append(str(_h))
-                dmg += _h
+            for _m in hits_list:
+                _h = max(1, round(calc_attack_damage(p, _dng_w) * _m))
+                hit_parts.append(str(_h)); dmg += _h
             skill_note = f"⚡ *{sk_name}!* " + " + ".join(hit_parts) + f" = *{dmg}*"
 
+        elif stype in ("aoe_bleed_multihit", "multihit_crit"):
+            hits = sk.get("hits", 4)
+            dmg  = sum(max(1, round(base * sk_mult)) for _ in range(hits))
+            combat["poisoned"] = True
+            skill_note = f"🌀 *{sk_name}!* {hits}-hit combo = *{dmg}*! Enemy bleeding!"
+
+        elif stype == "execute_multihit":
+            hits   = sk.get("hits", 8)
+            hp_pct = combat["hp"] / max(1, combat["max_hp"])
+            mult   = 1.0 if hp_pct <= 0.50 else sk_mult
+            dmg    = sum(max(1, round(base * mult)) for _ in range(hits))
+            prefix = "💀 *Execute!* " if hp_pct <= 0.50 else ""
+            skill_note = f"{prefix}🌀 *{sk_name}!* {hits} hits = *{dmg}*"
+
         elif stype == "stun":
-            dmg = max(1, round((str_v + wep_atk * 0.5) * 1.5 * random.uniform(0.9, 1.1)))
+            dmg = max(1, round(base * sk_mult * random.uniform(0.9, 1.1)))
             enemy_counter = False
             skill_note = f"⚡ *{sk_name}!* _(Enemy stunned — no counter this turn!)_"
 
+        elif stype == "stun_def_dmg":
+            dmg = max(1, round((str_v + def_v) * sk_mult * random.uniform(0.9, 1.1)))
+            enemy_counter = False
+            skill_note = f"🛡️ *{sk_name}!* _(STR+DEF — enemy stunned!)_"
+
         elif stype == "crit_dmg":
-            dmg = max(1, round((str_v + wep_atk * 0.5) * sk_mult * 2 * random.uniform(0.9, 1.1)))
+            dmg = max(1, round(base * sk_mult * 2 * random.uniform(0.9, 1.1)))
             skill_note = f"💥 *{sk_name}!* _(Guaranteed Critical!)_"
+
+        elif stype == "bleed_crit":
+            dmg = max(1, round(base * sk_mult * 2 * random.uniform(0.9, 1.1)))
+            combat["poisoned"] = True
+            skill_note = f"🩸 *{sk_name}!* _(Bleeding inflicted!)_"
 
         elif stype == "pierce_dmg":
             dmg = max(1, round(agi * 3 * random.uniform(0.9, 1.1)))
             skill_note = f"🗡️ *{sk_name}!* _(Pierces defense)_"
 
-        elif stype == "pierce_all":
+        elif stype in ("pierce_all", "pierce_dodge"):
             mult_v   = sk.get("dex_mult") or sk.get("str_mult", 2.5)
             stat_val = dex if sk.get("dex_mult") else str_v
             dmg      = max(1, round(stat_val * mult_v * random.uniform(0.9, 1.1)))
             skill_note = f"🏹 *{sk_name}!* _(Ignores all defense)_"
 
-        elif stype == "charged_shot":
+        elif stype in ("charged_shot", "vanish_dmg"):
             dmg = max(1, round(dex * 5 * random.uniform(0.95, 1.05)))
             skill_note = f"🎯 *{sk_name}!* _(DEX×5 — cannot be dodged)_"
+
+        elif stype == "phantom_aoe":
+            dmg = max(1, round(agi * 2.5 * random.uniform(0.9, 1.1)))
+            skill_note = f"🌀 *{sk_name}!* _(AGI×2.5 phantom strike)_"
 
         elif stype == "void_nuke":
             dmg = max(1, combat["hp"] // 2)
             skill_note = f"🌑 *{sk_name}!* _(Obliterates 50% current HP!)_"
+
+        elif stype in ("drain", "drain_kill", "drain_debuff"):
+            steal = round(combat["hp"] * sk.get("drain_pct", 0.30))
+            dmg   = max(1, round(base * sk_mult))
+            state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + steal)
+            skill_note = f"🩸 *{sk_name}!* _(Drained +{steal} HP!)_"
 
         elif stype == "combo_dmg":
             dmg = max(1, round((str_v + def_v) * sk_mult * random.uniform(0.9, 1.1)))
@@ -18040,19 +18230,49 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
         elif stype in ("spell", "bounce_spell"):
             dmg = max(1, round(int_v * sk_mult * random.uniform(0.9, 1.1)))
-            skill_note = f"🔮 *{sk_name}!*"
+            combat["burning"] = True
+            skill_note = f"🔮 *{sk_name}!* _(Magic fire applied!)_"
 
-        elif stype in ("holy_nuke", "dmg_field"):
+        elif stype in ("holy_nuke", "dmg_field", "holy_warrior_nuke"):
             dmg = max(1, round((str_v + def_v + wis_v) * sk_mult * random.uniform(0.9, 1.1)))
             skill_note = f"✨ *{sk_name}!* _(STR+DEF+WIS combined)_"
 
-        elif stype == "aoe_recent_attackers":
-            dmg = max(1, round(str_v * 4.0 * random.uniform(0.9, 1.1)))
+        elif stype == "holy_dmg":
+            dmg = max(1, wis_v * 3)
+            skill_note = f"✨ *{sk_name}!* _(WIS×3 holy damage)_"
+
+        elif stype in ("condemn", "curse_chain", "mass_debuff"):
+            dmg = max(1, round(wis_v * sk_mult * random.uniform(0.9, 1.1)))
+            enemy_counter = False
+            skill_note = f"💀 *{sk_name}!* _(Enemy cursed — no counter)_"
+
+        elif stype in ("aoe_recent_attackers", "random_aoe", "raid_aoe"):
+            dmg = max(1, round(base * sk_mult * random.uniform(0.9, 1.1)))
             skill_note = f"🌪️ *{sk_name}!* _(Full power assault!)_"
 
+        elif stype in ("aoe_poison_strong", "nature_nuke"):
+            dmg = max(1, round(wis_v * (7 if stype == "nature_nuke" else 1.5)))
+            combat["poisoned"] = True
+            skill_note = f"☠️ *{sk_name}!* _(Poisoned!)_"
+
+        elif stype == "godlike_lightning":
+            dmg = max(1, round(str_v * 8 * random.uniform(0.9, 1.1)))
+            enemy_counter = False
+            skill_note = f"⚡ *{sk_name}!* _(STR×8 divine lightning — stunned!)_"
+
+        elif stype == "intercept_aoe":
+            dmg = max(1, round(def_v * 2))
+            state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + round(state["p_max_hp"] * 0.10))
+            skill_note = f"🛡️ *{sk_name}!* _(DEF×2 — intercept stance active)_"
+
+        elif stype in ("debuff", "silence", "strip_debuff"):
+            dmg = max(1, round(base * 1.0))
+            enemy_counter = False
+            skill_note = f"💜 *{sk_name}!* _(Enemy silenced — no counter)_"
+
         else:
-            primary = cls.get("primary_stat", "STR")
-            dmg = max(1, round((get_stat(p, primary) + wep_atk * 0.5) * sk_mult * random.uniform(0.9, 1.1)))
+            stat_key = sk.get("stat", get_primary_stat(p))
+            dmg = max(1, round(get_stat(p, stat_key) * sk_mult * random.uniform(0.9, 1.1)))
 
         combat["hp"] = max(0, combat["hp"] - dmg)
 
@@ -18387,9 +18607,11 @@ async def dungeon_wiz_start(update_or_query, uid: int, p: dict, bot, chat_id: in
             await update_or_query.answer(msg, show_alert=True)
         return
 
-    grid = _wdng_generate_floor(1, uid)
+    _run_seed = random.randint(0, 2**31)
+    grid = _wdng_generate_floor(1, uid, _run_seed)
     state = {
         "floor":        1,
+        "run_seed":     _run_seed,
         "grid":         grid,
         "pos":          [0, 0],
         "revealed":     {(0, 0)},
@@ -18795,29 +19017,14 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     action_txt = f"You attacked for *{dmg}* damage!{pet_extra}{_enc_extras}"
 
         elif data.startswith(f"enc_skl_{uid}_"):
-            cls      = get_player_class(p)
-            p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
-                        if p.get("level", 1) >= sk.get("unlock", 5)]
+            p_skills = sjl(p.get("all_skills"), [])
             try:
                 idx = int(data[len(f"enc_skl_{uid}_"):])
                 sk  = p_skills[idx]
             except (ValueError, IndexError):
                 await query.answer("Skill not available!", show_alert=True); return
-            sk_name  = sk.get("active", sk.get("name", "Skill"))
-            stype    = sk.get("type", "damage")
-            _sk_w    = get_weather()
-            base     = calc_attack_damage(p, _sk_w)
-            # Healing / support skills
-            _heal_types = {"self_heal", "self_heal_buff", "group_heal", "revive_heal",
-                           "regen", "heal_shield", "mass_cleanse", "dmg_reduction_buff",
-                           "party_atk_buff", "party_def_buff", "party_full_buff",
-                           "ultimate_buff", "aoe_heal_dmg"}
-            if stype in _heal_types or stype.endswith("heal"):
-                wis  = get_stat(p, "WIS")
-                heal = max(1, round(wis * sk.get("mult", sk.get("wis_mult", 50))))
-                enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
-                action_txt = f"💚 *{sk_name}*! You healed *{heal} HP*! ({enc['p_hp']}/{enc['p_max_hp']})"
-                # Skip enemy NPC turn for pure heals
+            action_txt, _sk_dmg, _is_support = _enc_process_skill(enc, p, sk)
+            if _is_support:
                 npc_act = _enc_npc_attack(enc, p)
                 dot_txt = _apply_dot_tick(enc)
                 if dot_txt: npc_act += f"\n_{dot_txt}_"
@@ -18841,24 +19048,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                                                       reply_markup=_encounter_battle_markup(enc, p))
                     except Exception: pass
                 return
-            # Damage skills
-            if stype == "multihit":
-                hits = sk.get("hits", 2)
-                dmg  = sum(max(1, round(calc_attack_damage(p, _sk_w) * sk.get("mult", 0.8))) for _ in range(hits))
-                action_txt = f"⚡ *{sk_name}*! {hits}-hit combo for *{dmg}* damage!"
-            elif stype == "crit_dmg":
-                dmg = max(1, round(base * sk.get("mult", 1.8) * 2))
-                action_txt = f"💥 *{sk_name}*! Guaranteed Critical for *{dmg}* damage!"
-            elif stype == "pierce_dmg":
-                dmg = max(1, round(get_stat(p, "AGI") * 3))
-                action_txt = f"🌑 *{sk_name}*! Pierce for *{dmg}* damage! _(ignores dodge)_"
-            elif stype == "pierce_all":
-                dmg = max(1, round(get_stat(p, "STR") * sk.get("str_mult", 2)))
-                action_txt = f"🏹 *{sk_name}*! Piercing for *{dmg}* damage!"
-            else:
-                dmg = max(1, round(base * sk.get("mult", 1.0)))
-                action_txt = f"⚡ *{sk_name}*! *{dmg}* damage!"
-            enc["e_hp"] = max(0, enc["e_hp"] - dmg)
+            # Damage skills fall through to the normal NPC-attack-back flow below
 
         elif data == f"enc_heal_{uid}":
             if enc.get("heals_left", 0) <= 0:
@@ -19069,27 +19259,14 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage!{pet_extra}{_enc_extras}"
 
         elif data.startswith(f"enc_skl_{uid}_"):
-            cls      = get_player_class(p)
-            p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
-                        if p.get("level", 1) >= sk.get("unlock", 5)]
+            p_skills = sjl(p.get("all_skills"), [])
             try:
                 idx = int(data[len(f"enc_skl_{uid}_"):])
                 sk  = p_skills[idx]
             except (ValueError, IndexError):
                 await query.answer("Skill not available!", show_alert=True); return
-            sk_name  = sk.get("active", sk.get("name", "Skill"))
-            stype    = sk.get("type", "damage")
-            _hsk_w   = get_weather()
-            base     = calc_attack_damage(p, _hsk_w)
-            _heal_types = {"self_heal", "self_heal_buff", "group_heal", "revive_heal",
-                           "regen", "heal_shield", "mass_cleanse", "dmg_reduction_buff",
-                           "party_atk_buff", "party_def_buff", "party_full_buff",
-                           "ultimate_buff", "aoe_heal_dmg"}
-            if stype in _heal_types or stype.endswith("heal"):
-                wis  = get_stat(p, "WIS")
-                heal = max(1, round(wis * sk.get("mult", sk.get("wis_mult", 50))))
-                enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
-                action_txt = f"💚 *{sk_name}*! You healed *{heal} HP*! ({enc['p_hp']}/{enc['p_max_hp']})"
+            action_txt, _hsk_dmg, _is_support = _enc_process_skill(enc, p, sk)
+            if _is_support:
                 mon_act = _enc_monster_attack(enc)
                 dot_txt = _apply_dot_tick(enc)
                 if dot_txt: mon_act += f"\n_{dot_txt}_"
@@ -19113,23 +19290,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                                                       reply_markup=_encounter_battle_markup(enc, p))
                     except Exception: pass
                 return
-            if stype == "multihit":
-                hits = sk.get("hits", 2)
-                dmg  = sum(max(1, round(calc_attack_damage(p, _hsk_w) * sk.get("mult", 0.8))) for _ in range(hits))
-                action_txt = f"⚡ *{sk_name}*! {hits}-hit combo for *{dmg}* damage!"
-            elif stype == "crit_dmg":
-                dmg = max(1, round(base * sk.get("mult", 1.8) * 2))
-                action_txt = f"💥 *{sk_name}*! Guaranteed Critical for *{dmg}* damage!"
-            elif stype == "pierce_dmg":
-                dmg = max(1, round(get_stat(p, "AGI") * 3))
-                action_txt = f"🌑 *{sk_name}*! Pierce for *{dmg}* damage! _(ignores dodge)_"
-            elif stype == "pierce_all":
-                dmg = max(1, round(get_stat(p, "STR") * sk.get("str_mult", 2)))
-                action_txt = f"🏹 *{sk_name}*! Piercing for *{dmg}* damage!"
-            else:
-                dmg = max(1, round(base * sk.get("mult", 1.0)))
-                action_txt = f"⚡ *{sk_name}*! *{dmg}* damage!"
-            enc["e_hp"] = max(0, enc["e_hp"] - dmg)
+            # Damage skills fall through to the normal monster-attack-back flow below
 
         elif data == f"enc_heal_{uid}":
             if enc.get("heals_left", 0) <= 0:
