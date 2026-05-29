@@ -8835,27 +8835,33 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
     _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": chat_id}
 
     pair = _pvp_pair_key(uid, target_uid)
+
+    # Append to battle log and advance to latest page
+    _pvp_log_append(pair, action_text)
+
     if result_type == "defeat":
-        # Cancel timer, delete card, post permanent to group AND DM
+        # Cancel timer, delete card, clean up log, post permanent defeat message
         _cancel_card_timer(pair)
         _old = _pvp_cards.pop(pair, None)
         if _old:
             try: await context.bot.delete_message(chat_id=chat_id, message_id=_old)
             except Exception: pass
-        # One permanent group announcement + silent DM to attacker
+        _pvp_battle_logs.pop(pair, None)
+        _pvp_cur_page.pop(pair, None)
         try: await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
         except Exception: pass
         try: await context.bot.send_message(chat_id=uid, text=action_text[:4096], parse_mode="Markdown")
         except Exception: pass
     else:
-        # Hit or miss — edit existing battle card in-place, else send new one
-        _mid = _pvp_cards.get(pair)
-        markup = _build_pvp_card_markup(target_uid, uid, d)
-        edited = False
+        # Hit or miss — update paginated battle card (separate from picker message)
+        card_text = _pvp_card_text(pair, a, d)
+        markup    = _build_pvp_card_markup(target_uid, uid, d, pair=pair)
+        _mid      = _pvp_cards.get(pair)
+        edited    = False
         if _mid:
             try:
                 await context.bot.edit_message_text(chat_id=chat_id, message_id=_mid,
-                    text=action_text[:4096], parse_mode="Markdown", reply_markup=markup)
+                    text=card_text, parse_mode="Markdown", reply_markup=markup)
                 edited = True
             except Exception:
                 pass
@@ -8866,7 +8872,7 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
                 except Exception: pass
             try:
                 m = await context.bot.send_message(chat_id=chat_id,
-                    text=action_text[:4096], parse_mode="Markdown", reply_markup=markup)
+                    text=card_text, parse_mode="Markdown", reply_markup=markup)
                 _pvp_cards[pair] = m.message_id
                 _mid = m.message_id
             except Exception:
@@ -15210,15 +15216,50 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             for _d, _e, _g in track_objective(p, "pvp_win"):
                 p["gold"] = p.get("gold", 0) + _g; add_exp(p, _e)
         save_player(p); save_player(tp)
+        _sk_result_text = "\n".join(out)
+        _sk_pair = _pvp_pair_key(uid, target_uid)
         if _sk_killed:
             _bc = await check_and_claim_bounty(context.bot, p, tp, chat_id)
             if _bc:
                 out.append(f"🎯 *Bounty claimed!* +{_bc}g")
+            _sk_result_text = "\n".join(out)
+            _pvp_log_append(_sk_pair, _sk_result_text)
+            # Defeat: clean up battle card and log
+            _cancel_card_timer(_sk_pair)
+            _old_sk = _pvp_cards.pop(_sk_pair, None)
+            if _old_sk:
+                try: await context.bot.delete_message(chat_id=chat_id, message_id=_old_sk)
+                except Exception: pass
+            _pvp_battle_logs.pop(_sk_pair, None)
+            _pvp_cur_page.pop(_sk_pair, None)
             try:
-                await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown")
+                await query.edit_message_text(_sk_result_text[:4096], parse_mode="Markdown")
             except Exception:
-                await context.bot.send_message(chat_id, "\n".join(out)[:4096], parse_mode="Markdown")
+                await context.bot.send_message(chat_id, _sk_result_text[:4096], parse_mode="Markdown")
+            try: await context.bot.send_message(chat_id=uid, text=_sk_result_text[:4096], parse_mode="Markdown")
+            except Exception: pass
         else:
+            # Log skill result; update battle card; keep skill picker open for follow-up
+            _pvp_log_append(_sk_pair, _sk_result_text)
+            _sk_card = _pvp_card_text(_sk_pair, p, tp)
+            _sk_card_markup = _build_pvp_card_markup(target_uid, uid, tp, pair=_sk_pair)
+            _sk_mid = _pvp_cards.get(_sk_pair)
+            if _sk_mid:
+                try:
+                    await context.bot.edit_message_text(chat_id=chat_id, message_id=_sk_mid,
+                        text=_sk_card, parse_mode="Markdown", reply_markup=_sk_card_markup)
+                except Exception:
+                    pass
+            else:
+                try:
+                    _new_m = await context.bot.send_message(chat_id=chat_id,
+                        text=_sk_card, parse_mode="Markdown", reply_markup=_sk_card_markup)
+                    _pvp_cards[_sk_pair] = _new_m.message_id
+                    _sk_mid = _new_m.message_id
+                except Exception:
+                    _sk_mid = None
+            if _sk_mid:
+                _reset_card_timer(_sk_pair, context.bot, chat_id, _sk_mid, 20)
             # Keep skill picker open so user can use another skill on the same target
             _self_only_sk = {"self_heal", "group_heal", "mass_cleanse", "party_def_buff",
                              "party_atk_buff", "party_full_buff", "ultimate_buff", "self_atk_buff"}
@@ -15227,10 +15268,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                             and p.get("level", 1) >= s.get("unlock", 5)]
             _sk_markup = _build_skill_picker_keyboard(_rebuildable, uid, 0, target_uid) if _rebuildable else None
             try:
-                await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown",
+                await query.edit_message_text(_sk_result_text[:4096], parse_mode="Markdown",
                                               reply_markup=_sk_markup)
             except Exception:
-                await context.bot.send_message(chat_id, "\n".join(out)[:4096], parse_mode="Markdown")
+                await context.bot.send_message(chat_id, _sk_result_text[:4096], parse_mode="Markdown")
 
 async def _execute_skill(update, context, p, sk):
     """Core skill execution logic."""
