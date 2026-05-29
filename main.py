@@ -11737,7 +11737,9 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rarity_filter = rf
         sold_items = []; total_gold = 0; remaining_inv = []
         equipped = [p.get("equipped_weapon"), p.get("equipped_armor"),
-                    p.get("equipped_shield"), p.get("equipped_accessory"),
+                    p.get("equipped_shield"),
+                    p.get("equipped_accessory"), p.get("equipped_accessory_2"),
+                    p.get("equipped_accessory_3"), p.get("equipped_accessory_4"),
                     p.get("equipped_hat"), p.get("equipped_gloves"),
                     p.get("equipped_boots"), p.get("equipped_mask")]
         for item_s in inv:
@@ -11786,7 +11788,9 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sold_items = []; gold_earned = 0
         remaining = []
         equipped_slots = {p.get("equipped_weapon"), p.get("equipped_armor"),
-                          p.get("equipped_shield"), p.get("equipped_accessory"),
+                          p.get("equipped_shield"),
+                          p.get("equipped_accessory"), p.get("equipped_accessory_2"),
+                          p.get("equipped_accessory_3"), p.get("equipped_accessory_4"),
                           p.get("equipped_hat"), p.get("equipped_gloves"),
                           p.get("equipped_boots"), p.get("equipped_mask")}
         RARITY_SELL_VALUES = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
@@ -11884,16 +11888,20 @@ async def sell_rarity_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     }
     rarity_prices = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
     inv = sjl(p.get("inventory"), [])
-    equipped = {p.get("equipped_weapon"), p.get("equipped_armor"),
-                p.get("equipped_shield"), p.get("equipped_accessory"),
-                p.get("equipped_hat"), p.get("equipped_gloves"),
-                p.get("equipped_boots"), p.get("equipped_mask")}
+    equipped = {
+        p.get("equipped_weapon"), p.get("equipped_armor"),
+        p.get("equipped_shield"),
+        p.get("equipped_accessory"), p.get("equipped_accessory_2"),
+        p.get("equipped_accessory_3"), p.get("equipped_accessory_4"),
+        p.get("equipped_hat"), p.get("equipped_gloves"),
+        p.get("equipped_boots"), p.get("equipped_mask"),
+    }
     sold_items = []; total_gold = 0; remaining_inv = []
     for item_s in inv:
         if item_s in BULK_SELL_PROTECTED or item_s in equipped:
             remaining_inv.append(item_s); continue
         item_rarity = None; item_price = 0
-        for pool_s in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS]:
+        for pool_s in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS, HATS, GLOVES, BOOTS, MASKS]:
             if item_s in pool_s:
                 item_rarity = pool_s[item_s].get("rarity","common")
                 item_price = rarity_prices.get(item_rarity, 20); break
