@@ -10458,11 +10458,11 @@ async def allocate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
+        await reply_to_dm(update, context, "Use /ascend first!"); return
     if not check_cooldown(p.get("last_daily"), 86400):
-        await send_group(update,
+        await reply_to_dm(update, context,
             f"🎁 Daily already claimed! Come back in "
-            f"{time_remaining(p.get('last_daily'), 86400)}.", delay=9); return
+            f"{time_remaining(p.get('last_daily'), 86400)}."); return
     p["last_daily"] = datetime.now().isoformat()
     gold = 50 + p["level"] * 5; p["gold"] = p.get("gold",0) + gold
     # Rare potion chance
@@ -10481,7 +10481,7 @@ async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
             f"🎉 *{p['username']}* reached *Level {p['level']}* from daily! 🎁",
             delay=60))
-    await send_group(update, msg, delay=30)
+    await reply_to_dm(update, context, msg)
 
 # ── TRAIN ─────────────────────────────────────────────────────────────────────
 TRAIN_MESSAGES = [
@@ -10583,16 +10583,16 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def explore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
+        await reply_to_dm(update, context, "Use /ascend first!"); return
     if is_defeated(p):
-        await send_group(update, "💀 Can't explore while defeated!", delay=9); return
+        await reply_to_dm(update, context, "💀 Can't explore while defeated!"); return
     # Check twice-per-day limit
     today = datetime.now().strftime("%Y-%m-%d")
     if p.get("explore_date") == today and safe_int(p.get("explore_count_today")) >= 2:
-        await send_group(update, "🗺️ You've explored twice today. Come back tomorrow!", delay=9); return
+        await reply_to_dm(update, context, "🗺️ You've explored twice today. Come back tomorrow!"); return
     # Check if already on expedition
     if user.id in explore_timers and not explore_timers[user.id].done():
-        await send_group(update, "🗺️ You're already on an expedition! Results coming soon.", delay=9); return
+        await reply_to_dm(update, context, "🗺️ You're already on an expedition! Results coming soon."); return
 
     # Pick zone — show buttons if no args
     if not context.args:
@@ -15200,7 +15200,7 @@ async def weather_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cooldowns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
+        await reply_to_dm(update, context, "Use /ascend first!"); return
     s_cd = get_shadow(user.id)
     pool_ts = p.get("last_pool") or (s_cd.get("last_pool") if s_cd else None)
     lines = [f"⏳ *{p['username']}'s Cooldowns:*\n",
@@ -15219,7 +15219,7 @@ async def cooldowns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"💀 Defeat:  {h}h {m}m remaining")
     if is_invincible(p):
         lines.append(f"🛡️ Invincible: still recovering")
-    await send_group(update, "\n".join(lines), delay=15)
+    await reply_to_dm(update, context, "\n".join(lines))
 
 async def who_cmd(update, context):
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
@@ -23342,19 +23342,19 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lmsgs, leveled = add_shadow_exp(s, exp_gain)
         save_shadow(s)
 
-    lines = [f"{rarity_prefix} *{user.first_name}*"]
-    lines.append(f"_{shot['text']}{flavor}_")
-    lines.append("")
-    if exp_gain > 0: lines.append(f"✨ +{exp_gain} EXP")
-    if gold_gain > 0: lines.append(f"💰 +{gold_gain} gold")
+    flavor_suffix = f" {flavor.strip()}" if flavor else ""
+    lines = [f"{rarity_prefix} *{user.first_name}* — _{shot['text']}{flavor_suffix}_"]
+    reward_parts = []
+    if exp_gain > 0:  reward_parts.append(f"✨ +{exp_gain} EXP")
+    if gold_gain > 0: reward_parts.append(f"💰 +{gold_gain}g")
+    if reward_parts:  lines.append("  •  ".join(reward_parts))
     if item_found:
         rarity_tag = ""
         for pool3 in [WEAPONS, ARMORS, ACCESSORIES, CONSUMABLES]:
             if item_found in pool3:
-                r = pool3[item_found].get("rarity", "")
-                rarity_tag = RARITY_EMOJI.get(r, "")
+                rarity_tag = RARITY_EMOJI.get(pool3[item_found].get("rarity", ""), "")
                 break
-        lines.append(f"🎒 {rarity_tag} *{item_found}*!")
+        lines.append(f"🎒 {rarity_tag} *{item_found}*")
 
     # Secondary item roll from global pool
     if p:
@@ -23367,7 +23367,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if bonus_item in pool_check:
                     bi_rarity = RARITY_EMOJI.get(pool_check[bonus_item].get("rarity",""), "")
                     break
-            lines.append(f"🎱 *Table Drop:* {bi_rarity} *{bonus_item}*!")
+            lines.append(f"🎁 {bi_rarity} *{bonus_item}*")
 
     key = (chat_id, user.id)
     old_id = last_bot_message.get(key)
