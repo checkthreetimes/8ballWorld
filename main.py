@@ -333,7 +333,7 @@ def exp_for_level(level):
     elif level <= 90: return level * 1200000
     else:             return level * 3000000
 
-def max_hp_for_level(level): return 600 + (level - 1) * 50
+def max_hp_for_level(level): return 1000 + (level - 1) * 580
 
 # HP multiplier per class line — warrior = tank, mage = glass cannon
 _CLASS_LINE_HP_MULT = {
@@ -948,13 +948,13 @@ CLASS_TREE = {
         "skills":[
             {"tier":1,"unlock":5,"name":"Mending Aura",
              "passive":"All heals you cast are 25% more effective.",
-             "active":"Holy Light","type":"revive_heal","mult":10,
-             "desc":"Heal target for WIS x10 HP. Works on defeated players  -  revives them.",
+             "active":"Holy Light","type":"revive_heal","mult":50,
+             "desc":"Heal target for WIS x50 HP. Revives defeated players at 70% HP.",
              "passive_key":"mending_aura"},
             {"tier":1,"unlock":5,"name":"Mend",
              "passive":"Regen 15 HP every 10 minutes passively.",
-             "active":"Mend","type":"self_heal","mult":7,
-             "desc":"Restore WIS x7 HP to yourself.",
+             "active":"Mend","type":"self_heal","mult":50,
+             "desc":"Restore WIS x50 HP to yourself.",
              "passive_key":"mend"},
         ]
     },
@@ -986,8 +986,8 @@ CLASS_TREE = {
         "skills":[
             {"tier":3,"unlock":30,"name":"Sacred Ground",
              "passive":"Players you have healed take 10% less damage for 1 hour after being healed.",
-             "active":"Mass Heal","type":"group_heal","mult":8,
-             "desc":"Heal all guild members currently in chat for WIS x8 HP each. No potion required.",
+             "active":"Mass Heal","type":"group_heal","mult":60,
+             "desc":"Heal all guild members currently in chat for WIS x60 HP each. No potion required.",
              "passive_key":"sacred_ground"},
         ]
     },
@@ -1090,8 +1090,8 @@ CLASS_TREE = {
         "skills":[
             {"tier":1,"unlock":5,"name":"Natural Growth",
              "passive":"Regen 20 HP every 5 minutes. 12% chance each attack plants a poison seed on target (15 dmg/30s for 2 min).",
-             "active":"Healing Bloom","type":"revive_heal","mult":10,
-             "desc":"Bloom restores WIS x10 HP to self or target. Works on defeated allies — revives them.",
+             "active":"Healing Bloom","type":"revive_heal","mult":50,
+             "desc":"Bloom heals WIS x50 HP. Revives defeated allies at 70% HP.",
              "passive_key":"natural_growth"},
             {"tier":1,"unlock":5,"name":"Thorn Skin",
              "passive":"Attackers take WIS x0.5 damage when hitting you.",
@@ -1115,8 +1115,8 @@ CLASS_TREE = {
              "passive_key":"garden_aura"},
             {"tier":2,"unlock":10,"name":"Blossoming",
              "passive":"All healing you perform is 20% more effective.",
-             "active":"Bloom Mend","type":"self_heal","mult":7,
-             "desc":"Restore WIS x7 HP instantly. Remove one active bleed or poison from target.",
+             "active":"Bloom Mend","type":"self_heal","mult":50,
+             "desc":"Restore WIS x50 HP instantly. Remove one active bleed or poison from target.",
              "passive_key":"blossoming"},
         ]
     },
@@ -1143,8 +1143,8 @@ CLASS_TREE = {
         "skills":[
             {"tier":4,"unlock":60,"name":"Verdant Renewal",
              "passive":"Each heal you cast has 20% chance to heal double. Guild members healed by you take 10% less damage for 1 hour.",
-             "active":"Garden of Eden","type":"group_heal","mult":8,
-             "desc":"Restore WIS x8 HP to all guild members in chat. Grant regen 10 HP/30s for 2 hours.",
+             "active":"Garden of Eden","type":"group_heal","mult":60,
+             "desc":"Restore WIS x60 HP to all guild members in chat. Grant regen 10 HP/30s for 2 hours.",
              "passive_key":"verdant_renewal"},
         ]
     },
@@ -1157,8 +1157,8 @@ CLASS_TREE = {
         "skills":[
             {"tier":5,"unlock":100,"name":"Eternal Bloom",
              "passive":"Cannot be poisoned or diseased. All heals 50% stronger. Allies you've healed gain +5% all stats while in chat.",
-             "active":"Blossom Nova","type":"aoe_heal_dmg","mult":10,
-             "desc":"Pulse of pure life: heal all allies for WIS x10 HP. Enemies currently poisoned take WIS x8 burst damage.",
+             "active":"Blossom Nova","type":"aoe_heal_dmg","mult":50,
+             "desc":"Pulse of pure life: heal all allies for WIS x50 HP. Enemies currently poisoned take WIS x8 burst damage.",
              "passive_key":"eternal_bloom"},
         ]
     },
@@ -2783,9 +2783,9 @@ def _pet_main_markup():
 # Items that can be found in game
 CONSUMABLES = {
     # Healing
-    "Health Potion":          {"desc":"Restores 100 HP.","sell":75},
-    "Greater Health Potion":  {"desc":"Restores 200 HP.","sell":200},
-    "Grand Restorative Flask":{"desc":"Restores 500 HP.","sell":450},
+    "Health Potion":          {"desc":"Restores 800 HP.","sell":75},
+    "Greater Health Potion":  {"desc":"Restores 1500 HP.","sell":200},
+    "Grand Restorative Flask":{"desc":"Restores 4000 HP.","sell":450},
     # Revive
     "Scroll of Revival":      {"desc":"Revive a defeated player.","sell":750},
     # Skill items
@@ -2875,9 +2875,9 @@ RECIPES = {
 }
 
 SHOP_POOL = [  # kept for legacy compat
-    {"item":"Health Potion","price":150,"desc":"Restores 100 HP."},
-    {"item":"Greater Health Potion","price":400,"desc":"Restores 200 HP."},
-    {"item":"Grand Restorative Flask","price":900,"desc":"Restores 500 HP."},
+    {"item":"Health Potion","price":150,"desc":"Restores 800 HP."},
+    {"item":"Greater Health Potion","price":400,"desc":"Restores 1500 HP."},
+    {"item":"Grand Restorative Flask","price":900,"desc":"Restores 4000 HP."},
     {"item":"Scroll of Revival","price":1500,"desc":"Revive a defeated player."},
     {"item":"Iron Shard","price":300,"desc":"Crafting material."},
     {"item":"Enchanting Scroll","price":500,"desc":"Enchant gear."},
@@ -2887,9 +2887,9 @@ _RARITY_PRICES = {"common":350,"uncommon":950,"rare":2800,"epic":7000}
 
 _SHOP_STATIC_TABS = {
     "pot": [
-        {"item":"Health Potion",          "price":150,  "desc":"Restores 100 HP."},
-        {"item":"Greater Health Potion",  "price":400,  "desc":"Restores 200 HP."},
-        {"item":"Grand Restorative Flask","price":900,  "desc":"Restores 500 HP."},
+        {"item":"Health Potion",          "price":150,  "desc":"Restores 800 HP."},
+        {"item":"Greater Health Potion",  "price":400,  "desc":"Restores 1500 HP."},
+        {"item":"Grand Restorative Flask","price":900,  "desc":"Restores 4000 HP."},
         {"item":"Scroll of Revival",      "price":1500, "desc":"Revive a defeated player."},
     ],
     "mat": [
@@ -5262,37 +5262,35 @@ async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
     if not bounties:
         return 0
 
-    RAILRUNNER_CLASSES = {"bounty_hunter", "sharpshooter", "sniper", "deadeye"}
-    is_railrunner = attacker.get("class_id") in RAILRUNNER_CLASSES
     total_reward = 0
-    bonus_msgs = []
+    claimed_count = 0
 
     for bounty in bounties:
+        self_placed = (int(bounty["placer_id"]) == attacker_uid)
+        if self_placed:
+            continue  # Bounty hunters cannot claim their own bounties
         bc.execute("UPDATE bounties SET claimed_by=? WHERE bounty_id=?",
                    (attacker_uid, bounty["bounty_id"]))
-        reward      = bounty["reward"]
-        self_placed = (int(bounty["placer_id"]) == attacker_uid)
-        if self_placed and is_railrunner:
-            payout = reward + round(reward * 0.25)
-            total_reward += payout
-            bonus_msgs.append(f"🎯 Your own contract: *+{payout}g* (+25% self-collect!)")
-        else:
-            total_reward += reward
-            if not self_placed:
-                placer_p = get_player(bounty["placer_id"])
-                if placer_p:
-                    refund = round(reward * 0.25)
-                    placer_p["gold"] = placer_p.get("gold", 0) + refund
-                    save_player(placer_p)
-                    try:
-                        await bot.send_message(
-                            chat_id=placer_p["user_id"],
-                            text=f"💰 Your *{reward}g* bounty on *{target['username']}* was claimed!\n"
-                                 f"You received *{refund}g* back.",
-                            parse_mode="Markdown")
-                    except Exception: pass
+        reward = bounty["reward"]
+        total_reward += reward
+        claimed_count += 1
+        placer_p = get_player(bounty["placer_id"])
+        if placer_p:
+            refund = round(reward * 0.25)
+            placer_p["gold"] = placer_p.get("gold", 0) + refund
+            save_player(placer_p)
+            try:
+                await bot.send_message(
+                    chat_id=placer_p["user_id"],
+                    text=f"💰 Your *{reward}g* bounty on *{target['username']}* was claimed!\n"
+                         f"You received *{refund}g* back.",
+                    parse_mode="Markdown")
+            except Exception: pass
 
     conn.commit()
+
+    if claimed_count == 0:
+        return 0
 
     # Re-fetch attacker from DB to avoid stale dict / race with other saves
     fresh = get_player(attacker_uid)
@@ -5303,15 +5301,13 @@ async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
         attacker["gold"] = attacker.get("gold", 0) + total_reward
         save_player(attacker)
 
-    bounty_count = len(bounties)
-    stack_note = f" _(×{bounty_count} bounties stacked!)_" if bounty_count > 1 else ""
+    stack_note = f" _(×{claimed_count} bounties stacked!)_" if claimed_count > 1 else ""
     try:
         if chat_id:
             await bot.send_message(
                 chat_id=chat_id,
                 text=f"💰 *BOUNTY CLAIMED!* *{attacker['username']}* defeated *{target['username']}*!\n"
-                     f"*+{total_reward}g* collected!{stack_note} 🎯"
-                     + ("\n" + "\n".join(bonus_msgs) if bonus_msgs else ""),
+                     f"*+{total_reward}g* collected!{stack_note} 🎯",
                 parse_mode="Markdown")
     except Exception: pass
     try:
@@ -5483,7 +5479,7 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
     # ── New class skill types ──────────────────────────────────────────────────
     elif stype == "aoe_heal_dmg":
         wis = get_stat(p, "WIS")
-        heal = round(wis * 3)
+        heal = round(wis * sk.get("mult", 50))
         p["hp"] = min(calc_max_hp(p), p["hp"] + heal)
         lines.append(f"🌸 *Blossom Nova!* Healed self *+{heal} HP*!")
         if raid_state.get("enemy_statuses", {}).get("poisoned_until") or raid_state.get("enemy_statuses", {}).get("poison_damage"):
@@ -8623,11 +8619,11 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_priest = get_class_line(a) == "priest"
             potion = None; heal_amount = 0
             if is_priest:
-                heal_amount = safe_stats(a).get("WIS", 5) * 8
+                heal_amount = safe_stats(a).get("WIS", 5) * 50
             else:
-                for pname, pamt in [("Grand Restorative Flask", 500),
-                                    ("Greater Health Potion", 200),
-                                    ("Health Potion", 100)]:
+                for pname, pamt in [("Grand Restorative Flask", 4000),
+                                    ("Greater Health Potion", 1500),
+                                    ("Health Potion", 800)]:
                     if pname in inv:
                         potion = pname; heal_amount = pamt; break
                 if not potion:
@@ -8849,17 +8845,17 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_priest_healer:
         # Priest line  -  free revive via skill (Holy Light)
-        heal_amount = safe_stats(h).get("WIS",5) * 8
+        heal_amount = safe_stats(h).get("WIS",5) * 50
         if get_player_class(h) and get_player_class(h).get("passive_key") == "mending_aura":
             heal_amount = round(heal_amount * 1.25)
     else:
         # Non-priest  -  requires potion
         if "Grand Restorative Flask" in inv:
-            potion = "Grand Restorative Flask"; heal_amount = 500
+            potion = "Grand Restorative Flask"; heal_amount = 4000
         elif "Greater Health Potion" in inv:
-            potion = "Greater Health Potion"; heal_amount = 200
+            potion = "Greater Health Potion"; heal_amount = 1500
         elif "Health Potion" in inv:
-            potion = "Health Potion"; heal_amount = 100
+            potion = "Health Potion"; heal_amount = 800
         else:
             await send_group(update,
                 "❌ You need a Health Potion to heal someone!\n"
@@ -8882,7 +8878,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if was_defeated:
         t["defeated_until"]  = None
         t["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
-        t["hp"] = min(real_max_t, heal_amount)
+        t["hp"] = round(real_max_t * 0.70)
         t["shield_used"] = 0; t["shield_hp"] = 0; t["shield_core_bonus"] = 0
 
     h["heals_given"] = h.get("heals_given",0) + 1
@@ -11321,7 +11317,7 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_defeated(p):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
             await query.answer("You're defeated — potions won't help!", show_alert=True); return
-        hp_gain = {"Health Potion": 100, "Greater Health Potion": 200, "Grand Restorative Flask": 500}.get(item_name, 3000)
+        hp_gain = {"Health Potion": 800, "Greater Health Potion": 1500, "Grand Restorative Flask": 4000}.get(item_name, 3000)
         p["hp"] = min(calc_max_hp(p), p["hp"] + hp_gain)
         msg += f"❤️ +{hp_gain} HP ({p['hp']}/{calc_max_hp(p)})"
     elif item_name == "Scroll of Revival":
@@ -11331,10 +11327,10 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_revival_blocked(p):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
             await query.answer("You've been condemned — can't be revived!", show_alert=True); return
-        p["defeated_until"] = None; p["hp"] = p["max_hp"] // 2
+        p["defeated_until"] = None; p["hp"] = round(calc_max_hp(p) * 0.70)
         p["shield_used"] = 0; p["shield_hp"] = 0; p["shield_core_bonus"] = 0
         set_status(p, "invincible_until", 300)
-        msg += f"💚 Revived at {p['hp']} HP! 5 minutes invincibility granted."
+        msg += f"💚 Revived at {p['hp']} HP (70%)! 5 minutes invincibility granted."
     elif item_name.startswith("Monster Core (") or item_name == "Rare Monster Core":
         _core_stat_map = {
             "Monster Core (Fire)":      {"STR": 1},
@@ -11565,7 +11561,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+100);  msg += f"❤️ +100 HP ({p['hp']:,}/{calc_max_hp(p):,})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+800);  msg += f"❤️ +800 HP ({p['hp']:,}/{calc_max_hp(p):,})"
     elif item == "Greater Health Potion":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -11574,7 +11570,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+200);  msg += f"❤️ +200 HP ({p['hp']:,}/{calc_max_hp(p):,})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+1500);  msg += f"❤️ +1500 HP ({p['hp']:,}/{calc_max_hp(p):,})"
     elif item == "Grand Restorative Flask":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -11583,7 +11579,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+500);  msg += f"❤️ +500 HP ({p['hp']:,}/{calc_max_hp(p):,})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+4000);  msg += f"❤️ +4000 HP ({p['hp']:,}/{calc_max_hp(p):,})"
     elif item == "Scroll of Revival":
         if not is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -11599,10 +11595,10 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Only a *Cleric's Absolution* can lift this curse.", delay=9)
             return
         p["defeated_until"] = None
-        p["hp"] = p["max_hp"] // 2
+        p["hp"] = round(calc_max_hp(p) * 0.70)
         p["shield_used"] = 0; p["shield_hp"] = 0; p["shield_core_bonus"] = 0
         set_status(p, "invincible_until", 300)
-        msg += f"💚 Revived at {p['hp']} HP! 5 minutes invincibility granted."
+        msg += f"💚 Revived at {p['hp']} HP (70%)! 5 minutes invincibility granted."
     elif item.startswith("Monster Core (") or item == "Rare Monster Core":
         _core_stat_map = {
             "Monster Core (Fire)":      {"STR": 1},
@@ -11764,10 +11760,11 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Sell All Rare",      callback_data=f"sellr_{uid}_rare"),
              InlineKeyboardButton("Sell All Epic",      callback_data=f"sellr_{uid}_epic")],
             [InlineKeyboardButton("💰 Sell Everything (non-key)", callback_data=f"sellr_{uid}_all")],
+            [InlineKeyboardButton("⚔️ Sell Off-Class Items",      callback_data=f"selloffc_{uid}")],
             [InlineKeyboardButton("🔍 Browse & Sell Individual Items", callback_data=f"sellbrowse_{uid}_0")],
         ]
         await send_group(update,
-            "💰 *Sell Items*\n\nBulk sell by rarity, or browse to sell individual items. Equipped gear and key materials are always protected.",
+            "💰 *Sell Items*\n\nBulk sell by rarity, or sell gear that doesn't match your class. Equipped gear and key materials are always protected.",
             reply_markup=InlineKeyboardMarkup(buttons), delay=45)
         return
 
@@ -11974,6 +11971,57 @@ async def sell_rarity_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer(f"Sold {len(sold_items)} items for {total_gold}g!")
     await query.edit_message_text(
         f"💰 *Sold {len(sold_items)} {label} item{'s' if len(sold_items)!=1 else ''}*\n"
+        f"+*{total_gold:,}g* | Balance: *{p['gold']:,}g*",
+        parse_mode="Markdown")
+
+
+async def sell_offclass_callback(update, context):
+    """Sell all weapon/armor/shield items that don't match the player's class line."""
+    query = update.callback_query
+    parts = query.data.split("_", 1)
+    try: uid = int(parts[1])
+    except (IndexError, ValueError): await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your sell menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p: await query.answer("Player not found.", show_alert=True); return
+
+    player_line = get_class_line(p)
+    inv = sjl(p.get("inventory"), [])
+    equipped = {
+        p.get("equipped_weapon"), p.get("equipped_armor"),
+        p.get("equipped_shield"),
+        p.get("equipped_accessory"), p.get("equipped_accessory_2"),
+        p.get("equipped_accessory_3"), p.get("equipped_accessory_4"),
+        p.get("equipped_hat"), p.get("equipped_gloves"),
+        p.get("equipped_boots"), p.get("equipped_mask"),
+    }
+    RARITY_SELL = {"common": 20, "uncommon": 60, "rare": 200, "epic": 600, "legendary": 2000}
+    sold_items = []; total_gold = 0; remaining_inv = []
+    for item_s in inv:
+        if item_s in equipped:
+            remaining_inv.append(item_s); continue
+        item_data = None; item_pool = None
+        for pool in [WEAPONS, ARMORS, SHIELDS]:
+            if item_s in pool:
+                item_data = pool[item_s]; item_pool = pool; break
+        if item_data is None:
+            remaining_inv.append(item_s); continue
+        item_line = item_data.get("line") or item_data.get("class")
+        if item_line and player_line and item_line != player_line:
+            rarity = item_data.get("rarity", "common")
+            price  = RARITY_SELL.get(rarity, 20)
+            sold_items.append(item_s); total_gold += price
+        else:
+            remaining_inv.append(item_s)
+    if not sold_items:
+        await query.answer("No off-class gear to sell!", show_alert=True); return
+    p["inventory"] = json.dumps(remaining_inv)
+    p["gold"] = p.get("gold", 0) + total_gold
+    save_player(p)
+    await query.answer(f"Sold {len(sold_items)} off-class items for {total_gold}g!")
+    await query.edit_message_text(
+        f"⚔️ *Sold {len(sold_items)} off-class item{'s' if len(sold_items)!=1 else ''}*\n"
         f"+*{total_gold:,}g* | Balance: *{p['gold']:,}g*",
         parse_mode="Markdown")
 
@@ -14086,7 +14134,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append(f"💜 *{sk['name']}!* {dmg} damage + max curses!")
             elif stype == "aoe_heal_dmg":
                 wis = get_stat(p, "WIS")
-                heal = round(wis * 3); p["hp"] = min(p["max_hp"], p["hp"] + heal)
+                heal = round(wis * sk.get("mult", 50)); p["hp"] = min(p["max_hp"], p["hp"] + heal)
                 dmg = round(wis * 5)
                 lines.append(f"🌸 *{sk['name']}!* Healed +{heal} HP + {dmg} to boss!")
             elif stype in ("aoe_poison_strong",):
@@ -14500,16 +14548,16 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             cls_p = get_player_class(p)
             wis = get_stat(p, "WIS")
             mult = 1.25 if cls_p and cls_p.get("passive_key") == "mending_aura" else 1.0
-            heal = round(wis * 5 * mult)
+            heal = round(wis * sk.get("mult", 50) * mult)
             was_defeated = is_defeated(tp)
             if was_defeated:
                 if tp.get("revival_blocked_until") and _ts_active(tp, "revival_blocked_until"):
                     await send_result(f"☠️ {tp['username']} is condemned — cannot be revived!"); return
                 tp["defeated_until"] = None
-                tp["hp"] = min(calc_max_hp(tp), heal)
+                tp["hp"] = round(calc_max_hp(tp) * 0.70)
                 tp["shield_used"] = 0; tp["shield_hp"] = 0; tp["shield_core_bonus"] = 0
                 tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
-                out.append(f"✨ *Holy Light!* *{tp['username']}* revived with *{heal} HP*!\n"
+                out.append(f"✨ *Holy Light!* *{tp['username']}* revived at *{tp['hp']} HP (70%)*!\n"
                            f"🛡️ 5 minutes invincibility granted.")
             else:
                 tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
@@ -14518,7 +14566,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await send_result("\n".join(out)); return
         if stype == "regen":
             wis = get_stat(p, "WIS")
-            heal = wis * 5
+            heal = wis * 35
             tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
             out.append(f"💚 *Renew!* +{heal} HP to *{tp['username']}*! ({tp['hp']}/{tp['max_hp']})")
             save_player(p); save_player(tp)
@@ -14618,7 +14666,7 @@ async def _execute_skill(update, context, p, sk):
     # ── Healing / support skills ──────────────────────────────────────────────
     if stype == "self_heal":
         wis = safe_stats(p).get("WIS",5)
-        heal = wis * sk.get("wis_mult",5)
+        heal = wis * sk.get("mult", sk.get("wis_mult", 50))
         p["hp"] = min(p["max_hp"], p["hp"]+heal)
         lines.append(f"💚 Healed self for *{heal} HP*! ({p['hp']}/{p['max_hp']})")
         save_player(p)
@@ -14626,7 +14674,7 @@ async def _execute_skill(update, context, p, sk):
 
     elif stype == "group_heal":
         wis  = safe_stats(p).get("WIS",5)
-        heal = wis * sk.get("wis_mult",3)
+        heal = wis * sk.get("mult", sk.get("wis_mult", 60))
         gid  = p.get("guild_id")
         healed = []
         if gid and str(gid) != "None":
@@ -14693,17 +14741,17 @@ async def _execute_skill(update, context, p, sk):
         acc = p.get("equipped_accessory")
         if acc and ACCESSORIES.get(acc, {}).get("effect", {}).get("revive_heal_bonus"):
             mult += ACCESSORIES[acc]["effect"]["revive_heal_bonus"]
-        heal = round(wis * 5 * mult)
+        heal = round(wis * sk.get("mult", 50) * mult)
         was_defeated = is_defeated(tp)
         if was_defeated:
             if tp.get("revival_blocked_until") and _ts_active(tp, "revival_blocked_until"):
                 await send_group(update, f"☠️ *{tp['username']}* is condemned — cannot be revived!", delay=9); return
             tp["defeated_until"] = None
-            tp["hp"] = min(calc_max_hp(tp), heal)
+            tp["hp"] = round(calc_max_hp(tp) * 0.70)
             tp["shield_used"] = 0; tp["shield_hp"] = 0; tp["shield_core_bonus"] = 0
             tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
             save_player(tp); save_player(p)
-            lines.append(f"✨ *Holy Light!* *{tp['username']}* is revived with *{heal} HP*!\n"
+            lines.append(f"✨ *Holy Light!* *{tp['username']}* is revived at *{tp['hp']} HP (70%)*!\n"
                          f"🛡️ 5 minutes invincibility granted  -  _(Still Recovering)_")
         else:
             tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
@@ -14720,8 +14768,7 @@ async def _execute_skill(update, context, p, sk):
         if not tp:
             await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
         wis = get_stat(p, "WIS")
-        # Apply an upfront heal equal to 5 ticks of WIS HP
-        heal = wis * 5
+        heal = wis * 35
         tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
         save_player(tp); save_player(p)
         lines.append(f"💚 *Renew!* Applied regeneration to *{tp['username']}*!\n"
@@ -15022,7 +15069,7 @@ async def _execute_skill(update, context, p, sk):
         lines.append(f"🔴 *Contract!* Marking *{d['username']}*  -  increased threat level.")
     elif stype == "aoe_heal_dmg":
         wis = get_stat(p, "WIS")
-        heal = round(wis * 3)
+        heal = round(wis * sk.get("mult", 50))
         p["hp"] = min(calc_max_hp(p), p["hp"] + heal)
         lines.append(f"🌸 Healed self *+{heal} HP*! ({p['hp']}/{p['max_hp']})")
         if _ts_active(d, "poison_until") or d.get("poison_damage"):
@@ -18144,13 +18191,13 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         heal_amt = 0
         cls_line = get_class_line(p)
         if cls_line == "priest":
-            heal_amt = round(get_stat(p, "WIS") * 6)
+            heal_amt = round(get_stat(p, "WIS") * 40)
         elif "Grand Restorative Flask" in inv:
-            potion = "Grand Restorative Flask"; heal_amt = 500
+            potion = "Grand Restorative Flask"; heal_amt = 4000
         elif "Greater Health Potion" in inv:
-            potion = "Greater Health Potion"; heal_amt = 200
+            potion = "Greater Health Potion"; heal_amt = 1500
         elif "Health Potion" in inv:
-            potion = "Health Potion"; heal_amt = 100
+            potion = "Health Potion"; heal_amt = 800
         else:
             await query.answer("No potions! (Priests can heal for free)", show_alert=True)
             return
@@ -20607,7 +20654,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             items[item_name] -= 1
             if items[item_name] <= 0: del items[item_name]
             if "Health Potion" in item_name or "Restorative Flask" in item_name or "Greater Health" in item_name:
-                heal_val = {"Health Potion":100,"Greater Health Potion":200,"Grand Restorative Flask":500}.get(item_name,100)
+                heal_val = {"Health Potion":800,"Greater Health Potion":1500,"Grand Restorative Flask":4000}.get(item_name,800)
                 arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal_val)
                 log_entry = f"🧪 {atk_name} drinks *{item_name}*! +{heal_val} HP."
             else:
@@ -26078,6 +26125,7 @@ def main():
     app.add_handler(CallbackQueryHandler(sell_item_callback,    pattern="^sll_"))
     app.add_handler(CallbackQueryHandler(sell_rarity_callback,  pattern="^sellr_"))
     app.add_handler(CallbackQueryHandler(sell_browse_callback,  pattern="^sellbrowse_"))
+    app.add_handler(CallbackQueryHandler(sell_offclass_callback, pattern="^selloffc_"))
     app.add_handler(CallbackQueryHandler(forge_craft_callback,  pattern="^forge_"))
     app.add_handler(CallbackQueryHandler(explore_zone_callback, pattern="^explore_"))
     app.add_handler(CallbackQueryHandler(guilddonate_callback,  pattern="^gdonate_"))
