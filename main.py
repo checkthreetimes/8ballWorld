@@ -6828,6 +6828,28 @@ def init_db():
     except Exception as e:
         logger.error(f"v15 item migration failed: {e}")
 
+    # ── HP formula migration (raise base HP) ─────────────────────────────────
+    # Runs every startup but is a no-op for already-updated players.
+    try:
+        hp_mig = sqlite3.connect(DB_PATH)
+        hp_mig.row_factory = sqlite3.Row
+        hc = hp_mig.cursor()
+        hc.execute("SELECT user_id, level, max_hp FROM players")
+        rows_hp = hc.fetchall()
+        hp_updated = 0
+        for row in rows_hp:
+            level = int(row["level"] or 1)
+            new_max = max_hp_for_level(level)
+            if int(row["max_hp"] or 0) < new_max:
+                hc.execute("UPDATE players SET max_hp=?, hp=? WHERE user_id=?",
+                           (new_max, new_max, row["user_id"]))
+                hp_updated += 1
+        hp_mig.commit(); hp_mig.close()
+        if hp_updated > 0:
+            logger.info(f"HP formula migration: refreshed {hp_updated} player(s)")
+    except Exception as e:
+        logger.error(f"HP formula migration failed: {e}")
+
 # ── DB HELPERS ────────────────────────────────────────────────────────────────
 def _get(table, user_id):
     c = _db().cursor()
