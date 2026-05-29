@@ -460,13 +460,13 @@ CLASS_TREE = {
             {"tier":2,"unlock":10,"name":"Bloodlust",
              "passive":"Each hit landed restores 25% of damage dealt (min 20 HP).",
              "active":"Triple Strike","type":"multihit",
-             "desc":"Hit three times at full, 95%, and 75% power. Each hit has independent crit. If all three crit, Bloodlust heal triples.",
-             "passive_key":"bloodlust","hits":3,"mults":[1.20, 0.95, 0.75]},
+             "desc":"Hit three times at 150%, 120%, and 100% power. Each hit has independent crit. If all three crit, Bloodlust heal triples.",
+             "passive_key":"bloodlust","hits":3,"mults":[1.5, 1.2, 1.0]},
             {"tier":2,"unlock":10,"name":"Battle Cry",
              "passive":"Gain +80 STR for 15 minutes on every attack. No kill required.",
              "active":"Battle Cry","type":"self_heal_buff",
-             "desc":"Restore 25% of your max HP and gain +80 STR for 3 minutes.",
-             "passive_key":"battle_cry"},
+             "desc":"Restore 40% of your max HP. In dungeon: free heal action (no turn consumed).",
+             "passive_key":"battle_cry","heal_pct":0.40},
         ]
     },
     "crusader": {
@@ -479,8 +479,8 @@ CLASS_TREE = {
             {"tier":3,"unlock":30,"name":"Warcry",
              "passive":"+20% damage when outnumbered (more enemies than allies attacked you).",
              "active":"Charge","type":"guaranteed_hit",
-             "desc":"Guaranteed hit, ignores all dodge. Breaks any root/stun/freeze on yourself before striking.",
-             "passive_key":"warcry"},
+             "desc":"Guaranteed hit (STR×2.5), ignores all dodge. Breaks any root/stun/freeze on yourself before striking.",
+             "passive_key":"warcry","mult":2.5},
         ]
     },
     "hero": {
@@ -4274,6 +4274,12 @@ WDNG_TRAPS = [
     ("Magic Seal",     "INT",  0.06, "🔮 *Magic Seal!* {dmg} damage from arcane feedback!"),
     ("Bear Trap",      "DEX",  0.10, "🐻 *Bear Trap!* Clamped down for {dmg} damage!"),
 ]
+
+# Skill types that don't work solo/in dungeon (party/revival/cleanse only)
+WDNG_SKIP_SKILL_TYPES = {
+    "party_def_buff", "party_atk_buff", "party_full_buff",
+    "ultimate_buff", "revive_heal", "mass_cleanse",
+}
 
 WDNG_FLOOR_CURSES = [
     (6,  "🌑 *Floor Curse:* Darkness — monster HP +20%"),
@@ -17303,7 +17309,8 @@ def _wdng_combat_markup(uid, p=None, pet_used=False):
     if p:
         cls = get_player_class(p)
         p_skills = [sk for sk in (cls.get("skills", []) if cls else [])
-                    if p.get("level", 1) >= sk.get("unlock", 5)]
+                    if p.get("level", 1) >= sk.get("unlock", 5)
+                    and sk.get("type") not in WDNG_SKIP_SKILL_TYPES]
         skill_btns = [
             InlineKeyboardButton(sk.get("active", sk.get("name", "Skill")),
                                  callback_data=f"dng_skl_{uid}_{i}")
@@ -17343,8 +17350,12 @@ def _wdng_monster_for_floor(floor):
 
 
 def _wdng_scale(val, floor):
-    """Scale a stat by floor number."""
+    """Scale a stat by floor number (HP, 15%/floor)."""
     return max(1, round(val * (1 + (floor - 1) * 0.15)))
+
+def _wdng_scale_atk(val, floor):
+    """Scale monster ATK by floor (steeper, 25%/floor — floor 1 weak, floor 20 brutal)."""
+    return max(1, round(val * (1 + (floor - 1) * 0.25)))
 
 
 async def _wdng_surface(uid, state, bot, chat_id, reason="surfaced"):
@@ -17363,8 +17374,9 @@ async def _wdng_surface(uid, state, bot, chat_id, reason="surfaced"):
         p["deepest_dungeon_floor"] = floors
 
     # Bonus gold and EXP awarded on surfacing based on floors + rooms cleared
-    surface_gold = floors * 500 + rooms * 150
-    surface_exp  = floors * 1000 + rooms * 250
+    _lv_bonus    = max(1.0, 1.0 + (p.get("level", 1) - 1) * 0.04)
+    surface_gold = round((floors * 500 + rooms * 150) * _lv_bonus)
+    surface_exp  = round((floors * 1000 + rooms * 250) * _lv_bonus)
     total_gold = gold + surface_gold
     p["gold"] = safe_int(p.get("gold", 0)) + total_gold
     for item in loot:
@@ -17486,7 +17498,7 @@ async def _wdng_enter_room(uid, state, bot, chat_id, query=None):
         mon = _wdng_monster_for_floor(floor)
         void_gaze = floor >= 20
         mon_hp = _wdng_scale(round(p["max_hp"] * mon[1]), floor)
-        mon_atk = _wdng_scale(round(calc_attack_damage(p, get_weather()) * mon[2]), floor)
+        mon_atk = _wdng_scale_atk(round(calc_attack_damage(p, get_weather()) * mon[2]), floor)
         state["combat"] = {
             "name": mon[0], "hp": mon_hp, "max_hp": mon_hp,
             "atk": mon_atk, "element": mon[4],
@@ -17506,7 +17518,7 @@ async def _wdng_enter_room(uid, state, bot, chat_id, query=None):
     if rtype == "mini_boss":
         mon = random.choice([m for m in WDNG_MONSTERS if m[3] >= 3])
         mon_hp = _wdng_scale(round(p["max_hp"] * 2.0), floor)
-        mon_atk = _wdng_scale(round(calc_attack_damage(p, get_weather()) * 1.1), floor)
+        mon_atk = _wdng_scale_atk(round(calc_attack_damage(p, get_weather()) * 1.1), floor)
         state["combat"] = {
             "name": f"Elite {mon[0]}", "hp": mon_hp, "max_hp": mon_hp,
             "atk": mon_atk, "element": mon[4], "boss": False,
@@ -17750,18 +17762,19 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         header = _wdng_floor_header(state)
 
         if combat["hp"] <= 0:
+            _lv_bonus = max(1.0, 1.0 + (p.get("level", 1) - 1) * 0.04)
             is_boss = combat.get("boss")
             boss_data = combat.get("floor_boss")
             if is_boss and boss_data:
-                gold_earned = boss_data["gold"]
-                exp_earned  = boss_data["exp"]
+                gold_earned = round(boss_data["gold"] * _lv_bonus)
+                exp_earned  = round(boss_data["exp"]  * _lv_bonus)
                 state["boss_cleared"] = True
             elif combat.get("mini_boss"):
-                gold_earned = state["floor"] * 250 + random.randint(100, 250)
-                exp_earned  = state["floor"] * 500 + 400
+                gold_earned = round((state["floor"] * 250 + random.randint(100, 250)) * _lv_bonus)
+                exp_earned  = round((state["floor"] * 500 + 400) * _lv_bonus)
             else:
-                gold_earned = state["floor"] * 100 + random.randint(50, 150)
-                exp_earned  = state["floor"] * 200 + 200
+                gold_earned = round((state["floor"] * 100 + random.randint(50, 150)) * _lv_bonus)
+                exp_earned  = round((state["floor"] * 200 + 200) * _lv_bonus)
             state["run_gold"] = state.get("run_gold", 0) + gold_earned
             add_exp(p, exp_earned); save_player(p)
             # Loot drop
@@ -17823,43 +17836,169 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         if not cls:
             await query.answer("No class!", show_alert=True); return
         p_skills = [sk for sk in cls.get("skills", [])
-                    if p.get("level", 1) >= sk.get("unlock", 5)]
+                    if p.get("level", 1) >= sk.get("unlock", 5)
+                    and sk.get("type") not in WDNG_SKIP_SKILL_TYPES]
         if sk_idx >= len(p_skills):
             await query.answer("Skill unavailable!", show_alert=True); return
-        sk       = p_skills[sk_idx]
-        primary  = cls.get("primary_stat", "STR")
-        base_dmg = get_stat(p, primary)
-        wep      = p.get("equipped_weapon")
-        wep_atk  = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
-        sk_mult  = sk.get("mult", 1.5)
-        dmg      = max(1, int((base_dmg + wep_atk * 0.5) * sk_mult * random.uniform(0.9, 1.1)))
-        combat["hp"] = max(0, combat["hp"] - dmg)
-        # Enemy counter
-        state["p_hp"] = max(0, state["p_hp"] - combat["atk"])
-        if state["p_hp"] <= 0:
-            await _wdng_surface(uid, state, context.bot, chat_id, "died")
+        sk      = p_skills[sk_idx]
+        stype   = sk.get("type", "damage")
+        sk_name = sk.get("active", sk.get("name", "Skill"))
+        sk_mult = sk.get("mult", 1.5)
+        header  = _wdng_floor_header(state)
+        mbar    = _wdng_hp_bar(combat["hp"], combat["max_hp"])
+
+        # ── Heal / defensive skills: free action, no enemy counter ────────────
+        if stype in ("self_heal", "group_heal"):
+            heal_amt = round(get_stat(p, "WIS") * sk_mult)
+            state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + heal_amt)
+            save_wdng_state(uid, state)
+            pbar2 = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
             try:
                 await query.edit_message_text(
-                    f"💀 *{combat['name']}* counter-attacked and defeated you!", parse_mode="Markdown")
-            except Exception:
-                pass
+                    f"{header}\n\n💚 *{sk_name}!* Healed *{heal_amt} HP*! _(Free action — no turn lost)_\n\n"
+                    f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
+                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar2}]",
+                    parse_mode="Markdown",
+                    reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False)))
+            except Exception: pass
             return
-        mbar   = _wdng_hp_bar(combat["hp"], combat["max_hp"])
-        pbar   = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
+
+        if stype in ("self_heal_buff", "regen"):
+            heal_pct = sk.get("heal_pct", 0.40)
+            heal_amt = round(state["p_max_hp"] * heal_pct)
+            state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + heal_amt)
+            save_wdng_state(uid, state)
+            pbar2 = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
+            try:
+                await query.edit_message_text(
+                    f"{header}\n\n💚 *{sk_name}!* Restored *{heal_amt} HP*! _(Free action — no turn lost)_\n\n"
+                    f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
+                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar2}]",
+                    parse_mode="Markdown",
+                    reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False)))
+            except Exception: pass
+            return
+
+        if stype in ("def_buff", "heal_shield", "dmg_reduction_buff"):
+            shield_amt = round(state["p_max_hp"] * 0.20)
+            state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + shield_amt)
+            save_wdng_state(uid, state)
+            pbar2 = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
+            try:
+                await query.edit_message_text(
+                    f"{header}\n\n🛡️ *{sk_name}!* Barrier grants *{shield_amt} HP*! _(Free action — no turn lost)_\n\n"
+                    f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n"
+                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar2}]",
+                    parse_mode="Markdown",
+                    reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False)))
+            except Exception: pass
+            return
+
+        # ── Damage skills ──────────────────────────────────────────────────────
+        str_v   = get_stat(p, "STR")
+        int_v   = get_stat(p, "INT")
+        agi     = get_stat(p, "AGI")
+        wis_v   = get_stat(p, "WIS")
+        dex     = get_stat(p, "DEX")
+        def_v   = get_stat(p, "DEF")
+        wep     = p.get("equipped_weapon")
+        wep_atk = WEAPONS.get(wep, {}).get("atk", 0) if wep else 0
+        enemy_counter = True
+        skill_note = f"✨ *{sk_name}!*"
+        dmg = 0
+
+        if stype in ("guaranteed_hit", "execute_nuke"):
+            dmg = max(1, round((str_v + wep_atk * 0.3) * sk_mult * random.uniform(0.95, 1.05)))
+            skill_note = (f"⚡ *{sk_name}!* _(Guaranteed hit — STR×{sk_mult})_"
+                          if stype == "guaranteed_hit" else f"💀 *{sk_name}!* _(Crushing blow!)_")
+
+        elif stype == "multihit":
+            mults_list = sk.get("mults") or [sk_mult] * sk.get("hits", 2)
+            hit_parts, dmg = [], 0
+            for _m in mults_list:
+                _h = max(1, round((str_v + wep_atk * 0.5) * _m * random.uniform(0.9, 1.1)))
+                hit_parts.append(str(_h))
+                dmg += _h
+            skill_note = f"⚡ *{sk_name}!* " + " + ".join(hit_parts) + f" = *{dmg}*"
+
+        elif stype == "stun":
+            dmg = max(1, round((str_v + wep_atk * 0.5) * 1.5 * random.uniform(0.9, 1.1)))
+            enemy_counter = False
+            skill_note = f"⚡ *{sk_name}!* _(Enemy stunned — no counter this turn!)_"
+
+        elif stype == "crit_dmg":
+            dmg = max(1, round((str_v + wep_atk * 0.5) * sk_mult * 2 * random.uniform(0.9, 1.1)))
+            skill_note = f"💥 *{sk_name}!* _(Guaranteed Critical!)_"
+
+        elif stype == "pierce_dmg":
+            dmg = max(1, round(agi * 3 * random.uniform(0.9, 1.1)))
+            skill_note = f"🗡️ *{sk_name}!* _(Pierces defense)_"
+
+        elif stype == "pierce_all":
+            mult_v   = sk.get("dex_mult") or sk.get("str_mult", 2.5)
+            stat_val = dex if sk.get("dex_mult") else str_v
+            dmg      = max(1, round(stat_val * mult_v * random.uniform(0.9, 1.1)))
+            skill_note = f"🏹 *{sk_name}!* _(Ignores all defense)_"
+
+        elif stype == "charged_shot":
+            dmg = max(1, round(dex * 5 * random.uniform(0.95, 1.05)))
+            skill_note = f"🎯 *{sk_name}!* _(DEX×5 — cannot be dodged)_"
+
+        elif stype == "void_nuke":
+            dmg = max(1, combat["hp"] // 2)
+            skill_note = f"🌑 *{sk_name}!* _(Obliterates 50% current HP!)_"
+
+        elif stype == "combo_dmg":
+            dmg = max(1, round((str_v + def_v) * sk_mult * random.uniform(0.9, 1.1)))
+            skill_note = f"⚔️ *{sk_name}!* _(STR+DEF combined strike)_"
+
+        elif stype in ("spell", "bounce_spell"):
+            dmg = max(1, round(int_v * sk_mult * random.uniform(0.9, 1.1)))
+            skill_note = f"🔮 *{sk_name}!*"
+
+        elif stype in ("holy_nuke", "dmg_field"):
+            dmg = max(1, round((str_v + def_v + wis_v) * sk_mult * random.uniform(0.9, 1.1)))
+            skill_note = f"✨ *{sk_name}!* _(STR+DEF+WIS combined)_"
+
+        elif stype == "aoe_recent_attackers":
+            dmg = max(1, round(str_v * 4.0 * random.uniform(0.9, 1.1)))
+            skill_note = f"🌪️ *{sk_name}!* _(Full power assault!)_"
+
+        else:
+            primary = cls.get("primary_stat", "STR")
+            dmg = max(1, round((get_stat(p, primary) + wep_atk * 0.5) * sk_mult * random.uniform(0.9, 1.1)))
+
+        combat["hp"] = max(0, combat["hp"] - dmg)
+
+        # Enemy counter (unless stunned)
+        if enemy_counter:
+            state["p_hp"] = max(0, state["p_hp"] - combat["atk"])
+            if state["p_hp"] <= 0:
+                await _wdng_surface(uid, state, context.bot, chat_id, "died")
+                try:
+                    await query.edit_message_text(
+                        f"💀 *{combat['name']}* counter-attacked and defeated you!", parse_mode="Markdown")
+                except Exception: pass
+                return
+
+        mbar  = _wdng_hp_bar(combat["hp"], combat["max_hp"])
+        pbar  = _wdng_hp_bar(state["p_hp"], state["p_max_hp"])
         header = _wdng_floor_header(state)
-        sk_name = sk.get("active", sk.get("name", "Skill"))
+
         if combat["hp"] <= 0:
+            _lv_bonus = max(1.0, 1.0 + (p.get("level", 1) - 1) * 0.04)
             is_boss   = combat.get("boss")
             boss_data = combat.get("floor_boss")
             if is_boss and boss_data:
-                gold_earned = boss_data["gold"]; exp_earned = boss_data["exp"]
+                gold_earned = round(boss_data["gold"] * _lv_bonus)
+                exp_earned  = round(boss_data["exp"]  * _lv_bonus)
                 state["boss_cleared"] = True
             elif combat.get("mini_boss"):
-                gold_earned = state["floor"] * 80 + random.randint(30, 80)
-                exp_earned  = state["floor"] * 150 + 100
+                gold_earned = round((state["floor"] * 250 + random.randint(100, 250)) * _lv_bonus)
+                exp_earned  = round((state["floor"] * 500 + 400) * _lv_bonus)
             else:
-                gold_earned = state["floor"] * 30 + random.randint(20, 60)
-                exp_earned  = state["floor"] * 60 + 50
+                gold_earned = round((state["floor"] * 100 + random.randint(50, 150)) * _lv_bonus)
+                exp_earned  = round((state["floor"] * 200 + 200) * _lv_bonus)
             state["run_gold"] = state.get("run_gold", 0) + gold_earned
             add_exp(p, exp_earned); save_player(p)
             loot_tbl  = WDNG_BOSS_LOOT if is_boss else (WDNG_MINI_BOSS_LOOT if combat.get("mini_boss") else WDNG_MONSTER_LOOT)
@@ -17878,23 +18017,23 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             kill_line = "🏆 *BOSS DEFEATED!*" if is_boss else f"⚔️ *{combat['name']}* defeated!"
             try:
                 await query.edit_message_text(
-                    f"{header}\n\n✨ *{sk_name}!*\n{kill_line}\n+{gold_earned}g | +{exp_earned} EXP{loot_line}\n\n"
+                    f"{header}\n\n{skill_note}\n{kill_line}\n+{gold_earned}g | +{exp_earned} EXP{loot_line}\n\n"
                     f"❤️ You: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
                     parse_mode="Markdown", reply_markup=_wdng_nav_markup(uid, dirs))
-            except Exception:
-                pass
+            except Exception: pass
         else:
             save_wdng_state(uid, state)
+            if enemy_counter:
+                counter_line = f"\nEnemy counter-attacks for *{combat['atk']}*.\nYour HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]"
+            else:
+                counter_line = f"\n_(Stunned — no counter this turn!)_ HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]"
             try:
                 await query.edit_message_text(
-                    f"{header}\n\n✨ *{sk_name}* hits for *{dmg}* dmg!\n"
-                    f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]\n\n"
-                    f"Enemy counter-attacks for *{combat['atk']}*.\n"
-                    f"Your HP: {state['p_hp']}/{state['p_max_hp']} [{pbar}]",
+                    f"{header}\n\n{skill_note} *{dmg}* damage!\n"
+                    f"⚔️ *{combat['name']}*: {combat['hp']}/{combat['max_hp']} [{mbar}]{counter_line}",
                     parse_mode="Markdown",
                     reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False)))
-            except Exception:
-                pass
+            except Exception: pass
         return
 
     # ── COMBAT: PET ABILITY ───────────────────────────────────────────────────
@@ -18024,7 +18163,7 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             await query.edit_message_text(
                 f"{header}\n\n"
-                f"💊 Used {heal_src}. ❤️ +{heal_amt} HP [{pbar}]",
+                f"💊 Used {heal_src}. ❤️ +{heal_amt} HP [{pbar}] _(Free action — no turn lost)_",
                 parse_mode="Markdown",
                 reply_markup=_wdng_combat_markup(uid, p=p, pet_used=state.get("pet_ability_used", False)) if combat else _wdng_nav_markup(uid, _wdng_avail_dirs(state["grid"], tuple(state["pos"])))
             )
