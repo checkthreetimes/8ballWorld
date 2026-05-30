@@ -467,7 +467,7 @@ CLASS_TREE = {
              "desc":"Hit three times at 150%, 120%, and 100% power. Each hit has independent crit. If all three crit, Bloodlust heal triples.",
              "passive_key":"bloodlust","hits":3,"mults":[1.5, 1.2, 1.0]},
             {"tier":2,"unlock":10,"name":"Battle Cry",
-             "passive":"Gain +80 STR for 15 minutes on every attack. No kill required.",
+             "passive":"Gain +80 STR for 15m on every attack. No kill required.",
              "active":"Battle Cry","type":"self_heal_buff",
              "desc":"Restore 40% of your max HP. In dungeon: free heal action (no turn consumed).",
              "passive_key":"battle_cry","heal_pct":0.40},
@@ -497,7 +497,7 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Unbreakable",
              "passive":"Cannot be one-shotted  -  always survive at 1 HP (once per fight).",
              "active":"Rampage","type":"aoe_recent_attackers",
-             "desc":"Hit everyone who attacked you in the last 30 minutes. Damage scales +25% per attacker.",
+             "desc":"Hit everyone who attacked you in the last 30m. Damage scales +25% per attacker.",
              "passive_key":"unbreakable"},
         ]
     },
@@ -564,7 +564,7 @@ CLASS_TREE = {
             {"tier":3,"unlock":30,"name":"Arcane Mastery",
              "passive":"Every 3rd spell cast deals triple damage (tracked internally).",
              "active":"Meteor","type":"aoe_recent_attackers",
-             "desc":"Massive AOE  -  hits target + everyone who attacked them in last 30 minutes.",
+             "desc":"Massive AOE  -  hits target + everyone who attacked them in last 30m.",
              "passive_key":"arcane_mastery"},
         ]
     },
@@ -604,7 +604,7 @@ CLASS_TREE = {
         "stat_bonus":{"INT":2,"STR":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Cursed Blade",
-             "passive":"Physical attacks carry a hex  -  target deals 10% less damage for 2 minutes.",
+             "passive":"Physical attacks carry a hex  -  target deals 10% less damage for 2m.",
              "active":"Hex","type":"debuff",
              "desc":"Curse target  -  they deal 25% less damage for 3 hits.",
              "passive_key":"cursed_blade"},
@@ -955,7 +955,7 @@ CLASS_TREE = {
              "desc":"Heal target for WIS x50 HP. Revives defeated players at 70% HP.",
              "passive_key":"mending_aura"},
             {"tier":1,"unlock":5,"name":"Mend",
-             "passive":"Regen 15 HP every 10 minutes passively.",
+             "passive":"Regen 15 HP every 10m passively.",
              "active":"Mend","type":"self_heal","mult":50,
              "desc":"Restore WIS x50 HP to yourself.",
              "passive_key":"mend"},
@@ -974,7 +974,7 @@ CLASS_TREE = {
              "desc":"Grant target 1 hour of damage reduction (15% less damage taken).",
              "passive_key":"divine_grace"},
             {"tier":2,"unlock":10,"name":"Renew",
-             "passive":"Heals you cast leave a regen buff  -  20 HP per 30s for 5 minutes.",
+             "passive":"Heals you cast leave a regen buff  -  20 HP per 30s for 5m.",
              "active":"Renew","type":"regen",
              "desc":"Apply regen to target: restore WIS×2 HP ×10 triggers.",
              "passive_key":"renew"},
@@ -1004,7 +1004,7 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Resurrection",
              "passive":"Once per day if you reach 0 HP you automatically revive at 30% HP.",
              "active":"Miracle","type":"full_revive",
-             "desc":"Fully restore target to max HP. Grant 5 minutes invincibility. Costs one Holy Water Vial.",
+             "desc":"Fully restore target to max HP. Grant 5m invincibility. Costs one Holy Water Vial.",
              "passive_key":"resurrection"},
         ]
     },
@@ -1016,9 +1016,9 @@ CLASS_TREE = {
         "stat_bonus":{"WIS":6,"DEF":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Divine Presence",
-             "passive":"All guild members in active chat gain +5% EXP and regen 5 HP every 30 minutes while you are online.",
+             "passive":"All guild members in active chat gain +5% EXP and regen 5 HP every 30m while you are online.",
              "active":"Absolution","type":"mass_cleanse",
-             "desc":"Cleanse ALL debuffs from ALL guild members. Grant 30 minutes of blessed status (+10% all stats). COUNTERS Zealot's revival block.",
+             "desc":"Cleanse ALL debuffs from ALL guild members. Grant 30m of blessed status (+10% all stats). COUNTERS Zealot's revival block.",
              "passive_key":"divine_presence"},
         ]
     },
@@ -1092,7 +1092,7 @@ CLASS_TREE = {
         "stat_bonus":{"WIS":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Natural Growth",
-             "passive":"Regen 20 HP every 5 minutes. 12% chance each attack plants a poison seed on target (15 dmg/30s for 2 min).",
+             "passive":"Regen 20 HP every 5m. 12% chance each attack plants a poison seed on target (15 dmg/30s for 2 min).",
              "active":"Healing Bloom","type":"revive_heal","mult":50,
              "desc":"Bloom heals WIS x50 HP. Revives defeated allies at 70% HP.",
              "passive_key":"natural_growth"},
@@ -1112,7 +1112,7 @@ CLASS_TREE = {
         "stat_bonus":{"WIS":3},
         "skills":[
             {"tier":2,"unlock":10,"name":"Garden Aura",
-             "passive":"Guild members in chat regen 5 HP every 30 minutes while you are active.",
+             "passive":"Guild members in chat regen 5 HP every 30m while you are active.",
              "active":"Petal Veil","type":"dodge_buff",
              "desc":"Surround self or target with swirling petals: +25% dodge for 2 hits.",
              "passive_key":"garden_aura"},
@@ -1209,7 +1209,7 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Ancient Bark",
              "passive":"15% chance to completely absorb incoming damage. Poisoned enemies who hit you take double thorn damage.",
              "active":"Thorn Fortress","type":"def_reflect",
-             "desc":"For 2 minutes: reduce all incoming damage by 40% and reflect half back as nature damage.",
+             "desc":"For 2m: reduce all incoming damage by 40% and reflect half back as nature damage.",
              "passive_key":"ancient_bark"},
         ]
     },
@@ -1323,7 +1323,7 @@ CLASS_TREE = {
              "desc":"30% chance to stun target for 1 turn (loses their next attack). If already stunned, adds 1 more turn.",
              "passive_key":"harmonize"},
             {"tier":2,"unlock":10,"name":"Melody",
-             "passive":"Your heals and buffs grant target +2 INT for 5 minutes (stacks up to 3×).",
+             "passive":"Your heals and buffs grant target +2 INT for 5m (stacks up to 3×).",
              "active":"Hymn of Battle","type":"self_heal_buff",
              "desc":"Grant self or target: +10 ATK and +8 DEF for 4 hits.",
              "passive_key":"melody"},
@@ -1337,7 +1337,7 @@ CLASS_TREE = {
         "stat_bonus":{"INT":3,"WIS":2},
         "skills":[
             {"tier":3,"unlock":30,"name":"Battle Hymn",
-             "passive":"Once per fight, the first guild member to drop below 30% HP gains +20% ATK for 3 minutes.",
+             "passive":"Once per fight, the first guild member to drop below 30% HP gains +20% ATK for 3m.",
              "active":"War Song","type":"party_atk_buff",
              "desc":"Grant all guild members in chat +25% ATK for 5 hits. Stacks with other buffs.",
              "passive_key":"battle_hymn"},
@@ -1405,7 +1405,7 @@ CLASS_TREE = {
              "desc":"(STR + DEF) combined damage. 40% chance to stun for 1 hit.",
              "passive_key":"stalwart"},
             {"tier":2,"unlock":10,"name":"Defender's Oath",
-             "passive":"When a guild member in chat is defeated, gain +10% ATK for 10 minutes (up to 3 stacks).",
+             "passive":"When a guild member in chat is defeated, gain +10% ATK for 10m (up to 3 stacks).",
              "active":"Oath Surge","type":"self_heal_buff",
              "desc":"Honor the fallen: gain +15 DEF and restore 20% max HP for 3 hits.",
              "passive_key":"defenders_oath"},
@@ -1563,7 +1563,7 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":4},
         "skills":[
             {"tier":3,"unlock":30,"name":"Whirlwind",
-             "passive":"Every 3rd attack hits all players who attacked you in the last 30 minutes (30% damage each).",
+             "passive":"Every 3rd attack hits all players who attacked you in the last 30m (30% damage each).",
              "active":"Blade Storm","type":"aoe_bleed_multihit",
              "desc":"4 rapid slashes at AGI x0.6 each. Each hit applies bleed (10 dmg ×10 actions, stacks to 4).",
              "passive_key":"whirlwind","hits":4,"mult":0.6},
@@ -3509,7 +3509,7 @@ def _remove_box_monster(uid, box_id):
     conn.commit()
 
 def _encounter_battle_card(enc):
-    """Render the enhanced battle card with pet info and action log."""
+    """Pokémon-style battle card: enemy block at top, player block below, battle log at bottom."""
     mode   = enc["mode"]
     p_name = enc["p_name"]
     p_hp   = enc["p_hp"]
@@ -3523,43 +3523,43 @@ def _encounter_battle_card(enc):
     p_bar  = _enc_hp_bar(p_hp, p_mhp)
     e_bar  = _enc_hp_bar(e_hp, e_mhp)
     lines  = []
+    # Header
     lines.append(f"{'⚔️ NPC BATTLE' if mode=='battle' else '🌿 HUNT'}")
     lines.append("")
+    # Enemy block
     if mode == "battle":
         cls_name = CLASS_TREE.get(enc.get("e_class",""), {}).get("name", enc.get("e_class","NPC").replace("_"," ").title())
-        lines.append(f"👤 *{e_name}*  [{cls_name}]  Lv.{e_lv}")
+        lines.append(f"👾 *{e_name}*  Lv.{e_lv}  [{cls_name}]")
     else:
         lines.append(f"{elem_e} *{e_name}*  Lv.{e_lv}")
-    lines.append(f"HP: `{e_hp}/{e_mhp}`  [{e_bar}]")
-    # Enemy status effects
     e_status = []
-    if enc.get("e_burning"): e_status.append("🔥 Burning")
-    if enc.get("e_poisoned"): e_status.append("☠️ Poisoned")
-    if enc.get("e_stunned_turns"): e_status.append("⚡ Stunned")
-    if e_status: lines.append("  ".join(e_status))
+    if enc.get("e_burning"):        e_status.append("🔥")
+    if enc.get("e_poisoned"):       e_status.append("☠️")
+    if enc.get("e_stunned_turns"):  e_status.append("⚡")
+    if enc.get("e_weakened"):       e_status.append("⬇️")
+    e_s = "  " + " ".join(e_status) if e_status else ""
+    lines.append(f"`{e_bar}`  {e_hp}/{e_mhp} HP{e_s}")
     lines.append("")
-    lines.append(f"👤 *{p_name}*")
-    lines.append(f"HP: `{p_hp}/{p_mhp}`  [{p_bar}]")
-    lines.append(f"🧪 Potions: use button to consume from inventory")
-    # Player status effects
+    # Player block
     p_status = []
-    if enc.get("p_stunned"): p_status.append("⚡ Stunned")
-    if enc.get("p_weakened"): p_status.append("⬇️ Weakened")
-    if enc.get("p_guarding"): p_status.append("🛡️ Guarding")
-    if p_status: lines.append("  ".join(p_status))
-    # Pet info
+    if enc.get("p_stunned"):   p_status.append("⚡")
+    if enc.get("p_weakened"):  p_status.append("⬇️")
+    if enc.get("p_guarding"):  p_status.append("🛡️")
+    if enc.get("p_bleed"):     p_status.append("🩸")
+    if enc.get("p_burn"):      p_status.append("🔥")
+    if enc.get("p_poison"):    p_status.append("☠️")
+    if enc.get("p_blind"):     p_status.append("👁️")
+    p_s = "  " + " ".join(p_status) if p_status else ""
     pet_info = enc.get("pet_info")
-    if pet_info:
-        pname = pet_info.get("name","Pet")
-        plvl  = pet_info.get("level",1)
-        patk  = pet_info.get("atk",0)
-        pbond = pet_info.get("bond_label","")
-        lines.append(f"🐾 *{pname}* Lv{plvl}  ATK+{patk}  {pbond}")
-    # Action log
+    pet_str = f"  🐾 {pet_info['name']} +{pet_info['atk']}" if pet_info else ""
+    lines.append(f"👤 *{p_name}*{p_s}")
+    lines.append(f"`{p_bar}`  {p_hp}/{p_mhp} HP{pet_str}")
+    # Battle log
     action_log = enc.get("action_log", [])
     if action_log:
         lines.append("")
-        for act in action_log[-2:]:  # show last 2 actions
+        lines.append("─────────────")
+        for act in action_log[-3:]:
             lines.append(act)
     return "\n".join(lines)
 
@@ -3627,15 +3627,23 @@ def _enc_process_skill(enc, p, sk):
     _heal_types = {"self_heal", "self_heal_buff", "group_heal", "revive_heal",
                    "regen", "heal_shield", "mass_cleanse", "dmg_reduction_buff",
                    "party_atk_buff", "party_def_buff", "party_full_buff",
-                   "ultimate_buff", "aoe_heal_dmg"}
+                   "ultimate_buff", "aoe_heal_dmg", "full_revive", "strip_debuff"}
     if stype in _heal_types or stype.endswith("heal"):
         wis  = get_stat(p, "WIS")
         heal = max(1, round(wis * sk.get("mult", sk.get("wis_mult", 50))))
         if stype == "aoe_heal_dmg":
-            # also deals a small damage hit
             heal = max(1, round(wis * sk.get("mult", 50)))
             enemy_hit = max(1, round(wis * 3))
             enc["e_hp"] = max(0, enc["e_hp"] - enemy_hit)
+        elif stype == "full_revive":
+            enc["p_hp"] = enc["p_max_hp"]
+            return f"✨ *{sk_name}*! Fully restored! ({enc['p_hp']}/{enc['p_max_hp']})", 0, True
+        elif stype == "strip_debuff":
+            enc.pop("p_stunned", None); enc.pop("p_weakened", None)
+            enc.pop("p_bleed", None);   enc.pop("p_burn", None)
+            enc.pop("p_poison", None);  enc.pop("p_blind", None)
+            enc.pop("p_slow", None);    enc.pop("p_hexed", None)
+            return f"✨ *{sk_name}*! All debuffs cleared!", 0, True
         enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
         txt = f"💚 *{sk_name}*! Healed *{heal} HP*! ({enc['p_hp']}/{enc['p_max_hp']})"
         return txt, 0, True
@@ -3657,6 +3665,17 @@ def _enc_process_skill(enc, p, sk):
         heal = max(1, round(ps * 15))
         enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
         return f"💪 *{sk_name}*! Attack power surges! +{heal} HP recovery!", 0, True
+    if stype == "acc_debuff_only":
+        enc["e_weakened"] = True
+        return f"🌀 *{sk_name}*! Enemy disoriented — attack weakened!", 0, True
+    if stype in ("dodge_buff", "vanish"):
+        enc["enc_dodge_turns"] = enc.get("enc_dodge_turns", 0) + (2 if stype == "vanish" else 1)
+        return f"💨 *{sk_name}*! You slip into the shadows — next hit{'s' if stype=='vanish' else ''} dodged!", 0, True
+    if stype == "def_reflect":
+        def_v = get_stat(p, "DEF")
+        enc["enc_reflect_dmg"] = enc.get("enc_reflect_dmg", 0) + max(1, round(def_v * 1.5))
+        enc["p_guarding"] = True
+        return f"🛡️ *{sk_name}*! Thorns raised — reflects *{enc['enc_reflect_dmg']}* on next hit!", 0, True
 
     # ── Pet joins every skill use ─────────────────────────────────────────────
     pet_extra = ""
@@ -3799,6 +3818,65 @@ def _enc_process_skill(enc, p, sk):
         dmg = max(1, round(base * 0.8))
         enc["e_weakened"] = True
         txt = f"💀 *{sk_name}*! *{dmg}* damage! Enemy hexed + weakened!{pet_extra}"
+    elif stype == "combo_dmg":
+        str_v = get_stat(p, "STR"); wis_v = get_stat(p, "WIS")
+        dmg = max(1, round((str_v + wis_v) * sk.get("mult", 1.5)))
+        txt = f"⚔️ *{sk_name}*! (STR+WIS)×{sk.get('mult',1.5)} = *{dmg}* damage!{pet_extra}"
+    elif stype == "holy_nuke":
+        str_v = get_stat(p, "STR"); wis_v = get_stat(p, "WIS")
+        dmg = max(1, round(str_v * 4 + wis_v * 4))
+        enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 2
+        txt = f"✨ *{sk_name}*! STR×4+WIS×4 = *{dmg}* holy damage! Enemy stunned 2 turns!{pet_extra}"
+    elif stype == "dmg_field":
+        int_v = get_stat(p, "INT")
+        dmg = max(1, round(int_v * sk.get("mult", 3.0)))
+        enc["e_burning"] = True
+        txt = f"🔥 *{sk_name}*! INT×{sk.get('mult',3)} = *{dmg}* damage! Field set ablaze!{pet_extra}"
+    elif stype == "guaranteed_hit":
+        dmg = max(1, round(base * sk.get("mult", 1.2)))
+        txt = f"⚡ *{sk_name}*! *{dmg}* guaranteed damage! _(cannot miss)_{pet_extra}"
+    elif stype == "aoe_recent_attackers":
+        hits = sk.get("hits", 3)
+        dmg = sum(max(1, round(base * sk.get("mult", 0.7))) for _ in range(hits))
+        txt = f"🌀 *{sk_name}*! {hits}-hit sweep for *{dmg}* total damage!{pet_extra}"
+    elif stype == "raid_aoe":
+        int_v = get_stat(p, "INT")
+        dmg = max(1, round(int_v * sk.get("mult", 8)))
+        enc["e_burning"] = True; enc["e_weakened"] = True
+        txt = f"💥 *{sk_name}*! INT×{sk.get('mult',8)} = *{dmg}* massive damage! Enemy burning + weakened!{pet_extra}"
+    elif stype == "execute_nuke":
+        hp_pct = enc["e_hp"] / max(1, enc["e_max_hp"])
+        if hp_pct <= 0.35:
+            dmg = enc["e_hp"]
+            txt = f"💀 *{sk_name}*! *EXECUTION!* *{dmg}* lethal damage!{pet_extra}"
+        else:
+            dmg = max(1, round(base * sk.get("mult", 1.5)))
+            txt = f"⚔️ *{sk_name}*! *{dmg}* damage! _(execute triggers below 35% HP)_{pet_extra}"
+    elif stype in ("bounty_mark", "bind_attacker"):
+        dmg = max(1, round(base * sk.get("mult", 0.8)))
+        enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 1
+        enc["e_weakened"] = True
+        txt = f"🎯 *{sk_name}*! *{dmg}* damage! Enemy marked + stunned 1 turn!{pet_extra}"
+    elif stype in ("dmg_acc_debuff", "miss_debuff"):
+        dmg = max(1, round(base * sk.get("mult", 0.8)))
+        enc["e_weakened"] = True
+        txt = f"🎯 *{sk_name}*! *{dmg}* damage! Enemy accuracy lowered!{pet_extra}"
+    elif stype == "root":
+        dmg = max(1, round(get_stat(p, "AGI") * sk.get("mult", 1.5)))
+        enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 2
+        txt = f"🌿 *{sk_name}*! *{dmg}* damage! Enemy rooted 2 turns!{pet_extra}"
+    elif stype == "random_aoe":
+        hits = random.randint(2, 5)
+        dmg = sum(max(1, round(get_stat(p, "DEX") * sk.get("mult", 0.6))) for _ in range(hits))
+        txt = f"🏹 *{sk_name}*! {hits} shots = *{dmg}* total damage!{pet_extra}"
+    elif stype == "bounty":
+        agi = get_stat(p, "AGI"); dex = get_stat(p, "DEX")
+        dmg = max(1, round((agi + dex) * sk.get("mult", 2.0)))
+        txt = f"🎯 *{sk_name}*! AGI+DEX = *{dmg}* execution damage!{pet_extra}"
+    elif stype == "fear_kill":
+        agi = get_stat(p, "AGI")
+        dmg = max(1, round(agi * sk.get("mult", 5.0)))
+        txt = f"💀 *{sk_name}*! AGI×5 = *{dmg}* terrifying damage!{pet_extra}"
     else:
         # Generic fallback: use stat/mult from skill def, primary stat scaling
         stat_key = sk.get("stat", get_primary_stat(p))
@@ -3925,6 +4003,10 @@ def _enc_npc_attack(enc, p):
         ls = int(dmg * 0.3)
         enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + ls)
         extra = f" (+{ls} HP drained)"
+    # Dodge turns (Vanish / dodge_buff skills)
+    if enc.get("enc_dodge_turns", 0) > 0:
+        enc["enc_dodge_turns"] -= 1
+        return f"*{enc['e_name']}* used *{atk_name}* — 💨 *Dodged!* You slipped away unscathed!"
     # Shield charge: full negate (Shield Wall / Aegis Wall)
     if enc.get("enc_shield_charges", 0) > 0:
         enc["enc_shield_charges"] -= 1
@@ -3943,6 +4025,11 @@ def _enc_npc_attack(enc, p):
         extra += " 🛡️ Guard reduced damage!"
     enc["p_hp"] = max(0, enc["p_hp"] - dmg)
     enc["last_dmg"] = dmg
+    # Thorn Fortress reflect (def_reflect skill)
+    if enc.get("enc_reflect_dmg", 0) > 0:
+        ref = enc.pop("enc_reflect_dmg")
+        enc["e_hp"] = max(0, enc["e_hp"] - ref)
+        extra += f"\n🌿 *Thorns* reflected *{ref}* damage!"
     # Player armor enchant: reflect_flat — bounce damage back to NPC
     _p_uid = enc.get("uid")
     if _p_uid:
@@ -4256,7 +4343,7 @@ RANDOM_EVENTS = [
      "enemy_hp":200,"exp_reward":300,
      "loot_table":[("Greater Health Potion",0.20),("Worn Leather Band",0.15)]},
     {"key":"merchant","freq":"uncommon",
-     "msg":"🛍️ *A traveling merchant just arrived.*\n/greet them for 20% off at the shop for 30 minutes.",
+     "msg":"🛍️ *A traveling merchant just arrived.*\n/greet them for 20% off at the shop for 30m.",
      "discount":0.20,"duration_min":30},
     {"key":"rival","freq":"uncommon",
      "msg":"⚔️ *Someone walked in looking for action.*\nFirst to /fight claims the table. Winner gets bonus EXP and gold."},
@@ -4270,7 +4357,7 @@ RANDOM_EVENTS = [
     {"key":"storm","freq":"uncommon",
      "msg":"🌩️ *Something disrupted the ley lines.* The air is different now. Conditions changed."},
     {"key":"legendary_merchant","freq":"rare",
-     "msg":"👑 *A legendary craftsman just arrived with rare wares.* 10 minutes only. Use /shoplegend.","duration_min":10},
+     "msg":"👑 *A legendary craftsman just arrived with rare wares.* 10m only. Use /shoplegend.","duration_min":10},
     {"key":"shrine","freq":"rare",
      "msg":"🔮 *An old trophy was found behind the wall.*\nFirst to /pray gets something from it."},
     {"key":"cursed","freq":"rare",
@@ -5628,7 +5715,7 @@ def _defeated_msg(p):
 async def _notify_defeat(bot, p, cause_str):
     """DM the player letting them know what defeated them."""
     try:
-        countdown = time_until(p.get("defeated_until")) or "30 minutes"
+        countdown = time_until(p.get("defeated_until")) or "30m"
         await bot.send_message(
             chat_id=p["user_id"],
             text=f"💀 You were defeated by *{cause_str}*!\n⏳ Back in: *{countdown}*\n_Use /heal or ask a Priest to get back sooner._",
@@ -5637,7 +5724,7 @@ async def _notify_defeat(bot, p, cause_str):
         pass
 
 async def _notify_attack(bot, victim, attacker_name, dmg):
-    """DM the victim when attacked but not defeated. Auto-deletes after 5 minutes."""
+    """DM the victim when attacked but not defeated. Auto-deletes after 5m."""
     try:
         hp_pct = round(victim["hp"] / max(1, victim.get("max_hp", victim["hp"])) * 100)
         msg = await bot.send_message(
@@ -5833,7 +5920,7 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         dmg = round(base * 0.5)
     elif stype == "miss_debuff":
         set_enemy_status(raid_state, "weakened_until", 180)
-        lines.append(f"😵 *{enemy['name']}* is *Weakened!* Deals 25% less damage for 3 minutes.")
+        lines.append(f"😵 *{enemy['name']}* is *Weakened!* Deals 25% less damage for 3m.")
     elif stype == "bleed_crit":
         dmg = round(base * sk.get("mult", 2.0) * 2)
         set_enemy_status(raid_state, "bleed_until", 300)
@@ -5854,7 +5941,7 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         lines.append(f"🩸 *Drain Soul!* Stole {steal} HP!")
     elif stype == "debuff":
         set_enemy_status(raid_state, "hexed_until", 120)
-        lines.append(f"💀 *Hexed!* {enemy['name']} deals 25% less damage for 2 minutes!")
+        lines.append(f"💀 *Hexed!* {enemy['name']} deals 25% less damage for 2m!")
         dmg = round(base * 0.8)
     elif stype in ("vanish", "holy_shield", "blessing"):
         # Self-buff  -  apply to player, no damage
@@ -5863,7 +5950,7 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
             lines.append("👻 *Vanished!* (No effect in raids  -  treated as stealth stance)")
         elif stype == "blessing":
             set_status(p, "blessed_until", 300)
-            lines.append("✨ *Blessed!* +10% damage and healing for 5 minutes.")
+            lines.append("✨ *Blessed!* +10% damage and healing for 5m.")
         return lines, 0
     elif stype == "silence":
         set_enemy_status(raid_state, "silenced_until", 60)
@@ -5906,10 +5993,10 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
             raid_state["enemy_statuses"] = {}
         raid_state["enemy_statuses"]["poison_damage"] = max(wis, 10)
         raid_state["enemy_statuses"]["poison_last_tick"] = datetime.now().isoformat()
-        lines.append(f"☠️ *Toxic Bloom!* WIS-scaling poison applied for 10 minutes!")
+        lines.append(f"☠️ *Toxic Bloom!* WIS-scaling poison applied for 10m!")
     elif stype == "def_reflect":
         set_status(p, "def_reflect_until", 120)
-        lines.append("🌿 *Thorn Fortress!* 40% damage reduction + reflect active for 2 minutes!")
+        lines.append("🌿 *Thorn Fortress!* 40% damage reduction + reflect active for 2m!")
         return lines, 0
     elif stype == "nature_nuke":
         wis = get_stat(p, "WIS")
@@ -5927,13 +6014,13 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         dmg = steal
         set_enemy_status(raid_state, "hexed_until", 180)
         set_enemy_status(raid_state, "weakened_until", 180)
-        lines.append(f"💀 *Doom Curse!* Drained *{steal} HP*! Hex + Weak applied for 3 minutes!")
+        lines.append(f"💀 *Doom Curse!* Drained *{steal} HP*! Hex + Weak applied for 3m!")
     elif stype == "curse_chain":
         int_v = get_stat(p, "INT")
         dmg = round(int_v * 1.5)
         set_enemy_status(raid_state, "hexed_until", 300)
         set_enemy_status(raid_state, "weakened_until", 300)
-        lines.append(f"💜 *Vex Chain!* {enemy['name']} cursed: -25% ATK/DEF for 5 minutes!")
+        lines.append(f"💜 *Vex Chain!* {enemy['name']} cursed: -25% ATK/DEF for 5m!")
     elif stype == "mass_debuff":
         int_v = get_stat(p, "INT")
         dmg = round(int_v * 2.5)
@@ -5943,22 +6030,22 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         lines.append(f"💜 *Dread Proclamation!* Max curses! Stunned + hexed + weakened for 1 hour!")
     elif stype == "party_atk_buff":
         set_status(p, "blessed_until", 300)
-        lines.append("🎵 *War Song!* ATK +25% for 5 minutes!")
+        lines.append("🎵 *War Song!* ATK +25% for 5m!")
         return lines, 0
     elif stype == "party_full_buff":
         set_status(p, "blessed_until", 600)
         for field in ["hexed_until", "weakened_until"]:
             p[field] = None
-        lines.append("🎶 *Ancient Aria!* Full stats buffed 10 minutes! Debuffs cleared.")
+        lines.append("🎶 *Ancient Aria!* Full stats buffed 10m! Debuffs cleared.")
         return lines, 0
     elif stype == "ultimate_buff":
         p["hp"] = calc_max_hp(p)
         set_status(p, "blessed_until", 1800)
-        lines.append("✨ *Magnum Opus!* Full HP restored! +20% all stats for 30 minutes!")
+        lines.append("✨ *Magnum Opus!* Full HP restored! +20% all stats for 30m!")
         return lines, 0
     elif stype == "self_atk_buff":
         set_status(p, "blessed_until", 120)
-        lines.append("⚔️ *War Cry!* +30% ATK and +15% DEF for 2 minutes!")
+        lines.append("⚔️ *War Cry!* +30% ATK and +15% DEF for 2m!")
         return lines, 0
     elif stype == "stun_def_dmg":
         str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
@@ -5970,7 +6057,7 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
             lines.append(f"🛡️ *Shield Slam!* (STR+DEF) = {dmg} damage!")
     elif stype == "party_def_buff":
         set_status(p, "blessed_until", 300)
-        lines.append("🛡️ *Rune Barrier!* DEF +20% for 5 minutes!")
+        lines.append("🛡️ *Rune Barrier!* DEF +20% for 5m!")
         return lines, 0
     elif stype == "intercept_aoe":
         def_v = get_stat(p, "DEF")
@@ -10035,7 +10122,7 @@ async def raid_cmd(update, context):
         f"*{user.first_name}* is forming a raid party.\n"
         f"Others: type /raid to join!\n"
         f"Minimum 2 players required.\n\n"
-        f"_Leader: /raidstart when ready. Lobby expires in 15 minutes._",
+        f"_Leader: /raidstart when ready. Lobby expires in 15m._",
         permanent=False, delay=180)
 
 
@@ -12013,7 +12100,7 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p["defeated_until"] = None; p["hp"] = round(calc_max_hp(p) * 0.70)
         p["shield_used"] = 0; p["shield_hp"] = 0; p["shield_core_bonus"] = 0
         set_status(p, "invincible_until", 300)
-        msg += f"💚 Revived at {p['hp']} HP (70%)! 5 minutes invincibility granted."
+        msg += f"💚 Revived at {p['hp']} HP (70%)! 5m invincibility granted."
     elif item_name.startswith("Monster Core (") or item_name == "Rare Monster Core":
         _core_stat_map = {
             "Monster Core (Fire)":      {"STR": 1},
@@ -12281,7 +12368,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p["hp"] = round(calc_max_hp(p) * 0.70)
         p["shield_used"] = 0; p["shield_hp"] = 0; p["shield_core_bonus"] = 0
         set_status(p, "invincible_until", 300)
-        msg += f"💚 Revived at {p['hp']} HP (70%)! 5 minutes invincibility granted."
+        msg += f"💚 Revived at {p['hp']} HP (70%)! 5m invincibility granted."
     elif item.startswith("Monster Core (") or item == "Rare Monster Core":
         _core_stat_map = {
             "Monster Core (Fire)":      {"STR": 1},
@@ -13182,7 +13269,7 @@ async def alliance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]])
         await send_group(update,
             f"⚔️ {a_name} invites {d_name} to join *{a['name']}*!\n\n"
-            f"_{du.first_name}, do you accept?_\n_Expires in 5 minutes._",
+            f"_{du.first_name}, do you accept?_\n_Expires in 5m._",
             permanent=False, delay=300, reply_markup=markup)
         return
 
@@ -13399,7 +13486,7 @@ _RUMOR_TPL = [
     "A trusted source says {name} once arm-wrestled a bear. The bear never recovered.",
     "{name} has been collecting rocks. Not ore — just rocks.",
     "Witnesses claim {name} tried to trade a broken stick for legendary armor.",
-    "{name} was seen staring at a wall for 20 minutes. They seemed satisfied.",
+    "{name} was seen staring at a wall for 20m. They seemed satisfied.",
     "I heard {name} once ate a rare monster core thinking it was candy.",
     "{name}'s guild application reportedly just said 'trust me.' It worked.",
     "{name} asked the oracle if they were the main character. It said 'ask again later.'",
@@ -13694,7 +13781,7 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]])
         await send_group(update,
             f"🏰 {a_name} invites {d_name} to join *{g['name']}*!\n\n"
-            f"_{du.first_name}, do you accept?_\n_Expires in 5 minutes._",
+            f"_{du.first_name}, do you accept?_\n_Expires in 5m._",
             permanent=False, delay=300, reply_markup=markup)
         return
 
@@ -14757,21 +14844,21 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 heal = round(p["max_hp"] * sk.get("heal_pct", 0.25))
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
                 set_status(p, "battle_cry_str_until", 180)
-                lines.append(f"💪 *Battle Cry!* +{heal} HP restored. +80 STR for 3 minutes!")
+                lines.append(f"💪 *Battle Cry!* +{heal} HP restored. +80 STR for 3m!")
             elif stype == "self_atk_buff":
                 set_status(p, "blessed_until", 120)
-                lines.append("⚔️ *War Cry!* +30% ATK for 2 minutes!")
+                lines.append("⚔️ *War Cry!* +30% ATK for 2m!")
             elif stype == "def_reflect":
                 set_status(p, "def_reflect_until", 120)
                 lines.append("🌿 *Thorn Fortress!* 40% dmg reduction + reflect active 2 min!")
             elif stype in ("party_atk_buff", "party_def_buff"):
                 set_status(p, "blessed_until", 300)
                 label = "War Song" if stype == "party_atk_buff" else "Rune Barrier"
-                lines.append(f"🎵 *{label}!* Party buffed +25% stats for 5 minutes!")
+                lines.append(f"🎵 *{label}!* Party buffed +25% stats for 5m!")
             elif stype == "party_full_buff":
                 set_status(p, "blessed_until", 600)
                 for _f in ["hexed_until", "weakened_until"]: p[_f] = None
-                lines.append("🎶 *Ancient Aria!* Full buffs 10 minutes! Debuffs cleared.")
+                lines.append("🎶 *Ancient Aria!* Full buffs 10m! Debuffs cleared.")
             elif stype == "ultimate_buff":
                 p["hp"] = calc_max_hp(p)
                 set_status(p, "blessed_until", 1800)
@@ -15096,7 +15183,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             p["hp"] = min(p["max_hp"], p["hp"] + heal)
             if stype == "self_heal_buff":
                 set_status(p, "battle_cry_str_until", 180)
-                out.append(f"💪 *Battle Cry!* +{heal} HP restored. +80 STR for 3 minutes!")
+                out.append(f"💪 *Battle Cry!* +{heal} HP restored. +80 STR for 3m!")
             else:
                 out.append(f"💚 Healed self for *{heal} HP*!")
             dmg = 0
@@ -15237,7 +15324,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             heal = round(p["max_hp"] * sk.get("heal_pct", 0.25))
             p["hp"] = min(p["max_hp"], p["hp"] + heal)
             set_status(p, "battle_cry_str_until", 180)
-            out.append(f"💪 *{sk['name']}!* +{heal} HP restored. *+80 STR for 3 minutes!*")
+            out.append(f"💪 *{sk['name']}!* +{heal} HP restored. *+80 STR for 3m!*")
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "group_heal":
@@ -15294,7 +15381,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 tp["shield_used"] = 0; tp["shield_hp"] = 0; tp["shield_core_bonus"] = 0
                 tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
                 out.append(f"✨ *Holy Light!* *{tp['username']}* revived at *{tp['hp']} HP (70%)*!\n"
-                           f"🛡️ 5 minutes invincibility granted.")
+                           f"🛡️ 5m invincibility granted.")
             else:
                 tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
                 out.append(f"💚 Healed *{tp['username']}* for *{heal} HP*! ({tp['hp']}/{tp['max_hp']})")
@@ -15319,7 +15406,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             tp["defeated_until"] = None
             tp["shield_used"] = 0; tp["shield_hp"] = 0; tp["shield_core_bonus"] = 0
             tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
-            out.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored! 🛡️ 5 minutes invincibility.")
+            out.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored! 🛡️ 5m invincibility.")
             save_player(p); save_player(tp)
             await send_result("\n".join(out)); return
         if stype == "dmg_reduction_buff":
@@ -15481,7 +15568,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             out.append(f"💀 *{sk['name']}!* *Hexed ×3!* {tp['username']} deals 25% less damage next 3 attacks!")
         elif stype == "def_reflect":
             set_status(p, "def_reflect_until", 120)
-            out.append(f"🌿 *{sk['name']}!* {p['username']}: 40% dmg reduction + reflect active 2 minutes!")
+            out.append(f"🌿 *{sk['name']}!* {p['username']}: 40% dmg reduction + reflect active 2m!")
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "charged_shot":
@@ -15491,7 +15578,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await send_result("\n".join(out)); return
         elif stype == "self_atk_buff":
             set_status(p, "blessed_until", 120)
-            out.append(f"⚔️ *{sk['name']}!* {p['username']} gains *+30% ATK and +15% DEF* for 2 minutes!")
+            out.append(f"⚔️ *{sk['name']}!* {p['username']} gains *+30% ATK and +15% DEF* for 2m!")
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "root":
@@ -15610,7 +15697,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                             save_player(_mp); _buffed.append(_mp["username"])
             if not _buffed:
                 set_status(p, "blessed_until", 300); _buffed = [p["username"]]; save_player(p)
-            out.append(f"🎵 *{sk['name']}!* +25% ATK for 5 minutes!\n💪 Buffed: {', '.join(_buffed)}")
+            out.append(f"🎵 *{sk['name']}!* +25% ATK for 5m!\n💪 Buffed: {', '.join(_buffed)}")
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "party_def_buff":
@@ -15626,7 +15713,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                             save_player(_mp); _buffed.append(_mp["username"])
             if not _buffed:
                 set_status(p, "blessed_until", 300); _buffed = [p["username"]]; save_player(p)
-            out.append(f"🛡️ *{sk['name']}!* +20% DEF for 5 minutes!\n🛡️ Protected: {', '.join(_buffed)}")
+            out.append(f"🛡️ *{sk['name']}!* +20% DEF for 5m!\n🛡️ Protected: {', '.join(_buffed)}")
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "party_full_buff":
@@ -15819,7 +15906,7 @@ async def _execute_skill(update, context, p, sk):
                         set_status(mp, "blessed_until", 1800)
                         save_player(mp); cleansed.append(mp["username"])
         lines.append(f"✨ *Absolution!* Cleansed: {', '.join(cleansed) or 'self'}\n"
-                     f"Blessed status +10% all stats for 30 minutes!\n"
+                     f"Blessed status +10% all stats for 30m!\n"
                      f"_(Zealot's revival block lifted if active)_")
         save_player(p)
         await send_group(update, "\n".join(lines), delay=30); return
@@ -15862,7 +15949,7 @@ async def _execute_skill(update, context, p, sk):
             tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
             save_player(tp); save_player(p)
             lines.append(f"✨ *Holy Light!* *{tp['username']}* is revived at *{tp['hp']} HP (70%)*!\n"
-                         f"🛡️ 5 minutes invincibility granted  -  _(Still Recovering)_")
+                         f"🛡️ 5m invincibility granted  -  _(Still Recovering)_")
         else:
             tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
             save_player(tp); save_player(p)
@@ -15905,7 +15992,7 @@ async def _execute_skill(update, context, p, sk):
         tp["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
         save_player(tp); save_player(p)
         lines.append(f"✨ *MIRACLE!* *{tp['username']}* fully restored!\n"
-                     f"❤️ Full HP restored! 🛡️ 5 minutes invincibility granted.\n"
+                     f"❤️ Full HP restored! 🛡️ 5m invincibility granted.\n"
                      f"_(Used: Holy Water Vial)_")
         await send_group(update, "\n".join(lines), delay=20); return
 
@@ -15913,13 +16000,13 @@ async def _execute_skill(update, context, p, sk):
         wis = get_stat(p, "WIS")
         p["hp"] = min(calc_max_hp(p), p["hp"] + 15)
         lines.append(f"✨ *Holy Fervor!* Restored 15 HP! ({p['hp']}/{p['max_hp']})\n"
-                     f"⚡ WIS boosted — heals more effective for 2 minutes.")
+                     f"⚡ WIS boosted — heals more effective for 2m.")
         save_player(p)
         await send_group(update, "\n".join(lines), delay=15); return
 
     elif stype == "self_atk_buff":
         set_status(p, "blessed_until", 120)
-        lines.append(f"⚔️ *War Cry!* {p['username']} gains *+30% ATK and +15% DEF* for 2 minutes!")
+        lines.append(f"⚔️ *War Cry!* {p['username']} gains *+30% ATK and +15% DEF* for 2m!")
         save_player(p)
         await send_group(update, "\n".join(lines), delay=15); return
 
@@ -15942,7 +16029,7 @@ async def _execute_skill(update, context, p, sk):
                         save_player(mp); buffed.append(mp["username"])
         if not buffed:
             set_status(p, "blessed_until", 300); buffed = [p["username"]]; save_player(p)
-        lines.append(f"🎵 *War Song!* +25% ATK for 5 minutes!\n💪 Buffed: {', '.join(buffed)}")
+        lines.append(f"🎵 *War Song!* +25% ATK for 5m!\n💪 Buffed: {', '.join(buffed)}")
         await send_group(update, "\n".join(lines), delay=20); return
 
     elif stype == "party_def_buff":
@@ -15958,7 +16045,7 @@ async def _execute_skill(update, context, p, sk):
                         save_player(mp); buffed.append(mp["username"])
         if not buffed:
             set_status(p, "blessed_until", 300); buffed = [p["username"]]; save_player(p)
-        lines.append(f"🛡️ *Rune Barrier!* +20% DEF for 5 minutes!\n🛡️ Protected: {', '.join(buffed)}")
+        lines.append(f"🛡️ *Rune Barrier!* +20% DEF for 5m!\n🛡️ Protected: {', '.join(buffed)}")
         await send_group(update, "\n".join(lines), delay=20); return
 
     elif stype == "party_full_buff":
@@ -18296,7 +18383,7 @@ async def marry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💍 {a_name} proposes to {d_name}!\n\n"
         f"{cost_line}  {p_count_note}\n\n"
         f"_{du.first_name}, will you accept?_\n"
-        f"_Expires in 5 minutes._",
+        f"_Expires in 5m._",
         permanent=False, delay=300, reply_markup=markup)
 
 
@@ -20579,7 +20666,7 @@ async def holdhands_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update,
         f"🤝 {a_name} reaches out to {d_name}...\n\n"
         f"_{du.first_name}, will you take their hand?_\n"
-        f"_Expires in 5 minutes._",
+        f"_Expires in 5m._",
         permanent=False, delay=300, reply_markup=markup)
 
 
@@ -21152,7 +21239,7 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update,
         f"⚔️ *{user.first_name}* challenges *{du.first_name}* to a duel{wager_str}!\n\n"
         f"🔢 {user.first_name}'s CP: *{cp_self:,}*\n\n"
-        f"_{du.first_name}: tap Accept/Decline or type `/duel accept`. Expires in 5 minutes._",
+        f"_{du.first_name}: tap Accept/Decline or type `/duel accept`. Expires in 5m._",
         permanent=False, delay=60, reply_markup=duel_markup)
 
 async def duel_wager_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -21193,7 +21280,7 @@ async def duel_wager_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(
         f"⚔️ *{p['username']}* challenges *{tp['username']}* to a duel{wager_str}!\n\n"
         f"🔢 {p['username']}'s CP: *{cp_self:,}*\n\n"
-        f"_{tp['username']}: tap Accept/Decline or type `/duel accept`. Expires in 5 minutes._",
+        f"_{tp['username']}: tap Accept/Decline or type `/duel accept`. Expires in 5m._",
         parse_mode="Markdown", reply_markup=duel_markup)
 
 
@@ -22091,7 +22178,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update,
         f"🎪 *{user.first_name}* challenges *{du.first_name}* to an Arena fight{wager_str}!\n\n"
         f"_HP changes are arena-only — your real HP is safe._\n"
-        f"_Challenge expires in 5 minutes._",
+        f"_Challenge expires in 5m._",
         permanent=False, delay=300, reply_markup=arena_challenge_markup)
 
 
@@ -22805,7 +22892,7 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rooms = room_distributions[diff].copy()
     random.shuffle(rooms)
     timers        = {"normal": 2700, "hard": 3600, "legendary": 5400}
-    timer_display = {"normal": "45 minutes", "hard": "1 hour", "legendary": "90 minutes"}
+    timer_display = {"normal": "45m", "hard": "1 hour", "legendary": "90m"}
 
     p["last_dungeon"] = datetime.now().isoformat()
     save_player(p)
@@ -22993,7 +23080,7 @@ GUIDE_PAGES = [
         "🎱 *8Ball World  -  Combat & Raids* (4/14)\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
-        "Reply to any player's message and use /attack to fight them. Or use /attack with no target to open a live player picker and choose who to hit. Winners steal gold and EXP. Losers are defeated for 30 minutes and lose 10% EXP.\n"
+        "Reply to any player's message and use /attack to fight them. Or use /attack with no target to open a live player picker and choose who to hit. Winners steal gold and EXP. Losers are defeated for 30m and lose 10% EXP.\n"
         "\n"
         "*Battle Cards*\n"
         "When you land a hit, a battle card appears in chat with buttons for the defender:\n"
@@ -23019,7 +23106,7 @@ GUIDE_PAGES = [
         "\n"
         "*/who Icons*\n"
         "❤️ Healthy (above 50% HP)  |  🟡 Injured (25–50%)  |  🔴 Critical (below 25%)\n"
-        "💀 Defeated — out for 30 minutes, cannot be attacked\n"
+        "💀 Defeated — out for 30m, cannot be attacked\n"
         "🛡️ Invincible — immune to all damage AND cannot initiate PvP (from revival items or Priest skills)\n"
         "🔥×N Kill streak  |  🔴 WANTED — 5+ kills today  |  💰 Active bounty on this player\n"
         "\n"
@@ -23036,8 +23123,8 @@ GUIDE_PAGES = [
         "/soloraid  -  Private raid scaled to your level. Great for solo farming.\n"
         "\n"
         "*Defeat & Revival*\n"
-        "When your HP hits 0 you are defeated for 30 minutes and lose 10% EXP. Options to recover:\n"
-        "• Wait it out (30 minutes)\n"
+        "When your HP hits 0 you are defeated for 30m and lose 10% EXP. Options to recover:\n"
+        "• Wait it out (30m)\n"
         "• Use *Scroll of Revival* from your inventory (/use) — grants 5 min invincibility after\n"
         "• Ask a Priest to /heal you  -  they revive for free\n"
         "• 📿 Chalkers can also /heal themselves with no reply to self-revive\n"
@@ -23086,7 +23173,7 @@ GUIDE_PAGES = [
         "*Economy*\n"
         "/inventory — Browse your bag by category. Tap 💰 Sell buttons to sell items directly.\n"
         "/shop  -  Tabbed shop with 10 categories: 🧪 Potions, ⚔️ Weapons, 🛡️ Armor, 🔰 Shields, 💍 Accessories, 🎩 Hats, 🧤 Gloves, 👢 Boots, 🎭 Masks, 📦 Materials. Gear items show which class they're for. Guild members get a discount at guild level 7+.\n"
-        "/shoplegend  -  Legendary Craftsman's shop. Only available for 10 minutes when the rare event fires. Stocks legendary and mythic gear from all categories.\n"
+        "/shoplegend  -  Legendary Craftsman's shop. Only available for 10m when the rare event fires. Stocks legendary and mythic gear from all categories.\n"
         "\n"
         "*Set Bonuses*\n"
         "Equip matching legendary pieces to unlock set bonuses shown in /stats Gear page."
@@ -23299,7 +23386,7 @@ GUIDE_PAGES = [
         "\n"
         "*Getting Married*\n"
         "Reply to any player's message and type /marry to propose.\n"
-        "Your partner gets Accept / Decline buttons. Proposal expires in 5 minutes.\n"
+        "Your partner gets Accept / Decline buttons. Proposal expires in 5m.\n"
         "Use /marry alone to check your status — shows all spouses and dates.\n"
         "\n"
         "*Marriage Fees (per marriage)*\n"
@@ -26069,7 +26156,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 p["kill_streak"] = 0
                 asyncio.create_task(_notify_defeat(context.bot, p, "Bleed damage (you bled out)"))
                 asyncio.create_task(announce(context.bot, chat_id,
-                    f"🩸 *{p['username']}* bled out and is defeated for 30 minutes!",
+                    f"🩸 *{p['username']}* bled out and is defeated for 30m!",
                     delay=30))
                 _bleed_atk_ids = get_recent_attackers(p)
                 if _bleed_atk_ids:
@@ -26257,7 +26344,7 @@ async def greet_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_player(p)
         await send_group(update,
             f"🛍️ *{user.first_name}* greeted the merchant!\n"
-            f"*20% shop discount* for {event['duration_min']} minutes! Use /shop", delay=15)
+            f"*20% shop discount* for {event['duration_min']}m! Use /shop", delay=15)
     elif event["key"] == "shrine":
         if p:
             stat = random.choice(["STR","DEF","AGI","INT","WIS"])
@@ -27012,7 +27099,7 @@ async def dungeon_diff_callback(update: Update, context: ContextTypes.DEFAULT_TY
     rooms = room_distributions[diff].copy()
     random.shuffle(rooms)
     timers        = {"normal": 2700, "hard": 3600, "legendary": 5400}
-    timer_display = {"normal": "45 minutes", "hard": "1 hour", "legendary": "90 minutes"}
+    timer_display = {"normal": "45m", "hard": "1 hour", "legendary": "90m"}
 
     p["last_dungeon"] = datetime.now().isoformat()
     save_player(p)
