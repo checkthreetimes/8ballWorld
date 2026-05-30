@@ -8491,11 +8491,10 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             _dot_notes.append(f"{_em} *{_nm} tick!* -{_d_amt} HP ({_pct_txt})" + (f" [{_rem} left]" if _rem else " *(cleared!)*"))
     _dot_prefix = "\n".join(_dot_notes) + "\n" if _dot_notes else ""
 
-    # ── Per-turn charge burn: these expire every action, not just on heal/skill attempts
-    if safe_int(a.get("heal_blocked_turns")) > 0:
-        a["heal_blocked_turns"] -= 1
-    if safe_int(a.get("silence_turns")) > 0:
-        a["silence_turns"] -= 1
+    # ── Per-turn charge burn: decrement every time this player acts ──────────
+    for _turn_field in ("heal_blocked_turns", "silence_turns", "hex_turns", "revive_blocked_turns"):
+        if safe_int(a.get(_turn_field)) > 0:
+            a[_turn_field] -= 1
 
     # ── Charge-based stun/freeze/entangle — consume one turn, force miss ──────
     if safe_int(a.get("stun_turns")) > 0:
@@ -15274,6 +15273,13 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 p["silence_turns"] -= 1
                 save_player(p)
             await send_result("🤐 You are silenced — can't use skills!"); return
+        # Per-action charge burn on skill turns (mirrors the attack-turn burn in _execute_pvp_hit)
+        _skill_turn_changed = False
+        for _sf in ("heal_blocked_turns", "hex_turns", "revive_blocked_turns"):
+            if safe_int(p.get(_sf)) > 0:
+                p[_sf] -= 1; _skill_turn_changed = True
+        if _skill_turn_changed:
+            save_player(p)
         # Override send_result for PvP: log to battle log and update both Pokemon cards
         _pvp_pair_k = _pvp_pair_key(uid, target_uid)
         _pvp_gcid_k = _pvp_player_cards.get(target_uid, (chat_id,))[0]
