@@ -408,7 +408,7 @@ CLASS_TREE = {
             {"tier":2,"unlock":10,"name":"Shield Wall",
              "passive":"Reduce physical damage by 5 when shield is equipped.",
              "active":"Shield Wall","type":"def_buff",
-             "desc":"Negate the next hit completely (lasts 90 seconds).",
+             "desc":"Negate the next 1 incoming hit completely (1 shield charge).",
              "passive_key":"shield_wall"},
         ]
     },
@@ -687,7 +687,7 @@ CLASS_TREE = {
             {"tier":2,"unlock":10,"name":"Evasion",
              "passive":"15% chance to dodge any incoming attack.",
              "active":"Smoke Screen","type":"dodge_buff",
-             "desc":"Next attack against you automatically misses. Lasts 2 minutes.",
+             "desc":"Next attack against you automatically misses (1 incoming hit negated).",
              "passive_key":"evasion"},
             {"tier":2,"unlock":10,"name":"Nimble",
              "passive":"AGI x0.5 bonus dodge chance.",
@@ -767,7 +767,7 @@ CLASS_TREE = {
             {"tier":3,"unlock":30,"name":"Execute",
              "passive":"Attacks against targets below 25% HP deal double damage.",
              "active":"Eviscerate","type":"bleed_crit",
-             "desc":"200% damage, always crits. Survivor bleeds 10 damage every 30 seconds for 5 hits.",
+             "desc":"200% damage, always crits. Survivor bleeds for 5 hits (15% max HP/action).",
              "passive_key":"execute","mult":2.0},
         ]
     },
@@ -890,7 +890,7 @@ CLASS_TREE = {
             {"tier":2,"unlock":10,"name":"Marked for Death",
              "passive":"Targets you defeat drop +25% more gold. You earn their unclaimed daily EXP on kill.",
              "active":"Execution Order","type":"bounty",
-             "desc":"Place a 2,000g bounty on any player. Marks them (+20% dmg taken 30 min). Placer gets 25% back if someone else claims. You get +25% if you collect it yourself.",
+             "desc":"Place a 2,000g bounty on any player. Marks them (+20% dmg taken for 10 hits). Placer gets 25% back if someone else claims. You get +25% if you collect it yourself.",
              "passive_key":"marked_for_death"},
             {"tier":2,"unlock":10,"name":"Tracker",
              "passive":"Can see target cooldowns via /stats mention.",
@@ -1320,7 +1320,7 @@ CLASS_TREE = {
             {"tier":2,"unlock":10,"name":"Harmonize",
              "passive":"Guild members in chat gain +4% ATK while you are active.",
              "active":"Siren's Song","type":"stun",
-             "desc":"Target is entranced and cannot attack for 40 seconds. If already stunned, effect doubles.",
+             "desc":"30% chance to stun target for 1 turn (loses their next attack). If already stunned, adds 1 more turn.",
              "passive_key":"harmonize"},
             {"tier":2,"unlock":10,"name":"Melody",
              "passive":"Your heals and buffs grant target +2 INT for 5 minutes (stacks up to 3×).",
@@ -1387,7 +1387,7 @@ CLASS_TREE = {
             {"tier":1,"unlock":5,"name":"Shield Maiden",
              "passive":"Reduce incoming damage by 5 when above 50% HP.",
              "active":"Aegis Wall","type":"def_buff",
-             "desc":"Brace for impact: block the next 3 incoming attacks completely (lasts 90 seconds).",
+             "desc":"Block the next 3 incoming attacks completely (3 shield charges).",
              "passive_key":"shield_maiden"},
         ]
     },
@@ -1435,7 +1435,7 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Iron Bulwark",
              "passive":"Take 20% less damage from all sources. Guild members you have recently defended gain +5% DEF.",
              "active":"Vanguard's Presence","type":"intercept_aoe",
-             "desc":"For 2 minutes: intercept up to 3 attacks aimed at guild members. Each intercepted hit: attacker takes DEF x2 back.",
+             "desc":"DEF×2 damage + gain 2 ward charges (each reduces an incoming hit by 40%). While ward is active, intercepted attackers take DEF×2 back.",
              "passive_key":"iron_bulwark"},
         ]
     },
@@ -1627,7 +1627,7 @@ CLASS_TREE = {
             {"tier":3,"unlock":30,"name":"Fog of War",
              "passive":"Enemies who miss you have their ATK reduced by 12% for 1 minute.",
              "active":"Mist Form","type":"vanish",
-             "desc":"Become untargetable for 3 incoming hits. During Mist Form: regen 5 HP per 10 seconds.",
+             "desc":"Become untargetable for 3 incoming hits. No one can /attack or /skill you while hidden.",
              "passive_key":"fog_of_war"},
         ]
     },
@@ -1696,6 +1696,22 @@ LINE_ARCHETYPE = {
     "enchantress":    "Enchantress",
     "valkyrie":       "Valkyrie",
     "phantom_dancer": "Phantom Dancer",
+}
+
+# Weapon type → path identifier (A = first/light path, B = second/heavy path)
+_WEAPON_TYPE_PATH = {
+    "sword_1h": "A", "sword_2h": "B",
+    "wand":     "A", "staff":    "B",
+    "dagger":   "A", "throwing_star": "B",
+    "bow":      "A", "crossbow": "B",
+    "rosary":   "A", "cross":    "B",
+}
+# Class line → display emoji (mirrors _CLASS_EMOJIS but available early)
+_LINE_EMOJI = {
+    "warrior": "⚔️", "mage": "🔮", "thief": "🔪",
+    "archer":  "🏹", "priest": "📿",
+    "botanist": "🌸", "enchantress": "💜",
+    "valkyrie": "⚡", "phantom_dancer": "🌀",
 }
 
 # Priest classes that can revive for free
@@ -2918,7 +2934,7 @@ ENHANCE_RATES = {1:1.00, 2:0.95, 3:0.90, 4:0.85, 5:0.75,
 ENCHANT_EFFECTS = {
     "weapon": [
         {"id":"lifesteal",    "desc":"Each hit restores 15% of damage as HP", "type":"lifesteal_flat","val":3},
-        {"id":"flaming",      "desc":"10% chance to burn on hit (5 dmg/20s for 1min)","type":"burn_proc","val":5},
+        {"id":"flaming",      "desc":"10% chance to burn on hit (2 stacks, 10% max HP/action)","type":"burn_proc","val":5},
         {"id":"keen",         "desc":"+8% crit chance",                 "type":"crit_bonus","val":0.08},
         {"id":"heavy",        "desc":"+5 flat damage per hit",          "type":"flat_dmg","val":5},
         {"id":"vampiric",     "desc":"Kills restore 15 HP",             "type":"kill_heal","val":15},
@@ -2962,9 +2978,14 @@ def _build_gear_shop_tab(pool, seed_key):
         if "atk" in data:   desc = f"+{data['atk']} ATK"
         elif "def" in data: desc = f"+{data['def']} DEF"
         else:               desc = data.get("desc","")[:45]
-        item_line = data.get("line") or data.get("class")
+        item_line = data.get("line") or data.get("class", "")
+        wtype = data.get("type", "")
         if item_line and item_line in LINE_ARCHETYPE:
-            desc = f"{desc} ({LINE_ARCHETYPE[item_line]})"
+            path = _WEAPON_TYPE_PATH.get(wtype, "")
+            emoji = _LINE_EMOJI.get(item_line, "")
+            arch  = LINE_ARCHETYPE[item_line]
+            tag   = f"{emoji} {arch}{(' (' + path + ')') if path else ''}".strip()
+            desc  = f"{desc} — {tag}"
         elif ("def" in data or "atk" in data) and not item_line:
             desc = f"{desc} (All Classes)"
         result.append({"item":name,"price":price,"desc":desc,"rarity":rarity})
@@ -2986,9 +3007,14 @@ def _build_legend_shop_tab():
         if "atk" in data:   desc = f"+{data['atk']} ATK"
         elif "def" in data: desc = f"+{data['def']} DEF"
         else:               desc = data.get("desc","")[:45]
-        item_line = data.get("line") or data.get("class")
+        item_line = data.get("line") or data.get("class", "")
+        wtype = data.get("type", "")
         if item_line and item_line in LINE_ARCHETYPE:
-            desc = f"{desc} ({LINE_ARCHETYPE[item_line]})"
+            path = _WEAPON_TYPE_PATH.get(wtype, "")
+            emoji = _LINE_EMOJI.get(item_line, "")
+            arch  = LINE_ARCHETYPE[item_line]
+            tag   = f"{emoji} {arch}{(' (' + path + ')') if path else ''}".strip()
+            desc  = f"{desc} — {tag}"
         elif ("def" in data or "atk" in data) and not item_line:
             desc = f"{desc} (All Classes)"
         result.append({"item":name,"price":price,"desc":desc,"rarity":rarity})
@@ -3616,8 +3642,16 @@ def _enc_process_skill(enc, p, sk):
 
     # ── Pure defence/buff skills (no damage) ─────────────────────────────────
     if stype == "def_buff":
-        enc["p_guarding"] = True
-        return f"🛡️ *{sk_name}*! Bracing! (40% damage reduction next hit)", 0, False
+        sk_active = sk.get("active", sk.get("name", ""))
+        if sk_active == "Aegis Wall":
+            enc["enc_shield_charges"] = enc.get("enc_shield_charges", 0) + 3
+            return "🛡️ *Aegis Wall*! 3 shield charges — next 3 hits completely negated!", 0, False
+        elif sk_active == "Shield Wall":
+            enc["enc_shield_charges"] = enc.get("enc_shield_charges", 0) + 1
+            return "🛡️ *Shield Wall*! Shield active — next hit completely negated!", 0, False
+        else:
+            enc["p_guard_hits"] = enc.get("p_guard_hits", 0) + 3
+            return f"🛡️ *{sk_name}*! +30 flat damage reduction for 3 hits!", 0, False
     if stype in ("self_atk_buff",):
         ps   = get_stat(p, get_primary_stat(p))
         heal = max(1, round(ps * 15))
@@ -3891,8 +3925,20 @@ def _enc_npc_attack(enc, p):
         ls = int(dmg * 0.3)
         enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + ls)
         extra = f" (+{ls} HP drained)"
-    # Guard reduction
-    if enc.pop("p_guarding", False):
+    # Shield charge: full negate (Shield Wall / Aegis Wall)
+    if enc.get("enc_shield_charges", 0) > 0:
+        enc["enc_shield_charges"] -= 1
+        rem = enc["enc_shield_charges"]
+        extra += " 🛡️ *Shield negated the hit!*" + (f" ({rem} left)" if rem else " (shield broken!)")
+        dmg = 0
+    # Guard: flat reduction per hit (Brace)
+    if enc.get("p_guard_hits", 0) > 0:
+        enc["p_guard_hits"] -= 1
+        if enc["p_guard_hits"] == 0:
+            enc.pop("p_guard_hits", None)
+        dmg = max(0, dmg - 30)
+        extra += " 🛡️ Brace reduced damage by 30!"
+    elif enc.pop("p_guarding", False):
         dmg = max(1, int(dmg * 0.60))
         extra += " 🛡️ Guard reduced damage!"
     enc["p_hp"] = max(0, enc["p_hp"] - dmg)
@@ -4972,6 +5018,18 @@ _GEAR_LINE_MAP = {
     "phantom_dancer": "thief",
 }
 
+def _weapon_class_tag(item_name):
+    """Return a display tag like '⚔️ Warrior (A)' for a weapon, or '' for non-weapons."""
+    w = WEAPONS.get(item_name)
+    if not w: return ""
+    line  = w.get("line") or w.get("class", "")
+    wtype = w.get("type", "")
+    emoji = _LINE_EMOJI.get(line, "")
+    arch  = LINE_ARCHETYPE.get(line, line.capitalize())
+    path  = _WEAPON_TYPE_PATH.get(wtype, "")
+    return f"{emoji} {arch}{(' (' + path + ')') if path else ''}".strip()
+
+
 def can_equip_weapon(p, weapon_name):
     w = WEAPONS.get(weapon_name)
     if not w: return False, "Unknown weapon."
@@ -4986,10 +5044,10 @@ def can_equip_weapon(p, weapon_name):
     weapon_type = w.get("type")
     allowed = cls_data.get("weapon_types", [])
     if weapon_type not in allowed:
-        path = p.get("class_path","")
+        nice = " or ".join(t.replace("_", " ") for t in allowed)
         return False, (f"Your current class ({cls_data['name']}) cannot use "
-                       f"{weapon_type} weapons. "
-                       f"{'Path A uses one-handed weapons.' if path == 'A' else 'Path B uses two-handed weapons.'}")
+                       f"{weapon_type.replace('_', ' ')} weapons. "
+                       f"This class uses: {nice}.")
     return True, ""
 
 def can_equip_armor(p, armor_name):
@@ -5560,15 +5618,16 @@ async def _notify_defeat(bot, p, cause_str):
         pass
 
 async def _notify_attack(bot, victim, attacker_name, dmg):
-    """DM the victim when attacked but not defeated."""
+    """DM the victim when attacked but not defeated. Auto-deletes after 5 minutes."""
     try:
         hp_pct = round(victim["hp"] / max(1, victim.get("max_hp", victim["hp"])) * 100)
-        await bot.send_message(
+        msg = await bot.send_message(
             chat_id=victim["user_id"],
             text=f"⚠️ *{attacker_name}* attacked you for *{dmg} damage!*\n"
                  f"❤️ HP: *{victim['hp']}/{victim.get('max_hp', victim['hp'])}* ({hp_pct}%)\n"
                  f"_Respond in the group chat!_",
             parse_mode="Markdown")
+        asyncio.create_task(_auto_delete(bot, victim["user_id"], msg.message_id, 300))
     except Exception:
         pass
 
@@ -11628,8 +11687,10 @@ def _build_equip_page_markup(p, uid, page, page_size=5):
             enh_str = f" +{enh}" if enh else ""
             stat_val = d_it.get("atk") or d_it.get("def", 0)
             stat_key = "ATK" if "atk" in d_it else "DEF"
+            wtag = _weapon_class_tag(it)
+            tag_str = f" [{wtag}]" if wtag else ""
             all_btns.append(InlineKeyboardButton(
-                f"{slot_emoji} [{slot_label}] {rarity}{it}{enh_str} (+{stat_val} {stat_key})",
+                f"{slot_emoji} [{slot_label}] {rarity}{it}{enh_str} (+{stat_val} {stat_key}){tag_str}",
                 callback_data=f"eqp_{uid}_{it}"))
     if not all_btns:
         return False, InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]])
@@ -15165,6 +15226,37 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             out.append(f"✨ *Blessing!* {tp['username']} takes 15% less damage for 1 hour.")
             save_player(p); save_player(tp)
             await send_result("\n".join(out)); return
+        # ── Caster self-buff skills (no damage to target) ────────────────────
+        if stype == "def_buff":
+            sk_active = sk.get("active", sk.get("name", ""))
+            if sk_active == "Aegis Wall":
+                charges = 3
+            elif sk_active == "Shield Wall":
+                charges = 1
+            else:
+                charges = 3
+            add_charges(p, "shield_charges", charges)
+            noun = "charge" if charges == 1 else "charges"
+            out.append(f"🛡️ *{sk['name']}!* {charges} shield {noun} — "
+                       f"next {'hit' if charges == 1 else str(charges) + ' hits'} completely negated!")
+            save_player(p)
+            await send_result("\n".join(out)); return
+        if stype == "dodge_buff":
+            add_charges(p, "vanish_turns", 1)
+            out.append(f"💨 *{sk['name']}!* Next incoming attack automatically misses!")
+            save_player(p)
+            await send_result("\n".join(out)); return
+        if stype == "vanish":
+            add_charges(p, "vanish_turns", 3)
+            out.append(f"👻 *{sk['name']}!* {p['username']} is untargetable for 3 incoming hits!")
+            save_player(p)
+            await send_result("\n".join(out)); return
+        if stype == "miss_debuff":
+            add_charges(d, "distract_turns", 2)
+            out.append(f"😵 *{sk['name']}!* *Distracted ×2!* {d['username']} has 30% miss chance next 2 attacks.")
+            save_player(p); save_player(d)
+            await send_result("\n".join(out)); return
+        # ── Damage + effect skills ────────────────────────────────────────────
         dmg = round(base * sk.get("mult", 1.0))
         if stype == "multihit":
             hits = sk.get("hits", 2)
@@ -15179,6 +15271,57 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         elif stype == "pierce_all":
             dmg = round(get_stat(p, "STR") * sk.get("str_mult", 2))
             out.append("🏹 *Piercing Shot!*")
+        elif stype == "stun":
+            dmg = round(base * 1.0)
+            already_stunned = safe_int(d.get("stun_turns")) > 0 or is_stunned(d)
+            if already_stunned or random.random() < 0.30:
+                add_charges(d, "stun_turns", 1)
+                out.append(f"⚡ *Stunned!* {d['username']} loses their next attack!")
+            else:
+                out.append(f"⚡ *{sk['name']}!* (Stun missed)")
+        elif stype == "bleed_crit":
+            dmg = round(base * sk.get("mult", 2.0) * 2)
+            add_charges(d, "bleed_stacks", 5)
+            d["bleed_pct"] = 15
+            out.append(f"🩸 *{sk['name']}!* 200% damage! *Bleed ×5* — {d['username']} loses 15% max HP next 5 attacks!")
+        elif stype == "aoe_bleed_multihit":
+            hits = sk.get("hits", 4)
+            dmg = sum(round(base * sk.get("mult", 0.6)) for _ in range(hits))
+            add_charges(d, "bleed_stacks", hits)
+            d["bleed_pct"] = 15
+            out.append(f"🌀 *{sk['name']}!* {hits}-hit combo ({dmg} total)! *Bleed ×{hits}* — {d['username']} loses 15% max HP per action!")
+        elif stype == "intercept_aoe":
+            def_v = get_stat(p, "DEF")
+            dmg = round(def_v * 2)
+            add_charges(p, "ward_charges", 2)
+            out.append(f"🛡️ *{sk['name']}!* DEF×2 = {dmg} damage! *Ward ×2* — next 2 incoming hits -40%!")
+        elif stype == "bounty":
+            dmg = round(base * 0.6)
+            placed = False
+            try:
+                _bconn = sqlite3.connect(DB_PATH); _bc2 = _bconn.cursor()
+                _ac = _bc2.execute(
+                    "SELECT COUNT(*) FROM bounties WHERE placer_id=? AND claimed_by IS NULL AND expires_at > ?",
+                    (p["user_id"], datetime.now().isoformat())).fetchone()[0]
+                if _ac < 2:
+                    _bc2.execute("DELETE FROM bounties WHERE target_id=? AND placer_id=? AND claimed_by IS NULL",
+                                 (d["user_id"], p["user_id"]))
+                    _bc2.execute("INSERT INTO bounties (placer_id,target_id,reward,expires_at) VALUES (?,?,?,?)",
+                                 (p["user_id"], d["user_id"], 2000, "2099-12-31T23:59:59"))
+                    _bconn.commit(); placed = True
+                _bconn.close()
+            except Exception: pass
+            if placed:
+                add_charges(d, "marked_hits", 10)
+                out.append(f"🎯 *Execution Order!* A *2,000g bounty* placed on *{d['username']}*!\n"
+                           f"🎯 *Marked ×10!* {d['username']} takes +20% damage next 10 hits!")
+                asyncio.create_task(context.bot.send_message(
+                    chat_id=d["user_id"],
+                    text=f"🎯 *{p['username']}* placed a *2,000g bounty* on you and marked you!\n"
+                         "You take +20% damage for your next 10 incoming hits.",
+                    parse_mode="Markdown"))
+            else:
+                out.append(f"🎯 *Execution Order!* You already have 2 active contracts — collect or wait.")
         if check_crit(p):
             dmg = apply_crit(p, dmg); out.append("💥 *CRITICAL HIT!*")
         # Pet defensive ability for skill damage
@@ -15576,9 +15719,12 @@ async def _execute_skill(update, context, p, sk):
         await send_group(update, "\n".join(lines), delay=15); return
     elif stype == "stun":
         dmg = round(base * 1.0)
-        if random.random() < 0.30:
+        already_stunned = safe_int(d.get("stun_turns")) > 0 or is_stunned(d)
+        if already_stunned or random.random() < 0.30:
             add_charges(d, "stun_turns", 1)
             lines.append(f"⚡ *Stunned!* {d['username']} will lose their next attack!")
+        else:
+            lines.append(f"⚡ *{sk['name']}!* (Stun missed)")
     elif stype == "miss_debuff":
         add_charges(d, "distract_turns", 2)
         lines.append(f"😵 *Distracted ×2!* {d['username']} has 30% miss chance next 2 attacks.")
@@ -16346,7 +16492,9 @@ def _build_trade_menu(seller_uid, buyer_uid, inv, category="all", page=0):
         buttons.append([InlineKeyboardButton("(nothing here)", callback_data="noop")])
     else:
         for item, count in page_items:
-            label = f"📦 {item}{' x'+str(count) if count > 1 else ''}"
+            wtag = _weapon_class_tag(item)
+            tag_str = f" [{wtag}]" if wtag else ""
+            label = f"📦 {item}{' x'+str(count) if count > 1 else ''}{tag_str}"
             buttons.append([InlineKeyboardButton(label,
                 callback_data=f"trdi_{seller_uid}_{buyer_uid}_{item}")])
 
@@ -16472,8 +16620,10 @@ async def trade_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if row: buttons.append(row)
     buttons.append([InlineKeyboardButton("◀ Back", callback_data=f"trdback_{seller_uid}_{buyer_uid}")])
     markup = InlineKeyboardMarkup(buttons)
+    wtag = _weapon_class_tag(item)
+    tag_line = f"\n_{wtag}_" if wtag else ""
     await query.edit_message_text(
-        f"📦 *Trade: {item}*\n\nChoose a price to offer to the buyer:",
+        f"📦 *Trade: {item}*{tag_line}\n\nChoose a price to offer to the buyer:",
         parse_mode="Markdown", reply_markup=markup)
 
 
@@ -16510,16 +16660,18 @@ async def trade_price_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         "expires": (datetime.now() + timedelta(minutes=30)).isoformat(),
     }
     price_str = "FREE" if price == 0 else f"{price:,}g"
+    wtag = _weapon_class_tag(item)
+    tag_str = f" ({wtag})" if wtag else ""
     await query.edit_message_text(
         f"📦 *Trade Offer Posted!*\n\n"
-        f"Item: *{item}*\nPrice: *{price_str}*\nFor: {buyer_name}\n\n"
+        f"Item: *{item}*{tag_str}\nPrice: *{price_str}*\nFor: {buyer_name}\n\n"
         f"_{buyer_name} can type /accept to complete the trade. Expires in 30 min._",
         parse_mode="Markdown")
     try:
         await context.bot.send_message(
             chat_id=buyer_uid,
             text=f"📦 *{p.get('username','Someone')}* wants to trade!\n"
-                 f"Item: *{item}* — Price: *{price_str}*\n"
+                 f"Item: *{item}*{tag_str} — Price: *{price_str}*\n"
                  f"Type /accept to claim it (30 min).",
             parse_mode="Markdown")
     except Exception: pass
