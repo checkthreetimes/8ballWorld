@@ -9967,14 +9967,6 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_defeated(p) and p["hp"] > 0:
         p["defeated_until"] = None; save_player(p)
 
-    sd_check = safe_stats(p)
-    if sd_check.get("DEF", 0) > 0:
-        refund_def = sd_check["DEF"]
-        sd_check["DEF"] = 0
-        p["stats"] = json.dumps(sd_check)
-        p["stat_points"] = safe_int(p.get("stat_points")) + refund_def
-        save_player(p)
-
     if not viewing_other:
         _stripped = _unequip_class_gear(p)
         if _stripped:
@@ -25082,20 +25074,23 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def _do_resetstats(p):
     """Execute the stat reset and return (new_stats, refunded)."""
     sd = safe_stats(p)
-    base_defaults = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
+    # Only the 6 allocatable stats are refunded — DEF is not allocatable (comes from gear/cores only)
+    alloc_defaults = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5}
     # Get actual class bonuses so we don't count them as user-allocated points
     class_bonuses = _calc_applied_class_bonuses(p)
     total_allocated = 0
-    for stat, base in base_defaults.items():
+    for stat, base in alloc_defaults.items():
         bonus = class_bonuses.get(stat, 0)
         current = sd.get(stat, base)
         user_pts = current - base - bonus
         if user_pts > 0:
             total_allocated += user_pts
-    new_stats = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
+    # Reset only allocatable stats; preserve DEF (Monster Core Earth bonus)
+    core_def = sd.get("DEF", 0)
+    new_stats = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":core_def}
     for stat, bonus in class_bonuses.items():
-        if stat in new_stats:
-            new_stats[stat] = new_stats.get(stat, 5 if stat != "DEF" else 0) + bonus
+        if stat in new_stats and stat != "DEF":
+            new_stats[stat] = new_stats.get(stat, 5) + bonus
     refunded = total_allocated + safe_int(p.get("stat_points"))
     p["stats"] = json.dumps(new_stats)
     p["stat_points"] = refunded
@@ -25641,7 +25636,7 @@ async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     def _inspect(p):
         class_bonuses = _calc_applied_class_bonuses(p)
         sd = safe_stats(p)
-        base = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5,"DEF":0}
+        base = {"STR":5,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5}
         allocated = sum(max(0, sd.get(s, b) - b - class_bonuses.get(s, 0)) for s, b in base.items())
         pool      = safe_int(p.get("stat_points"))
         max_pts   = _calc_max_stat_points(p)
