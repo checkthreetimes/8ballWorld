@@ -5418,8 +5418,6 @@ def calc_attack_damage(attacker, weather=None):
             _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
             if _hp_pct < 0.25: buff_mod += 0.50
         # Mage offensive passives
-        if pk == "spell_surge":
-            if random.random() < 0.20: buff_mod += 1.0   # 20% chance double damage
         if "arcane_pulse" in active_pks:  raw += get_stat(attacker, "INT") * 0.10
         if "arcane_mastery" in active_pks:
             attacker["arcane_mastery_count"] = safe_int(attacker.get("arcane_mastery_count")) + 1
@@ -8406,6 +8404,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         if lvl_msgs: action += "\n\n" + "\n".join(lvl_msgs)
         return action, lvl_msgs, "defeat" if d["hp"] <= 0 else "hit"
 
+    # Grant mark_first_hit bonus when switching to a new target
+    if "marked" in get_all_passive_keys(a):
+        if safe_int(a.get("mark_first_hit_target")) != du_id:
+            a["mark_first_hit"] = 1
+            a["mark_first_hit_target"] = du_id
+
     # Miss check
     if check_miss(a, d):
         d["dodges"] = d.get("dodges", 0) + 1
@@ -8418,6 +8422,10 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
                 d["passive_cooldowns"] = json.dumps(cds_d)
             if pk_d_miss == "deaths_shadow":
                 d["hp"] = min(d["max_hp"], d["hp"] + 10)
+        if "flourish" in get_all_passive_keys(d):
+            d["flourish_stacks"] = min(3, safe_int(d.get("flourish_stacks", 0)) + 1)
+        if "harmonize" in get_all_passive_keys(a):
+            a["harmony_stacks"] = 0
         save_player(d); save_player(a)
         return f"🌀 *{a['username']}* swings at *{d['username']}*  -  *MISS!*", [], "miss"
 
@@ -8486,10 +8494,6 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         if rev_exp and datetime.now() < datetime.fromisoformat(rev_exp):
             dmg = round(dmg * 1.15); revenge_bonus_note = " 🔥 *Revenge!* +15% dmg"
             a["revenge_target"] = None; a["revenge_expires"] = None
-
-    if is_distracted(a) and random.random() < 0.30:
-        save_player(a); save_player(d)
-        return f"😵 *{a['username']}* was *Distracted* and missed *{d['username']}*!", [], "miss"
 
     cls_d = get_player_class(d)
     if cls_d:
@@ -8578,6 +8582,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     d_hp_after = max(0, d["hp"] - dmg_after_def)
     d["hp"] = d_hp_after
+    if "flourish" in get_all_passive_keys(d):
+        d["flourish_stacks"] = 0
     healed = apply_lifesteal(a, dmg_after_def)
 
     # Burn proc from weapon enchant
@@ -8622,6 +8628,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             reflect_dmg = d.pop("mana_overload_reflect")
             a["hp"] = max(1, a["hp"] - reflect_dmg)
             extra_notes.append(f"⚡ *Mana Overload!* {d['username']} reflects *{reflect_dmg} dmg*!")
+        if "harmonize" in get_all_passive_keys(a):
+            a["harmony_stacks"] = min(3, safe_int(a.get("harmony_stacks", 0)) + 1)
 
     update_recent_attackers(d, au_id)
     proc_fired, proc_msg, proc_extra = calc_proc_effect(a, d, dmg_after_def)
@@ -15252,9 +15260,9 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_player(p)
             await send_result("\n".join(out)); return
         if stype == "miss_debuff":
-            add_charges(d, "distract_turns", 2)
-            out.append(f"😵 *{sk['name']}!* *Distracted ×2!* {d['username']} has 30% miss chance next 2 attacks.")
-            save_player(p); save_player(d)
+            add_charges(tp, "distract_turns", 2)
+            out.append(f"😵 *{sk['name']}!* *Distracted ×2!* {tp['username']} has 30% miss chance next 2 attacks.")
+            save_player(p); save_player(tp)
             await send_result("\n".join(out)); return
         # ── Damage + effect skills ────────────────────────────────────────────
         dmg = round(base * sk.get("mult", 1.0))
@@ -15273,23 +15281,23 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             out.append("🏹 *Piercing Shot!*")
         elif stype == "stun":
             dmg = round(base * 1.0)
-            already_stunned = safe_int(d.get("stun_turns")) > 0 or is_stunned(d)
+            already_stunned = safe_int(tp.get("stun_turns")) > 0 or is_stunned(tp)
             if already_stunned or random.random() < 0.30:
-                add_charges(d, "stun_turns", 1)
-                out.append(f"⚡ *Stunned!* {d['username']} loses their next attack!")
+                add_charges(tp, "stun_turns", 1)
+                out.append(f"⚡ *Stunned!* {tp['username']} loses their next attack!")
             else:
                 out.append(f"⚡ *{sk['name']}!* (Stun missed)")
         elif stype == "bleed_crit":
             dmg = round(base * sk.get("mult", 2.0) * 2)
-            add_charges(d, "bleed_stacks", 5)
-            d["bleed_pct"] = 15
-            out.append(f"🩸 *{sk['name']}!* 200% damage! *Bleed ×5* — {d['username']} loses 15% max HP next 5 attacks!")
+            add_charges(tp, "bleed_stacks", 5)
+            tp["bleed_pct"] = 15
+            out.append(f"🩸 *{sk['name']}!* 200% damage! *Bleed ×5* — {tp['username']} loses 15% max HP next 5 attacks!")
         elif stype == "aoe_bleed_multihit":
             hits = sk.get("hits", 4)
             dmg = sum(round(base * sk.get("mult", 0.6)) for _ in range(hits))
-            add_charges(d, "bleed_stacks", hits)
-            d["bleed_pct"] = 15
-            out.append(f"🌀 *{sk['name']}!* {hits}-hit combo ({dmg} total)! *Bleed ×{hits}* — {d['username']} loses 15% max HP per action!")
+            add_charges(tp, "bleed_stacks", hits)
+            tp["bleed_pct"] = 15
+            out.append(f"🌀 *{sk['name']}!* {hits}-hit combo ({dmg} total)! *Bleed ×{hits}* — {tp['username']} loses 15% max HP per action!")
         elif stype == "intercept_aoe":
             def_v = get_stat(p, "DEF")
             dmg = round(def_v * 2)
@@ -15305,23 +15313,261 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     (p["user_id"], datetime.now().isoformat())).fetchone()[0]
                 if _ac < 2:
                     _bc2.execute("DELETE FROM bounties WHERE target_id=? AND placer_id=? AND claimed_by IS NULL",
-                                 (d["user_id"], p["user_id"]))
+                                 (tp["user_id"], p["user_id"]))
                     _bc2.execute("INSERT INTO bounties (placer_id,target_id,reward,expires_at) VALUES (?,?,?,?)",
-                                 (p["user_id"], d["user_id"], 2000, "2099-12-31T23:59:59"))
+                                 (p["user_id"], tp["user_id"], 2000, "2099-12-31T23:59:59"))
                     _bconn.commit(); placed = True
                 _bconn.close()
             except Exception: pass
             if placed:
-                add_charges(d, "marked_hits", 10)
-                out.append(f"🎯 *Execution Order!* A *2,000g bounty* placed on *{d['username']}*!\n"
-                           f"🎯 *Marked ×10!* {d['username']} takes +20% damage next 10 hits!")
+                add_charges(tp, "marked_hits", 10)
+                out.append(f"🎯 *Execution Order!* A *2,000g bounty* placed on *{tp['username']}*!\n"
+                           f"🎯 *Marked ×10!* {tp['username']} takes +20% damage next 10 hits!")
                 asyncio.create_task(context.bot.send_message(
-                    chat_id=d["user_id"],
+                    chat_id=tp["user_id"],
                     text=f"🎯 *{p['username']}* placed a *2,000g bounty* on you and marked you!\n"
                          "You take +20% damage for your next 10 incoming hits.",
                     parse_mode="Markdown"))
             else:
                 out.append(f"🎯 *Execution Order!* You already have 2 active contracts — collect or wait.")
+        elif stype == "silence":
+            add_charges(tp, "silence_turns", 2)
+            dmg = round(base * 1.5)
+            out.append(f"🤐 *{sk['name']}!* *Silenced ×2!* {tp['username']} cannot use skills next 2 times!")
+        elif stype == "holy_dmg":
+            wis = get_stat(p, "WIS")
+            dmg = wis * 3
+            recent_kills = tp.get("recent_kills", 0)
+            if recent_kills: dmg *= 2; out.append("✨ *Holy!* Double damage vs a recent killer!")
+            out.append(f"✨ *{sk['name']}!* WIS×3 = {dmg} holy damage!")
+        elif stype == "strip_debuff":
+            buffs_stripped = 0
+            for _bf in ["blessed_until", "holy_field_until"]:
+                if tp.get(_bf): tp[_bf] = None; buffs_stripped += 1
+            for _bfc in ["blessed_turns", "ward_charges"]:
+                if safe_int(tp.get(_bfc)) > 0:
+                    tp[_bfc] = 0; buffs_stripped += 1
+            wis = get_stat(p, "WIS")
+            dmg = wis * 2 * max(1, buffs_stripped)
+            add_charges(tp, "heal_blocked_turns", 5)
+            out.append(f"🔥 *{sk['name']}!* Stripped {buffs_stripped} buff(s) — Healing blocked ×5!")
+        elif stype == "condemn":
+            wis = get_stat(p, "WIS")
+            dmg = wis * 8
+            for _bf in ["blessed_until", "holy_field_until"]:
+                tp[_bf] = None
+            tp["blessed_turns"] = 0; tp["ward_charges"] = 0
+            add_charges(tp, "hex_turns", 5)
+            add_charges(tp, "weakened_hits", 5)
+            out.append(f"☠️ *{sk['name']}!* WIS×8 = {dmg}! All buffs stripped — Hexed ×5, Weakened ×5!")
+        elif stype == "void_nuke":
+            dmg = tp["hp"] // 2
+            add_charges(tp, "heal_blocked_turns", 5)
+            out.append(f"🌑 *{sk['name']}!* {tp['username']} loses *50% HP* ({dmg} dmg) — Healing blocked ×5!")
+        elif stype == "freeze_nuke":
+            int_v = get_stat(p, "INT")
+            dmg = int_v * 6
+            add_charges(tp, "freeze_turns", 2)
+            out.append(f"🧊 *{sk['name']}!* INT×6 = {dmg}! {tp['username']} frozen for 2 turns!")
+        elif stype == "drain":
+            steal = round(tp["hp"] * sk.get("drain_pct", 0.30))
+            dmg = round(base * sk.get("mult", 1.0))
+            p["hp"] = min(calc_max_hp(p), p["hp"] + steal)
+            out.append(f"🩸 *{sk['name']}!* Drained *{steal} HP* from {tp['username']}!")
+        elif stype == "drain_kill":
+            steal = round(tp["hp"] * sk.get("drain_pct", 0.40))
+            dmg = round(base * sk.get("mult", 1.5))
+            p["hp"] = min(calc_max_hp(p), p["hp"] + steal)
+            out.append(f"🩸 *{sk['name']}!* Stole *{steal} HP* from {tp['username']}!")
+        elif stype == "debuff":
+            add_charges(tp, "hex_turns", 3)
+            dmg = round(base * 0.8)
+            out.append(f"💀 *{sk['name']}!* *Hexed ×3!* {tp['username']} deals 25% less damage next 3 attacks!")
+        elif stype == "def_reflect":
+            set_status(p, "def_reflect_until", 120)
+            out.append(f"🌿 *{sk['name']}!* {p['username']}: 40% dmg reduction + reflect active 2 minutes!")
+            save_player(p)
+            await send_result("\n".join(out)); return
+        elif stype == "charged_shot":
+            p["charging_killshot"] = 1
+            out.append(f"🎯 *{sk['name']}!* Charging... Next /attack fires *Killshot*!")
+            save_player(p)
+            await send_result("\n".join(out)); return
+        elif stype == "self_atk_buff":
+            set_status(p, "blessed_until", 120)
+            out.append(f"⚔️ *{sk['name']}!* {p['username']} gains *+30% ATK and +15% DEF* for 2 minutes!")
+            save_player(p)
+            await send_result("\n".join(out)); return
+        elif stype == "root":
+            dmg = calc_defense(tp, round(base * sk.get("mult", 0.5)))
+            add_charges(tp, "entangle_turns", 2)
+            out.append(f"🌿 *{sk['name']}!* {dmg} damage — *Entangled ×2!* {tp['username']} cannot attack for 2 turns.")
+            tp["hp"] = max(0, tp["hp"] - dmg)
+            if tp["hp"] <= 0:
+                apply_pvp_death(tp, p["username"], sk["name"], killer_id=uid)
+                p["wins"] = p.get("wins", 0) + 1
+                out.append(f"💀 *{tp['username']}* defeated!")
+            save_player(p); save_player(tp)
+            await send_result("\n".join(out)); return
+        elif stype == "aoe_heal_dmg":
+            wis = get_stat(p, "WIS")
+            heal = round(wis * sk.get("mult", 50))
+            p["hp"] = min(calc_max_hp(p), p["hp"] + heal)
+            out.append(f"🌸 *{sk['name']}!* Healed self *+{heal} HP*! ({p['hp']}/{p['max_hp']})")
+            if is_poisoned(tp):
+                dmg = round(wis * 6)
+                out.append("☠️ Poisoned target takes WIS×6 burst!")
+            else:
+                dmg = round(wis * 3)
+        elif stype == "aoe_poison_strong":
+            wis = get_stat(p, "WIS")
+            dmg = round(wis * 1.5)
+            add_charges(tp, "poison_stacks", 8)
+            tp["poison_pct"] = 30
+            out.append(f"☠️ *{sk['name']}!* Poison ×8 on {tp['username']} — 30% max HP/action!")
+        elif stype == "nature_nuke":
+            wis = get_stat(p, "WIS")
+            dmg = round(wis * 7)
+            add_charges(tp, "poison_stacks", 6)
+            tp["poison_pct"] = 30
+            add_charges(tp, "heal_blocked_turns", 5)
+            out.append(f"🌿 *{sk['name']}!* WIS×7 = {dmg}! Poison ×6 (30%/action) + Healing blocked ×5!")
+        elif stype == "drain_debuff":
+            steal = round(tp["hp"] * 0.25)
+            p["hp"] = min(calc_max_hp(p), p["hp"] + steal)
+            dmg = steal
+            add_charges(tp, "hex_turns", 4)
+            add_charges(tp, "weakened_hits", 4)
+            out.append(f"💀 *{sk['name']}!* Drained *{steal} HP* from {tp['username']}! Hexed ×4 + Weakened ×4!")
+        elif stype == "curse_chain":
+            int_v = get_stat(p, "INT")
+            dmg = round(int_v * 1.5)
+            add_charges(tp, "hex_turns", 5)
+            add_charges(tp, "weakened_hits", 5)
+            add_charges(tp, "exposed_hits", 5)
+            out.append(f"💜 *{sk['name']}!* {tp['username']}: Hexed ×5 + Weakened ×5 + Exposed ×5!")
+        elif stype == "mass_debuff":
+            int_v = get_stat(p, "INT")
+            dmg = round(int_v * 2.5)
+            add_charges(tp, "hex_turns", 8)
+            add_charges(tp, "weakened_hits", 8)
+            add_charges(tp, "stun_turns", 1)
+            out.append(f"💜 *{sk['name']}!* {tp['username']}: Hexed ×8, Weakened ×8, Stunned ×1!")
+        elif stype == "stun_def_dmg":
+            str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
+            dmg = round((str_v + def_v) * sk.get("mult", 1.0))
+            if random.random() < 0.40:
+                add_charges(tp, "stun_turns", 1)
+                out.append(f"🛡️ *{sk['name']}!* (STR+DEF) = {dmg} damage! {tp['username']} *Stunned* next attack!")
+            else:
+                out.append(f"🛡️ *{sk['name']}!* (STR+DEF) = {dmg} damage!")
+        elif stype == "holy_warrior_nuke":
+            str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
+            dmg = round(str_v * 4 + def_v * 4)
+            add_charges(tp, "stun_turns", 2)
+            out.append(f"⚡ *{sk['name']}!* STR×4+DEF×4 = {dmg} holy damage! {tp['username']} Stunned ×2!")
+        elif stype == "godlike_lightning":
+            str_v = get_stat(p, "STR")
+            dmg = round(str_v * 8)
+            add_charges(tp, "hex_turns", 3)
+            add_charges(tp, "weakened_hits", 3)
+            out.append(f"⚡ *{sk['name']}!* STR×8 = {dmg} divine lightning! Hexed ×3 + Weakened ×3!")
+        elif stype == "execute_multihit":
+            hits = sk.get("hits", 8)
+            hp_pct = tp["hp"] / max(1, tp["max_hp"])
+            _mult = 1.0 if hp_pct <= 0.50 else sk.get("mult", 0.5)
+            dmg = sum(round(base * _mult) for _ in range(hits))
+            if hp_pct <= 0.50:
+                out.append(f"💀 *{sk['name']}!* {tp['username']} below 50% — full power! {hits} hits = *{dmg} total!*")
+            else:
+                out.append(f"🌀 *{sk['name']}!* {hits}-hit combo = *{dmg} total damage!*")
+        elif stype == "vanish_dmg":
+            agi = get_stat(p, "AGI")
+            dmg = round(agi * 4)
+            add_charges(p, "vanish_turns", 2)
+            out.append(f"👻 *{sk['name']}!* AGI×4 = {dmg} burst! Vanished ×2 — untargetable 2 hits!")
+        elif stype == "phantom_aoe":
+            agi = get_stat(p, "AGI")
+            dmg = round(agi * 2.5)
+            out.append(f"🌀 *{sk['name']}!* AGI×2.5 = {dmg} phantom damage!")
+        elif stype == "bounce_spell":
+            str_v = get_stat(p, "STR")
+            dmg = round(str_v * 2)
+            out.append(f"⚡ *{sk['name']}!* STR×2 = {dmg} lightning — bounces to nearby targets!")
+        elif stype == "party_atk_buff":
+            _gid = p.get("guild_id")
+            _buffed = []
+            if _gid and str(_gid) != "None":
+                _g = get_guild(_gid)
+                if _g:
+                    for _mid in sjl(_g.get("members"), []):
+                        _mp = get_player(_mid)
+                        if _mp:
+                            set_status(_mp, "blessed_until", 300)
+                            save_player(_mp); _buffed.append(_mp["username"])
+            if not _buffed:
+                set_status(p, "blessed_until", 300); _buffed = [p["username"]]; save_player(p)
+            out.append(f"🎵 *{sk['name']}!* +25% ATK for 5 minutes!\n💪 Buffed: {', '.join(_buffed)}")
+            save_player(p)
+            await send_result("\n".join(out)); return
+        elif stype == "party_def_buff":
+            _gid = p.get("guild_id")
+            _buffed = []
+            if _gid and str(_gid) != "None":
+                _g = get_guild(_gid)
+                if _g:
+                    for _mid in sjl(_g.get("members"), []):
+                        _mp = get_player(_mid)
+                        if _mp:
+                            set_status(_mp, "blessed_until", 300)
+                            save_player(_mp); _buffed.append(_mp["username"])
+            if not _buffed:
+                set_status(p, "blessed_until", 300); _buffed = [p["username"]]; save_player(p)
+            out.append(f"🛡️ *{sk['name']}!* +20% DEF for 5 minutes!\n🛡️ Protected: {', '.join(_buffed)}")
+            save_player(p)
+            await send_result("\n".join(out)); return
+        elif stype == "party_full_buff":
+            _gid = p.get("guild_id")
+            _buffed = []
+            if _gid and str(_gid) != "None":
+                _g = get_guild(_gid)
+                if _g:
+                    for _mid in sjl(_g.get("members"), []):
+                        _mp = get_player(_mid)
+                        if _mp:
+                            set_status(_mp, "blessed_until", 600)
+                            for _f in ["hexed_until", "weakened_until"]: _mp[_f] = None
+                            save_player(_mp); _buffed.append(_mp["username"])
+            if not _buffed:
+                set_status(p, "blessed_until", 600)
+                for _f in ["hexed_until", "weakened_until"]: p[_f] = None
+                _buffed = [p["username"]]; save_player(p)
+            out.append(f"🎶 *{sk['name']}!* +15% ATK/DEF/dodge for 10 min! Debuffs cleared.\n✨ Buffed: {', '.join(_buffed)}")
+            save_player(p)
+            await send_result("\n".join(out)); return
+        elif stype == "ultimate_buff":
+            _gid = p.get("guild_id")
+            _buffed = []
+            if _gid and str(_gid) != "None":
+                _g = get_guild(_gid)
+                if _g:
+                    for _mid in sjl(_g.get("members"), []):
+                        _mp = get_player(_mid)
+                        if _mp:
+                            _mp["hp"] = calc_max_hp(_mp)
+                            set_status(_mp, "blessed_until", 1800)
+                            save_player(_mp); _buffed.append(_mp["username"])
+            if not _buffed:
+                p["hp"] = calc_max_hp(p)
+                set_status(p, "blessed_until", 1800)
+                _buffed = [p["username"]]; save_player(p)
+            out.append(f"✨ *{sk['name']}!* Full HP restored! +20% all stats 30 min!\n🎵 Empowered: {', '.join(_buffed)}")
+            save_player(p)
+            await send_result("\n".join(out)); return
+        elif stype == "bounty_mark":
+            dmg = round(base * 0.8)
+            add_charges(tp, "marked_hits", 10)
+            out.append(f"🔴 *{sk['name']}!* *Marked ×10!* {tp['username']} takes +20% damage next 10 hits!")
         if check_crit(p):
             dmg = apply_crit(p, dmg); out.append("💥 *CRITICAL HIT!*")
         # Pet defensive ability for skill damage
@@ -17702,17 +17948,26 @@ async def objectives_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── DUEL ──────────────────────────────────────────────────────────────────────
 def calc_combat_power(p):
-    stat_total = sum(get_stat(p, st) for st in ["STR","AGI","INT","WIS","DEX","LUK"])
-    weapon_val = get_weapon_atk(p) * 3
-    armor_val  = get_armor_def(p) * 2
-    level_val  = p["level"] * 10
-    skill_count = len(sjl(p.get("all_skills"), []))
-    skill_val   = skill_count * 50
-    enchant_count = len([1 for sk in ["equipped_weapon","equipped_armor",
-                                      "equipped_shield","equipped_accessory"]
-                         if get_enchant(p, p.get(sk) or "")])
-    enchant_val = enchant_count * 30
-    return level_val + stat_total + weapon_val + armor_val + skill_val + enchant_val
+    stat_total  = sum(get_stat(p, st) for st in ["STR","AGI","INT","WIS","DEX","LUK"])
+    weapon_val  = get_weapon_atk(p) * 3
+    armor_val   = get_armor_def(p) * 2
+    level_val   = p["level"] * 10
+    skill_val   = len(sjl(p.get("all_skills"), [])) * 50
+    # All 11 item slots for enchantments (not just 4)
+    _enc_slots  = ["equipped_weapon","equipped_armor","equipped_shield",
+                   "equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4",
+                   "equipped_hat","equipped_gloves","equipped_boots","equipped_mask"]
+    enchant_val = sum(30 for _sl in _enc_slots if get_enchant(p, p.get(_sl) or ""))
+    # Active class passives
+    passive_val = len(get_all_passive_keys(p)) * 25
+    # Active pet contribution
+    pet_val     = 0
+    _uid        = p.get("user_id")
+    if _uid:
+        _pet = get_active_pet_record(_uid)
+        if _pet:
+            pet_val = safe_int(_pet.get("level", 1)) * 5 + safe_int(_pet.get("evolution_stage", 0)) * 50
+    return level_val + stat_total + weapon_val + armor_val + skill_val + enchant_val + passive_val + pet_val
 
 def calc_dungeon_cp(p):
     sd = safe_stats(p)
