@@ -4861,6 +4861,30 @@ def get_active_statuses(p):
     if is_invincible(p):      statuses.append("🛡️ Still Recovering (Invincible)")
     return statuses
 
+def _compact_status_emojis(p):
+    """Compact emoji row of active statuses for display next to a player's name on battle cards."""
+    out = []
+    if safe_int(p.get("stun_turns")) > 0 or is_stunned(p):       out.append("⚡")
+    if safe_int(p.get("freeze_turns")) > 0 or is_frozen(p):      out.append("🧊")
+    if safe_int(p.get("entangle_turns")) > 0 or is_entangled(p): out.append("🌿")
+    if safe_int(p.get("silence_turns")) > 0 or is_silenced(p):   out.append("🤐")
+    if safe_int(p.get("distract_turns")) > 0 or is_distracted(p):out.append("😵")
+    if safe_int(p.get("vanish_turns")) > 0 or is_vanished(p):    out.append("👻")
+    if safe_int(p.get("poison_stacks")) > 0 or is_poisoned(p):   out.append("🐍")
+    if safe_int(p.get("burn_stacks")) > 0 or is_burning(p):      out.append("🔥")
+    if safe_int(p.get("bleed_stacks")) > 0 or is_bleeding(p):    out.append("🩸")
+    if safe_int(p.get("hex_turns")) > 0 or is_hexed(p):          out.append("💀")
+    if safe_int(p.get("weakened_hits")) > 0 or is_weakened(p):   out.append("💔")
+    if safe_int(p.get("marked_hits")) > 0 or is_marked(p):       out.append("🎯")
+    if safe_int(p.get("shield_charges")) > 0:                     out.append("🛡️")
+    if safe_int(p.get("ward_charges")) > 0 or has_ward(p):       out.append("✨")
+    if safe_int(p.get("blessed_turns")) > 0 or is_blessed(p):    out.append("🌟")
+    if safe_int(p.get("regen_charges")) > 0:                      out.append("💚")
+    if is_healing_blocked(p):                                      out.append("🚫")
+    if is_invincible(p):                                           out.append("🔰")
+    if is_revival_blocked(p):                                      out.append("☠️")
+    return " ".join(out)
+
 # ── GEAR HELPERS ──────────────────────────────────────────────────────────────
 def get_equipped_weapon(p):
     name = p.get("equipped_weapon")
@@ -8334,11 +8358,13 @@ def _pvp_pokemon_card(viewer_uid, a, d, pair):
         top, bot = a, d
     top_bar = _enc_hp_bar(top["hp"], max(1, top.get("max_hp", top["hp"])))
     bot_bar = _enc_hp_bar(bot["hp"], max(1, bot.get("max_hp", bot["hp"])))
+    top_s = _compact_status_emojis(top)
+    bot_s = _compact_status_emojis(bot)
     lines = ["⚔️ PVP BATTLE", ""]
-    lines.append(f"👾 *{top['username']}*")
+    lines.append(f"👾 *{top['username']}*{'  ' + top_s if top_s else ''}")
     lines.append(f"`{top_bar}`  {top['hp']}/{top.get('max_hp', top['hp'])} HP")
     lines.append("")
-    lines.append(f"👤 *{bot['username']}*")
+    lines.append(f"👤 *{bot['username']}*{'  ' + bot_s if bot_s else ''}")
     lines.append(f"`{bot_bar}`  {bot['hp']}/{bot.get('max_hp', bot['hp'])} HP")
     if logs:
         lines.append("")
@@ -8356,24 +8382,34 @@ def _pvp_log_append(pair, entry):
 
 
 def _build_pvp_card_markup(player_uid, opp_uid, player_p):
-    """Action buttons for a specific PvP player attacking their opponent."""
+    """Action buttons for a specific PvP player — all skills inline, like encounter mode."""
     inv = sjl(player_p.get("inventory"), [])
     has_potion = any(i in inv for i in
                      ["Health Potion", "Greater Health Potion", "Grand Restorative Flask"])
-    is_priest  = get_class_line(player_p) == "priest"
     all_skills = sjl(player_p.get("all_skills"), [])
     shield_available = safe_int(player_p.get("shield_used")) == 0
+    rows = []
+    # Row 1: Attack + Defend
     row1 = [InlineKeyboardButton("⚔️ Attack", callback_data=f"pvpcard_atk_{player_uid}_{opp_uid}")]
-    if all_skills:
-        row1.append(InlineKeyboardButton("✨ Skills", callback_data=f"pvpcard_skl_{player_uid}_{opp_uid}_0"))
-    rows = [row1]
-    row2 = []
-    if has_potion or is_priest:
-        row2.append(InlineKeyboardButton("💊 Heal", callback_data=f"pvpcard_heal_{player_uid}_{opp_uid}"))
     if shield_available:
-        row2.append(InlineKeyboardButton("🛡️ Defend", callback_data=f"pvpcard_def_{player_uid}_{opp_uid}"))
-    if row2:
-        rows.append(row2)
+        row1.append(InlineKeyboardButton("🛡️ Defend", callback_data=f"pvpcard_def_{player_uid}_{opp_uid}"))
+    rows.append(row1)
+    # Row 2: Potion (only shown when player has one; priest heals come from their skill buttons)
+    if has_potion:
+        rows.append([InlineKeyboardButton("🧪 Potion", callback_data=f"pvpcard_heal_{player_uid}_{opp_uid}")])
+    # Class combat skills inline — 2 per row, like encounter/hunt mode
+    p_skills = get_combat_skills(player_p)
+    all_sk_by_name = {sk.get("name"): i for i, sk in enumerate(all_skills)}
+    skill_btns = []
+    for sk in p_skills:
+        idx = all_sk_by_name.get(sk.get("name"), -1)
+        if idx >= 0:
+            skill_btns.append(InlineKeyboardButton(
+                sk.get("name", "Skill"),
+                callback_data=f"skillpick_{player_uid}_{idx}_{opp_uid}"
+            ))
+    for i in range(0, len(skill_btns), 2):
+        rows.append(skill_btns[i:i+2])
     return InlineKeyboardMarkup(rows)
 
 
@@ -9314,48 +9350,24 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not a or not d:
             await query.edit_message_text("Player data not found."); return
 
-        if action_type == "skl":
-            page = int(parts[4]) if len(parts) > 4 else 0
-            all_skills = sjl(a.get("all_skills"), [])
-            if not all_skills:
-                await query.answer("No skills unlocked yet!", show_alert=True); return
-            if is_defeated(a):
-                await query.answer("You're defeated — can't use skills!", show_alert=True); return
-            if is_invincible(a):
-                await query.answer("You're invincible — can't use offensive skills!", show_alert=True); return
-            if is_silenced(a):
-                await query.answer("You are silenced — can't use skills!", show_alert=True); return
-            markup = _build_skill_picker_keyboard(all_skills, uid, page, target_id, show_close=False)
-            try:
-                await query.edit_message_text(
-                    f"⚡ Choose a skill to use on *{d['username']}*:",
-                    parse_mode="Markdown", reply_markup=markup)
-            except Exception: pass
-            return
-
         if action_type == "heal":
             inv = sjl(a.get("inventory"), [])
-            is_priest = get_class_line(a) == "priest"
             potion = None; heal_amount = 0
-            if is_priest:
-                heal_amount = safe_stats(a).get("WIS", 5) * 50
-            else:
-                for pname, pamt in [("Grand Restorative Flask", 4000),
-                                    ("Greater Health Potion", 1500),
-                                    ("Health Potion", 800)]:
-                    if pname in inv:
-                        potion = pname; heal_amount = pamt; break
-                if not potion:
-                    await query.answer("No potions left!", show_alert=True); return
-                inv.remove(potion); a["inventory"] = json.dumps(inv)
-            heal_amount += safe_stats(a).get("WIS", 5)
+            for pname, pamt in [("Grand Restorative Flask", 4000),
+                                ("Greater Health Potion", 1500),
+                                ("Health Potion", 800)]:
+                if pname in inv:
+                    potion = pname; heal_amount = pamt; break
+            if not potion:
+                await query.answer("No potions left!", show_alert=True); return
+            inv.remove(potion); a["inventory"] = json.dumps(inv)
             old_hp = a["hp"]
             a["hp"] = min(a["max_hp"], a["hp"] + heal_amount)
             actual = a["hp"] - old_hp
             save_player(a)
             hp_pct = a["hp"] / max(1, a["max_hp"])
             bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
-            heal_entry = f"💊 *{a['username']}* heals *+{actual} HP* ❤️ {a['hp']}/{a['max_hp']}"
+            heal_entry = f"🧪 *{a['username']}* uses *{potion}* — *+{actual} HP* ❤️ {a['hp']}/{a['max_hp']}"
             pair = _pvp_pair_key(uid, target_id)
             _pvp_log_append(pair, heal_entry)
             group_cid = _pvp_player_cards.get(target_id, (chat_id,))[0]
@@ -15235,6 +15247,17 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await send_result(f"🛡️ {tp['username']} is still recovering — invincible."); return
         if is_silenced(p) and stype not in ("self_heal", "self_heal_buff", "group_heal", "mass_cleanse"):
             await send_result("🤐 You are silenced — can't use skills!"); return
+        # Override send_result for PvP: log to battle log and update both Pokemon cards
+        _pvp_pair_k = _pvp_pair_key(uid, target_uid)
+        _pvp_gcid_k = _pvp_player_cards.get(target_uid, (chat_id,))[0]
+        async def send_result(text):  # noqa: F811
+            _pvp_log_append(_pvp_pair_k, text[:300])
+            p_upd  = get_player(uid) or p
+            tp_upd = get_player(target_uid) or tp
+            await _pvp_update_both_cards(
+                _pvp_pair_k, p_upd, tp_upd, uid, target_uid,
+                _pvp_gcid_k, context.bot, query=query
+            )
         base = calc_attack_damage(p, w)
         out = [f"⚡ *{p['username']}* uses *{sk['name']}*!"]
         # ── Self / group skills — execute on caster, no target needed ──
@@ -21395,16 +21418,19 @@ def build_arena_card(arena, viewer_uid=None):
     turn_name = p1["username"] if arena["turn"] == arena["p1_id"] else p2["username"]
     # Perspective: if viewer_uid set, show opponent at top; else show p1 at top
     if viewer_uid and viewer_uid == arena["p2_id"]:
-        top_name, top_hp, top_max = p1["username"], hp1, max1
-        bot_name, bot_hp, bot_max = p2["username"], hp2, max2
+        top_p, top_hp, top_max = p1, hp1, max1
+        bot_p, bot_hp, bot_max = p2, hp2, max2
     else:
-        top_name, top_hp, top_max = p1["username"], hp1, max1
-        bot_name, bot_hp, bot_max = p2["username"], hp2, max2
+        top_p, top_hp, top_max = p1, hp1, max1
+        bot_p, bot_hp, bot_max = p2, hp2, max2
+    top_name = top_p["username"]; bot_name = bot_p["username"]
+    top_s = _compact_status_emojis(top_p)
+    bot_s = _compact_status_emojis(bot_p)
     lines = ["🎪 *ARENA BATTLE*", ""]
-    lines.append(f"👾 *{top_name}*")
+    lines.append(f"👾 *{top_name}*{'  ' + top_s if top_s else ''}")
     lines.append(f"`{bar(top_hp, top_max)}`  {top_hp}/{top_max} HP")
     lines.append("")
-    lines.append(f"👤 *{bot_name}*")
+    lines.append(f"👤 *{bot_name}*{'  ' + bot_s if bot_s else ''}")
     lines.append(f"`{bar(bot_hp, bot_max)}`  {bot_hp}/{bot_max} HP")
     if arena["status"] == "done":
         winner = p1["username"] if hp1 > 0 else p2["username"]
