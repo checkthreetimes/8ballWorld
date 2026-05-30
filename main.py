@@ -5192,8 +5192,9 @@ def get_stat(p, stat):
     set_stat  = set_bonuses.get(stat, 0)
     set_all   = set_bonuses.get("all_stats", 0)
     battle_cry_bonus = 80 if stat == "STR" and _ts_active(p, "battle_cry_str_until") else 0
+    guild_bonus = safe_int(p.get("guild_stat_bonus", 0)) if stat in ("STR","AGI","INT","WIS","DEX","LUK") else 0
     if stat in ("STR","AGI","INT","WIS","DEX","LUK"):
-        return base + acc + all_s + blessed_bonus + title_bonus + all_title + set_stat + set_all + battle_cry_bonus
+        return base + acc + all_s + blessed_bonus + title_bonus + all_title + set_stat + set_all + battle_cry_bonus + guild_bonus
     return base + acc + all_s + blessed_bonus
 
 def calc_max_hp(p):
@@ -6868,6 +6869,7 @@ def init_db():
         ("players", "poison_pct",         "INTEGER DEFAULT 0"),
         ("players", "bleed_pct",          "INTEGER DEFAULT 0"),
         ("players", "burn_pct",           "INTEGER DEFAULT 0"),
+        ("players", "guild_stat_bonus",   "INTEGER DEFAULT 0"),
     ]
     for table, col, definition in _charge_cols:
         try:
@@ -7566,6 +7568,21 @@ def save_guild(g):
          safe_int(g.get("bank_gold"))))
     conn.commit()
 
+def _guild_stat_bonus_for_level(glvl):
+    """Returns the all-stats bonus granted to members at this guild level (max +5)."""
+    return min(5, max(0, safe_int(glvl) // 2))
+
+def _update_guild_member_bonuses(g):
+    """After guild level changes, update guild_stat_bonus for all current members."""
+    bonus = _guild_stat_bonus_for_level(safe_int(g.get("level"), 1))
+    members = sjl(g.get("members"), [])
+    if not members: return
+    conn = _db(); c = conn.cursor()
+    placeholders = ",".join("?" for _ in members)
+    c.execute(f"UPDATE players SET guild_stat_bonus=? WHERE user_id IN ({placeholders})",
+              [bonus] + list(members))
+    conn.commit()
+
 def add_guild_exp(g, amount):
     msgs = []; g["exp"] = safe_int(g.get("exp")) + amount
     max_lv = max(GUILD_PERKS.keys())
@@ -7575,6 +7592,7 @@ def add_guild_exp(g, amount):
         g["level"] = safe_int(g.get("level"),1) + 1
         msgs.append(f"🏰 Guild leveled up to {g['level']}! "
                     f"{GUILD_PERKS.get(g['level'],{}).get('desc','')}")
+    _update_guild_member_bonuses(g)
     return msgs
 
 def new_player(s):
@@ -13778,7 +13796,9 @@ async def guildjoin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer("You're already in this guild.", show_alert=True); return
     members.append(user.id)
     g["members"] = json.dumps(members); save_guild(g)
-    p["guild_id"] = gid; save_player(p)
+    p["guild_id"] = gid
+    p["guild_stat_bonus"] = _guild_stat_bonus_for_level(safe_int(g.get("level"), 1))
+    save_player(p)
     asyncio.create_task(announce(context.bot, query.message.chat.id,
         f"🏰 *{user.first_name}* joined *{g['name']}*!"))
     await query.answer()
@@ -14150,7 +14170,7 @@ async def guildkick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     members = sjl(g["members"], [])
     if target_uid in members: members.remove(target_uid)
     g["members"] = json.dumps(members); save_guild(g)
-    tp["guild_id"] = None; save_player(tp)
+    tp["guild_id"] = None; tp["guild_stat_bonus"] = 0; save_player(tp)
     await query.edit_message_text(
         f"🚫 *{tp['username']}* has been kicked from *{g['name']}*.",
         parse_mode="Markdown")
@@ -14169,7 +14189,7 @@ async def guildleave_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         members = sjl(g["members"], [])
         if user.id in members: members.remove(user.id)
         g["members"] = json.dumps(members); save_guild(g)
-    p["guild_id"] = None; save_player(p)
+    p["guild_id"] = None; p["guild_stat_bonus"] = 0; save_player(p)
     await send_group(update, f"👋 You've left *{g['name'] if g else 'your guild'}*.", delay=9)
 
 
@@ -14194,10 +14214,10 @@ async def guilddisband_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Tap Confirm or type /guilddisband confirm to proceed.",
             delay=15, reply_markup=gdisband_markup); return
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-    c.execute("UPDATE players SET guild_id=NULL WHERE guild_id=?", (p["guild_id"],))
+    c.execute("UPDATE players SET guild_id=NULL, guild_stat_bonus=0 WHERE guild_id=?", (p["guild_id"],))
     c.execute("DELETE FROM guilds WHERE guild_id=?", (p["guild_id"],))
     conn.commit(); conn.close()
-    p["guild_id"] = None; save_player(p)
+    p["guild_id"] = None; p["guild_stat_bonus"] = 0; save_player(p)
     await send_group(update, f"🏚️ *{g['name']}* has been disbanded.", permanent=False, delay=30)
 
 async def guilddisband_callback(update, context):
@@ -14235,10 +14255,10 @@ async def guilddisband_callback(update, context):
         return
     guild_name = g["name"]
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-    c.execute("UPDATE players SET guild_id=NULL WHERE guild_id=?", (p["guild_id"],))
+    c.execute("UPDATE players SET guild_id=NULL, guild_stat_bonus=0 WHERE guild_id=?", (p["guild_id"],))
     c.execute("DELETE FROM guilds WHERE guild_id=?", (p["guild_id"],))
     conn.commit(); conn.close()
-    p["guild_id"] = None; save_player(p)
+    p["guild_id"] = None; p["guild_stat_bonus"] = 0; save_player(p)
     try:
         await query.edit_message_text(f"🏚️ *{guild_name}* has been disbanded.", parse_mode="Markdown")
     except Exception:
@@ -16703,6 +16723,94 @@ async def forge_craft_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.edit_message_text("\n".join(lines),
         reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
         parse_mode="Markdown")
+
+_PERMA_GOLD_COST   = 100
+_PERMA_SHARD_COST  = 5
+_PERMA_CAP         = 50
+
+async def perma_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    current = safe_int(p.get("perm_dmg_bonus", 0))
+    if context.args and context.args[0].lower() == "upgrade":
+        if current >= _PERMA_CAP:
+            await send_group(update,
+                f"⚔️ *Permanent ATK* is maxed at *+{_PERMA_CAP}*!", delay=9); return
+        inv = sjl(p.get("inventory"), [])
+        inv_ctr = Counter(inv)
+        gold = safe_int(p.get("gold", 0))
+        if inv_ctr.get("Iron Shard", 0) < _PERMA_SHARD_COST:
+            await send_group(update,
+                f"❌ Need *{_PERMA_SHARD_COST}x Iron Shard* (have {inv_ctr.get('Iron Shard', 0)}).", delay=9); return
+        if gold < _PERMA_GOLD_COST:
+            await send_group(update,
+                f"❌ Need *{_PERMA_GOLD_COST}g* (have {gold}g).", delay=9); return
+        for _ in range(_PERMA_SHARD_COST): inv.remove("Iron Shard")
+        p["inventory"] = json.dumps(inv)
+        p["gold"] = gold - _PERMA_GOLD_COST
+        p["perm_dmg_bonus"] = current + 1
+        save_player(p)
+        await send_group(update,
+            f"⚔️ *Permanent ATK upgraded!*\n\n"
+            f"*+{current + 1} permanent damage per attack* ({current} → {current + 1})\n"
+            f"Spent: {_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}x Iron Shard\n\n"
+            f"_Tip: use /perma upgrade again to keep going. Max +{_PERMA_CAP}._", delay=20)
+        return
+    # Display menu
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            f"⚔️ Upgrade (+1 ATK) — {_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}× Iron Shard",
+            callback_data=f"perma_upgrade_{user.id}")
+    ]]) if current < _PERMA_CAP else None
+    inv_ctr = Counter(sjl(p.get("inventory"), []))
+    shards = inv_ctr.get("Iron Shard", 0)
+    status = "✅ MAX" if current >= _PERMA_CAP else f"+{current}/{_PERMA_CAP}"
+    await send_group(update,
+        f"⚔️ *Permanent Damage Upgrades*\n\n"
+        f"Current bonus: *+{current} ATK* per hit ({status})\n"
+        f"Your gold: *{safe_int(p.get('gold', 0))}g* | Iron Shards: *{shards}*\n\n"
+        f"Cost per +1: *{_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}× Iron Shard*\n"
+        f"_Each upgrade permanently adds +1 raw damage to every attack._",
+        reply_markup=markup, delay=20)
+
+async def perma_upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try: uid = int(query.data.split("_")[-1])
+    except (ValueError, IndexError): await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your button!", show_alert=True); return
+    p = get_player(uid)
+    if not p: await query.answer("Player not found.", show_alert=True); return
+    current = safe_int(p.get("perm_dmg_bonus", 0))
+    if current >= _PERMA_CAP:
+        await query.answer(f"Already maxed at +{_PERMA_CAP}!", show_alert=True); return
+    inv = sjl(p.get("inventory"), [])
+    inv_ctr = Counter(inv)
+    gold = safe_int(p.get("gold", 0))
+    if inv_ctr.get("Iron Shard", 0) < _PERMA_SHARD_COST or gold < _PERMA_GOLD_COST:
+        await query.answer(f"Need {_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}× Iron Shard!", show_alert=True); return
+    for _ in range(_PERMA_SHARD_COST): inv.remove("Iron Shard")
+    p["inventory"] = json.dumps(inv)
+    p["gold"] = gold - _PERMA_GOLD_COST
+    p["perm_dmg_bonus"] = current + 1
+    save_player(p)
+    await query.answer(f"⚔️ Permanent ATK: +{current + 1}!", show_alert=True)
+    new_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            f"⚔️ Upgrade (+1 ATK) — {_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}× Iron Shard",
+            callback_data=f"perma_upgrade_{uid}")
+    ]]) if current + 1 < _PERMA_CAP else None
+    inv_ctr2 = Counter(sjl(p.get("inventory"), []))
+    status = "✅ MAX" if current + 1 >= _PERMA_CAP else f"+{current + 1}/{_PERMA_CAP}"
+    try:
+        await query.edit_message_text(
+            f"⚔️ *Permanent Damage Upgrades*\n\n"
+            f"Current bonus: *+{current + 1} ATK* per hit ({status})\n"
+            f"Your gold: *{safe_int(p.get('gold', 0))}g* | Iron Shards: *{inv_ctr2.get('Iron Shard', 0)}*\n\n"
+            f"Cost per +1: *{_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}× Iron Shard*",
+            reply_markup=new_markup, parse_mode="Markdown")
+    except Exception: pass
 
 async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -27140,6 +27248,7 @@ def main():
     app.add_handler(CommandHandler("history",      history_cmd))
     app.add_handler(CommandHandler("war",          war_cmd))
     app.add_handler(CommandHandler("forge",        forge_cmd))
+    app.add_handler(CommandHandler("perma",        perma_cmd))
 
     # Class & progression
     app.add_handler(CommandHandler("class",     class_cmd))
@@ -27326,7 +27435,8 @@ def main():
     app.add_handler(CallbackQueryHandler(sell_rarity_callback,  pattern="^sellr_"))
     app.add_handler(CallbackQueryHandler(sell_browse_callback,  pattern="^sellbrowse_"))
     app.add_handler(CallbackQueryHandler(sell_offclass_callback, pattern="^selloffc_"))
-    app.add_handler(CallbackQueryHandler(forge_craft_callback,  pattern="^forge_"))
+    app.add_handler(CallbackQueryHandler(forge_craft_callback,    pattern="^forge_"))
+    app.add_handler(CallbackQueryHandler(perma_upgrade_callback,  pattern="^perma_upgrade_"))
     app.add_handler(CallbackQueryHandler(explore_zone_callback, pattern="^explore_"))
     app.add_handler(CallbackQueryHandler(guilddonate_callback,  pattern="^gdonate_"))
     # ── Pets ──────────────────────────────────────────────────────────────────
