@@ -15221,13 +15221,64 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await send_result(f"{tp['username']} is already defeated!"); return
             if is_invincible(tp):
                 await send_result(f"🛡️ {tp['username']} is still recovering — invincible."); return
-        if is_silenced(p):
+        if is_silenced(p) and stype not in ("self_heal", "self_heal_buff", "group_heal", "mass_cleanse"):
             await send_result("🤐 You are silenced — can't use skills!"); return
         base = calc_attack_damage(p, w)
+        out = [f"⚡ *{p['username']}* uses *{sk['name']}*!"]
+        # ── Self / group skills — execute on caster, no target needed ──
+        if stype == "self_heal":
+            wis = get_stat(p, "WIS")
+            heal = round(wis * sk.get("mult", 50))
+            p["hp"] = min(p["max_hp"], p["hp"] + heal)
+            out.append(f"💚 Healed self for *{heal} HP*! ({p['hp']}/{p['max_hp']})")
+            save_player(p)
+            await send_result("\n".join(out)); return
+        elif stype == "self_heal_buff":
+            heal = round(p["max_hp"] * sk.get("heal_pct", 0.25))
+            p["hp"] = min(p["max_hp"], p["hp"] + heal)
+            set_status(p, "battle_cry_str_until", 180)
+            out.append(f"💪 *{sk['name']}!* +{heal} HP restored. *+80 STR for 3 minutes!*")
+            save_player(p)
+            await send_result("\n".join(out)); return
+        elif stype == "group_heal":
+            wis = get_stat(p, "WIS")
+            heal = round(wis * sk.get("mult", 60))
+            gid = p.get("guild_id")
+            healed = []
+            if gid and str(gid) != "None":
+                g_gh = get_guild(gid)
+                if g_gh:
+                    for mid in sjl(g_gh.get("members"), []):
+                        mp = get_player(mid)
+                        if mp:
+                            mp["hp"] = min(mp["max_hp"], mp["hp"] + heal)
+                            save_player(mp); healed.append(mp["username"])
+            if not healed:
+                p["hp"] = min(p["max_hp"], p["hp"] + heal); healed = [p["username"]]
+                save_player(p)
+            out.append(f"💚 *{sk['name']}!* Healed {', '.join(healed)} for *{heal} HP* each!")
+            await send_result("\n".join(out)); return
+        elif stype == "mass_cleanse":
+            gid = p.get("guild_id"); cleansed = []
+            if gid and str(gid) != "None":
+                g_mc = get_guild(gid)
+                if g_mc:
+                    for mid in sjl(g_mc.get("members"), []):
+                        mp = get_player(mid)
+                        if mp:
+                            for field in ["hexed_until","distracted_until","entangled_until",
+                                          "frozen_until","stunned_until","weakened_until",
+                                          "healing_blocked_until","silenced_until"]:
+                                mp[field] = None
+                            for chg in ["hex_turns","distract_turns","stun_turns",
+                                        "freeze_turns","silence_turns","weakened_hits"]:
+                                mp[chg] = 0
+                            set_status(mp, "blessed_until", 1800)
+                            save_player(mp); cleansed.append(mp["username"])
+            out.append(f"✨ *{sk['name']}!* Cleansed: {', '.join(cleansed) or 'self'} — Blessed 30 min!")
+            save_player(p)
+            await send_result("\n".join(out)); return
         out = [f"⚡ *{p['username']}* uses *{sk['name']}* on *{tp['username']}*!"]
-        if stype in ("self_heal", "self_heal_buff", "group_heal", "mass_cleanse"):
-            await send_result("Use self/group skills with /skill (no target).")
-            return
         # ── Healing skills on target ──
         if stype == "revive_heal":
             cls_p = get_player_class(p)
