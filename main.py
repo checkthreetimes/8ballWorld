@@ -8946,6 +8946,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
         d["revenge_target"] = au_id
         d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
+        # Clear turn-based combat debuffs from both players when battle ends
+        for _cf in ("heal_blocked_turns", "revive_blocked_turns", "silence_turns", "hex_turns",
+                    "stun_turns", "freeze_turns", "entangle_turns", "distract_turns"):
+            d[_cf] = 0
+            if safe_int(a.get(_cf)) > 0:
+                a[_cf] = 0
         exp_loss = round(d.get("exp", 0) * 0.10)
         d["exp"] = max(0, d.get("exp", 0) - exp_loss)
         d["losses"] = d.get("losses", 0) + 1
@@ -20385,6 +20391,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Helper: end encounter (win/lose/flee)
     async def _end_encounter(result_text, gave_rewards=False):
         active_encounters.pop(uid, None)
+        # Clear any turn-based combat debuffs so they don't bleed into the next session
+        for _cf in ("heal_blocked_turns", "revive_blocked_turns", "silence_turns", "hex_turns",
+                    "stun_turns", "freeze_turns", "entangle_turns", "distract_turns"):
+            if safe_int(p.get(_cf)) > 0:
+                p[_cf] = 0
         save_player(p)
         # Accumulate session stats
         sess = _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})
