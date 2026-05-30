@@ -4969,6 +4969,21 @@ def get_armor_def(p):
         bonus += val
     return a_val + s_val + bonus
 
+def _get_secondary_armor_def(p):
+    """DEF from hat/gloves/boots/mask only — used to apply a separate DR cap."""
+    bonus = 0
+    for slot_key, pool in [("equipped_hat", HATS), ("equipped_gloves", GLOVES),
+                            ("equipped_boots", BOOTS), ("equipped_mask", MASKS)]:
+        name = p.get(slot_key)
+        if not name: continue
+        item = pool.get(name)
+        if not item: continue
+        val = item["def"] + get_enhance_bonus(p, name) + reinforce_atk_bonus(p, name)
+        for enc in get_enchant(p, name):
+            if enc.get("type") == "armor_def": val += enc["val"]
+        bonus += val
+    return bonus
+
 def gear_line(p, slot_key):
     """Return a display string for an equipped item slot with reinforce, +enh and ✨enchant tags."""
     name = p.get(slot_key)
@@ -5464,10 +5479,15 @@ def calc_defense(defender, dmg):
     def_val    = get_stat(defender, "DEF")
     armor_def  = get_armor_def(defender)
 
-    # Base reduction from DEF stat
+    # Base reduction from DEF stat (softcap at DEF 72 = 50%)
     def_reduction  = min(0.50, (def_val / 10) * 0.07)
-    # Armor adds flat reduction
-    armor_reduction = min(0.20, armor_def / 300)
+    # Excess DEF above cap converts to flat HP absorb per hit
+    excess_def_absorb = max(0, (def_val - 72) * 5) if def_val > 72 else 0
+
+    # Primary armor (chest+shield) and secondary slots (hat/gloves/boots/mask) have separate caps
+    secondary_armor_def = _get_secondary_armor_def(defender)
+    primary_armor_def   = armor_def - secondary_armor_def
+    armor_reduction = min(0.20, primary_armor_def / 300) + min(0.10, secondary_armor_def / 300)
 
     # Passive class bonuses — use get_all_passive_keys so inherited passives apply
     def_pks = get_all_passive_keys(defender)
@@ -5540,7 +5560,7 @@ def calc_defense(defender, dmg):
         return 0
 
     total = min(0.80, def_reduction + armor_reduction)
-    final = max(1, round(dmg * (1 - total)))
+    final = max(1, round(dmg * (1 - total)) - excess_def_absorb)
  
     # Exposed debuff — target takes +15% more damage (consume one charge)
     if safe_int(defender.get("exposed_hits")) > 0:
@@ -8604,8 +8624,9 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             set_status(a, "feint_proc_until", 60); add_charges(d, "distract_turns", 1)
             extra_notes.append(f"🗡️ *Feint!* {d['username']} distracted for 1 attack!")
         if pk_a == "throat_cut" and random.random() < 0.05:
-            add_charges(d, "silence_turns", 1)
-            extra_notes.append(f"🤐 *Throat Cut!* {d['username']} silenced for 1 skill!")
+            if safe_int(d.get("silence_turns", 0)) < 4:
+                add_charges(d, "silence_turns", 1)
+                extra_notes.append(f"🤐 *Throat Cut!* {d['username']} silenced for 1 skill!")
         if pk_a == "cursed_blade": set_status(d, "cursed_until", 120)
         if pk_a == "warning_shot":
             ws_key = f"warning_shot_hit_{a.get('user_id', '')}"
@@ -8652,6 +8673,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         elif active_pet.get("mood", 100) < 40:
             action += f"\n{emoji_p} _{pname} is too sad to join in._"
         elif pet_atk > 0:
+            pet_atk = round(pet_atk * get_weather().get("dmg_mod", 1.0))
             d["hp"] = max(0, d["hp"] - pet_atk)
             battle_msg = PERSONALITY_BATTLE.get(pers, "attacks")
             action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*!"
@@ -15331,9 +15353,12 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             else:
                 out.append(f"🎯 *Execution Order!* You already have 2 active contracts — collect or wait.")
         elif stype == "silence":
-            add_charges(tp, "silence_turns", 2)
             dmg = round(base * 1.5)
-            out.append(f"🤐 *{sk['name']}!* *Silenced ×2!* {tp['username']} cannot use skills next 2 times!")
+            if safe_int(tp.get("silence_turns", 0)) < 4:
+                add_charges(tp, "silence_turns", 2)
+                out.append(f"🤐 *{sk['name']}!* *Silenced ×2!* {tp['username']} cannot use skills next 2 times!")
+            else:
+                out.append(f"🤐 *{sk['name']}!* {tp['username']} is *Silence Immune* (max stacks).")
         elif stype == "holy_dmg":
             wis = get_stat(p, "WIS")
             dmg = wis * 3
@@ -15361,7 +15386,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             add_charges(tp, "weakened_hits", 5)
             out.append(f"☠️ *{sk['name']}!* WIS×8 = {dmg}! All buffs stripped — Hexed ×5, Weakened ×5!")
         elif stype == "void_nuke":
-            dmg = tp["hp"] // 2
+            dmg = min(tp["hp"] // 2, round(calc_max_hp(p) * 0.6))
             add_charges(tp, "heal_blocked_turns", 5)
             out.append(f"🌑 *{sk['name']}!* {tp['username']} loses *50% HP* ({dmg} dmg) — Healing blocked ×5!")
         elif stype == "freeze_nuke":
@@ -15451,12 +15476,16 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             dmg = round(int_v * 2.5)
             add_charges(tp, "hex_turns", 8)
             add_charges(tp, "weakened_hits", 8)
-            add_charges(tp, "stun_turns", 1)
-            out.append(f"💜 *{sk['name']}!* {tp['username']}: Hexed ×8, Weakened ×8, Stunned ×1!")
+            _stun_msg = ""
+            if safe_int(tp.get("stun_turns", 0)) < 3:
+                add_charges(tp, "stun_turns", 1); _stun_msg = ", Stunned ×1"
+            else:
+                _stun_msg = " (Stun Immune)"
+            out.append(f"💜 *{sk['name']}!* {tp['username']}: Hexed ×8, Weakened ×8{_stun_msg}!")
         elif stype == "stun_def_dmg":
             str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
             dmg = round((str_v + def_v) * sk.get("mult", 1.0))
-            if random.random() < 0.40:
+            if random.random() < 0.40 and safe_int(tp.get("stun_turns", 0)) < 3:
                 add_charges(tp, "stun_turns", 1)
                 out.append(f"🛡️ *{sk['name']}!* (STR+DEF) = {dmg} damage! {tp['username']} *Stunned* next attack!")
             else:
@@ -15464,8 +15493,11 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         elif stype == "holy_warrior_nuke":
             str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
             dmg = round(str_v * 4 + def_v * 4)
-            add_charges(tp, "stun_turns", 2)
-            out.append(f"⚡ *{sk['name']}!* STR×4+DEF×4 = {dmg} holy damage! {tp['username']} Stunned ×2!")
+            if safe_int(tp.get("stun_turns", 0)) < 3:
+                add_charges(tp, "stun_turns", 2)
+                out.append(f"⚡ *{sk['name']}!* STR×4+DEF×4 = {dmg} holy damage! {tp['username']} Stunned ×2!")
+            else:
+                out.append(f"⚡ *{sk['name']}!* STR×4+DEF×4 = {dmg} holy damage! ({tp['username']} Stun Immune)")
         elif stype == "godlike_lightning":
             str_v = get_stat(p, "STR")
             dmg = round(str_v * 8)
@@ -16008,9 +16040,12 @@ async def _execute_skill(update, context, p, sk):
         save_player(p)
         await send_group(update, "\n".join(lines), delay=15); return
     elif stype == "silence":
-        add_charges(d, "silence_turns", 2)
         dmg = round(base * 1.5)
-        lines.append(f"🤐 *Silenced ×2!* {d['username']} cannot use skills next 2 times!")
+        if safe_int(d.get("silence_turns", 0)) < 4:
+            add_charges(d, "silence_turns", 2)
+            lines.append(f"🤐 *Silenced ×2!* {d['username']} cannot use skills next 2 times!")
+        else:
+            lines.append(f"🤐 *{sk['name']}!* {d['username']} is *Silence Immune* (max stacks).")
     elif stype == "holy_dmg":
         wis = get_stat(p,"WIS")
         dmg = wis * 3
@@ -16040,7 +16075,7 @@ async def _execute_skill(update, context, p, sk):
         add_charges(d, "weakened_hits", 5)
         lines.append(f"☠️ *Holy Wrath!* All buffs stripped — Hexed ×5, Weakened ×5!")
     elif stype == "void_nuke":
-        dmg = d["hp"] // 2
+        dmg = min(d["hp"] // 2, round(calc_max_hp(p) * 0.6))
         add_charges(d, "heal_blocked_turns", 5)
         lines.append(f"🌑 *Void Collapse!* {d['username']} loses 50% HP — Healing blocked ×5!")
     elif stype == "freeze_nuke":
@@ -16123,12 +16158,16 @@ async def _execute_skill(update, context, p, sk):
         dmg = round(int_v * 2.5)
         add_charges(d, "hex_turns", 8)
         add_charges(d, "weakened_hits", 8)
-        add_charges(d, "stun_turns", 1)
-        lines.append(f"💜 *Dread Proclamation!* {d['username']}: Hexed ×8, Weakened ×8, Stunned ×1!")
+        _stun_msg = ""
+        if safe_int(d.get("stun_turns", 0)) < 3:
+            add_charges(d, "stun_turns", 1); _stun_msg = ", Stunned ×1"
+        else:
+            _stun_msg = " (Stun Immune)"
+        lines.append(f"💜 *Dread Proclamation!* {d['username']}: Hexed ×8, Weakened ×8{_stun_msg}!")
     elif stype == "stun_def_dmg":
         str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
         dmg = round((str_v + def_v) * sk.get("mult", 1.0))
-        if random.random() < 0.40:
+        if random.random() < 0.40 and safe_int(d.get("stun_turns", 0)) < 3:
             add_charges(d, "stun_turns", 1)
             lines.append(f"🛡️ *Shield Slam!* {dmg} damage! {d['username']} *Stunned* next attack!")
         else:
@@ -16141,8 +16180,11 @@ async def _execute_skill(update, context, p, sk):
     elif stype == "holy_warrior_nuke":
         str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
         dmg = round(str_v * 4 + def_v * 4)
-        add_charges(d, "stun_turns", 2)
-        lines.append(f"⚡ *Bifrost Descent!* STR×4+DEF×4 = {dmg} holy damage! {d['username']} Stunned ×2!")
+        if safe_int(d.get("stun_turns", 0)) < 3:
+            add_charges(d, "stun_turns", 2)
+            lines.append(f"⚡ *Bifrost Descent!* STR×4+DEF×4 = {dmg} holy damage! {d['username']} Stunned ×2!")
+        else:
+            lines.append(f"⚡ *Bifrost Descent!* STR×4+DEF×4 = {dmg} holy damage! ({d['username']} Stun Immune)")
     elif stype == "godlike_lightning":
         str_v = get_stat(p, "STR")
         dmg = round(str_v * 8)
