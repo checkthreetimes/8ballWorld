@@ -141,11 +141,13 @@ pending_alliance_inv    = {}   # inviter_id  -> {target_id, alliance_id, expires
 pending_guild_inv       = {}   # inviter_id  -> {target_id, guild_id, expires}
 pending_holdhands  = {}   # proposer_id -> {target_id, chat_id, expires}
 active_encounters  = {}   # user_id -> encounter state
+_enc_sessions      = {}   # uid -> {"gold":0,"exp":0,"wins":0,"losses":0}
 active_wizardry    = {}   # user_id -> wizardry dungeon state
 _pvp_cards         = {}   # (attacker_uid, defender_uid) -> message_id — used to clean up stale cards
 _pvp_card_tasks    = {}   # (attacker_uid, defender_uid) -> asyncio.Task for auto-delete timer
 _pvp_battle_logs   = {}   # pair -> list[str], one entry per round (chronological)
 _pvp_cur_page      = {}   # pair -> int, current page index (0 = oldest)
+_pvp_player_cards  = {}   # uid -> (chat_id, message_id) — each player's own battle card
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
 
@@ -403,7 +405,7 @@ CLASS_TREE = {
             {"tier":2,"unlock":10,"name":"Holy Stance",
              "passive":"Gain +15% defense when below 50% HP.",
              "active":"Consecrate","type":"dmg_field",
-             "desc":"Deal damage + create a holy field for 30 min  -  enemies who attack you take WIS x2 holy damage back.",
+             "desc":"Deal damage + create a holy field for 10 turns: enemies who attack you take WIS x2 holy damage back.",
              "passive_key":"holy_stance"},
             {"tier":2,"unlock":10,"name":"Shield Wall",
              "passive":"Reduce physical damage by 5 when shield is equipped.",
@@ -497,7 +499,7 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Unbreakable",
              "passive":"Cannot be one-shotted  -  always survive at 1 HP (once per fight).",
              "active":"Rampage","type":"aoe_recent_attackers",
-             "desc":"Hit everyone who attacked you in the last 30m. Damage scales +25% per attacker.",
+             "desc":"Hit everyone who attacked you in the last 6 actions. Damage scales +25% per attacker.",
              "passive_key":"unbreakable"},
         ]
     },
@@ -564,7 +566,7 @@ CLASS_TREE = {
             {"tier":3,"unlock":30,"name":"Arcane Mastery",
              "passive":"Every 3rd spell cast deals triple damage (tracked internally).",
              "active":"Meteor","type":"aoe_recent_attackers",
-             "desc":"Massive AOE  -  hits target + everyone who attacked them in last 30m.",
+             "desc":"Massive AOE  -  hits target + everyone who attacked them in the last 6 actions.",
              "passive_key":"arcane_mastery"},
         ]
     },
@@ -971,7 +973,7 @@ CLASS_TREE = {
             {"tier":2,"unlock":10,"name":"Divine Grace",
              "passive":"Every time you heal someone you restore 10% of your own HP.",
              "active":"Blessing","type":"dmg_reduction_buff",
-             "desc":"Grant target 1 hour of damage reduction (15% less damage taken).",
+             "desc":"Grant target 15% damage reduction for 8 actions.",
              "passive_key":"divine_grace"},
             {"tier":2,"unlock":10,"name":"Renew",
              "passive":"Heals you cast leave a regen buff  -  20 HP per 30s for 5m.",
@@ -1004,7 +1006,7 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Resurrection",
              "passive":"Once per day if you reach 0 HP you automatically revive at 30% HP.",
              "active":"Miracle","type":"full_revive",
-             "desc":"Fully restore target to max HP. Grant 5m invincibility. Costs one Holy Water Vial.",
+             "desc":"Fully restore target to max HP. Grant 5-action invincibility. Costs one Holy Water Vial.",
              "passive_key":"resurrection"},
         ]
     },
@@ -1018,7 +1020,7 @@ CLASS_TREE = {
             {"tier":5,"unlock":100,"name":"Divine Presence",
              "passive":"All guild members in active chat gain +5% EXP and regen 5 HP every 30m while you are online.",
              "active":"Absolution","type":"mass_cleanse",
-             "desc":"Cleanse ALL debuffs from ALL guild members. Grant 30m of blessed status (+10% all stats). COUNTERS Zealot's revival block.",
+             "desc":"Cleanse ALL debuffs from ALL guild members. Grant 10-action blessed status (+10% all stats). COUNTERS Zealot's revival block.",
              "passive_key":"divine_presence"},
         ]
     },
@@ -1209,7 +1211,7 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Ancient Bark",
              "passive":"15% chance to completely absorb incoming damage. Poisoned enemies who hit you take double thorn damage.",
              "active":"Thorn Fortress","type":"def_reflect",
-             "desc":"For 2m: reduce all incoming damage by 40% and reflect half back as nature damage.",
+             "desc":"For 3 turns: reduce all incoming damage by 40% and reflect half back as nature damage.",
              "passive_key":"ancient_bark"},
         ]
     },
@@ -1305,7 +1307,7 @@ CLASS_TREE = {
             {"tier":5,"unlock":100,"name":"Empress's Dread",
              "passive":"Your presence causes fear: all enemies have -15% ATK. On kill, your debuffs transfer to a random other target.",
              "active":"Dread Proclamation","type":"mass_debuff",
-             "desc":"Apply max-stack curses to ALL players who attacked you in the last hour. Cannot be cleansed for 10 actions.",
+             "desc":"Apply max-stack curses to ALL players who recently attacked you. Cannot be cleansed for 10 actions.",
              "passive_key":"empress_dread"},
         ]
     },
@@ -8322,40 +8324,27 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── PVP COMBAT HELPERS ────────────────────────────────────────────────────────
 
-def _pvp_card_text(pair, a, d):
-    """Build paginated battle-log text for a PvP card.
-    Shows ROUNDS_PER_PAGE rounds per page; always appends current HP for both players."""
-    logs  = _pvp_battle_logs.get(pair, [])
-    total = len(logs)
-    pages = max(1, (total + ROUNDS_PER_PAGE - 1) // ROUNDS_PER_PAGE)
-    cur   = min(_pvp_cur_page.get(pair, pages - 1), pages - 1)
-    cur   = max(0, cur)
-
-    # Stable display order: lower user_id first
-    p1, p2 = (a, d) if a["user_id"] < d["user_id"] else (d, a)
-    lines = [f"⚔️ *{p1['username']}* vs *{p2['username']}*",
-             "━━━━━━━━━━━━━━━━━━━━━━━━"]
-
-    if logs:
-        start = cur * ROUNDS_PER_PAGE
-        end   = min(start + ROUNDS_PER_PAGE, total)
-        for i in range(start, end):
-            lines.append(f"📜 *Round {i + 1}:*")
-            lines.append(logs[i])
-            if i < end - 1:
-                lines.append("─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─")
+def _pvp_pokemon_card(viewer_uid, a, d, pair):
+    """Pokémon-style PvP card: opponent at top, self at bottom, last 3 log entries."""
+    logs = _pvp_battle_logs.get(pair, [])
+    # Perspective: viewer sees their opponent at top, themselves at bottom
+    if viewer_uid == a["user_id"]:
+        top, bot = d, a
     else:
-        lines.append("_No rounds yet._")
-
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━")
-    for p in (p1, p2):
-        hp_pct = p["hp"] / max(1, p.get("max_hp", p["hp"]))
-        filled = round(hp_pct * 10)
-        bar    = "█" * filled + "░" * (10 - filled)
-        lines.append(f"❤️ *{p['username']}:* {p['hp']}/{p.get('max_hp', p['hp'])} [{bar}]")
-    if pages > 1:
-        lines.append(f"📖 Page {cur + 1}/{pages}")
-
+        top, bot = a, d
+    top_bar = _enc_hp_bar(top["hp"], max(1, top.get("max_hp", top["hp"])))
+    bot_bar = _enc_hp_bar(bot["hp"], max(1, bot.get("max_hp", bot["hp"])))
+    lines = ["⚔️ PVP BATTLE", ""]
+    lines.append(f"👾 *{top['username']}*")
+    lines.append(f"`{top_bar}`  {top['hp']}/{top.get('max_hp', top['hp'])} HP")
+    lines.append("")
+    lines.append(f"👤 *{bot['username']}*")
+    lines.append(f"`{bot_bar}`  {bot['hp']}/{bot.get('max_hp', bot['hp'])} HP")
+    if logs:
+        lines.append("")
+        lines.append("─────────────")
+        for entry in logs[-3:]:
+            lines.append(entry)
     return "\n".join(lines)[:4096]
 
 
@@ -8366,42 +8355,57 @@ def _pvp_log_append(pair, entry):
     _pvp_cur_page[pair] = max(0, (total - 1) // ROUNDS_PER_PAGE)
 
 
-def _build_pvp_card_markup(def_id, atk_id, defender_p, pair=None):
-    """Retaliate / Skills / Heal / Defend / page-nav buttons shown on a PvP combat card."""
-    inv = sjl(defender_p.get("inventory"), [])
+def _build_pvp_card_markup(player_uid, opp_uid, player_p):
+    """Action buttons for a specific PvP player attacking their opponent."""
+    inv = sjl(player_p.get("inventory"), [])
     has_potion = any(i in inv for i in
                      ["Health Potion", "Greater Health Potion", "Grand Restorative Flask"])
-    is_priest  = get_class_line(defender_p) == "priest"
-    all_skills = sjl(defender_p.get("all_skills"), [])
-    shield_available = safe_int(defender_p.get("shield_used")) == 0
-    row1 = [InlineKeyboardButton("⚔️ Retaliate", callback_data=f"pvpcard_atk_{def_id}_{atk_id}")]
+    is_priest  = get_class_line(player_p) == "priest"
+    all_skills = sjl(player_p.get("all_skills"), [])
+    shield_available = safe_int(player_p.get("shield_used")) == 0
+    row1 = [InlineKeyboardButton("⚔️ Attack", callback_data=f"pvpcard_atk_{player_uid}_{opp_uid}")]
     if all_skills:
-        row1.append(InlineKeyboardButton("✨ Skills", callback_data=f"pvpcard_skl_{def_id}_{atk_id}_0"))
+        row1.append(InlineKeyboardButton("✨ Skills", callback_data=f"pvpcard_skl_{player_uid}_{opp_uid}_0"))
     rows = [row1]
     row2 = []
     if has_potion or is_priest:
-        row2.append(InlineKeyboardButton("💊 Heal", callback_data=f"pvpcard_heal_{def_id}_{atk_id}"))
+        row2.append(InlineKeyboardButton("💊 Heal", callback_data=f"pvpcard_heal_{player_uid}_{opp_uid}"))
     if shield_available:
-        row2.append(InlineKeyboardButton("🛡️ Defend", callback_data=f"pvpcard_def_{def_id}_{atk_id}"))
+        row2.append(InlineKeyboardButton("🛡️ Defend", callback_data=f"pvpcard_def_{player_uid}_{opp_uid}"))
     if row2:
         rows.append(row2)
-    # Pagination row (only when there are multiple pages)
-    if pair is not None:
-        logs  = _pvp_battle_logs.get(pair, [])
-        total = len(logs)
-        pages = max(1, (total + ROUNDS_PER_PAGE - 1) // ROUNDS_PER_PAGE)
-        cur   = min(_pvp_cur_page.get(pair, pages - 1), pages - 1)
-        if pages > 1:
-            nav = []
-            if cur > 0:
-                nav.append(InlineKeyboardButton(
-                    "◀ Older", callback_data=f"pvpcard_pg_{def_id}_{atk_id}_{cur - 1}"))
-            if cur < pages - 1:
-                nav.append(InlineKeyboardButton(
-                    "▶ Newer", callback_data=f"pvpcard_pg_{def_id}_{atk_id}_{cur + 1}"))
-            if nav:
-                rows.append(nav)
     return InlineKeyboardMarkup(rows)
+
+
+async def _pvp_update_both_cards(pair, a, d, au_id, du_id, chat_id, bot):
+    """Update (or create) both players' PvP battle cards in the group chat."""
+    for viewer_uid, player_p, opp_uid in [(au_id, a, du_id), (du_id, d, au_id)]:
+        card_text = _pvp_pokemon_card(viewer_uid, a, d, pair)
+        markup    = _build_pvp_card_markup(viewer_uid, opp_uid, player_p)
+        existing  = _pvp_player_cards.get(viewer_uid)
+        updated   = False
+        if existing:
+            ex_chat, ex_mid = existing
+            if ex_chat == chat_id:
+                try:
+                    await bot.edit_message_text(chat_id=chat_id, message_id=ex_mid,
+                        text=card_text, parse_mode="Markdown", reply_markup=markup)
+                    updated = True
+                except Exception:
+                    pass
+        if not updated:
+            if existing:
+                try: await bot.delete_message(chat_id=existing[0], message_id=existing[1])
+                except Exception: pass
+            try:
+                msg = await bot.send_message(chat_id=chat_id, text=card_text,
+                    parse_mode="Markdown", reply_markup=markup)
+                _pvp_player_cards[viewer_uid] = (chat_id, msg.message_id)
+                # Also track in _pvp_cards for pair-level cleanup
+                cards_dict = _pvp_cards.setdefault(pair, {})
+                cards_dict[viewer_uid] = msg.message_id
+            except Exception:
+                pass
 
 
 async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
@@ -9034,12 +9038,13 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
     _pvp_log_append(pair, action_text)
 
     if result_type == "defeat":
-        # Cancel timer, delete card, clean up log, post permanent defeat message
         _cancel_card_timer(pair)
-        _old = _pvp_cards.pop(pair, None)
-        if _old:
-            try: await context.bot.delete_message(chat_id=chat_id, message_id=_old)
-            except Exception: pass
+        _pvp_cards.pop(pair, None)
+        for _puid in (uid, target_uid):
+            _pcard = _pvp_player_cards.pop(_puid, None)
+            if _pcard:
+                try: await context.bot.delete_message(chat_id=_pcard[0], message_id=_pcard[1])
+                except Exception: pass
         _pvp_battle_logs.pop(pair, None)
         _pvp_cur_page.pop(pair, None)
         try: await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
@@ -9047,32 +9052,9 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         try: await context.bot.send_message(chat_id=uid, text=action_text[:4096], parse_mode="Markdown")
         except Exception: pass
     else:
-        # Hit or miss — update paginated battle card (separate from picker message)
-        card_text = _pvp_card_text(pair, a, d)
-        markup    = _build_pvp_card_markup(target_uid, uid, d, pair=pair)
-        _mid      = _pvp_cards.get(pair)
-        edited    = False
-        if _mid:
-            try:
-                await context.bot.edit_message_text(chat_id=chat_id, message_id=_mid,
-                    text=card_text, parse_mode="Markdown", reply_markup=markup)
-                edited = True
-            except Exception:
-                pass
-        if not edited:
-            _old_mid = _pvp_cards.pop(pair, None)
-            if _old_mid:
-                try: await context.bot.delete_message(chat_id=chat_id, message_id=_old_mid)
-                except Exception: pass
-            try:
-                m = await context.bot.send_message(chat_id=chat_id,
-                    text=card_text, parse_mode="Markdown", reply_markup=markup)
-                _pvp_cards[pair] = m.message_id
-                _mid = m.message_id
-            except Exception:
-                _mid = None
-        if _mid:
-            _reset_card_timer(pair, context.bot, chat_id, _mid, 20)
+        # Hit or miss — update both players' battle cards
+        await _pvp_update_both_cards(pair, a, d, uid, target_uid, chat_id, context.bot)
+        _reset_card_timer(pair, context.bot, chat_id, 0, 20)
 
     # Refresh picker with updated HP bars (only if picker still makes sense)
     if result_type != "defeat":
@@ -9269,12 +9251,14 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _pvp_log_append(pair, action)
 
     if result_type == "defeat":
-        # Permanent defeat message; clean up card and battle log
         _cancel_card_timer(pair)
-        _old = _pvp_cards.pop(pair, None)
-        if _old:
-            try: await bot.delete_message(chat_id=chat, message_id=_old)
-            except Exception: pass
+        _pvp_cards.pop(pair, None)
+        # Remove both players' cards
+        for _puid in (au.id, du_id):
+            _pcard = _pvp_player_cards.pop(_puid, None)
+            if _pcard:
+                try: await bot.delete_message(chat_id=_pcard[0], message_id=_pcard[1])
+                except Exception: pass
         _pvp_battle_logs.pop(pair, None)
         _pvp_cur_page.pop(pair, None)
         try: await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
@@ -9283,33 +9267,9 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception: pass
         return
 
-    # hit or miss — update/create the battle card
-    # def_id = du_id (defender gets retaliate button), atk_id = au.id
-    card_text = _pvp_card_text(pair, a, d)
-    markup    = _build_pvp_card_markup(du_id, au.id, d, pair=pair)
-    _mid      = _pvp_cards.get(pair)
-    edited    = False
-    if _mid:
-        try:
-            await bot.edit_message_text(chat_id=chat, message_id=_mid,
-                text=card_text, parse_mode="Markdown", reply_markup=markup)
-            edited = True
-        except Exception:
-            pass
-    if not edited:
-        _old_mid = _pvp_cards.pop(pair, None)
-        if _old_mid:
-            try: await bot.delete_message(chat_id=chat, message_id=_old_mid)
-            except Exception: pass
-        try:
-            msg = await bot.send_message(chat_id=chat, text=card_text,
-                parse_mode="Markdown", reply_markup=markup)
-            _pvp_cards[pair] = msg.message_id
-            _mid = msg.message_id
-        except Exception:
-            _mid = None
-    if _mid:
-        _reset_card_timer(pair, bot, chat, _mid, 20)
+    # hit or miss — update/create both players' battle cards
+    await _pvp_update_both_cards(pair, a, d, au.id, du_id, chat, bot)
+    _reset_card_timer(pair, bot, chat, 0, 20)
 
 
 # ── PVP CARD CALLBACK ─────────────────────────────────────────────────────────
@@ -9324,28 +9284,6 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid         = int(parts[2])
         target_id   = int(parts[3])
     except (IndexError, ValueError):
-        return
-
-    # Page navigation — either player in the pair may press ◀/▶
-    if action_type == "pg":
-        fuid = query.from_user.id
-        if fuid not in (uid, target_id):
-            await query.answer("Not your battle!", show_alert=True); return
-        page = int(parts[4]) if len(parts) > 4 else 0
-        pair = _pvp_pair_key(uid, target_id)
-        total_log = len(_pvp_battle_logs.get(pair, []))
-        pages = max(1, (total_log + ROUNDS_PER_PAGE - 1) // ROUNDS_PER_PAGE)
-        page  = max(0, min(page, pages - 1))
-        _pvp_cur_page[pair] = page
-        a_f = get_player(uid); d_f = get_player(target_id)
-        if not a_f or not d_f:
-            await query.answer("Player data not found.", show_alert=True); return
-        card_text = _pvp_card_text(pair, a_f, d_f)
-        markup    = _build_pvp_card_markup(uid, target_id, a_f, pair=pair)
-        try:
-            await query.edit_message_text(card_text, parse_mode="Markdown", reply_markup=markup)
-        except Exception:
-            await query.answer(f"Page {page + 1}/{pages}", show_alert=False)
         return
 
     if query.from_user.id != uid:
@@ -9405,12 +9343,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             heal_entry = f"💊 *{a['username']}* heals *+{actual} HP* ❤️ {a['hp']}/{a['max_hp']}"
             pair = _pvp_pair_key(uid, target_id)
             _pvp_log_append(pair, heal_entry)
-            card_text = _pvp_card_text(pair, a, d)
-            markup    = _build_pvp_card_markup(uid, target_id, a, pair=pair)
-            try:
-                await query.edit_message_text(card_text, parse_mode="Markdown", reply_markup=markup)
-                _reset_card_timer(pair, context.bot, chat_id, query.message.message_id, 20)
-            except Exception: pass
+            await _pvp_update_both_cards(pair, a, d, uid, target_id, chat_id, context.bot)
+            _reset_card_timer(pair, context.bot, chat_id, 0, 20)
             return
 
         if action_type == "def":
@@ -9432,12 +9366,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pair         = _pvp_pair_key(uid, target_id)
             shield_entry = f"🛡️ *{a['username']}* raises their shield — *{max_sh} HP*"
             _pvp_log_append(pair, shield_entry)
-            card_text = _pvp_card_text(pair, a, d)
-            markup    = _build_pvp_card_markup(uid, target_id, a, pair=pair)
-            try:
-                await query.edit_message_text(card_text, parse_mode="Markdown", reply_markup=markup)
-                _reset_card_timer(pair, context.bot, chat_id, query.message.message_id, 20)
-            except Exception: pass
+            await _pvp_update_both_cards(pair, a, d, uid, target_id, chat_id, context.bot)
+            _reset_card_timer(pair, context.bot, chat_id, 0, 20)
             return
 
         if action_type != "atk": return
@@ -9473,40 +9403,24 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _pvp_log_append(pair, result_text)
 
         if result_type == "defeat":
-            # Permanent defeat message; clean up card and log
             _cancel_card_timer(pair)
             _pvp_cards.pop(pair, None)
+            for _puid in (uid, target_id):
+                _pcard = _pvp_player_cards.pop(_puid, None)
+                if _pcard:
+                    try: await context.bot.delete_message(chat_id=_pcard[0], message_id=_pcard[1])
+                    except Exception: pass
             _pvp_battle_logs.pop(pair, None)
             _pvp_cur_page.pop(pair, None)
-            try: await query.delete_message()
-            except Exception: pass
             try: await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
             except Exception: pass
             try: await context.bot.send_message(chat_id=uid, text=result_text[:4096], parse_mode="Markdown")
             except Exception: pass
             return
 
-        # miss or hit — update the single battle card with paginated log
-        # After uid attacked target_id, target_id is the new defender
-        card_text = _pvp_card_text(pair, a, d)
-        markup    = _build_pvp_card_markup(target_id, uid, d, pair=pair)
-        _mid      = query.message.message_id
-        try:
-            await query.edit_message_text(card_text, parse_mode="Markdown", reply_markup=markup)
-            _pvp_cards[pair] = _mid
-        except Exception:
-            try: await query.delete_message()
-            except Exception: pass
-            _pvp_cards.pop(pair, None)
-            try:
-                msg = await context.bot.send_message(chat_id, card_text,
-                    parse_mode="Markdown", reply_markup=markup)
-                _mid = msg.message_id
-                _pvp_cards[pair] = _mid
-            except Exception:
-                _mid = None
-        if _mid:
-            _reset_card_timer(pair, context.bot, chat_id, _mid, 20)
+        # miss or hit — update both players' battle cards
+        await _pvp_update_both_cards(pair, a, d, uid, target_id, chat_id, context.bot)
+        _reset_card_timer(pair, context.bot, chat_id, 0, 20)
 
     finally:
         _cb_unlock(uid)
@@ -15805,10 +15719,12 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             _pvp_log_append(_sk_pair, _sk_result_text)
             # Defeat: clean up battle card and log
             _cancel_card_timer(_sk_pair)
-            _old_sk = _pvp_cards.pop(_sk_pair, None)
-            if _old_sk:
-                try: await context.bot.delete_message(chat_id=chat_id, message_id=_old_sk)
-                except Exception: pass
+            _pvp_cards.pop(_sk_pair, None)
+            for _puid in (uid, target_uid):
+                _pcard = _pvp_player_cards.pop(_puid, None)
+                if _pcard:
+                    try: await context.bot.delete_message(chat_id=_pcard[0], message_id=_pcard[1])
+                    except Exception: pass
             _pvp_battle_logs.pop(_sk_pair, None)
             _pvp_cur_page.pop(_sk_pair, None)
             try:
@@ -15818,27 +15734,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             try: await context.bot.send_message(chat_id=uid, text=_sk_result_text[:4096], parse_mode="Markdown")
             except Exception: pass
         else:
-            # Log skill result; update battle card; keep skill picker open for follow-up
+            # Log skill result; update both players' battle cards
             _pvp_log_append(_sk_pair, _sk_result_text)
-            _sk_card = _pvp_card_text(_sk_pair, p, tp)
-            _sk_card_markup = _build_pvp_card_markup(target_uid, uid, tp, pair=_sk_pair)
-            _sk_mid = _pvp_cards.get(_sk_pair)
-            if _sk_mid:
-                try:
-                    await context.bot.edit_message_text(chat_id=chat_id, message_id=_sk_mid,
-                        text=_sk_card, parse_mode="Markdown", reply_markup=_sk_card_markup)
-                except Exception:
-                    pass
-            else:
-                try:
-                    _new_m = await context.bot.send_message(chat_id=chat_id,
-                        text=_sk_card, parse_mode="Markdown", reply_markup=_sk_card_markup)
-                    _pvp_cards[_sk_pair] = _new_m.message_id
-                    _sk_mid = _new_m.message_id
-                except Exception:
-                    _sk_mid = None
-            if _sk_mid:
-                _reset_card_timer(_sk_pair, context.bot, chat_id, _sk_mid, 20)
+            await _pvp_update_both_cards(_sk_pair, p, tp, uid, target_uid, chat_id, context.bot)
+            _reset_card_timer(_sk_pair, context.bot, chat_id, 0, 20)
             # Keep skill picker open so user can use another skill on the same target
             _self_only_sk = {"self_heal", "group_heal", "mass_cleanse", "party_def_buff",
                              "party_atk_buff", "party_full_buff", "ultimate_buff", "self_atk_buff"}
@@ -19771,10 +19670,6 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = user.id
     if uid in active_encounters:
         await send_group(update, "⚠️ You're already in an encounter! Use the buttons to continue.", delay=10); return
-    if not check_cooldown(p.get("last_encounter"), 30):
-        secs = time_remaining(p.get("last_encounter"), 30)
-        await send_group(update, f"⏳ Encounter cooldown: {secs} remaining.", delay=8); return
-
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⚔️ Battle — fight an NPC", callback_data=f"enc_mode_{uid}_battle")],
         [InlineKeyboardButton("🌿 Hunt — fight wild monsters", callback_data=f"enc_mode_{uid}_hunt")],
@@ -19967,6 +19862,60 @@ async def _start_encounter_hunt(query, uid, p):
     markup = _encounter_battle_markup(enc, p)
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
 
+async def enc_next_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle Continue / Retry / End buttons after an encounter result screen."""
+    query = update.callback_query
+    data  = query.data  # enc_next_{uid}_{action}
+    parts = data.split("_")
+    try:
+        uid    = int(parts[2])
+        action = parts[3]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your button!", show_alert=True); return
+    await query.answer()
+
+    if action == "end":
+        sess = _enc_sessions.pop(uid, {})
+        wins    = sess.get("wins", 0)
+        losses  = sess.get("losses", 0)
+        g_total = sess.get("gold", 0)
+        e_total = sess.get("exp", 0)
+        lines = ["🏁 *Session Complete!*", ""]
+        lines.append(f"⚔️ Wins: *{wins}*  |  💀 Losses: *{losses}*")
+        if g_total: lines.append(f"💰 Gold earned: *{g_total}*")
+        if e_total: lines.append(f"⭐ EXP earned: *{e_total}*")
+        if not wins and not losses:
+            lines.append("_No battles completed._")
+        try:
+            await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+        except Exception: pass
+        return
+
+    # Continue or Retry: start a new encounter
+    p = get_player(uid)
+    if not p:
+        try: await query.edit_message_text("Player data not found."); return
+        except Exception: return
+    if uid in active_encounters:
+        await query.answer("Already in an encounter!", show_alert=True); return
+
+    # Rebuild the mode selector (same as /encounter command)
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚔️ Battle — fight an NPC",        callback_data=f"enc_mode_{uid}_battle")],
+        [InlineKeyboardButton("🌿 Hunt — fight wild monsters",   callback_data=f"enc_mode_{uid}_hunt")],
+        [InlineKeyboardButton("🏰 Enter Dungeon",                callback_data=f"enc_mode_{uid}_dungeon")],
+        [InlineKeyboardButton("❌ Cancel",                       callback_data=f"close_msg_{uid}")],
+    ])
+    prefix = "🔄 *Retry!*" if action == "retry" else "⚔️ *Next Encounter!*"
+    try:
+        await query.edit_message_text(
+            f"{prefix}\nChoose your mode:",
+            parse_mode="Markdown", reply_markup=markup)
+    except Exception: pass
+
+
 async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     # Do NOT answer here — each branch answers (or show_alert) itself so we
@@ -20031,17 +19980,37 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Helper: end encounter (win/lose/flee)
     async def _end_encounter(result_text, gave_rewards=False):
         active_encounters.pop(uid, None)
-        p["last_encounter"] = datetime.now().isoformat()
         save_player(p)
+        # Accumulate session stats
+        sess = _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})
+        if "Victory" in result_text or "defeated!" in result_text or "Caught!" in result_text:
+            sess["wins"] += 1
+        elif "defeated by" in result_text or "knocked you out" in result_text:
+            sess["losses"] += 1
+        is_win = sess["wins"] > 0 and ("Victory" in result_text or "defeated!" in result_text or "Caught!" in result_text or "broke free" not in result_text)
+        is_loss = "defeated by" in result_text or "knocked you out" in result_text
+        # Build continue/retry/end buttons
+        enc_mode = enc.get("mode", "battle")
+        if is_loss:
+            result_markup = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Retry", callback_data=f"enc_next_{uid}_retry"),
+                InlineKeyboardButton("🏁 End", callback_data=f"enc_next_{uid}_end"),
+            ]])
+        else:
+            result_markup = InlineKeyboardMarkup([[
+                InlineKeyboardButton("⚔️ Continue", callback_data=f"enc_next_{uid}_continue"),
+                InlineKeyboardButton("🏁 End", callback_data=f"enc_next_{uid}_end"),
+            ]])
         try:
             await query.answer()
         except Exception:
             pass
         try:
-            await query.edit_message_text(result_text, parse_mode="Markdown")
+            await query.edit_message_text(result_text, parse_mode="Markdown", reply_markup=result_markup)
         except Exception:
             try:
-                await context.bot.send_message(query.message.chat_id, result_text, parse_mode="Markdown")
+                await context.bot.send_message(query.message.chat_id, result_text,
+                    parse_mode="Markdown", reply_markup=result_markup)
             except Exception:
                 pass
 
@@ -20049,7 +20018,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if data == f"enc_flee_{uid}":
         flee_chance = 0.6
         if random.random() < flee_chance:
-            await _end_encounter("🏃 *You fled safely!*\n_(30s cooldown)_")
+            await _end_encounter("🏃 *You fled safely!*")
         else:
             npc_act = _enc_npc_attack(enc, p) if enc["mode"] == "battle" else _enc_monster_attack(enc)
             if enc["p_hp"] <= 0:
@@ -20134,7 +20103,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 if enc["p_hp"] <= 0:
                     gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
                     p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-                    await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold. _(30s cooldown)_")
+                    await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold.")
                     return
                 enc.setdefault("action_log", []).append(action_txt)
                 enc.setdefault("action_log", []).append(npc_act)
@@ -20170,7 +20139,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if enc["p_hp"] <= 0:
                 gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-                await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold. _(30s cooldown)_")
+                await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold.")
                 return
             enc.setdefault("action_log",[]).append(action_txt)
             enc.setdefault("action_log",[]).append(npc_act)
@@ -20289,7 +20258,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if pet_mat:   loot_line += f"\n🐾 Pet mat: *{pet_mat}*"
             await _end_encounter(
                 f"✅ *Victory!*\n*{enc['e_name']}* was defeated!{close_bonus}\n"
-                f"💰 +{gold} gold | ⭐ +{exp} EXP{loot_line}\n_(30s cooldown)_")
+                f"💰 +{gold} gold | ⭐ +{exp} EXP{loot_line}")
             return
 
         # NPC attacks back
@@ -20301,7 +20270,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if enc["p_hp"] <= 0:
             gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
             p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-            await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold. _(30s cooldown)_")
+            await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold.")
             return
         enc.setdefault("action_log",[]).append(action_txt)
         enc.setdefault("action_log",[]).append(npc_act)
@@ -20383,7 +20352,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 if enc["p_hp"] <= 0:
                     gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
                     p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-                    await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold. _(30s cooldown)_")
+                    await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold.")
                     return
                 enc.setdefault("action_log", []).append(action_txt)
                 enc.setdefault("action_log", []).append(mon_act)
@@ -20419,7 +20388,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if enc["p_hp"] <= 0:
                 gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-                await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold. _(30s cooldown)_")
+                await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold.")
                 return
             enc.setdefault("action_log",[]).append(action_txt)
             enc.setdefault("action_log",[]).append(mon_act)
@@ -20471,7 +20440,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await _end_encounter(
                     f"🎯 *Caught!* *{enc['e_name']}* {elem_e}\n"
                     f"📦 Received: {_core_str}{_bonus_str}\n"
-                    f"💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP\n_(30s cooldown)_")
+                    f"💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP")
             else:
                 mon_act = _enc_monster_attack(enc)
                 enc.setdefault("action_log",[]).append(f"*{enc['e_name']}* broke free!")
@@ -20584,7 +20553,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await _end_encounter(
                 f"⚔️ *{enc['e_name']}* {elem_e} defeated!{close_bonus}\n"
                 f"💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP{loot_txt}{pet_exp_txt}\n"
-                f"_Use 🎯 Catch to get Monster Cores next time!_\n_(30s cooldown)_")
+                f"_Use 🎯 Catch to get Monster Cores next time!_")
             return
 
         # Monster attacks back
@@ -20594,7 +20563,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if enc["p_hp"] <= 0:
             gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
             p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-            await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold. _(30s cooldown)_")
+            await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold.")
             return
         enc.setdefault("action_log",[]).append(action_txt)
         enc.setdefault("action_log",[]).append(mon_act)
@@ -21405,30 +21374,40 @@ def _arena_state():
         "extra_dmg_per_hit": 0, "extra_dmg_turns": 0,
     }
 
-def build_arena_card(arena):
+def build_arena_card(arena, viewer_uid=None):
+    """Pokémon-style arena card: opponent at top, self at bottom, log at bottom."""
     p1 = arena["p1"]; p2 = arena["p2"]
     hp1 = arena["p1_hp"]; hp2 = arena["p2_hp"]
     max1 = arena["p1_max"]; max2 = arena["p2_max"]
-    def bar(hp, mx, length=8):
-        pct = hp / max(1, mx)
-        filled = round(pct * length)
+    def bar(hp, mx, length=10):
+        filled = max(0, round((hp / max(1, mx)) * length))
         return "█" * filled + "░" * (length - filled)
     turn_name = p1["username"] if arena["turn"] == arena["p1_id"] else p2["username"]
-    lines = [
-        f"🎪 *ARENA  -  Round {arena['round']}*",
-        f"━━━━━━━━━━━━━━━━",
-        f"⚔️ {p1['username']} [{bar(hp1,max1)}] {hp1}/{max1} HP",
-        f"⚔️ {p2['username']} [{bar(hp2,max2)}] {hp2}/{max2} HP",
-        f"━━━━━━━━━━━━━━━━",
-    ]
+    # Perspective: if viewer_uid set, show opponent at top; else show p1 at top
+    if viewer_uid and viewer_uid == arena["p2_id"]:
+        top_name, top_hp, top_max = p1["username"], hp1, max1
+        bot_name, bot_hp, bot_max = p2["username"], hp2, max2
+    else:
+        top_name, top_hp, top_max = p1["username"], hp1, max1
+        bot_name, bot_hp, bot_max = p2["username"], hp2, max2
+    lines = ["🎪 *ARENA BATTLE*", ""]
+    lines.append(f"👾 *{top_name}*")
+    lines.append(f"`{bar(top_hp, top_max)}`  {top_hp}/{top_max} HP")
+    lines.append("")
+    lines.append(f"👤 *{bot_name}*")
+    lines.append(f"`{bar(bot_hp, bot_max)}`  {bot_hp}/{bot_max} HP")
     if arena["status"] == "done":
         winner = p1["username"] if hp1 > 0 else p2["username"]
+        lines.append("")
         lines.append(f"🏆 *{winner} WINS!*")
     else:
-        lines.append(f"⏳ *{turn_name}'s turn*")
-        lines.append("Use `/arena attack`, `/arena skill [1/name]`, or `/arena item [name]`")
-    for entry in arena["log"][-5:]:
-        lines.append(f"  {entry}")
+        lines.append(f"\n⏳ *{turn_name}'s turn*")
+    log = arena.get("log", [])
+    if log:
+        lines.append("")
+        lines.append("─────────────")
+        for entry in log[-3:]:
+            lines.append(entry)
     return "\n".join(lines)
 
 def build_arena_markup(arena, chat_id):
@@ -27429,6 +27408,7 @@ def main():
     app.add_handler(CommandHandler("squad",        squad_cmd))
     app.add_handler(CommandHandler("withdraw",     withdraw_cmd))
     app.add_handler(CommandHandler("deposit",      deposit_cmd))
+    app.add_handler(CallbackQueryHandler(enc_next_callback, pattern=r"^enc_next_"))
     app.add_handler(CallbackQueryHandler(encounter_callback, pattern="^enc_"))
     app.add_handler(CallbackQueryHandler(dungeon_wiz_callback, pattern="^dng_"))
 
