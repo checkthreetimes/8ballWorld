@@ -15768,22 +15768,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             try: await context.bot.send_message(chat_id=uid, text=_sk_result_text[:4096], parse_mode="Markdown")
             except Exception: pass
         else:
-            # Log skill result; the skill picker message becomes the attacker's card
+            # Log skill result and update both Pokemon cards
             _pvp_log_append(_sk_pair, _sk_result_text)
             await _pvp_update_both_cards(_sk_pair, p, tp, uid, target_uid, chat_id, context.bot, query=query)
             _reset_card_timer(_sk_pair, context.bot, chat_id, 0, 20)
-            # Keep skill picker open so user can use another skill on the same target
-            _self_only_sk = {"self_heal", "group_heal", "mass_cleanse", "party_def_buff",
-                             "party_atk_buff", "party_full_buff", "ultimate_buff", "self_atk_buff"}
-            _rebuildable = [s for s in sjl(p.get("all_skills"), [])
-                            if s.get("type", "damage") not in _self_only_sk
-                            and p.get("level", 1) >= s.get("unlock", 5)]
-            _sk_markup = _build_skill_picker_keyboard(_rebuildable, uid, 0, target_uid) if _rebuildable else None
-            try:
-                await query.edit_message_text(_sk_result_text[:4096], parse_mode="Markdown",
-                                              reply_markup=_sk_markup)
-            except Exception:
-                await context.bot.send_message(chat_id, _sk_result_text[:4096], parse_mode="Markdown")
 
 async def _execute_skill(update, context, p, sk):
     """Core skill execution logic."""
