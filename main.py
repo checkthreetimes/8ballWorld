@@ -148,7 +148,9 @@ _pvp_card_tasks    = {}   # (attacker_uid, defender_uid) -> asyncio.Task for aut
 _pvp_battle_logs   = {}   # pair -> list[str], one entry per round (chronological)
 _pvp_cur_page      = {}   # pair -> int, current page index (0 = oldest)
 _pvp_player_cards  = {}   # uid -> (chat_id, message_id) — each player's own battle card
+_pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
+_PVP_ACTION_CD     = 3.0  # seconds between PvP card button presses
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
 
 def _pvp_pair_key(a, b):
@@ -8489,6 +8491,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             _dot_notes.append(f"{_em} *{_nm} tick!* -{_d_amt} HP ({_pct_txt})" + (f" [{_rem} left]" if _rem else " *(cleared!)*"))
     _dot_prefix = "\n".join(_dot_notes) + "\n" if _dot_notes else ""
 
+    # ── Per-turn charge burn: these expire every action, not just on heal/skill attempts
+    if safe_int(a.get("heal_blocked_turns")) > 0:
+        a["heal_blocked_turns"] -= 1
+    if safe_int(a.get("silence_turns")) > 0:
+        a["silence_turns"] -= 1
+
     # ── Charge-based stun/freeze/entangle — consume one turn, force miss ──────
     if safe_int(a.get("stun_turns")) > 0:
         a["stun_turns"] -= 1
@@ -9334,6 +9342,13 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.from_user.id != uid:
         await query.answer("These aren't your buttons!", show_alert=True); return
+
+    _now = time.time()
+    _last = _pvp_action_times.get(uid, 0)
+    if _now - _last < _PVP_ACTION_CD:
+        _wait = round(_PVP_ACTION_CD - (_now - _last), 1)
+        await query.answer(f"⏳ Wait {_wait}s", show_alert=False); return
+    _pvp_action_times[uid] = _now
 
     if not _cb_lock(uid):
         await query.answer("Still processing...", show_alert=True); return
@@ -15226,6 +15241,12 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # ── PVP context (target_uid provided) ────────────────────────────────────
     if target_uid:
+        _now_pvp = time.time()
+        _last_pvp = _pvp_action_times.get(uid, 0)
+        if _now_pvp - _last_pvp < _PVP_ACTION_CD:
+            _wait_pvp = round(_PVP_ACTION_CD - (_now_pvp - _last_pvp), 1)
+            await query.answer(f"⏳ Wait {_wait_pvp}s", show_alert=False); return
+        _pvp_action_times[uid] = _now_pvp
         tp = get_player(target_uid)
         if not tp:
             await send_result("That player hasn't ascended yet!"); return
