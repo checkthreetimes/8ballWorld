@@ -3635,12 +3635,12 @@ _RANDOM_EVENTS = {
 }
 
 _ENC_DIFFICULTY = {
-    "easy":        {"label":"Easy",         "emoji":"🟢", "weight":25, "hp_mult":(0.40,0.65), "atk_mult":(0.04,0.07), "reward":0.70, "gear":["common","common","uncommon"]},
-    "normal":      {"label":"Normal",       "emoji":"🔵", "weight":35, "hp_mult":(0.70,1.30), "atk_mult":(0.06,0.14), "reward":1.00, "gear":["common","uncommon","uncommon"]},
-    "hard":        {"label":"Hard",         "emoji":"🟡", "weight":22, "hp_mult":(1.35,1.90), "atk_mult":(0.15,0.22), "reward":1.75, "gear":["uncommon","rare","rare"]},
-    "challenging": {"label":"Challenging",  "emoji":"🟠", "weight":12, "hp_mult":(2.00,2.70), "atk_mult":(0.23,0.33), "reward":2.75, "gear":["rare","rare","epic"]},
-    "extreme":     {"label":"Extreme",      "emoji":"🔴", "weight":5,  "hp_mult":(2.80,3.80), "atk_mult":(0.34,0.46), "reward":4.50, "gear":["epic","epic","legendary"]},
-    "mythic":      {"label":"MYTHIC",       "emoji":"💜", "weight":1,  "hp_mult":(4.00,6.00), "atk_mult":(0.47,0.55), "reward":8.00, "gear":["legendary","legendary","legendary"]},
+    "easy":        {"label":"Easy",         "emoji":"🟢", "weight":25, "hp_mult":(0.40,0.65), "atk_mult":(0.03,0.06), "reward":0.70, "gear":["common","common","uncommon"]},
+    "normal":      {"label":"Normal",       "emoji":"🔵", "weight":35, "hp_mult":(0.70,1.20), "atk_mult":(0.05,0.10), "reward":1.00, "gear":["common","uncommon","uncommon"]},
+    "hard":        {"label":"Hard",         "emoji":"🟡", "weight":22, "hp_mult":(1.20,1.75), "atk_mult":(0.08,0.13), "reward":1.75, "gear":["uncommon","rare","rare"]},
+    "challenging": {"label":"Challenging",  "emoji":"🟠", "weight":12, "hp_mult":(1.60,2.20), "atk_mult":(0.11,0.17), "reward":2.75, "gear":["rare","rare","epic"]},
+    "extreme":     {"label":"Extreme",      "emoji":"🔴", "weight":5,  "hp_mult":(2.00,2.80), "atk_mult":(0.14,0.21), "reward":4.50, "gear":["epic","epic","legendary"]},
+    "mythic":      {"label":"MYTHIC",       "emoji":"💜", "weight":1,  "hp_mult":(2.50,3.50), "atk_mult":(0.17,0.25), "reward":8.00, "gear":["legendary","legendary","legendary"]},
 }
 
 def _treasure_card(enc):
@@ -4055,8 +4055,10 @@ def _enc_npc_attack(enc, p):
     attacks = NPC_CLASS_ATTACKS.get(enc.get("e_class", "fighter"), _NPC_DEFAULT_ATTACKS)
     atk_name, dmg_mult, effect = random.choice(attacks)
     raw = int(enc["e_atk"] * dmg_mult * random.uniform(0.85, 1.15))
-    def_red = int(get_stat(p, "DEF") * 0.20)
+    def_red = int(get_stat(p, "DEF") * 0.50)
     dmg = max(1, raw - def_red)
+    # Cap single hit at 30% of player max HP so no one-shots
+    dmg = min(dmg, max(1, int(enc["p_max_hp"] * 0.30)))
     _enc_cls = get_player_class(p)
     _enc_pk  = _enc_cls.get("passive_key", "") if _enc_cls else ""
     if _enc_pk == "iron_will":
@@ -4168,10 +4170,11 @@ def _enc_monster_attack(enc):
         eff = _apply_move_effect(enc, move_key) if mv.get("effect") else ""
         return f"*{enc['e_name']}* used *{mv['name']}* on *{fighter.get('nickname') or enc['e_name']}* — {dmg} dmg!{eff}"
     else:
-        dmg = max(1, raw)
         p = get_player(enc.get("uid"))
         _mon_cls = get_player_class(p) if p else None
         _mon_pk  = _mon_cls.get("passive_key", "") if _mon_cls else ""
+        def_red = int(get_stat(p, "DEF") * 0.50) if p else 0
+        dmg = max(1, raw - def_red)
         if _mon_pk == "iron_will":
             dmg = max(1, int(dmg * 0.50))
         if _mon_pk == "defensive_stance":
@@ -4179,6 +4182,8 @@ def _enc_monster_attack(enc):
                 dmg = max(1, dmg - 30)
         if enc.pop("e_weakened", False):
             dmg = max(1, int(dmg * 0.75))
+        # Cap single hit at 30% of player max HP so no one-shots
+        dmg = min(dmg, max(1, int(enc["p_max_hp"] * 0.30)))
         enc["p_hp"] = max(0, enc["p_hp"] - dmg)
         eff = _apply_move_effect(enc, move_key) if mv.get("effect") else ""
         return f"*{enc['e_name']}* used *{mv['name']}* — {dmg} damage!{eff}"
@@ -20361,7 +20366,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if _r < 0.65:
                 result_text = "🏃 *Escaped!*\nYou slipped away before they could grab you."
             else:
-                gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
                 result_text = f"⚠️ *Couldn't shake them!*\nLost {gold_loss} gold in the chaos."
         save_player(p)
@@ -20438,7 +20443,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else:
             npc_act = _enc_npc_attack(enc, p) if enc["mode"] == "battle" else _enc_monster_attack(enc)
             if enc["p_hp"] <= 0:
-                gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
                 await _end_encounter(f"💀 *You were knocked out trying to flee!*\nLost {gold_loss} gold.")
             else:
@@ -20524,7 +20529,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 dot_txt = _apply_dot_tick(enc)
                 if dot_txt: npc_act += f"\n_{dot_txt}_"
                 if enc["p_hp"] <= 0:
-                    gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                    gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
                     p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
                     await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold.")
                     return
@@ -20560,7 +20565,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             dot_txt = _apply_dot_tick(enc)
             if dot_txt: npc_act += f"\n_{dot_txt}_"
             if enc["p_hp"] <= 0:
-                gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
                 await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold.")
                 return
@@ -20706,7 +20711,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if dot_txt: npc_act += f"\n_{dot_txt}_"
         # Check player dead
         if enc["p_hp"] <= 0:
-            gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+            gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
             p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
             await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold.")
             return
@@ -20795,7 +20800,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 dot_txt = _apply_dot_tick(enc)
                 if dot_txt: mon_act += f"\n_{dot_txt}_"
                 if enc["p_hp"] <= 0:
-                    gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                    gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
                     p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
                     await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold.")
                     return
@@ -20831,7 +20836,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             dot_txt = _apply_dot_tick(enc)
             if dot_txt: mon_act += f"\n_{dot_txt}_"
             if enc["p_hp"] <= 0:
-                gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
                 await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold.")
                 return
@@ -20892,7 +20897,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 enc.setdefault("action_log",[]).append(mon_act)
                 if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
                 if enc["p_hp"] <= 0:
-                    gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                    gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
                     p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
                     await _end_encounter(f"💀 *{enc['e_name']}* broke free and knocked you out!\nLost {gold_loss} gold.")
                     return
@@ -21030,7 +21035,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         dot_txt = _apply_dot_tick(enc)
         if dot_txt: mon_act += f"\n_{dot_txt}_"
         if enc["p_hp"] <= 0:
-            gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+            gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
             p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
             await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold.")
             return
