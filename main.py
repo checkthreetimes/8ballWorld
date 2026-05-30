@@ -20388,10 +20388,24 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # ── All in-combat actions require an active encounter ────────────────────
     enc = active_encounters.get(uid)
     if not enc:
-        await query.answer(); await query.edit_message_text("No active encounter."); return
+        # Battle already ended (duplicate tap or Telegram callback retry).
+        # Silently dismiss and strip buttons from the stale card so it can't be re-pressed.
+        await query.answer()
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    # Answer the callback immediately so Telegram stops the spinner and won't
+    # resend the callback (resends cause the "already ended" false-positive).
+    try:
+        await query.answer()
+    except Exception:
+        pass
 
     p = get_player(uid)
-    if not p: await query.answer(); return
+    if not p: return
 
     # Helper: end encounter (win/lose/flee)
     async def _end_encounter(result_text, gave_rewards=False):
@@ -20432,6 +20446,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             try:
                 await context.bot.send_message(query.message.chat_id, result_text,
                     parse_mode="Markdown", reply_markup=result_markup)
+            except Exception:
+                pass
+            # Old card still has active buttons — strip them so stale taps don't trigger
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
             except Exception:
                 pass
 
