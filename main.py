@@ -8414,19 +8414,18 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p):
 
 
 async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, query=None):
-    """Attacker's card = group chat (edit in place or create once).
-    Defender's card = their DM.
-    Never sends a new card to the attacker's DM.
+    """Each player's card is updated in place wherever it already lives.
+    Fallback: attacker → group chat, defender → their DM (uid == DM chat_id).
     """
     card_targets = [
-        (au_id, a, du_id, group_chat_id),  # attacker always in group
-        (du_id, d, au_id, du_id),           # defender always in their DM
+        (au_id, a, du_id, group_chat_id),  # attacker fallback: group
+        (du_id, d, au_id, du_id),           # defender fallback: their DM
     ]
-    for viewer_uid, player_p, opp_uid, home_chat in card_targets:
+    for viewer_uid, player_p, opp_uid, fallback_chat in card_targets:
         card_text = _pvp_pokemon_card(viewer_uid, a, d, pair)
         markup    = _build_pvp_card_markup(viewer_uid, opp_uid, player_p)
         updated   = False
-        # If this is the player pressing the button, edit that message directly
+        # If this is the player who pressed the button, edit that message directly
         if query and query.from_user.id == viewer_uid:
             try:
                 await query.edit_message_text(card_text, parse_mode="Markdown", reply_markup=markup)
@@ -8436,24 +8435,24 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
                 pass
         if not updated:
             existing = _pvp_player_cards.get(viewer_uid)
-            # Only reuse an existing card if it's in the correct home chat
-            if existing and existing[0] == home_chat:
+            if existing:
+                # Always edit in the tracked location, regardless of which role the player has now
                 try:
-                    await bot.edit_message_text(chat_id=home_chat, message_id=existing[1],
+                    await bot.edit_message_text(chat_id=existing[0], message_id=existing[1],
                         text=card_text, parse_mode="Markdown", reply_markup=markup)
                     updated = True
                 except Exception:
                     pass
         if not updated:
-            # Remove stale card from wrong chat (e.g. old DM card when now attacker)
+            # Create a new card in the fallback location
             existing = _pvp_player_cards.get(viewer_uid)
-            if existing and existing[0] != home_chat:
+            if existing:
                 try: await bot.delete_message(chat_id=existing[0], message_id=existing[1])
                 except Exception: pass
             try:
-                msg = await bot.send_message(chat_id=home_chat, text=card_text,
+                msg = await bot.send_message(chat_id=fallback_chat, text=card_text,
                     parse_mode="Markdown", reply_markup=markup)
-                _pvp_player_cards[viewer_uid] = (home_chat, msg.message_id)
+                _pvp_player_cards[viewer_uid] = (fallback_chat, msg.message_id)
                 _pvp_cards.setdefault(pair, {})[viewer_uid] = msg.message_id
             except Exception:
                 pass
@@ -8594,6 +8593,9 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     if check_miss(a, d):
         d["dodges"] = d.get("dodges", 0) + 1
         check_titles(d)
+        # Consume one vanish charge when the attacker misses due to vanish
+        if safe_int(d.get("vanish_turns")) > 0:
+            d["vanish_turns"] -= 1
         cls_d_miss = get_player_class(d)
         if cls_d_miss:
             pk_d_miss = cls_d_miss.get("passive_key", "")
@@ -9107,13 +9109,6 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         await _pvp_update_both_cards(pair, a, d, uid, target_uid, chat_id, context.bot, query=query)
         _reset_card_timer(pair, context.bot, chat_id, 0, 20)
 
-    # Refresh picker with updated HP bars (only if picker still makes sense)
-    if result_type != "defeat":
-        markup = _build_target_picker_markup(uid, a.get("guild_id"), 0, "atk")
-        try:
-            await query.edit_message_reply_markup(reply_markup=markup)
-        except Exception:
-            pass
 
 async def skill_target_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle skl2_pick_{uid}_{target} and skl2_page_{uid}_{page} callbacks."""
@@ -9351,6 +9346,11 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("Player data not found."); return
 
         if action_type == "heal":
+            if is_healing_blocked(a):
+                if safe_int(a.get("heal_blocked_turns")) > 0:
+                    a["heal_blocked_turns"] -= 1
+                    save_player(a)
+                await query.answer("🚫 Healing blocked!", show_alert=True); return
             inv = sjl(a.get("inventory"), [])
             potion = None; heal_amount = 0
             for pname, pamt in [("Grand Restorative Flask", 4000),
@@ -9540,6 +9540,9 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"☠️ *{t['username']}* has been condemned by a Zealot  -  they cannot be revived for now.\n"
             f"Only a *Saint's Absolution* can lift this.", delay=15); return
     if is_healing_blocked(t) and not target_is_dead:
+        if safe_int(t.get("heal_blocked_turns")) > 0:
+            t["heal_blocked_turns"] -= 1
+            save_player(t)
         await send_group(update,
             f"🚫 *{t['username']}* cannot be healed right now (Void Collapse active).", delay=9); return
 
@@ -15246,6 +15249,9 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             if is_invincible(tp):
                 await send_result(f"🛡️ {tp['username']} is still recovering — invincible."); return
         if is_silenced(p) and stype not in ("self_heal", "self_heal_buff", "group_heal", "mass_cleanse"):
+            if safe_int(p.get("silence_turns")) > 0:
+                p["silence_turns"] -= 1
+                save_player(p)
             await send_result("🤐 You are silenced — can't use skills!"); return
         # Override send_result for PvP: log to battle log and update both Pokemon cards
         _pvp_pair_k = _pvp_pair_key(uid, target_uid)
@@ -15262,6 +15268,12 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         out = [f"⚡ *{p['username']}* uses *{sk['name']}*!"]
         # ── Self / group skills — execute on caster, no target needed ──
         if stype == "self_heal":
+            if is_healing_blocked(p):
+                if safe_int(p.get("heal_blocked_turns")) > 0:
+                    p["heal_blocked_turns"] -= 1
+                    save_player(p)
+                out.append("🚫 Healing is blocked!")
+                await send_result("\n".join(out)); return
             wis = get_stat(p, "WIS")
             heal = round(wis * sk.get("mult", 50))
             p["hp"] = min(p["max_hp"], p["hp"] + heal)
@@ -15269,6 +15281,12 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "self_heal_buff":
+            if is_healing_blocked(p):
+                if safe_int(p.get("heal_blocked_turns")) > 0:
+                    p["heal_blocked_turns"] -= 1
+                    save_player(p)
+                out.append("🚫 Healing is blocked!")
+                await send_result("\n".join(out)); return
             heal = round(p["max_hp"] * sk.get("heal_pct", 0.25))
             p["hp"] = min(p["max_hp"], p["hp"] + heal)
             set_status(p, "battle_cry_str_until", 180)
@@ -16038,6 +16056,9 @@ async def _execute_skill(update, context, p, sk):
         except Exception:
             pass
     if is_silenced(p):
+        if safe_int(p.get("silence_turns")) > 0:
+            p["silence_turns"] -= 1
+            save_player(p)
         await send_group(update, "🤐 You are silenced  -  can't use skills!", delay=9); return
 
     stats_p = safe_stats(p)
