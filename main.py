@@ -141,7 +141,7 @@ pending_alliance_inv    = {}   # inviter_id  -> {target_id, alliance_id, expires
 pending_guild_inv       = {}   # inviter_id  -> {target_id, guild_id, expires}
 pending_holdhands  = {}   # proposer_id -> {target_id, chat_id, expires}
 active_encounters  = {}   # user_id -> encounter state
-_enc_sessions      = {}   # uid -> {"gold":0,"exp":0,"wins":0,"losses":0}
+_enc_sessions      = {}   # uid -> {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]}
 active_wizardry    = {}   # user_id -> wizardry dungeon state
 _pvp_cards         = {}   # (attacker_uid, defender_uid) -> message_id — used to clean up stale cards
 _pvp_card_tasks    = {}   # (attacker_uid, defender_uid) -> asyncio.Task for auto-delete timer
@@ -3528,7 +3528,8 @@ def _encounter_battle_card(enc):
     e_bar  = _enc_hp_bar(e_hp, e_mhp)
     lines  = []
     # Header
-    lines.append(f"{'⚔️ NPC BATTLE' if mode=='battle' else '🌿 HUNT'}")
+    diff_tag = f"  {enc.get('diff_emoji','')} {enc.get('diff_label','')}" if enc.get('diff_label') else ""
+    lines.append(f"{'⚔️ NPC BATTLE' if mode=='battle' else '🌿 HUNT'}{diff_tag}")
     lines.append("")
     # Enemy block
     if mode == "battle":
@@ -3631,6 +3632,15 @@ _RANDOM_EVENTS = {
         "desc": "Bandits leap from the shadows! You can fight back or attempt to flee.",
         "choices": [("⚔️ Fight Back", "fight"), ("🏃 Attempt Escape", "flee")],
     },
+}
+
+_ENC_DIFFICULTY = {
+    "easy":        {"label":"Easy",         "emoji":"🟢", "weight":25, "hp_mult":(0.40,0.65), "atk_mult":(0.04,0.07), "reward":0.70, "gear":["common","common","uncommon"]},
+    "normal":      {"label":"Normal",       "emoji":"🔵", "weight":35, "hp_mult":(0.70,1.30), "atk_mult":(0.06,0.14), "reward":1.00, "gear":["common","uncommon","uncommon"]},
+    "hard":        {"label":"Hard",         "emoji":"🟡", "weight":22, "hp_mult":(1.35,1.90), "atk_mult":(0.15,0.22), "reward":1.75, "gear":["uncommon","rare","rare"]},
+    "challenging": {"label":"Challenging",  "emoji":"🟠", "weight":12, "hp_mult":(2.00,2.70), "atk_mult":(0.23,0.33), "reward":2.75, "gear":["rare","rare","epic"]},
+    "extreme":     {"label":"Extreme",      "emoji":"🔴", "weight":5,  "hp_mult":(2.80,3.80), "atk_mult":(0.34,0.46), "reward":4.50, "gear":["epic","epic","legendary"]},
+    "mythic":      {"label":"MYTHIC",       "emoji":"💜", "weight":1,  "hp_mult":(4.00,6.00), "atk_mult":(0.47,0.55), "reward":8.00, "gear":["legendary","legendary","legendary"]},
 }
 
 def _treasure_card(enc):
@@ -19803,7 +19813,7 @@ async def dungeon_wiz_start(update_or_query, uid: int, p: dict, bot, chat_id: in
         }
         active_wizardry[uid] = state
 
-    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})["mode"] = "dungeon"
+    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = "dungeon"
     dirs   = _wdng_avail_dirs(grid, (0, 0))
     header = _wdng_floor_header(state)
     minimap = _wdng_minimap(grid, (0, 0), state["revealed"])
@@ -19961,10 +19971,16 @@ async def _start_encounter_battle(query, uid, p):
         await _start_encounter_treasure(query, uid, p, "battle"); return
     elif _roll < 0.22:
         await _start_encounter_event(query, uid, p, "battle"); return
+    # Roll difficulty tier
+    _diff_keys = list(_ENC_DIFFICULTY.keys())
+    diff_key = random.choices(_diff_keys, weights=[_ENC_DIFFICULTY[k]["weight"] for k in _diff_keys])[0]
+    diff = _ENC_DIFFICULTY[diff_key]
+
     npc = _pick_random_npc(p.get("level", 1))
     n_level = _enc_npc_level(npc, p.get("level", 1))
     p_mhp = safe_int(p.get("max_hp")) or calc_max_hp(p)
-    n_hp, n_atk = _npc_level_stats(npc[4], npc[5], n_level, p_mhp)
+    n_hp  = max(1, round(p_mhp * random.uniform(*diff["hp_mult"])))
+    n_atk = max(1, round(p_mhp * random.uniform(*diff["atk_mult"])))
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     cls_name = CLASS_TREE.get(npc[1], {}).get("name", npc[1].replace("_"," ").title())
     # Load pet info for enc
@@ -19991,9 +20007,12 @@ async def _start_encounter_battle(query, uid, p):
         "action_log": [f"*{npc[0]}* [{cls_name}] Lv.{n_level} steps forward!"],
         "pet_info": _pet_info,
         "pet_ability_used": False,
+        "difficulty": diff_key,
+        "diff_label": diff["label"],
+        "diff_emoji": diff["emoji"],
     }
     active_encounters[uid] = enc
-    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})["mode"] = "battle"
+    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = "battle"
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
@@ -20005,13 +20024,14 @@ async def _start_encounter_hunt(query, uid, p):
         await _start_encounter_treasure(query, uid, p, "hunt"); return
     elif _roll < 0.15:
         await _start_encounter_event(query, uid, p, "hunt"); return
+    _diff_keys = list(_ENC_DIFFICULTY.keys())
+    diff_key = random.choices(_diff_keys, weights=[_ENC_DIFFICULTY[k]["weight"] for k in _diff_keys])[0]
+    diff = _ENC_DIFFICULTY[diff_key]
     monster = _pick_random_monster(p.get("level", 1))
     m_level = _enc_monster_level(monster, p.get("level", 1))
     p_mhp = safe_int(p.get("max_hp")) or calc_max_hp(p)
-    m_hp, m_atk = _mon_level_stats(monster[4], monster[5], m_level)
-    # Scale monster to player HP range like NPC battles
-    m_hp  = max(int(p_mhp * 0.85), min(m_hp, int(p_mhp * 1.60)))
-    m_atk = max(int(p_mhp * 0.11), min(m_atk, int(p_mhp * 0.26)))
+    m_hp  = max(1, round(p_mhp * random.uniform(*diff["hp_mult"])))
+    m_atk = max(1, round(p_mhp * random.uniform(*diff["atk_mult"])))
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     elem_e = ELEMENT_EMOJI.get(monster[2], "")
     # Load pet info for enc
@@ -20038,9 +20058,12 @@ async def _start_encounter_hunt(query, uid, p):
         "action_log": [f"A wild *{monster[1]}* {elem_e} (Lv.{m_level}) appears!"],
         "pet_info": _pet_info,
         "pet_ability_used": False,
+        "difficulty": diff_key,
+        "diff_label": diff["label"],
+        "diff_emoji": diff["emoji"],
     }
     active_encounters[uid] = enc
-    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})["mode"] = "hunt"
+    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = "hunt"
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
@@ -20053,7 +20076,7 @@ async def _start_encounter_treasure(query, uid, p, mode="battle"):
         "action_log": [],
     }
     active_encounters[uid] = enc
-    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})["mode"] = mode
+    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = mode
     await query.edit_message_text(_treasure_card(enc), parse_mode="Markdown",
                                   reply_markup=_treasure_markup(enc))
 
@@ -20065,7 +20088,7 @@ async def _start_encounter_event(query, uid, p, mode="battle"):
         "action_log": [],
     }
     active_encounters[uid] = enc
-    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})["mode"] = mode
+    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = mode
     await query.edit_message_text(_event_card(enc), parse_mode="Markdown",
                                   reply_markup=_event_markup(enc))
 
@@ -20089,11 +20112,23 @@ async def enc_next_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         losses  = sess.get("losses", 0)
         g_total = sess.get("gold", 0)
         e_total = sess.get("exp", 0)
-        lines = ["🏁 *Session Complete!*", ""]
+        items   = sess.get("items", [])
+        mode    = sess.get("mode", "battle")
+        mode_label = "⚔️ NPC Battle" if mode == "battle" else ("🌿 Hunt" if mode == "hunt" else "🏰 Dungeon")
+        lines = [f"🏁 *{mode_label} Session Complete!*", ""]
         lines.append(f"⚔️ Wins: *{wins}*  |  💀 Losses: *{losses}*")
-        if g_total: lines.append(f"💰 Gold earned: *{g_total}*")
-        if e_total: lines.append(f"⭐ EXP earned: *{e_total}*")
-        if not wins and not losses:
+        if g_total: lines.append(f"💰 Gold earned: *+{g_total:,}*")
+        if e_total: lines.append(f"⭐ EXP earned:  *+{e_total:,}*")
+        if items:
+            lines.append("")
+            lines.append("*🎒 Items Collected:*")
+            _item_counts = {}
+            for _itm in items:
+                _item_counts[_itm] = _item_counts.get(_itm, 0) + 1
+            for _itm, _cnt in sorted(_item_counts.items()):
+                prefix = f"×{_cnt} " if _cnt > 1 else ""
+                lines.append(f"  {prefix}*{_itm}*")
+        if not wins and not losses and not items:
             lines.append("_No battles completed._")
         try:
             await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
@@ -20228,7 +20263,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             inv = sjl(p.get("inventory"), []); inv.append(potion); p["inventory"] = json.dumps(inv)
             loot_lines.append(f"🧪 *{potion}*!")
         save_player(p)
-        _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})["wins"] = \
+        _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["wins"] = \
             _enc_sessions.get(uid, {}).get("wins", 0) + 1
         try:
             await query.edit_message_text(
@@ -20352,7 +20387,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         active_encounters.pop(uid, None)
         save_player(p)
         # Accumulate session stats
-        sess = _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})
+        sess = _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})
         if "Victory" in result_text or "defeated!" in result_text or "Caught!" in result_text:
             sess["wins"] += 1
         elif "defeated by" in result_text or "knocked you out" in result_text:
@@ -20465,8 +20500,15 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 sk  = p_skills[idx]
             except (ValueError, IndexError):
                 await query.answer("Skill not available!", show_alert=True); return
+            _HEAL_LIMIT_TYPES = {"self_heal","self_heal_buff","group_heal","revive_heal",
+                                 "regen","heal_shield","mass_cleanse","full_revive","aoe_heal_dmg"}
+            if sk.get("type") in _HEAL_LIMIT_TYPES or str(sk.get("type","")).endswith("heal"):
+                if enc.get("skill_heal_uses", 0) >= 3:
+                    await query.answer("🚫 Heal limit reached (3/3)! Healing skills exhausted.", show_alert=True)
+                    return
             action_txt, _sk_dmg, _is_support = _enc_process_skill(enc, p, sk)
             if _is_support:
+                enc["skill_heal_uses"] = enc.get("skill_heal_uses", 0) + 1
                 npc_act = _enc_npc_attack(enc, p)
                 dot_txt = _apply_dot_tick(enc)
                 if dot_txt: npc_act += f"\n_{dot_txt}_"
@@ -20584,32 +20626,31 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # Close-fight bonus: reward surviving tough battles
             hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
             close_bonus = ""
-            gear_drop_chance = 0.50
             if hp_pct <= 0.15:
                 gold = int(gold * 2.0); exp = int(exp * 2.0)
-                gear_drop_chance = 0.75
                 close_bonus = "\n🔥 *Clutch Victory!* Bonus rewards for surviving on the edge!"
             elif hp_pct <= 0.30:
                 gold = int(gold * 1.5); exp = int(exp * 1.5)
-                gear_drop_chance = 0.65
                 close_bonus = "\n⚔️ *Close Fight Bonus!*"
+
+            # Apply difficulty reward multiplier
+            _diff = _ENC_DIFFICULTY.get(enc.get("difficulty", "normal"), _ENC_DIFFICULTY["normal"])
+            reward_mult = _diff["reward"]
+            gold = round(gold * reward_mult)
+            exp  = round(exp  * reward_mult)
+            gear_drop_chance = min(0.90, 0.50 * reward_mult)
+            if hp_pct <= 0.15: gear_drop_chance = min(0.95, gear_drop_chance * 1.40)
+            elif hp_pct <= 0.30: gear_drop_chance = min(0.90, gear_drop_chance * 1.20)
 
             add_exp(p, exp)
             p["gold"] = safe_int(p.get("gold", 0)) + gold
             # Loot key item
             loot_key  = enc.get("e_loot_key", "Encounter Token")
             loot_item = loot_key if random.random() < 0.40 else None
-            # Gear drop — NPC mode is a good farming spot (higher base chance)
+            # Gear drop — rarity from difficulty tier
             gear_drop = None
             if random.random() < gear_drop_chance:
-                if e_level < 20:
-                    _rar = random.choice(["common", "common", "uncommon"])
-                elif e_level < 40:
-                    _rar = random.choice(["uncommon", "uncommon", "rare"])
-                elif e_level < 60:
-                    _rar = random.choice(["rare", "rare", "epic"])
-                else:
-                    _rar = random.choice(["rare", "epic", "legendary"])
+                _rar = random.choice(_diff["gear"])
                 _gear_pool = [n for n, d in {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}.items() if d.get("rarity") == _rar]
                 gear_drop = random.choice(_gear_pool) if _gear_pool else None
             if gear_drop:
@@ -20630,14 +20671,21 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 _pet_mats = ["Pet Snack","Pet Snack","Pet Snack","Greater Health Potion","Fortune Coin"]
                 pet_mat = random.choice(_pet_mats)
                 inv = sjl(p.get("inventory"), []); inv.append(pet_mat); p["inventory"] = json.dumps(inv)
+            # Track in session
+            _sess = _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})
+            _sess["gold"] = _sess.get("gold", 0) + gold
+            _sess["exp"]  = _sess.get("exp",  0) + exp
+            for _si in [gear_drop, loot_item, potion_drop, pet_mat]:
+                if _si: _sess.setdefault("items", []).append(_si)
             loot_line = ""
             if gear_drop:   loot_line += f"\n🎁 Found: *{gear_drop}*"
             if loot_item:   loot_line += f"\n📦 Loot: *{loot_item}*"
             if potion_drop: loot_line += f"\n🧪 *{potion_drop}*"
             if pet_mat:     loot_line += f"\n🐾 Pet mat: *{pet_mat}*"
+            _diff_tag = f" {enc.get('diff_emoji','')} *{enc.get('diff_label','')}*" if enc.get('diff_label') else ""
             await _end_encounter(
-                f"✅ *Victory!*\n*{enc['e_name']}* was defeated!{close_bonus}\n"
-                f"💰 +{gold} gold | ⭐ +{exp} EXP{loot_line}")
+                f"✅ *Victory!*{_diff_tag}\n*{enc['e_name']}* was defeated!{close_bonus}\n"
+                f"💰 +{gold:,} gold | ⭐ +{exp:,} EXP{loot_line}")
             return
 
         # NPC attacks back
@@ -20723,8 +20771,15 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 sk  = p_skills[idx]
             except (ValueError, IndexError):
                 await query.answer("Skill not available!", show_alert=True); return
+            _HEAL_LIMIT_TYPES = {"self_heal","self_heal_buff","group_heal","revive_heal",
+                                 "regen","heal_shield","mass_cleanse","full_revive","aoe_heal_dmg"}
+            if sk.get("type") in _HEAL_LIMIT_TYPES or str(sk.get("type","")).endswith("heal"):
+                if enc.get("skill_heal_uses", 0) >= 3:
+                    await query.answer("🚫 Heal limit reached (3/3)! Healing skills exhausted.", show_alert=True)
+                    return
             action_txt, _hsk_dmg, _is_support = _enc_process_skill(enc, p, sk)
             if _is_support:
+                enc["skill_heal_uses"] = enc.get("skill_heal_uses", 0) + 1
                 mon_act = _enc_monster_attack(enc)
                 dot_txt = _apply_dot_tick(enc)
                 if dot_txt: mon_act += f"\n_{dot_txt}_"
@@ -20898,6 +20953,14 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             elif hp_pct <= 0.30:
                 exp_gain = int(exp_gain * 1.5); gold_gain = int(gold_gain * 1.5)
                 close_bonus = "\n⚔️ *Close Fight Bonus!*"
+            # Apply difficulty reward multiplier
+            _diff = _ENC_DIFFICULTY.get(enc.get("difficulty","normal"), _ENC_DIFFICULTY["normal"])
+            reward_mult = _diff["reward"]
+            exp_gain  = round(exp_gain  * reward_mult)
+            gold_gain = round(gold_gain * reward_mult)
+            _hunt_gear_chance = min(0.70, 0.30 * reward_mult)
+            if hp_pct <= 0.15: _hunt_gear_chance = min(0.85, _hunt_gear_chance * 1.40)
+            elif hp_pct <= 0.30: _hunt_gear_chance = min(0.75, _hunt_gear_chance * 1.20)
             add_exp(p, exp_gain)
             p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
             # Element-based loot drops
@@ -20920,6 +20983,15 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 hunt_loot = random.choice(pool)
                 add_item(p, hunt_loot)
             loot_txt = f"\n🎁 Drop: *{hunt_loot}*" if hunt_loot else ""
+            # Gear drop for hard+ difficulties
+            hunt_gear_drop = None
+            if _diff["reward"] >= 1.75 and random.random() < _hunt_gear_chance:
+                _rar = random.choice(_diff["gear"])
+                _gear_pool = [n for n, d in {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}.items() if d.get("rarity") == _rar]
+                hunt_gear_drop = random.choice(_gear_pool) if _gear_pool else None
+            if hunt_gear_drop:
+                add_item(p, hunt_gear_drop)
+                loot_txt += f"\n🎁 Gear Drop: *{hunt_gear_drop}*"
             # Pet EXP from hunt
             pet_info = enc.get("pet_info")
             pet_exp_txt = ""
@@ -20929,9 +21001,16 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     pet_exp = enc["e_level"] * 8
                     give_pet_exp(uid, pet_exp)
                     pet_exp_txt = f"\n🐾 *{pet_info['name']}* +{pet_exp} EXP"
+            # Track in session
+            _sess = _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})
+            _sess["gold"] = _sess.get("gold", 0) + gold_gain
+            _sess["exp"]  = _sess.get("exp",  0) + exp_gain
+            for _si in [hunt_loot, hunt_gear_drop]:
+                if _si: _sess.setdefault("items", []).append(_si)
+            _hdiff_tag = f" {enc.get('diff_emoji','')} *{enc.get('diff_label','')}*" if enc.get('diff_label') else ""
             await _end_encounter(
-                f"⚔️ *{enc['e_name']}* {elem_e} defeated!{close_bonus}\n"
-                f"💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP{loot_txt}{pet_exp_txt}\n"
+                f"⚔️ *{enc['e_name']}* {elem_e} defeated!{_hdiff_tag}{close_bonus}\n"
+                f"💰 +{gold_gain:,} gold | ⭐ +{exp_gain:,} EXP{loot_txt}{pet_exp_txt}\n"
                 f"_Use 🎯 Catch to get Monster Cores next time!_")
             return
 
