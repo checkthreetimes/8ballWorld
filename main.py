@@ -2237,13 +2237,13 @@ ACCESSORIES = {
     "Phantom Loop":               {"slot":"ring","effect":{"AGI":10,"dodge_bonus":0.10},"rarity":"rare",
                                 "desc":"+10 AGI, +10% dodge chance."},
     "Warrior's Band":      {"slot":"ring","effect":{"STR":10,"lifesteal_flat":5},"rarity":"rare",
-                                "desc":"+10 STR. Kills restore 5 HP."},
+                                "desc":"+10 STR. Each hit restores 5% of damage dealt as HP."},
     "Mage's Coil":         {"slot":"ring","effect":{"INT":14},"rarity":"rare",
                                 "desc":"+14 INT."},
     "Stone Heart":         {"slot":"amulet","effect":{"DEF":15,"hp":20},"rarity":"rare",
                                 "desc":"+15 DEF, +20 HP."},
     "Beast Fang Chain":      {"slot":"amulet","effect":{"STR":10,"lifesteal_flat":5},"rarity":"rare",
-                                "desc":"+10 STR. +5 HP per hit landed."},
+                                "desc":"+10 STR. Each hit restores 5% of damage dealt as HP."},
     "Traveler's Compass":         {"slot":"amulet","effect":{"all_stats":10,"explore_bonus":0.10},"rarity":"rare",
                                 "desc":"+10 to all stats, +10% explore rewards."},
     "The Storm Torc":      {"slot":"amulet","effect":{"AGI":10,"INT":10},"rarity":"rare",
@@ -2417,7 +2417,7 @@ PET_DEF_ABILITIES = {
     "counter":    {"name":"Counter Strike","emoji":"⚔️","desc":"Retaliates instantly with a fierce counter attack.",           "proc_base":0.18},
     "poison":     {"name":"Venom Bite",    "emoji":"🐍","desc":"Sinks fangs into the attacker, applying poison.",             "proc_base":0.16},
     "stun":       {"name":"Stunning Blow", "emoji":"⚡","desc":"Delivers a blow that stuns the attacker (miss next attack).", "proc_base":0.14},
-    "lifesteal":  {"name":"Life Drain",    "emoji":"💜","desc":"Drains life force from the attacker and channels it to you.", "proc_base":0.16},
+    "lifesteal":  {"name":"Life Drain",    "emoji":"💜","desc":"Drains 20–32% of incoming damage as HP for you (scales with pet level).", "proc_base":0.16},
     "shield":     {"name":"Aura Shield",   "emoji":"✨","desc":"Projects a protective aura that reduces incoming damage.",    "proc_base":0.22},
 }
 
@@ -2519,7 +2519,7 @@ def apply_pet_defense(pet, attacker, dmg_after_def, extra_notes):
         extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Stunning Blow!* Attacker is *stunned* — misses next attack!")
 
     elif da == "lifesteal":
-        heal_amt = round(8 + lvl * 0.6)
+        heal_amt = round(max(80, dmg_after_def * (0.12 + lvl * 0.002)))
         status_type = "lifesteal_to_owner"
         status_val  = heal_amt
         extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Life Drain!* Drained *{heal_amt} HP* from attacker!")
@@ -2678,7 +2678,7 @@ def _build_pet_card(pet):
         plines = []
         if passives.get("crit_bonus"):  plines.append(f"+{round(passives['crit_bonus']*100)}% crit")
         if passives.get("dodge_bonus"): plines.append(f"+{round(passives['dodge_bonus']*100)}% dodge")
-        if passives.get("lifesteal_flat"): plines.append(f"+{passives['lifesteal_flat']} lifesteal")
+        if passives.get("lifesteal_flat"): plines.append(f"+{passives['lifesteal_flat']}% lifesteal/hit")
         if plines: lines.append("✨ Passives: " + "  |  ".join(plines))
     next_unlock = next((t for t in sorted(PET_LEVEL_PASSIVES) if t > lvl), None)
     if next_unlock:
@@ -3602,6 +3602,75 @@ def _encounter_battle_markup(enc, p=None):
         rows.append(bottom)
     else:
         rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"enc_flee_{uid}")])
+    return InlineKeyboardMarkup(rows)
+
+_CHEST_TIERS = {
+    "wooden": {"emoji": "🪵", "gold": (20, 80),   "gear_chance": 0.20, "curse_chance": 0.10, "exp": (10, 30)},
+    "iron":   {"emoji": "⛏️",  "gold": (80, 250),  "gear_chance": 0.40, "curse_chance": 0.08, "exp": (30, 80)},
+    "golden": {"emoji": "✨",  "gold": (200, 600), "gear_chance": 0.65, "curse_chance": 0.05, "exp": (80, 200)},
+}
+
+_RANDOM_EVENTS = {
+    "merchant": {
+        "title": "🛒 Wandering Merchant",
+        "desc": "A mysterious merchant appears, offering to trade for a deal that's too good to pass up.",
+        "choices": [("🛒 Browse Wares", "buy"), ("🚶 Keep Walking", "skip")],
+    },
+    "shrine": {
+        "title": "🗿 Ancient Shrine",
+        "desc": "You stumble upon an ancient shrine radiating quiet power. Pray and something may happen...",
+        "choices": [("🙏 Pray at the Shrine", "pray"), ("🚶 Leave it Alone", "skip")],
+    },
+    "fallen": {
+        "title": "💀 Fallen Adventurer",
+        "desc": "You find the remains of an adventurer who didn't make it. Their pack still has some items...",
+        "choices": [("🎒 Search the Pack", "loot"), ("🕯️ Leave in Peace", "skip")],
+    },
+    "ambush": {
+        "title": "⚠️ Ambush!",
+        "desc": "Bandits leap from the shadows! You can fight back or attempt to flee.",
+        "choices": [("⚔️ Fight Back", "fight"), ("🏃 Attempt Escape", "flee")],
+    },
+}
+
+def _treasure_card(enc):
+    tier = enc.get("chest_tier", "wooden")
+    td   = _CHEST_TIERS[tier]
+    lines = [f"💰 *TREASURE*\n"]
+    lines.append(f"{td['emoji']} A *{tier.title()} Chest* sits before you.")
+    lines.append("")
+    lines.append("_What do you do?_")
+    log = enc.get("action_log", [])
+    if log:
+        lines.append("─────────────")
+        for entry in log[-2:]:
+            lines.append(entry)
+    return "\n".join(lines)
+
+def _treasure_markup(enc):
+    uid = enc["uid"]
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎁 Open the Chest", callback_data=f"enc_open_{uid}"),
+         InlineKeyboardButton("🚪 Leave it", callback_data=f"enc_leave_{uid}")],
+    ])
+
+def _event_card(enc):
+    etype = enc.get("event_type", "shrine")
+    ev = _RANDOM_EVENTS.get(etype, _RANDOM_EVENTS["shrine"])
+    lines = [f"*{ev['title']}*\n", ev["desc"], ""]
+    log = enc.get("action_log", [])
+    if log:
+        lines.append("─────────────")
+        for entry in log[-2:]:
+            lines.append(entry)
+    return "\n".join(lines)
+
+def _event_markup(enc):
+    uid   = enc["uid"]
+    etype = enc.get("event_type", "shrine")
+    ev    = _RANDOM_EVENTS.get(etype, _RANDOM_EVENTS["shrine"])
+    rows  = [[InlineKeyboardButton(label, callback_data=f"enc_event_{uid}_{key}")
+              for label, key in ev["choices"]]]
     return InlineKeyboardMarkup(rows)
 
 def _pick_random_npc(p_level):
@@ -6607,14 +6676,17 @@ def apply_lifesteal(attacker, dmg):
     if pk == "adrenaline":
         _hp_pct = attacker["hp"] / max(1, calc_max_hp(attacker))
         if _hp_pct < 0.30: healed += 10
-    if get_accessory_bonus(attacker, "lifesteal_flat"):
-        healed += get_accessory_bonus(attacker, "lifesteal_flat")
+    _acc_ls = get_accessory_bonus(attacker, "lifesteal_flat")
+    if _acc_ls and dmg:
+        healed += round(dmg * _acc_ls / 100)
     enc_heal = get_enchant_bonus(attacker, "lifesteal_flat")
     if enc_heal:
         healed += round(dmg * 0.15)  # 15% of damage dealt
     ls_pet = get_active_pet_record(attacker.get("user_id"))
-    if ls_pet:
-        healed += get_pet_passives(ls_pet.get("level", 1)).get("lifesteal_flat", 0)
+    if ls_pet and dmg:
+        _pet_ls_pct = get_pet_passives(ls_pet.get("level", 1)).get("lifesteal_flat", 0)
+        if _pet_ls_pct:
+            healed += round(dmg * _pet_ls_pct / 100)
     if healed:
         attacker["hp"] = min(calc_max_hp(attacker), attacker["hp"] + healed)
     return healed
@@ -8433,8 +8505,10 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
                 await query.edit_message_text(card_text, parse_mode="Markdown", reply_markup=markup)
                 _pvp_player_cards[viewer_uid] = (query.message.chat_id, query.message.message_id)
                 updated = True
-            except Exception:
-                pass
+            except Exception as _qe:
+                if "not modified" in str(_qe).lower():
+                    _pvp_player_cards[viewer_uid] = (query.message.chat_id, query.message.message_id)
+                    updated = True
         if not updated:
             existing = _pvp_player_cards.get(viewer_uid)
             if existing:
@@ -8443,8 +8517,9 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
                     await bot.edit_message_text(chat_id=existing[0], message_id=existing[1],
                         text=card_text, parse_mode="Markdown", reply_markup=markup)
                     updated = True
-                except Exception:
-                    pass
+                except Exception as _be:
+                    if "not modified" in str(_be).lower():
+                        updated = True
         if not updated:
             # Create a new card in the fallback location
             existing = _pvp_player_cards.get(viewer_uid)
@@ -14967,6 +15042,29 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.delete()
             return
 
+    # When replying with an explicit skill (or auto-selected sole skill), route through
+    # the PvP card system instead of the old plain-text path.
+    if replying:
+        _reply_tgt = update.message.reply_to_message.from_user
+        _reply_p = get_player(_reply_tgt.id)
+        if _reply_p:
+            sk_idx = next((i for i, s in enumerate(all_skills) if s["name"] == sk["name"]), 0)
+            markup = InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    f"⚡ {sk['name']} → {_reply_p['username']}",
+                    callback_data=f"skillpick_{user.id}_{sk_idx}_{_reply_tgt.id}")
+            ]])
+            try:
+                await update.message.reply_to_message.reply_text(
+                    f"🎯 *{p['username']}* readies *{sk['name']}*!",
+                    parse_mode="Markdown", reply_markup=markup)
+            except Exception:
+                await update.message.reply_text(
+                    f"🎯 *{p['username']}* readies *{sk['name']}*!",
+                    parse_mode="Markdown", reply_markup=markup)
+            try: await update.message.delete()
+            except Exception: pass
+            return
     await _execute_skill(update, context, p, sk)
 
 _SKILL_PAGE_SIZE = 4
@@ -19857,6 +19955,12 @@ async def deposit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update, f"📦 *{name}* {elem_e} (Lv.{sm['level']}) moved to your Box.", delay=12)
 
 async def _start_encounter_battle(query, uid, p):
+    # 15% chance: treasure chest. 7% chance: random event.
+    _roll = random.random()
+    if _roll < 0.15:
+        await _start_encounter_treasure(query, uid, p, "battle"); return
+    elif _roll < 0.22:
+        await _start_encounter_event(query, uid, p, "battle"); return
     npc = _pick_random_npc(p.get("level", 1))
     n_level = _enc_npc_level(npc, p.get("level", 1))
     p_mhp = safe_int(p.get("max_hp")) or calc_max_hp(p)
@@ -19895,6 +19999,12 @@ async def _start_encounter_battle(query, uid, p):
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
 
 async def _start_encounter_hunt(query, uid, p):
+    # 10% chance: treasure chest. 5% chance: random event.
+    _roll = random.random()
+    if _roll < 0.10:
+        await _start_encounter_treasure(query, uid, p, "hunt"); return
+    elif _roll < 0.15:
+        await _start_encounter_event(query, uid, p, "hunt"); return
     monster = _pick_random_monster(p.get("level", 1))
     m_level = _enc_monster_level(monster, p.get("level", 1))
     p_mhp = safe_int(p.get("max_hp")) or calc_max_hp(p)
@@ -19934,6 +20044,30 @@ async def _start_encounter_hunt(query, uid, p):
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
+
+async def _start_encounter_treasure(query, uid, p, mode="battle"):
+    tier = random.choices(["wooden", "iron", "golden"], weights=[60, 30, 10])[0]
+    enc = {
+        "uid": uid, "mode": "treasure", "p_name": p.get("username", "You"),
+        "chest_tier": tier,
+        "action_log": [],
+    }
+    active_encounters[uid] = enc
+    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})["mode"] = mode
+    await query.edit_message_text(_treasure_card(enc), parse_mode="Markdown",
+                                  reply_markup=_treasure_markup(enc))
+
+async def _start_encounter_event(query, uid, p, mode="battle"):
+    etype = random.choice(list(_RANDOM_EVENTS.keys()))
+    enc = {
+        "uid": uid, "mode": "event", "p_name": p.get("username", "You"),
+        "event_type": etype,
+        "action_log": [],
+    }
+    active_encounters[uid] = enc
+    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})["mode"] = mode
+    await query.edit_message_text(_event_card(enc), parse_mode="Markdown",
+                                  reply_markup=_event_markup(enc))
 
 async def enc_next_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle Continue / Retry / End buttons after an encounter result screen."""
@@ -20026,6 +20160,173 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await dungeon_wiz_start(query, uid, p, context.bot, query.message.chat_id)
         else:
             await _start_encounter_hunt(query, uid, p)
+        return
+
+    # ── Treasure chest ───────────────────────────────────────────────────────
+    _chest_match = re.match(r"enc_(?:open|leave)_(\d+)$", data)
+    if _chest_match:
+        owner_uid = int(_chest_match.group(1))
+        if uid != owner_uid:
+            await query.answer("Not your encounter!", show_alert=True); return
+        uid = owner_uid
+        enc = active_encounters.get(uid)
+        if not enc or enc.get("mode") != "treasure":
+            await query.answer(); await query.edit_message_text("No active chest."); return
+        p = get_player(uid)
+        if not p: await query.answer(); return
+        await query.answer()
+        active_encounters.pop(uid, None)
+        tier = enc.get("chest_tier", "wooden")
+        td   = _CHEST_TIERS[tier]
+        action = "open" if "open" in data else "leave"
+        result_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⚔️ Continue", callback_data=f"enc_next_{uid}_continue"),
+            InlineKeyboardButton("🏁 End",      callback_data=f"enc_next_{uid}_end"),
+        ]])
+        if action == "leave":
+            try:
+                await query.edit_message_text(f"🚶 You walk past the chest.\n_Safety first._",
+                                              parse_mode="Markdown", reply_markup=result_markup)
+            except Exception: pass
+            return
+        # Open the chest
+        td_gold_min, td_gold_max = td["gold"]
+        gold_found = random.randint(td_gold_min, td_gold_max)
+        exp_found  = random.randint(*td["exp"])
+        # Curse check: lose gold/exp instead
+        if random.random() < td["curse_chance"]:
+            gold_penalty = random.randint(20, 150)
+            exp_penalty  = random.randint(10, 50)
+            p["gold"] = max(0, safe_int(p.get("gold", 0)) - gold_penalty)
+            save_player(p)
+            try:
+                await query.edit_message_text(
+                    f"💀 *CURSED CHEST!*\n_{td['emoji']} The chest springs a trap!_\n"
+                    f"Lost *{gold_penalty} gold* and *{exp_penalty} EXP*! Watch your greed...",
+                    parse_mode="Markdown", reply_markup=result_markup)
+            except Exception: pass
+            return
+        # Normal rewards
+        p["gold"] = safe_int(p.get("gold", 0)) + gold_found
+        add_exp(p, exp_found)
+        loot_lines = [f"💰 +{gold_found} gold", f"⭐ +{exp_found} EXP"]
+        gear_drop = None
+        if random.random() < td["gear_chance"]:
+            p_lv = p.get("level", 1)
+            if p_lv < 20:   _rar = random.choice(["common", "uncommon"])
+            elif p_lv < 40: _rar = random.choice(["uncommon", "rare"])
+            elif p_lv < 60: _rar = random.choice(["rare", "epic"])
+            else:           _rar = random.choice(["rare", "epic", "legendary"])
+            _gear_pool = [n for n, d in {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}.items() if d.get("rarity") == _rar]
+            gear_drop = random.choice(_gear_pool) if _gear_pool else None
+        if gear_drop:
+            inv = sjl(p.get("inventory"), []); inv.append(gear_drop); p["inventory"] = json.dumps(inv)
+            loot_lines.append(f"🎁 Found: *{gear_drop}*!")
+        # Bonus potion
+        if random.random() < 0.40:
+            potion = random.choice(["Health Potion", "Health Potion", "Greater Health Potion"])
+            inv = sjl(p.get("inventory"), []); inv.append(potion); p["inventory"] = json.dumps(inv)
+            loot_lines.append(f"🧪 *{potion}*!")
+        save_player(p)
+        _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})["wins"] = \
+            _enc_sessions.get(uid, {}).get("wins", 0) + 1
+        try:
+            await query.edit_message_text(
+                f"🎉 *{td['emoji']} Chest Opened!*\n" + "\n".join(loot_lines),
+                parse_mode="Markdown", reply_markup=result_markup)
+        except Exception: pass
+        return
+
+    # ── Random events ────────────────────────────────────────────────────────
+    _event_match = re.match(r"enc_event_(\d+)_(\w+)$", data)
+    if _event_match:
+        owner_uid = int(_event_match.group(1))
+        choice    = _event_match.group(2)
+        if uid != owner_uid:
+            await query.answer("Not your encounter!", show_alert=True); return
+        uid = owner_uid
+        enc = active_encounters.get(uid)
+        if not enc or enc.get("mode") != "event":
+            await query.answer(); await query.edit_message_text("No active event."); return
+        p = get_player(uid)
+        if not p: await query.answer(); return
+        await query.answer()
+        active_encounters.pop(uid, None)
+        etype = enc.get("event_type", "shrine")
+        result_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⚔️ Continue", callback_data=f"enc_next_{uid}_continue"),
+            InlineKeyboardButton("🏁 End",      callback_data=f"enc_next_{uid}_end"),
+        ]])
+        result_text = "..."
+        if choice == "skip":
+            result_text = "🚶 You move on, leaving the encounter behind."
+        elif etype == "merchant" and choice == "buy":
+            # Sell a random item from stock
+            _merch_items = [("Health Potion", 30), ("Greater Health Potion", 80),
+                            ("Fortune Coin", 50), ("Pet Snack", 25)]
+            item_name, cost = random.choice(_merch_items)
+            if safe_int(p.get("gold", 0)) >= cost:
+                p["gold"] = safe_int(p.get("gold", 0)) - cost
+                inv = sjl(p.get("inventory"), []); inv.append(item_name); p["inventory"] = json.dumps(inv)
+                result_text = f"🛒 *Deal made!*\nBought *{item_name}* for {cost} gold."
+            else:
+                result_text = f"🛒 *No deal!*\nYou don't have enough gold ({cost}g needed)."
+        elif etype == "shrine" and choice == "pray":
+            _r = random.random()
+            if _r < 0.50:
+                exp_bonus = random.randint(50, 200)
+                add_exp(p, exp_bonus)
+                result_text = f"🗿 *The shrine glows warmly.*\n+{exp_bonus} EXP blessed upon you!"
+            elif _r < 0.75:
+                hp_restore = round(calc_max_hp(p) * 0.30)
+                p["hp"] = min(calc_max_hp(p), safe_int(p.get("hp", 0)) + hp_restore)
+                result_text = f"🗿 *Holy energy fills you.*\n+{hp_restore} HP restored!"
+            else:
+                gold_drain = random.randint(10, 60)
+                p["gold"] = max(0, safe_int(p.get("gold", 0)) - gold_drain)
+                result_text = f"🗿 *The shrine rumbles and takes its tithe.*\n−{gold_drain} gold vanished..."
+        elif etype == "fallen" and choice == "loot":
+            _r = random.random()
+            if _r < 0.55:
+                p_lv = p.get("level", 1)
+                _rar = "common" if p_lv < 20 else ("uncommon" if p_lv < 40 else "rare")
+                _pool = [n for n, d in {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}.items() if d.get("rarity") == _rar]
+                item = random.choice(_pool) if _pool else "Health Potion"
+                inv = sjl(p.get("inventory"), []); inv.append(item); p["inventory"] = json.dumps(inv)
+                result_text = f"💀 *Found something.*\n🎁 *{item}* recovered from the pack."
+            else:
+                gold = random.randint(15, 80)
+                p["gold"] = safe_int(p.get("gold", 0)) + gold
+                result_text = f"💀 *Found some coin.*\n💰 +{gold} gold recovered."
+        elif etype == "ambush" and choice == "fight":
+            # Quick skirmish: win/lose based on player stats
+            _enc_w = get_weather()
+            player_dmg = calc_attack_damage(p, _enc_w)
+            bandit_hp  = random.randint(int(p.get("max_hp", 100) * 0.3), int(p.get("max_hp", 100) * 0.7))
+            rounds = 0
+            while bandit_hp > 0 and rounds < 10:
+                bandit_hp -= player_dmg; rounds += 1
+            if bandit_hp <= 0:
+                gold_stolen = random.randint(30, 120)
+                p["gold"] = safe_int(p.get("gold", 0)) + gold_stolen
+                result_text = (f"⚔️ *Bandits defeated!*\nYou fought off the ambush in {rounds} strike(s)!\n"
+                               f"💰 +{gold_stolen} gold from their pockets!")
+            else:
+                gold_loss = max(0, safe_int(p.get("gold", 0)) // 15)
+                p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
+                result_text = f"⚠️ *Overwhelmed!*\nThe bandits robbed you for {gold_loss} gold before fleeing!"
+        elif etype == "ambush" and choice == "flee":
+            _r = random.random()
+            if _r < 0.65:
+                result_text = "🏃 *Escaped!*\nYou slipped away before they could grab you."
+            else:
+                gold_loss = max(0, safe_int(p.get("gold", 0)) // 20)
+                p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
+                result_text = f"⚠️ *Couldn't shake them!*\nLost {gold_loss} gold in the chaos."
+        save_player(p)
+        try:
+            await query.edit_message_text(result_text, parse_mode="Markdown", reply_markup=result_markup)
+        except Exception: pass
         return
 
     # ── All in-combat actions: parse owner uid from callback data ───────────
@@ -20283,28 +20584,28 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # Close-fight bonus: reward surviving tough battles
             hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
             close_bonus = ""
-            gear_drop_chance = 0.30
+            gear_drop_chance = 0.50
             if hp_pct <= 0.15:
                 gold = int(gold * 2.0); exp = int(exp * 2.0)
-                gear_drop_chance = 0.55
+                gear_drop_chance = 0.75
                 close_bonus = "\n🔥 *Clutch Victory!* Bonus rewards for surviving on the edge!"
             elif hp_pct <= 0.30:
                 gold = int(gold * 1.5); exp = int(exp * 1.5)
-                gear_drop_chance = 0.45
+                gear_drop_chance = 0.65
                 close_bonus = "\n⚔️ *Close Fight Bonus!*"
 
             add_exp(p, exp)
             p["gold"] = safe_int(p.get("gold", 0)) + gold
             # Loot key item
             loot_key  = enc.get("e_loot_key", "Encounter Token")
-            loot_item = loot_key if random.random() < 0.35 else None
-            # Gear drop — rarity scaled by NPC level
+            loot_item = loot_key if random.random() < 0.40 else None
+            # Gear drop — NPC mode is a good farming spot (higher base chance)
             gear_drop = None
             if random.random() < gear_drop_chance:
                 if e_level < 20:
                     _rar = random.choice(["common", "common", "uncommon"])
                 elif e_level < 40:
-                    _rar = random.choice(["uncommon", "rare", "rare"])
+                    _rar = random.choice(["uncommon", "uncommon", "rare"])
                 elif e_level < 60:
                     _rar = random.choice(["rare", "rare", "epic"])
                 else:
@@ -20315,16 +20616,25 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 inv = sjl(p.get("inventory"), []); inv.append(gear_drop); p["inventory"] = json.dumps(inv)
             if loot_item:
                 inv = sjl(p.get("inventory"), []); inv.append(loot_item); p["inventory"] = json.dumps(inv)
-            # Pet material drops from hunt
+            # Potion drops — NPC mode is a reliable supply source
+            potion_drop = None
+            if random.random() < 0.45:
+                _potion_pool = ["Health Potion", "Health Potion", "Health Potion",
+                                "Greater Health Potion", "Greater Health Potion",
+                                "Grand Restorative Flask"]
+                potion_drop = random.choice(_potion_pool)
+                inv = sjl(p.get("inventory"), []); inv.append(potion_drop); p["inventory"] = json.dumps(inv)
+            # Pet material drops
             pet_mat = None
             if random.random() < 0.25:
                 _pet_mats = ["Pet Snack","Pet Snack","Pet Snack","Greater Health Potion","Fortune Coin"]
                 pet_mat = random.choice(_pet_mats)
                 inv = sjl(p.get("inventory"), []); inv.append(pet_mat); p["inventory"] = json.dumps(inv)
             loot_line = ""
-            if gear_drop: loot_line += f"\n🎁 Found: *{gear_drop}*"
-            if loot_item: loot_line += f"\n📦 Loot: *{loot_item}*"
-            if pet_mat:   loot_line += f"\n🐾 Pet mat: *{pet_mat}*"
+            if gear_drop:   loot_line += f"\n🎁 Found: *{gear_drop}*"
+            if loot_item:   loot_line += f"\n📦 Loot: *{loot_item}*"
+            if potion_drop: loot_line += f"\n🧪 *{potion_drop}*"
+            if pet_mat:     loot_line += f"\n🐾 Pet mat: *{pet_mat}*"
             await _end_encounter(
                 f"✅ *Victory!*\n*{enc['e_name']}* was defeated!{close_bonus}\n"
                 f"💰 +{gold} gold | ⭐ +{exp} EXP{loot_line}")
