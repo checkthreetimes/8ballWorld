@@ -8377,33 +8377,46 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p):
     return InlineKeyboardMarkup(rows)
 
 
-async def _pvp_update_both_cards(pair, a, d, au_id, du_id, chat_id, bot):
-    """Update (or create) both players' PvP battle cards in the group chat."""
-    for viewer_uid, player_p, opp_uid in [(au_id, a, du_id), (du_id, d, au_id)]:
+async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, query=None):
+    """Update (or create) both players' PvP battle cards.
+    Attacker's card lives in the group; defender's card lives in their DM.
+    query — if provided, edit that message directly for the button presser's card.
+    """
+    # attacker card → group chat; defender card → DM (chat_id == defender uid)
+    card_targets = [
+        (au_id, a, du_id, group_chat_id),   # attacker's card in the group
+        (du_id, d, au_id, du_id),            # defender's card in their DM
+    ]
+    for viewer_uid, player_p, opp_uid, target_chat in card_targets:
         card_text = _pvp_pokemon_card(viewer_uid, a, d, pair)
         markup    = _build_pvp_card_markup(viewer_uid, opp_uid, player_p)
         existing  = _pvp_player_cards.get(viewer_uid)
         updated   = False
-        if existing:
+        # If query belongs to this viewer, use query.edit (saves an API call)
+        if query and query.from_user.id == viewer_uid:
+            try:
+                await query.edit_message_text(card_text, parse_mode="Markdown", reply_markup=markup)
+                _pvp_player_cards[viewer_uid] = (query.message.chat_id, query.message.message_id)
+                updated = True
+            except Exception:
+                pass
+        if not updated and existing:
             ex_chat, ex_mid = existing
-            if ex_chat == chat_id:
-                try:
-                    await bot.edit_message_text(chat_id=chat_id, message_id=ex_mid,
-                        text=card_text, parse_mode="Markdown", reply_markup=markup)
-                    updated = True
-                except Exception:
-                    pass
+            try:
+                await bot.edit_message_text(chat_id=ex_chat, message_id=ex_mid,
+                    text=card_text, parse_mode="Markdown", reply_markup=markup)
+                updated = True
+            except Exception:
+                pass
         if not updated:
             if existing:
                 try: await bot.delete_message(chat_id=existing[0], message_id=existing[1])
                 except Exception: pass
             try:
-                msg = await bot.send_message(chat_id=chat_id, text=card_text,
+                msg = await bot.send_message(chat_id=target_chat, text=card_text,
                     parse_mode="Markdown", reply_markup=markup)
-                _pvp_player_cards[viewer_uid] = (chat_id, msg.message_id)
-                # Also track in _pvp_cards for pair-level cleanup
-                cards_dict = _pvp_cards.setdefault(pair, {})
-                cards_dict[viewer_uid] = msg.message_id
+                _pvp_player_cards[viewer_uid] = (target_chat, msg.message_id)
+                _pvp_cards.setdefault(pair, {})[viewer_uid] = msg.message_id
             except Exception:
                 pass
 
@@ -9053,8 +9066,9 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         except Exception: pass
     else:
         # Hit or miss — update both players' battle cards
-        await _pvp_update_both_cards(pair, a, d, uid, target_uid, chat_id, context.bot)
-        _reset_card_timer(pair, context.bot, chat_id, 0, 20)
+        group_cid = _pvp_player_cards.get(target_uid, (chat_id,))[0]
+        await _pvp_update_both_cards(pair, a, d, uid, target_uid, group_cid, context.bot)
+        _reset_card_timer(pair, context.bot, group_cid, 0, 20)
 
     # Refresh picker with updated HP bars (only if picker still makes sense)
     if result_type != "defeat":
@@ -9343,8 +9357,9 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             heal_entry = f"💊 *{a['username']}* heals *+{actual} HP* ❤️ {a['hp']}/{a['max_hp']}"
             pair = _pvp_pair_key(uid, target_id)
             _pvp_log_append(pair, heal_entry)
-            await _pvp_update_both_cards(pair, a, d, uid, target_id, chat_id, context.bot)
-            _reset_card_timer(pair, context.bot, chat_id, 0, 20)
+            group_cid = _pvp_player_cards.get(target_id, (chat_id,))[0]
+            await _pvp_update_both_cards(pair, a, d, uid, target_id, group_cid, context.bot, query=query)
+            _reset_card_timer(pair, context.bot, group_cid, 0, 20)
             return
 
         if action_type == "def":
@@ -9366,8 +9381,9 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pair         = _pvp_pair_key(uid, target_id)
             shield_entry = f"🛡️ *{a['username']}* raises their shield — *{max_sh} HP*"
             _pvp_log_append(pair, shield_entry)
-            await _pvp_update_both_cards(pair, a, d, uid, target_id, chat_id, context.bot)
-            _reset_card_timer(pair, context.bot, chat_id, 0, 20)
+            group_cid = _pvp_player_cards.get(target_id, (chat_id,))[0]
+            await _pvp_update_both_cards(pair, a, d, uid, target_id, group_cid, context.bot, query=query)
+            _reset_card_timer(pair, context.bot, group_cid, 0, 20)
             return
 
         if action_type != "atk": return
@@ -9419,8 +9435,10 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # miss or hit — update both players' battle cards
-        await _pvp_update_both_cards(pair, a, d, uid, target_id, chat_id, context.bot)
-        _reset_card_timer(pair, context.bot, chat_id, 0, 20)
+        # group_cid: attacker's card lives in the group; derive it from stored cards
+        group_cid = _pvp_player_cards.get(target_id, (chat_id,))[0]
+        await _pvp_update_both_cards(pair, a, d, uid, target_id, group_cid, context.bot, query=query)
+        _reset_card_timer(pair, context.bot, group_cid, 0, 20)
 
     finally:
         _cb_unlock(uid)
@@ -15736,8 +15754,9 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             # Log skill result; update both players' battle cards
             _pvp_log_append(_sk_pair, _sk_result_text)
-            await _pvp_update_both_cards(_sk_pair, p, tp, uid, target_uid, chat_id, context.bot)
-            _reset_card_timer(_sk_pair, context.bot, chat_id, 0, 20)
+            group_cid = _pvp_player_cards.get(target_uid, (chat_id,))[0]
+            await _pvp_update_both_cards(_sk_pair, p, tp, uid, target_uid, group_cid, context.bot)
+            _reset_card_timer(_sk_pair, context.bot, group_cid, 0, 20)
             # Keep skill picker open so user can use another skill on the same target
             _self_only_sk = {"self_heal", "group_heal", "mass_cleanse", "party_def_buff",
                              "party_atk_buff", "party_full_buff", "ultimate_buff", "self_atk_buff"}
@@ -19635,6 +19654,7 @@ async def dungeon_wiz_start(update_or_query, uid: int, p: dict, bot, chat_id: in
         }
         active_wizardry[uid] = state
 
+    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})["mode"] = "dungeon"
     dirs   = _wdng_avail_dirs(grid, (0, 0))
     header = _wdng_floor_header(state)
     minimap = _wdng_minimap(grid, (0, 0), state["revealed"])
@@ -19818,6 +19838,7 @@ async def _start_encounter_battle(query, uid, p):
         "pet_ability_used": False,
     }
     active_encounters[uid] = enc
+    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})["mode"] = "battle"
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
@@ -19858,6 +19879,7 @@ async def _start_encounter_hunt(query, uid, p):
         "pet_ability_used": False,
     }
     active_encounters[uid] = enc
+    _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0})["mode"] = "hunt"
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
@@ -19893,7 +19915,7 @@ async def enc_next_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception: pass
         return
 
-    # Continue or Retry: start a new encounter
+    # Continue or Retry: restart in the same mode (no picker shown)
     p = get_player(uid)
     if not p:
         try: await query.edit_message_text("Player data not found."); return
@@ -19901,19 +19923,15 @@ async def enc_next_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid in active_encounters:
         await query.answer("Already in an encounter!", show_alert=True); return
 
-    # Rebuild the mode selector (same as /encounter command)
-    markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚔️ Battle — fight an NPC",        callback_data=f"enc_mode_{uid}_battle")],
-        [InlineKeyboardButton("🌿 Hunt — fight wild monsters",   callback_data=f"enc_mode_{uid}_hunt")],
-        [InlineKeyboardButton("🏰 Enter Dungeon",                callback_data=f"enc_mode_{uid}_dungeon")],
-        [InlineKeyboardButton("❌ Cancel",                       callback_data=f"close_msg_{uid}")],
-    ])
-    prefix = "🔄 *Retry!*" if action == "retry" else "⚔️ *Next Encounter!*"
-    try:
-        await query.edit_message_text(
-            f"{prefix}\nChoose your mode:",
-            parse_mode="Markdown", reply_markup=markup)
-    except Exception: pass
+    sess = _enc_sessions.get(uid, {})
+    mode = sess.get("mode", "battle")
+
+    if mode == "dungeon":
+        await dungeon_wiz_start(query, uid, p, context.bot, query.message.chat_id)
+    elif mode == "hunt":
+        await _start_encounter_hunt(query, uid, p)
+    else:
+        await _start_encounter_battle(query, uid, p)
 
 
 async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
