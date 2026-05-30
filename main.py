@@ -8378,21 +8378,19 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p):
 
 
 async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, query=None):
-    """Update (or create) both players' PvP battle cards.
-    Attacker's card lives in the group; defender's card lives in their DM.
-    query — if provided, edit that message directly for the button presser's card.
+    """Attacker's card = group chat (edit in place or create once).
+    Defender's card = their DM.
+    Never sends a new card to the attacker's DM.
     """
-    # attacker card → group chat; defender card → DM (chat_id == defender uid)
     card_targets = [
-        (au_id, a, du_id, group_chat_id),   # attacker's card in the group
-        (du_id, d, au_id, du_id),            # defender's card in their DM
+        (au_id, a, du_id, group_chat_id),  # attacker always in group
+        (du_id, d, au_id, du_id),           # defender always in their DM
     ]
-    for viewer_uid, player_p, opp_uid, target_chat in card_targets:
+    for viewer_uid, player_p, opp_uid, home_chat in card_targets:
         card_text = _pvp_pokemon_card(viewer_uid, a, d, pair)
         markup    = _build_pvp_card_markup(viewer_uid, opp_uid, player_p)
-        existing  = _pvp_player_cards.get(viewer_uid)
         updated   = False
-        # If query belongs to this viewer, use query.edit (saves an API call)
+        # If this is the player pressing the button, edit that message directly
         if query and query.from_user.id == viewer_uid:
             try:
                 await query.edit_message_text(card_text, parse_mode="Markdown", reply_markup=markup)
@@ -8400,22 +8398,26 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
                 updated = True
             except Exception:
                 pass
-        if not updated and existing:
-            ex_chat, ex_mid = existing
-            try:
-                await bot.edit_message_text(chat_id=ex_chat, message_id=ex_mid,
-                    text=card_text, parse_mode="Markdown", reply_markup=markup)
-                updated = True
-            except Exception:
-                pass
         if not updated:
-            if existing:
+            existing = _pvp_player_cards.get(viewer_uid)
+            # Only reuse an existing card if it's in the correct home chat
+            if existing and existing[0] == home_chat:
+                try:
+                    await bot.edit_message_text(chat_id=home_chat, message_id=existing[1],
+                        text=card_text, parse_mode="Markdown", reply_markup=markup)
+                    updated = True
+                except Exception:
+                    pass
+        if not updated:
+            # Remove stale card from wrong chat (e.g. old DM card when now attacker)
+            existing = _pvp_player_cards.get(viewer_uid)
+            if existing and existing[0] != home_chat:
                 try: await bot.delete_message(chat_id=existing[0], message_id=existing[1])
                 except Exception: pass
             try:
-                msg = await bot.send_message(chat_id=target_chat, text=card_text,
+                msg = await bot.send_message(chat_id=home_chat, text=card_text,
                     parse_mode="Markdown", reply_markup=markup)
-                _pvp_player_cards[viewer_uid] = (target_chat, msg.message_id)
+                _pvp_player_cards[viewer_uid] = (home_chat, msg.message_id)
                 _pvp_cards.setdefault(pair, {})[viewer_uid] = msg.message_id
             except Exception:
                 pass
@@ -9065,10 +9067,9 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         try: await context.bot.send_message(chat_id=uid, text=action_text[:4096], parse_mode="Markdown")
         except Exception: pass
     else:
-        # Hit or miss — update both players' battle cards
-        group_cid = _pvp_player_cards.get(target_uid, (chat_id,))[0]
-        await _pvp_update_both_cards(pair, a, d, uid, target_uid, group_cid, context.bot)
-        _reset_card_timer(pair, context.bot, group_cid, 0, 20)
+        # Hit or miss — the picker message becomes the attacker's battle card
+        await _pvp_update_both_cards(pair, a, d, uid, target_uid, chat_id, context.bot, query=query)
+        _reset_card_timer(pair, context.bot, chat_id, 0, 20)
 
     # Refresh picker with updated HP bars (only if picker still makes sense)
     if result_type != "defeat":
@@ -15752,11 +15753,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             try: await context.bot.send_message(chat_id=uid, text=_sk_result_text[:4096], parse_mode="Markdown")
             except Exception: pass
         else:
-            # Log skill result; update both players' battle cards
+            # Log skill result; the skill picker message becomes the attacker's card
             _pvp_log_append(_sk_pair, _sk_result_text)
-            group_cid = _pvp_player_cards.get(target_uid, (chat_id,))[0]
-            await _pvp_update_both_cards(_sk_pair, p, tp, uid, target_uid, group_cid, context.bot)
-            _reset_card_timer(_sk_pair, context.bot, group_cid, 0, 20)
+            await _pvp_update_both_cards(_sk_pair, p, tp, uid, target_uid, chat_id, context.bot, query=query)
+            _reset_card_timer(_sk_pair, context.bot, chat_id, 0, 20)
             # Keep skill picker open so user can use another skill on the same target
             _self_only_sk = {"self_heal", "group_heal", "mass_cleanse", "party_def_buff",
                              "party_atk_buff", "party_full_buff", "ultimate_buff", "self_atk_buff"}
