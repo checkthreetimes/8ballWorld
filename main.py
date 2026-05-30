@@ -2472,7 +2472,7 @@ def get_pet_def_proc_chance(pet):
     bond_bonus = _get_bond_proc_bonus(pet)
     return round(min(0.80, base + level_bonus + bond_bonus), 3)
 
-def apply_pet_defense(pet, attacker, dmg_after_def, extra_notes):
+def apply_pet_defense(pet, attacker, dmg_after_def, extra_notes, owner_max_hp=0):
     """
     Check if the defender's pet triggers its defensive ability.
     Mutates dmg_after_def (returns new value) and appends to extra_notes.
@@ -2519,7 +2519,7 @@ def apply_pet_defense(pet, attacker, dmg_after_def, extra_notes):
         extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Stunning Blow!* Attacker is *stunned* — misses next attack!")
 
     elif da == "lifesteal":
-        heal_amt = round(max(80, dmg_after_def * (0.12 + lvl * 0.002)))
+        heal_amt = round(owner_max_hp * 0.30) if owner_max_hp > 0 else round(max(80, dmg_after_def * (0.12 + lvl * 0.002)))
         status_type = "lifesteal_to_owner"
         status_val  = heal_amt
         extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Life Drain!* Drained *{heal_amt} HP* from attacker!")
@@ -3547,13 +3547,15 @@ def _encounter_battle_card(enc):
     lines.append("")
     # Player block
     p_status = []
-    if enc.get("p_stunned"):   p_status.append("⚡")
+    if enc.get("p_stunned") or enc.get("p_skip"): p_status.append("⚡")
     if enc.get("p_weakened"):  p_status.append("⬇️")
     if enc.get("p_guarding"):  p_status.append("🛡️")
     if enc.get("p_bleed"):     p_status.append("🩸")
     if enc.get("p_burn"):      p_status.append("🔥")
     if enc.get("p_poison"):    p_status.append("☠️")
     if enc.get("p_blind"):     p_status.append("👁️")
+    if enc.get("p_slow"):      p_status.append("🐢")
+    if enc.get("p_hexed"):     p_status.append("💜")
     p_s = "  " + " ".join(p_status) if p_status else ""
     pet_info = enc.get("pet_info")
     pet_str = f"  🐾 {pet_info['name']} +{pet_info['atk']}" if pet_info else ""
@@ -3714,6 +3716,10 @@ def _enc_process_skill(enc, p, sk):
     if stype in _heal_types or stype.endswith("heal"):
         wis  = get_stat(p, "WIS")
         heal = max(1, round(wis * sk.get("mult", sk.get("wis_mult", 50))))
+        # Hexed: reduce healing by 50%
+        if enc.pop("p_hexed", False):
+            heal = max(1, heal // 2)
+            sk_name = sk_name + " *(Hexed — half heal)*"
         if stype == "aoe_heal_dmg":
             heal = max(1, round(wis * sk.get("mult", 50)))
             enemy_hit = max(1, round(wis * 3))
@@ -3769,6 +3775,13 @@ def _enc_process_skill(enc, p, sk):
         pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
 
     # ── Damage skills ─────────────────────────────────────────────────────────
+    # Consume player status debuffs that affect damage
+    if enc.pop("p_weakened", False):
+        base = int(base * 0.65)
+    if enc.pop("p_blind", False) and random.random() < 0.40:
+        return f"👁️ *{sk_name}*! You're blinded and miss!", 0, False
+    if enc.pop("p_slow", False):
+        base = int(base * 0.80)
     dmg = 0
     txt = ""
     if stype == "multihit":
@@ -4034,24 +4047,55 @@ def _apply_move_effect(enc, move_key, target="player"):
     return flavour
 
 def _apply_dot_tick(enc):
-    """Apply bleed/burn/poison ticks; return damage text."""
+    """Apply bleed/burn/poison ticks each turn; return combined damage text."""
     msgs = []
+    # ── Player DOTs (decrement so they expire) ────────────────────────────
     if enc.get("p_bleed", 0) > 0:
         d = max(3, enc["p_max_hp"] // 20)
         enc["p_hp"] = max(0, enc["p_hp"] - d)
-        msgs.append(f"Bleed: -{d} HP")
+        enc["p_bleed"] -= 1
+        msgs.append(f"🩸 Bleed -{d}" + (" *(faded)*" if not enc["p_bleed"] else ""))
     if enc.get("p_burn", 0) > 0:
         d = max(3, enc["p_max_hp"] // 18)
         enc["p_hp"] = max(0, enc["p_hp"] - d)
-        msgs.append(f"Burn: -{d} HP")
+        enc["p_burn"] -= 1
+        msgs.append(f"🔥 Burn -{d}" + (" *(faded)*" if not enc["p_burn"] else ""))
     if enc.get("p_poison", 0) > 0:
         d = max(2, enc["p_max_hp"] // 22)
         enc["p_hp"] = max(0, enc["p_hp"] - d)
-        msgs.append(f"Poison: -{d} HP")
-    return ", ".join(msgs)
+        enc["p_poison"] -= 1
+        msgs.append(f"☠️ Poison -{d}" + (" *(faded)*" if not enc["p_poison"] else ""))
+    # ── Enemy DOTs (tick each turn, expire after set duration) ───────────
+    if enc.get("e_burning"):
+        d = max(3, enc["e_max_hp"] // 18)
+        enc["e_hp"] = max(0, enc["e_hp"] - d)
+        enc["e_burn_turns"] = enc.get("e_burn_turns", 4) - 1
+        if enc["e_burn_turns"] <= 0:
+            enc.pop("e_burning", None); enc.pop("e_burn_turns", None)
+            msgs.append(f"🔥 {enc['e_name']} burns -{d} *(faded)*")
+        else:
+            msgs.append(f"🔥 {enc['e_name']} burns -{d}")
+    if enc.get("e_poisoned"):
+        _pct = enc.get("e_poison_pct", 5)
+        d = max(2, enc["e_max_hp"] * _pct // 100)
+        enc["e_hp"] = max(0, enc["e_hp"] - d)
+        enc["e_poison_turns"] = enc.get("e_poison_turns", 4) - 1
+        if enc["e_poison_turns"] <= 0:
+            enc.pop("e_poisoned", None); enc.pop("e_poison_turns", None); enc.pop("e_poison_pct", None)
+            msgs.append(f"☠️ {enc['e_name']} poisoned -{d} *(faded)*")
+        else:
+            msgs.append(f"☠️ {enc['e_name']} poisoned -{d}")
+    return "\n".join(msgs)
 
 def _enc_npc_attack(enc, p):
     """NPC takes their RPG combat turn; returns action description."""
+    # ── Enemy stun: skip attack and decrement counter ─────────────────────────
+    if safe_int(enc.get("e_stunned_turns")) > 0:
+        enc["e_stunned_turns"] -= 1
+        rem = enc["e_stunned_turns"]
+        return (f"⚡ *{enc['e_name']}* is stunned — loses their attack!"
+                + (f" ({rem} left)" if rem else " *(stun cleared!)*"))
+
     attacks = NPC_CLASS_ATTACKS.get(enc.get("e_class", "fighter"), _NPC_DEFAULT_ATTACKS)
     atk_name, base_mult, effect = random.choice(attacks)
 
@@ -4154,6 +4198,13 @@ def _enc_npc_attack(enc, p):
 
 def _enc_monster_attack(enc):
     """Wild monster takes its turn; returns action description."""
+    # ── Enemy stun: skip attack and decrement counter ─────────────────────────
+    if safe_int(enc.get("e_stunned_turns")) > 0:
+        enc["e_stunned_turns"] -= 1
+        rem = enc["e_stunned_turns"]
+        return (f"⚡ *{enc['e_name']}* is stunned — loses their attack!"
+                + (f" ({rem} left)" if rem else " *(stun cleared!)*"))
+
     moves = enc.get("e_moves", ["tackle"])
     move_key = random.choice(moves)
     mv = MONSTER_MOVES.get(move_key, {"name":"Attack","dmg_mult":1.0,"effect":None})
@@ -8859,7 +8910,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     def_pet_rec = get_active_pet_record(du_id)
     if def_pet_rec:
-        dmg_after_def, pet_status_type, pet_status_val = apply_pet_defense(def_pet_rec, a, dmg_after_def, extra_notes)
+        dmg_after_def, pet_status_type, pet_status_val = apply_pet_defense(def_pet_rec, a, dmg_after_def, extra_notes, calc_max_hp(d))
         if pet_status_type == "stun": add_charges(a, "stun_turns", 1)
         elif pet_status_type == "poison" and pet_status_val:
             a["poison_damage"] = pet_status_val; add_charges(a, "poison_stacks", 2)
@@ -9180,7 +9231,7 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         elapsed = (datetime.now() - datetime.fromisoformat(last_pick)).total_seconds()
         if elapsed < _PICKER_COOLDOWN_SECS:
             remaining = round(_PICKER_COOLDOWN_SECS - elapsed, 1)
-            await query.answer(f"⏳ Wait {remaining}s", show_alert=False)
+            await query.answer(f"⏳ {remaining}s until your next action!", show_alert=False)
             return
 
     if is_defeated(a):
@@ -9462,7 +9513,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _last = _pvp_action_times.get(uid, 0)
     if _now - _last < _PVP_ACTION_CD:
         _wait = round(_PVP_ACTION_CD - (_now - _last), 1)
-        await query.answer(f"⏳ Wait {_wait}s", show_alert=False); return
+        await query.answer(f"⏳ {_wait}s until your next action!", show_alert=False); return
     _pvp_action_times[uid] = _now
 
     if not _cb_lock(uid):
@@ -15383,7 +15434,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         _last_pvp = _pvp_action_times.get(uid, 0)
         if _now_pvp - _last_pvp < _PVP_ACTION_CD:
             _wait_pvp = round(_PVP_ACTION_CD - (_now_pvp - _last_pvp), 1)
-            await query.answer(f"⏳ Wait {_wait_pvp}s", show_alert=False); return
+            await query.answer(f"⏳ {_wait_pvp}s until your next action!", show_alert=True); return
         _pvp_action_times[uid] = _now_pvp
         tp = get_player(target_uid)
         if not tp:
@@ -15895,7 +15946,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Pet defensive ability for skill damage
         sk_def_pet = get_active_pet_record(tp.get("user_id")) if tp.get("user_id") else None
         if sk_def_pet:
-            dmg, sk_pet_st, sk_pet_val = apply_pet_defense(sk_def_pet, p, dmg, out)
+            dmg, sk_pet_st, sk_pet_val = apply_pet_defense(sk_def_pet, p, dmg, out, calc_max_hp(tp))
             if sk_pet_st == "stun":
                 add_charges(p, "stun_turns", 1)
             elif sk_pet_st == "poison" and sk_pet_val:
@@ -20507,12 +20558,18 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # ── BATTLE MODE ACTIONS ─────────────────────────────────────────────────
     if enc["mode"] == "battle":
         action_txt = ""
-        if data == f"enc_atk_{uid}":
-            if enc.pop("p_stunned", False):
-                action_txt = "⚡ You're stunned and lose your turn!"
+        # Stun / paralyze / freeze / fear: block ALL player actions this turn
+        _p_blocked = enc.pop("p_stunned", False) or enc.pop("p_skip", False)
+        if _p_blocked:
+            action_txt = "⚡ You're stunned and lose your turn!"
+        elif data == f"enc_atk_{uid}":
+            _enc_w = get_weather()
+            dmg    = calc_attack_damage(p, _enc_w)
+            if enc.pop("p_weakened", False): dmg = max(1, int(dmg * 0.65))
+            if enc.pop("p_slow", False):     dmg = max(1, int(dmg * 0.80))
+            if enc.pop("p_blind", False) and random.random() < 0.40:
+                action_txt = "👁️ You swing blindly and miss!"
             else:
-                _enc_w    = get_weather()
-                dmg       = calc_attack_damage(p, _enc_w)
                 _enc_crit = ""
                 if check_crit(p):
                     dmg = apply_crit(p, dmg); _enc_crit = " 💥 *CRIT!*"
@@ -20523,7 +20580,6 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
                     enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
                     pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
-                # Weapon enchant procs
                 _enc_extras = _enc_crit
                 if get_enchant_bonus(p, "burn_proc") and random.random() < 0.10:
                     enc["e_burning"] = True; _enc_extras += "\n🔥 Your weapon *ignites* the enemy!"
@@ -20531,9 +20587,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     _ls = max(1, round(dmg * 0.15))
                     enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _ls)
                     _enc_extras += f"\n💜 Lifesteal +{_ls} HP!"
-                # Class passive procs
-                _enc_cls = get_player_class(p)
-                _enc_pk  = _enc_cls.get("passive_key", "") if _enc_cls else ""
+                _enc_cls  = get_player_class(p)
+                _enc_pk   = _enc_cls.get("passive_key", "") if _enc_cls else ""
                 _enc_path = p.get("class_path", "A")
                 _enc_line = get_class_line(p)
                 if dmg > 0:
@@ -20548,10 +20603,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         _enc_extras += "\n🏹 *Pin Down!* Enemy distracted — stunned 1 turn!"
                     if _enc_pk == "curse_touch" and random.random() < 0.08:
                         enc["e_weakened"] = True; _enc_extras += "\n💜 *Curse Touch!* Enemy weakened!"
-                if enc.pop("p_weakened", False):
-                    action_txt = f"You attacked for *{dmg}* damage! _(weakened)_{pet_extra}{_enc_extras}"
-                else:
-                    action_txt = f"You attacked for *{dmg}* damage!{pet_extra}{_enc_extras}"
+                action_txt = f"You attacked for *{dmg}* damage!{pet_extra}{_enc_extras}"
 
         elif data.startswith(f"enc_skl_{uid}_"):
             p_skills = get_combat_skills(p)
@@ -20607,8 +20659,10 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             else:
                 await query.answer("No potions in inventory!", show_alert=True); return
             _inv.remove(_potion); p["inventory"] = json.dumps(_inv); save_player(p)
+            _hex_note = ""
+            if enc.pop("p_hexed", False): _heal = max(1, _heal // 2); _hex_note = " *(Hexed — half heal)*"
             enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _heal)
-            action_txt = f"🧪 Used *{_potion}*! +{_heal} HP! ({enc['p_hp']}/{enc['p_max_hp']})"
+            action_txt = f"🧪 Used *{_potion}*!{_hex_note} +{_heal} HP! ({enc['p_hp']}/{enc['p_max_hp']})"
             npc_act = _enc_npc_attack(enc, p)
             dot_txt = _apply_dot_tick(enc)
             if dot_txt: npc_act += f"\n_{dot_txt}_"
@@ -20664,7 +20718,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             elif da == "lifesteal":
                 pet_dmg = max(1, int(patk * 1.5 * random.uniform(0.9, 1.1)))
                 enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
-                heal_amt = int(pet_dmg * 0.4)
+                heal_amt = round(enc["p_max_hp"] * 0.30)
                 enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal_amt)
                 action_txt = f"🐾 *{pname}* drains *{pet_dmg}* dmg and heals you *{heal_amt}* HP! 💜"
             elif da == "shield":
@@ -20759,9 +20813,15 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         # NPC attacks back
         npc_act = _enc_npc_attack(enc, p)
-        # DOT tick
+        # DOT tick (player and enemy)
         dot_txt = _apply_dot_tick(enc)
         if dot_txt: npc_act += f"\n_{dot_txt}_"
+        # Enemy may have died from DOT
+        if enc["e_hp"] <= 0:
+            enc.setdefault("action_log",[]).append(action_txt)
+            enc.setdefault("action_log",[]).append(npc_act)
+            await _end_encounter(f"☠️ *{enc['e_name']}* was defeated by status effects!\n✅ *Victory!*")
+            return
         # Check player dead
         if enc["p_hp"] <= 0:
             gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
@@ -20789,18 +20849,23 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # ── HUNT MODE ACTIONS ────────────────────────────────────────────────────
     if enc["mode"] == "hunt":
         action_txt = ""
-
-        if data == f"enc_atk_{uid}":
-            if enc.pop("p_stunned", False):
-                action_txt = "⚡ You're stunned and lose your turn!"
+        # Stun / paralyze / freeze / fear: block ALL player actions this turn
+        _ph_blocked = enc.pop("p_stunned", False) or enc.pop("p_skip", False)
+        if _ph_blocked:
+            action_txt = "⚡ You're stunned and lose your turn!"
+        elif data == f"enc_atk_{uid}":
+            _hunt_w = get_weather()
+            dmg     = calc_attack_damage(p, _hunt_w)
+            if enc.pop("p_weakened", False): dmg = max(1, int(dmg * 0.65))
+            if enc.pop("p_slow", False):     dmg = max(1, int(dmg * 0.80))
+            elem_e = ELEMENT_EMOJI.get(enc.get("element",""), "")
+            if enc.pop("p_blind", False) and random.random() < 0.40:
+                action_txt = f"👁️ You swing blindly at *{enc['e_name']}* {elem_e} and miss!"
             else:
-                _hunt_w   = get_weather()
-                dmg       = calc_attack_damage(p, _hunt_w)
                 _hunt_crit = ""
                 if check_crit(p):
                     dmg = apply_crit(p, dmg); _hunt_crit = " 💥 *CRIT!*"
                 enc["e_hp"] = max(0, enc["e_hp"] - dmg)
-                elem_e = ELEMENT_EMOJI.get(enc.get("element",""), "")
                 pet_extra = ""
                 pet_info = enc.get("pet_info")
                 if pet_info and pet_info.get("atk", 0) > 0:
@@ -20814,7 +20879,6 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     _ls = max(1, round(dmg * 0.15))
                     enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _ls)
                     _enc_extras += f"\n💜 Lifesteal +{_ls} HP!"
-                # Class passive procs
                 _hunt_cls  = get_player_class(p)
                 _hunt_pk   = _hunt_cls.get("passive_key", "") if _hunt_cls else ""
                 _hunt_path = p.get("class_path", "A")
@@ -20831,10 +20895,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         _enc_extras += "\n🏹 *Pin Down!* Enemy distracted — stunned 1 turn!"
                     if _hunt_pk == "curse_touch" and random.random() < 0.08:
                         enc["e_weakened"] = True; _enc_extras += "\n💜 *Curse Touch!* Enemy weakened!"
-                if enc.pop("p_weakened", False):
-                    action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage! _(weakened)_{pet_extra}{_enc_extras}"
-                else:
-                    action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage!{pet_extra}{_enc_extras}"
+                action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage!{pet_extra}{_enc_extras}"
 
         elif data.startswith(f"enc_skl_{uid}_"):
             p_skills = get_combat_skills(p)
@@ -20890,8 +20951,10 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             else:
                 await query.answer("No potions in inventory!", show_alert=True); return
             _inv.remove(_potion); p["inventory"] = json.dumps(_inv); save_player(p)
+            _hex_note = ""
+            if enc.pop("p_hexed", False): _heal = max(1, _heal // 2); _hex_note = " *(Hexed — half heal)*"
             enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _heal)
-            action_txt = f"🧪 Used *{_potion}*! +{_heal} HP! ({enc['p_hp']}/{enc['p_max_hp']})"
+            action_txt = f"🧪 Used *{_potion}*!{_hex_note} +{_heal} HP! ({enc['p_hp']}/{enc['p_max_hp']})"
             mon_act = _enc_monster_attack(enc)
             dot_txt = _apply_dot_tick(enc)
             if dot_txt: mon_act += f"\n_{dot_txt}_"
@@ -21008,7 +21071,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             elif da == "lifesteal":
                 pet_dmg = max(1, int(patk * 1.5 * random.uniform(0.9, 1.1)))
                 enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
-                heal_amt = int(pet_dmg * 0.4)
+                heal_amt = round(enc["p_max_hp"] * 0.30)
                 enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal_amt)
                 action_txt = f"🐾 *{pname}* drains *{pet_dmg}* dmg and heals you *{heal_amt}* HP! 💜"
             elif da == "shield":
@@ -21102,6 +21165,12 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         mon_act = _enc_monster_attack(enc)
         dot_txt = _apply_dot_tick(enc)
         if dot_txt: mon_act += f"\n_{dot_txt}_"
+        # Enemy may have died from DOT
+        if enc["e_hp"] <= 0:
+            enc.setdefault("action_log",[]).append(action_txt)
+            enc.setdefault("action_log",[]).append(mon_act)
+            await _end_encounter(f"☠️ *{enc['e_name']}* was defeated by status effects!\n✅ *Victory!*")
+            return
         if enc["p_hp"] <= 0:
             gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
             p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
