@@ -3635,12 +3635,12 @@ _RANDOM_EVENTS = {
 }
 
 _ENC_DIFFICULTY = {
-    "easy":        {"label":"Easy",         "emoji":"🟢", "weight":25, "hp_mult":(0.40,0.65), "atk_mult":(0.03,0.06), "reward":0.70, "gear":["common","common","uncommon"]},
-    "normal":      {"label":"Normal",       "emoji":"🔵", "weight":35, "hp_mult":(0.70,1.20), "atk_mult":(0.05,0.10), "reward":1.00, "gear":["common","uncommon","uncommon"]},
-    "hard":        {"label":"Hard",         "emoji":"🟡", "weight":22, "hp_mult":(1.20,1.75), "atk_mult":(0.08,0.13), "reward":1.75, "gear":["uncommon","rare","rare"]},
-    "challenging": {"label":"Challenging",  "emoji":"🟠", "weight":12, "hp_mult":(1.60,2.20), "atk_mult":(0.11,0.17), "reward":2.75, "gear":["rare","rare","epic"]},
-    "extreme":     {"label":"Extreme",      "emoji":"🔴", "weight":5,  "hp_mult":(2.00,2.80), "atk_mult":(0.14,0.21), "reward":4.50, "gear":["epic","epic","legendary"]},
-    "mythic":      {"label":"MYTHIC",       "emoji":"💜", "weight":1,  "hp_mult":(2.50,3.50), "atk_mult":(0.17,0.25), "reward":8.00, "gear":["legendary","legendary","legendary"]},
+    "easy":        {"label":"Easy",         "emoji":"🟢", "weight":25, "hp_mult":(0.35,0.60), "atk_mult":(0.02,0.04), "reward":0.70, "gear":["common","common","uncommon"]},
+    "normal":      {"label":"Normal",       "emoji":"🔵", "weight":35, "hp_mult":(0.60,1.10), "atk_mult":(0.03,0.06), "reward":1.00, "gear":["common","uncommon","uncommon"]},
+    "hard":        {"label":"Hard",         "emoji":"🟡", "weight":22, "hp_mult":(1.00,1.60), "atk_mult":(0.05,0.08), "reward":1.75, "gear":["uncommon","rare","rare"]},
+    "challenging": {"label":"Challenging",  "emoji":"🟠", "weight":12, "hp_mult":(1.40,2.00), "atk_mult":(0.07,0.11), "reward":2.75, "gear":["rare","rare","epic"]},
+    "extreme":     {"label":"Extreme",      "emoji":"🔴", "weight":5,  "hp_mult":(1.80,2.60), "atk_mult":(0.09,0.14), "reward":4.50, "gear":["epic","epic","legendary"]},
+    "mythic":      {"label":"MYTHIC",       "emoji":"💜", "weight":1,  "hp_mult":(2.20,3.20), "atk_mult":(0.12,0.18), "reward":8.00, "gear":["legendary","legendary","legendary"]},
 }
 
 def _treasure_card(enc):
@@ -4053,12 +4053,44 @@ def _apply_dot_tick(enc):
 def _enc_npc_attack(enc, p):
     """NPC takes their RPG combat turn; returns action description."""
     attacks = NPC_CLASS_ATTACKS.get(enc.get("e_class", "fighter"), _NPC_DEFAULT_ATTACKS)
-    atk_name, dmg_mult, effect = random.choice(attacks)
-    raw = int(enc["e_atk"] * dmg_mult * random.uniform(0.85, 1.15))
+    atk_name, base_mult, effect = random.choice(attacks)
+
+    # ── Strategy tier: varies each turn so NPC isn't always hitting max ───────
+    strategy = random.choices(
+        ["rest",  "light", "normal", "heavy"],
+        weights=[10,      25,      50,      15]
+    )[0]
+
+    if strategy == "rest":
+        # NPC recovers HP or taunts — no damage this turn
+        heal = enc["e_max_hp"] // 10
+        enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + heal)
+        return f"⛔ *{enc['e_name']}* catches their breath and recovers *{heal} HP*!"
+
+    if strategy == "light":
+        dmg_mult  = base_mult * random.uniform(0.28, 0.52)
+        # Light attacks reliably apply a debuff
+        if not effect:
+            effect = random.choice(["stun","weaken","weaken"])
+        effect_chance = 0.75
+        label = ""
+    elif strategy == "heavy":
+        dmg_mult  = base_mult * random.uniform(1.20, 1.55)
+        effect        = None   # heavy swings skip debuffs
+        effect_chance = 0.0
+        label         = "💢 "
+    else:  # normal
+        dmg_mult  = base_mult
+        effect_chance = 0.22
+        label         = ""
+
+    # Wide variance so repeated hits feel different
+    raw     = int(enc["e_atk"] * dmg_mult * random.uniform(0.60, 1.40))
     def_red = int(get_stat(p, "DEF") * 0.50)
-    dmg = max(1, raw - def_red)
-    # Cap single hit at 30% of player max HP so no one-shots
-    dmg = min(dmg, max(1, int(enc["p_max_hp"] * 0.30)))
+    dmg     = max(1, raw - def_red)
+    # Cap single hit at 25% of player max HP — no one-shots
+    dmg     = min(dmg, max(1, int(enc["p_max_hp"] * 0.25)))
+
     _enc_cls = get_player_class(p)
     _enc_pk  = _enc_cls.get("passive_key", "") if _enc_cls else ""
     if _enc_pk == "iron_will":
@@ -4072,82 +4104,53 @@ def _enc_npc_attack(enc, p):
         dmg = int(dmg * 1.2); enc["p_exposed"] = False
     if enc.pop("e_weakened", False):
         dmg = max(1, int(dmg * 0.75))
+
     extra = ""
-    if effect == "heal_self" and random.random() < 0.25:
-        heal = enc["e_max_hp"] // 8
-        enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + heal)
-        extra = f" (+{heal} HP restored)"
-        dmg = max(1, dmg // 2)
-    elif effect == "stun" and random.random() < 0.20:
-        enc["p_stunned"] = True
-        extra = " ⚡ You are stunned next turn!"
-    elif effect == "weaken" and random.random() < 0.20:
-        enc["p_weakened"] = True
-        extra = " ⬇️ Your attacks are weakened!"
-    elif effect == "lifesteal" and random.random() < 0.20:
-        ls = int(dmg * 0.3)
-        enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + ls)
-        extra = f" (+{ls} HP drained)"
+    if effect and random.random() < effect_chance:
+        if effect == "heal_self":
+            heal = enc["e_max_hp"] // 8
+            enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + heal)
+            extra = f" (+{heal} HP restored)"
+            dmg = max(1, dmg // 2)
+        elif effect == "stun":
+            enc["p_stunned"] = True
+            extra = " ⚡ You are stunned next turn!"
+        elif effect == "weaken":
+            enc["p_weakened"] = True
+            extra = " ⬇️ Your attacks are weakened!"
+        elif effect == "lifesteal":
+            ls = int(dmg * 0.3)
+            enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + ls)
+            extra = f" (+{ls} HP drained)"
+
     # Dodge turns (Vanish / dodge_buff skills)
     if enc.get("enc_dodge_turns", 0) > 0:
         enc["enc_dodge_turns"] -= 1
-        return f"*{enc['e_name']}* used *{atk_name}* — 💨 *Dodged!* You slipped away unscathed!"
+        return f"*{enc['e_name']}* used *{label}{atk_name}* — 💨 *Dodged!* You slipped away unscathed!"
     # Shield charge: full negate (Shield Wall / Aegis Wall)
     if enc.get("enc_shield_charges", 0) > 0:
         enc["enc_shield_charges"] -= 1
         rem = enc["enc_shield_charges"]
-        extra += " 🛡️ *Shield negated the hit!*" + (f" ({rem} left)" if rem else " (shield broken!)")
         dmg = 0
+        extra += " 🛡️ *Shield negated the hit!*" + (f" ({rem} left)" if rem else " (shield broken!)")
     # Guard: flat reduction per hit (Brace)
     if enc.get("p_guard_hits", 0) > 0:
         enc["p_guard_hits"] -= 1
         if enc["p_guard_hits"] == 0:
-            enc.pop("p_guard_hits", None)
-        dmg = max(0, dmg - 30)
-        extra += " 🛡️ Brace reduced damage by 30!"
-    elif enc.pop("p_guarding", False):
+            extra += " 🛡️ *(Guard exhausted)*"
         dmg = max(1, int(dmg * 0.60))
-        extra += " 🛡️ Guard reduced damage!"
+    # Reflect damage
+    if enc.get("enc_reflect_dmg") and dmg > 0:
+        enc["e_hp"] = max(0, enc["e_hp"] - enc["enc_reflect_dmg"])
+        extra += f" 🔄 *Reflected {enc['enc_reflect_dmg']} back!*"
+        enc.pop("enc_reflect_dmg"); enc.pop("p_guarding", None)
+    # Player guarding (Brace skill)
+    if enc.pop("p_guarding", False) and not enc.get("enc_reflect_dmg"):
+        dmg = max(1, int(dmg * 0.60))
+        extra += " 🛡️ *(Guarding!)*"
+
     enc["p_hp"] = max(0, enc["p_hp"] - dmg)
-    enc["last_dmg"] = dmg
-    # Thorn Fortress reflect (def_reflect skill)
-    if enc.get("enc_reflect_dmg", 0) > 0:
-        ref = enc.pop("enc_reflect_dmg")
-        enc["e_hp"] = max(0, enc["e_hp"] - ref)
-        extra += f"\n🌿 *Thorns* reflected *{ref}* damage!"
-    # Player armor enchant: reflect_flat — bounce damage back to NPC
-    _p_uid = enc.get("uid")
-    if _p_uid:
-        _pp = get_player(_p_uid)
-        if _pp:
-            _ref = get_enchant_bonus(_pp, "reflect_flat")
-            if _ref and _ref > 0:
-                enc["e_hp"] = max(0, enc["e_hp"] - _ref)
-                extra += f"\n🔄 Reflected *{_ref}* damage back!"
-    # Pet defensive proc
-    pet_info = enc.get("pet_info")
-    if pet_info and pet_info.get("def_ability"):
-        _pet_rec = get_active_pet_record(enc["uid"]) if enc.get("uid") else None
-        if _pet_rec:
-            _proc_chance = get_pet_def_proc_chance(_pet_rec)
-            if _proc_chance > 0 and random.random() < _proc_chance:
-                da = pet_info["def_ability"]
-                pname = pet_info["name"]
-                if da == "intercept":
-                    restore = int(dmg * 0.5)
-                    enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + restore)
-                    return f"*{enc['e_name']}* used *{atk_name}* — {dmg} dmg!\n🛡️ *{pname}* intercepts, restoring {restore} HP!{extra}"
-                elif da == "counter":
-                    counter_dmg = int(dmg * 0.6)
-                    enc["e_hp"] = max(0, enc["e_hp"] - counter_dmg)
-                    return f"*{enc['e_name']}* used *{atk_name}* — {dmg} dmg!\n⚔️ *{pname}* counter-strikes for {counter_dmg}!{extra}"
-                elif da == "shield":
-                    block = int(dmg * 0.4)
-                    enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + block)
-                    return f"*{enc['e_name']}* used *{atk_name}* — {dmg} dmg!\n✨ *{pname}*'s shield absorbs {block} dmg!{extra}"
-                elif da in ("stun","poison"):
-                    return f"*{enc['e_name']}* used *{atk_name}* — {dmg} dmg!\n{'⚡' if da=='stun' else '☠️'} *{pname}* retaliates!{extra}"
-    return f"*{enc['e_name']}* used *{atk_name}* — {dmg} dmg!{extra}"
+    return f"*{enc['e_name']}* used *{label}{atk_name}* — *{dmg}* damage!{extra}"
 
 def _enc_monster_attack(enc):
     """Wild monster takes its turn; returns action description."""
@@ -4173,8 +4176,25 @@ def _enc_monster_attack(enc):
         p = get_player(enc.get("uid"))
         _mon_cls = get_player_class(p) if p else None
         _mon_pk  = _mon_cls.get("passive_key", "") if _mon_cls else ""
+
+        # Strategy tier — monsters also vary their attacks
+        _mstrategy = random.choices(
+            ["rest",  "light", "normal", "heavy"],
+            weights=[8,       22,      55,      15]
+        )[0]
+        if _mstrategy == "rest":
+            heal = enc["e_max_hp"] // 10
+            enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + heal)
+            return f"*{enc['e_name']}* recuperates and restores *{heal} HP*!"
+        elif _mstrategy == "light":
+            dmg_mult = dmg_mult * random.uniform(0.28, 0.52)
+        elif _mstrategy == "heavy":
+            dmg_mult = dmg_mult * random.uniform(1.20, 1.55)
+        # normal: use dmg_mult as-is
+
+        raw     = int(enc["e_atk"] * dmg_mult * random.uniform(0.60, 1.40))
         def_red = int(get_stat(p, "DEF") * 0.50) if p else 0
-        dmg = max(1, raw - def_red)
+        dmg     = max(1, raw - def_red)
         if _mon_pk == "iron_will":
             dmg = max(1, int(dmg * 0.50))
         if _mon_pk == "defensive_stance":
@@ -4182,8 +4202,8 @@ def _enc_monster_attack(enc):
                 dmg = max(1, dmg - 30)
         if enc.pop("e_weakened", False):
             dmg = max(1, int(dmg * 0.75))
-        # Cap single hit at 30% of player max HP so no one-shots
-        dmg = min(dmg, max(1, int(enc["p_max_hp"] * 0.30)))
+        # Cap single hit at 25% of player max HP — no one-shots
+        dmg = min(dmg, max(1, int(enc["p_max_hp"] * 0.25)))
         enc["p_hp"] = max(0, enc["p_hp"] - dmg)
         eff = _apply_move_effect(enc, move_key) if mv.get("effect") else ""
         return f"*{enc['e_name']}* used *{mv['name']}* — {dmg} damage!{eff}"
@@ -20470,18 +20490,23 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 enc.setdefault("action_log",[]).append(npc_act)
                 if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
                 try:
-                    await query.answer()
                     await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception:
                     try:
                         await query.edit_message_text(_encounter_battle_card(enc),
                                                       reply_markup=_encounter_battle_markup(enc, p))
-                    except Exception: pass
+                    except Exception:
+                        try:
+                            await context.bot.send_message(
+                                query.message.chat_id, _encounter_battle_card(enc),
+                                parse_mode="Markdown", reply_markup=_encounter_battle_markup(enc, p))
+                        except Exception: pass
         return
 
     # ── BATTLE MODE ACTIONS ─────────────────────────────────────────────────
     if enc["mode"] == "battle":
+        action_txt = ""
         if data == f"enc_atk_{uid}":
             if enc.pop("p_stunned", False):
                 action_txt = "⚡ You're stunned and lose your turn!"
@@ -20558,14 +20583,18 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 save_player(p)
                 context.user_data["encounter"] = enc
                 try:
-                    await query.answer()
                     await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception:
                     try:
                         await query.edit_message_text(_encounter_battle_card(enc),
                                                       reply_markup=_encounter_battle_markup(enc, p))
-                    except Exception: pass
+                    except Exception:
+                        try:
+                            await context.bot.send_message(
+                                query.message.chat_id, _encounter_battle_card(enc),
+                                parse_mode="Markdown", reply_markup=_encounter_battle_markup(enc, p))
+                        except Exception: pass
                 return
             # Damage skills fall through to the normal NPC-attack-back flow below
 
@@ -20592,14 +20621,18 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             enc.setdefault("action_log",[]).append(npc_act)
             if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
             try:
-                await query.answer()
                 await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                               reply_markup=_encounter_battle_markup(enc, p))
             except Exception:
                 try:
                     await query.edit_message_text(_encounter_battle_card(enc),
                                                   reply_markup=_encounter_battle_markup(enc, p))
-                except Exception: pass
+                except Exception:
+                    try:
+                        await context.bot.send_message(
+                            query.message.chat_id, _encounter_battle_card(enc),
+                            parse_mode="Markdown", reply_markup=_encounter_battle_markup(enc, p))
+                    except Exception: pass
             return
 
         elif data == f"enc_guard_{uid}":
@@ -20644,7 +20677,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 action_txt = f"🐾 *{pname}* attacks for *{pet_dmg}* dmg!"
 
         else:
-            return
+            # Unknown action — do nothing, card stays as-is
+            pass
 
         # Check enemy dead
         if enc["e_hp"] <= 0:
@@ -20738,7 +20772,6 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         enc.setdefault("action_log",[]).append(npc_act)
         if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
         try:
-            await query.answer()
             await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                           reply_markup=_encounter_battle_markup(enc, p))
         except Exception:
@@ -20746,7 +20779,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await query.edit_message_text(_encounter_battle_card(enc),
                                               reply_markup=_encounter_battle_markup(enc, p))
             except Exception:
-                pass
+                try:
+                    await context.bot.send_message(
+                        query.message.chat_id, _encounter_battle_card(enc),
+                        parse_mode="Markdown", reply_markup=_encounter_battle_markup(enc, p))
+                except Exception: pass
         return
 
     # ── HUNT MODE ACTIONS ────────────────────────────────────────────────────
@@ -20829,14 +20866,18 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 save_player(p)
                 context.user_data["encounter"] = enc
                 try:
-                    await query.answer()
                     await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception:
                     try:
                         await query.edit_message_text(_encounter_battle_card(enc),
                                                       reply_markup=_encounter_battle_markup(enc, p))
-                    except Exception: pass
+                    except Exception:
+                        try:
+                            await context.bot.send_message(
+                                query.message.chat_id, _encounter_battle_card(enc),
+                                parse_mode="Markdown", reply_markup=_encounter_battle_markup(enc, p))
+                        except Exception: pass
                 return
             # Damage skills fall through to the normal monster-attack-back flow below
 
@@ -20863,14 +20904,18 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             enc.setdefault("action_log",[]).append(mon_act)
             if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
             try:
-                await query.answer()
                 await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                               reply_markup=_encounter_battle_markup(enc, p))
             except Exception:
                 try:
                     await query.edit_message_text(_encounter_battle_card(enc),
                                                   reply_markup=_encounter_battle_markup(enc, p))
-                except Exception: pass
+                except Exception:
+                    try:
+                        await context.bot.send_message(
+                            query.message.chat_id, _encounter_battle_card(enc),
+                            parse_mode="Markdown", reply_markup=_encounter_battle_markup(enc, p))
+                    except Exception: pass
             return
 
         elif data == f"enc_catch_{uid}":
@@ -20921,14 +20966,18 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     await _end_encounter(f"💀 *{enc['e_name']}* broke free and knocked you out!\nLost {gold_loss} gold.")
                     return
                 try:
-                    await query.answer()
                     await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception:
                     try:
                         await query.edit_message_text(_encounter_battle_card(enc),
                                                       reply_markup=_encounter_battle_markup(enc, p))
-                    except Exception: pass
+                    except Exception:
+                        try:
+                            await context.bot.send_message(
+                                query.message.chat_id, _encounter_battle_card(enc),
+                                parse_mode="Markdown", reply_markup=_encounter_battle_markup(enc, p))
+                        except Exception: pass
             return
 
         elif data == f"enc_guard_{uid}":
@@ -20972,7 +21021,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 action_txt = f"🐾 *{pname}* attacks for *{pet_dmg}* dmg!"
 
         else:
-            return
+            pass
 
         # Monster defeated
         if enc["e_hp"] <= 0:
@@ -21062,7 +21111,6 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         enc.setdefault("action_log",[]).append(mon_act)
         if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
         try:
-            await query.answer()
             await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
                                           reply_markup=_encounter_battle_markup(enc, p))
         except Exception:
@@ -21070,7 +21118,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await query.edit_message_text(_encounter_battle_card(enc),
                                               reply_markup=_encounter_battle_markup(enc, p))
             except Exception:
-                pass
+                try:
+                    await context.bot.send_message(
+                        query.message.chat_id, _encounter_battle_card(enc),
+                        parse_mode="Markdown", reply_markup=_encounter_battle_markup(enc, p))
+                except Exception: pass
         return
 
 # ── HOLD HANDS ────────────────────────────────────────────────────────────────
