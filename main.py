@@ -2519,7 +2519,7 @@ def apply_pet_defense(pet, attacker, dmg_after_def, extra_notes, owner_max_hp=0)
         extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Stunning Blow!* Attacker is *stunned* — misses next attack!")
 
     elif da == "lifesteal":
-        heal_amt = round(owner_max_hp * 0.30) if owner_max_hp > 0 else round(max(80, dmg_after_def * (0.12 + lvl * 0.002)))
+        heal_amt = round(owner_max_hp * 0.10) if owner_max_hp > 0 else round(max(30, dmg_after_def * (0.06 + lvl * 0.001)))
         status_type = "lifesteal_to_owner"
         status_val  = heal_amt
         extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Life Drain!* Drained *{heal_amt} HP* from attacker!")
@@ -5560,7 +5560,7 @@ def calc_proc_effect(attacker, defender, dmg):
     # ── ARCHER PATH A  -  Pin Down ──────────────────────────────
     elif line == "archer" and path == "A":
         chance = get_proc_chance(0.12, attacker)
-        if random.random() < chance:
+        if random.random() < chance and safe_int(defender.get("distract_turns", 0)) < 3:
             add_charges(defender, "distract_turns", 2)
             return True, "🏹 *Pin Down!* Distracted ×2 — 30% miss chance next 2 attacks!", 0
 
@@ -6750,12 +6750,12 @@ def apply_lifesteal(attacker, dmg):
     pk = cls.get("passive_key","") if cls else ""
     healed = 0
     if pk == "soul_pact":
-        healed = round(dmg * 0.20)
+        healed = round(dmg * 0.10)
     if pk == "bloodlust":
-        healed = max(20, round(dmg * 0.25))
+        healed = max(10, round(dmg * 0.12))
     # New class passives
-    if pk == "verdant_renewal":  healed += round(dmg * 0.15)
-    if pk == "eternal_bloom":    healed += round(dmg * 0.10)
+    if pk == "verdant_renewal":  healed += round(dmg * 0.08)
+    if pk == "eternal_bloom":    healed += round(dmg * 0.05)
     if pk == "natural_growth":   healed += 5
     if pk == "flourish":         healed += safe_int(attacker.get("flourish_stacks", 0)) * 3
     if pk == "waltz":            healed += 5  # crits restore 5 HP
@@ -6767,12 +6767,12 @@ def apply_lifesteal(attacker, dmg):
         healed += round(dmg * _acc_ls / 100)
     enc_heal = get_enchant_bonus(attacker, "lifesteal_flat")
     if enc_heal:
-        healed += round(dmg * 0.15)  # 15% of damage dealt
+        healed += round(dmg * 0.08)  # 8% of damage dealt in PvP
     ls_pet = get_active_pet_record(attacker.get("user_id"))
     if ls_pet and dmg:
         _pet_ls_pct = get_pet_passives(ls_pet.get("level", 1)).get("lifesteal_flat", 0)
         if _pet_ls_pct:
-            healed += round(dmg * _pet_ls_pct / 100)
+            healed += round(dmg * _pet_ls_pct / 200)  # halved in PvP
     if healed:
         attacker["hp"] = min(calc_max_hp(attacker), attacker["hp"] + healed)
     return healed
@@ -8911,7 +8911,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     def_pet_rec = get_active_pet_record(du_id)
     if def_pet_rec:
         dmg_after_def, pet_status_type, pet_status_val = apply_pet_defense(def_pet_rec, a, dmg_after_def, extra_notes, calc_max_hp(d))
-        if pet_status_type == "stun": add_charges(a, "stun_turns", 1)
+        if pet_status_type == "stun" and safe_int(a.get("stun_turns", 0)) < 3: add_charges(a, "stun_turns", 1)
         elif pet_status_type == "poison" and pet_status_val:
             a["poison_damage"] = pet_status_val; add_charges(a, "poison_stacks", 2)
         elif pet_status_type == "lifesteal_to_owner" and pet_status_val:
@@ -8950,7 +8950,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     if cls_a and dmg_after_def > 0:
         pk_a = cls_a.get("passive_key", "")
-        if pk_a == "feint" and random.random() < 0.05:
+        if pk_a == "feint" and random.random() < 0.05 and safe_int(d.get("distract_turns", 0)) < 3:
             set_status(a, "feint_proc_until", 60); add_charges(d, "distract_turns", 1)
             extra_notes.append(f"🗡️ *Feint!* {d['username']} distracted for 1 attack!")
         if pk_a == "throat_cut" and random.random() < 0.05:
@@ -15623,8 +15623,11 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_player(p)
             await send_result("\n".join(out)); return
         if stype == "miss_debuff":
-            add_charges(tp, "distract_turns", 2)
-            out.append(f"😵 *{sk['name']}!* *Distracted ×2!* {tp['username']} has 30% miss chance next 2 attacks.")
+            if safe_int(tp.get("distract_turns", 0)) < 3:
+                add_charges(tp, "distract_turns", 2)
+                out.append(f"😵 *{sk['name']}!* *Distracted ×2!* {tp['username']} has 30% miss chance next 2 attacks.")
+            else:
+                out.append(f"😵 *{sk['name']}!* {tp['username']} is *Distract Immune* (max stacks).")
             save_player(p); save_player(tp)
             await send_result("\n".join(out)); return
         # ── Damage + effect skills ────────────────────────────────────────────
@@ -15644,23 +15647,32 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             out.append("🏹 *Piercing Shot!*")
         elif stype == "stun":
             dmg = round(base * 1.0)
-            already_stunned = safe_int(tp.get("stun_turns")) > 0 or is_stunned(tp)
-            if already_stunned or random.random() < 0.30:
+            if safe_int(tp.get("stun_turns", 0)) >= 3 or is_stunned(tp):
+                out.append(f"⚡ *{sk['name']}!* {tp['username']} is *Stun Immune* (max stacks).")
+            elif random.random() < 0.25:
                 add_charges(tp, "stun_turns", 1)
                 out.append(f"⚡ *Stunned!* {tp['username']} loses their next attack!")
             else:
                 out.append(f"⚡ *{sk['name']}!* (Stun missed)")
         elif stype == "bleed_crit":
             dmg = round(base * sk.get("mult", 2.0) * 2)
-            add_charges(tp, "bleed_stacks", 5)
-            tp["bleed_pct"] = 15
-            out.append(f"🩸 *{sk['name']}!* 200% damage! *Bleed ×5* — {tp['username']} loses 15% max HP next 5 attacks!")
+            new_bleed = min(5, max(0, 5 - safe_int(tp.get("bleed_stacks", 0))))
+            if new_bleed > 0:
+                add_charges(tp, "bleed_stacks", new_bleed)
+                tp["bleed_pct"] = 10
+                out.append(f"🩸 *{sk['name']}!* 200% damage! *Bleed ×{new_bleed}* — {tp['username']} loses 10% max HP next {new_bleed} attacks!")
+            else:
+                out.append(f"🩸 *{sk['name']}!* 200% damage! {tp['username']} is *Bleed Immune* (max stacks).")
         elif stype == "aoe_bleed_multihit":
             hits = sk.get("hits", 4)
             dmg = sum(round(base * sk.get("mult", 0.6)) for _ in range(hits))
-            add_charges(tp, "bleed_stacks", hits)
-            tp["bleed_pct"] = 15
-            out.append(f"🌀 *{sk['name']}!* {hits}-hit combo ({dmg} total)! *Bleed ×{hits}* — {tp['username']} loses 15% max HP per action!")
+            new_bleed = min(hits, max(0, 5 - safe_int(tp.get("bleed_stacks", 0))))
+            if new_bleed > 0:
+                add_charges(tp, "bleed_stacks", new_bleed)
+                tp["bleed_pct"] = 10
+                out.append(f"🌀 *{sk['name']}!* {hits}-hit combo ({dmg} total)! *Bleed ×{new_bleed}* — {tp['username']} loses 10% max HP per action!")
+            else:
+                out.append(f"🌀 *{sk['name']}!* {hits}-hit combo ({dmg} total)! {tp['username']} is *Bleed Immune* (max stacks).")
         elif stype == "intercept_aoe":
             def_v = get_stat(p, "DEF")
             dmg = round(def_v * 2)
@@ -15696,8 +15708,8 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         elif stype == "silence":
             dmg = round(base * 1.5)
             if safe_int(tp.get("silence_turns", 0)) < 4:
-                add_charges(tp, "silence_turns", 2)
-                out.append(f"🤐 *{sk['name']}!* *Silenced ×2!* {tp['username']} cannot use skills next 2 times!")
+                add_charges(tp, "silence_turns", 1)
+                out.append(f"🤐 *{sk['name']}!* *Silenced!* {tp['username']} cannot use skills next turn!")
             else:
                 out.append(f"🤐 *{sk['name']}!* {tp['username']} is *Silence Immune* (max stacks).")
         elif stype == "holy_dmg":
@@ -15723,18 +15735,24 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             for _bf in ["blessed_until", "holy_field_until"]:
                 tp[_bf] = None
             tp["blessed_turns"] = 0; tp["ward_charges"] = 0
-            add_charges(tp, "hex_turns", 5)
-            add_charges(tp, "weakened_hits", 5)
-            out.append(f"☠️ *{sk['name']}!* WIS×8 = {dmg}! All buffs stripped — Hexed ×5, Weakened ×5!")
+            _hex_add = min(3, max(0, 5 - safe_int(tp.get("hex_turns", 0))))
+            _wk_add  = min(3, max(0, 5 - safe_int(tp.get("weakened_hits", 0))))
+            if _hex_add: add_charges(tp, "hex_turns", _hex_add)
+            if _wk_add:  add_charges(tp, "weakened_hits", _wk_add)
+            out.append(f"☠️ *{sk['name']}!* WIS×8 = {dmg}! All buffs stripped — Hexed ×{_hex_add}, Weakened ×{_wk_add}!")
         elif stype == "void_nuke":
             dmg = min(tp["hp"] // 2, round(calc_max_hp(p) * 0.6))
-            add_charges(tp, "heal_blocked_turns", 5)
-            out.append(f"🌑 *{sk['name']}!* {tp['username']} loses *50% HP* ({dmg} dmg) — Healing blocked ×5!")
+            if safe_int(tp.get("heal_blocked_turns", 0)) < 5:
+                add_charges(tp, "heal_blocked_turns", min(3, 5 - safe_int(tp.get("heal_blocked_turns", 0))))
+            out.append(f"🌑 *{sk['name']}!* {tp['username']} loses *50% HP* ({dmg} dmg) — Healing blocked!")
         elif stype == "freeze_nuke":
             int_v = get_stat(p, "INT")
             dmg = int_v * 6
-            add_charges(tp, "freeze_turns", 2)
-            out.append(f"🧊 *{sk['name']}!* INT×6 = {dmg}! {tp['username']} frozen for 2 turns!")
+            if safe_int(tp.get("freeze_turns", 0)) < 3:
+                add_charges(tp, "freeze_turns", 2)
+                out.append(f"🧊 *{sk['name']}!* INT×6 = {dmg}! {tp['username']} frozen for 2 turns!")
+            else:
+                out.append(f"🧊 *{sk['name']}!* INT×6 = {dmg}! {tp['username']} is *Freeze Immune* (max stacks).")
         elif stype == "drain":
             steal = round(tp["hp"] * sk.get("drain_pct", 0.30))
             dmg = round(base * sk.get("mult", 1.0))
@@ -15766,8 +15784,11 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await send_result("\n".join(out)); return
         elif stype == "root":
             dmg = calc_defense(tp, round(base * sk.get("mult", 0.5)))
-            add_charges(tp, "entangle_turns", 2)
-            out.append(f"🌿 *{sk['name']}!* {dmg} damage — *Entangled ×2!* {tp['username']} cannot attack for 2 turns.")
+            if safe_int(tp.get("entangle_turns", 0)) < 3:
+                add_charges(tp, "entangle_turns", 2)
+                out.append(f"🌿 *{sk['name']}!* {dmg} damage — *Entangled ×2!* {tp['username']} cannot attack for 2 turns.")
+            else:
+                out.append(f"🌿 *{sk['name']}!* {dmg} damage! {tp['username']} is *Root Immune* (max stacks).")
             tp["hp"] = max(0, tp["hp"] - dmg)
             if tp["hp"] <= 0:
                 apply_pvp_death(tp, p["username"], sk["name"], killer_id=uid)
@@ -15815,14 +15836,16 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         elif stype == "mass_debuff":
             int_v = get_stat(p, "INT")
             dmg = round(int_v * 2.5)
-            add_charges(tp, "hex_turns", 8)
-            add_charges(tp, "weakened_hits", 8)
+            _hex_add = min(3, max(0, 5 - safe_int(tp.get("hex_turns", 0))))
+            _wk_add  = min(3, max(0, 5 - safe_int(tp.get("weakened_hits", 0))))
+            if _hex_add: add_charges(tp, "hex_turns", _hex_add)
+            if _wk_add:  add_charges(tp, "weakened_hits", _wk_add)
             _stun_msg = ""
             if safe_int(tp.get("stun_turns", 0)) < 3:
                 add_charges(tp, "stun_turns", 1); _stun_msg = ", Stunned ×1"
             else:
                 _stun_msg = " (Stun Immune)"
-            out.append(f"💜 *{sk['name']}!* {tp['username']}: Hexed ×8, Weakened ×8{_stun_msg}!")
+            out.append(f"💜 *{sk['name']}!* {tp['username']}: Hexed ×{_hex_add}, Weakened ×{_wk_add}{_stun_msg}!")
         elif stype == "stun_def_dmg":
             str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
             dmg = round((str_v + def_v) * sk.get("mult", 1.0))
@@ -15947,7 +15970,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         sk_def_pet = get_active_pet_record(tp.get("user_id")) if tp.get("user_id") else None
         if sk_def_pet:
             dmg, sk_pet_st, sk_pet_val = apply_pet_defense(sk_def_pet, p, dmg, out, calc_max_hp(tp))
-            if sk_pet_st == "stun":
+            if sk_pet_st == "stun" and safe_int(p.get("stun_turns", 0)) < 3:
                 add_charges(p, "stun_turns", 1)
             elif sk_pet_st == "poison" and sk_pet_val:
                 p["poison_damage"] = sk_pet_val
@@ -16314,29 +16337,40 @@ async def _execute_skill(update, context, p, sk):
         await send_group(update, "\n".join(lines), delay=15); return
     elif stype == "stun":
         dmg = round(base * 1.0)
-        already_stunned = safe_int(d.get("stun_turns")) > 0 or is_stunned(d)
-        if already_stunned or random.random() < 0.30:
+        if safe_int(d.get("stun_turns", 0)) >= 3 or is_stunned(d):
+            lines.append(f"⚡ *{sk['name']}!* {d['username']} is *Stun Immune* (max stacks).")
+        elif random.random() < 0.25:
             add_charges(d, "stun_turns", 1)
             lines.append(f"⚡ *Stunned!* {d['username']} will lose their next attack!")
         else:
             lines.append(f"⚡ *{sk['name']}!* (Stun missed)")
     elif stype == "miss_debuff":
-        add_charges(d, "distract_turns", 2)
-        lines.append(f"😵 *Distracted ×2!* {d['username']} has 30% miss chance next 2 attacks.")
+        if safe_int(d.get("distract_turns", 0)) < 3:
+            add_charges(d, "distract_turns", 2)
+            lines.append(f"😵 *Distracted ×2!* {d['username']} has 30% miss chance next 2 attacks.")
+        else:
+            lines.append(f"😵 *{sk['name']}!* {d['username']} is *Distract Immune* (max stacks).")
         save_player(d); save_player(p)
         await send_group(update, "\n".join(lines), delay=15); return
     elif stype == "root":
         dmg = calc_defense(d, round(base * sk.get("mult", 0.5)))
         d["hp"] = max(0, d["hp"] - dmg)
-        add_charges(d, "entangle_turns", 2)
-        lines.append(f"🌿 *Entangled ×2!* {dmg} damage — {d['username']} cannot attack for 2 turns.")
+        if safe_int(d.get("entangle_turns", 0)) < 3:
+            add_charges(d, "entangle_turns", 2)
+            lines.append(f"🌿 *Entangled ×2!* {dmg} damage — {d['username']} cannot attack for 2 turns.")
+        else:
+            lines.append(f"🌿 *Root!* {dmg} damage — {d['username']} is *Root Immune* (max stacks).")
         save_player(d); save_player(p)
         await send_group(update, "\n".join(lines), delay=15); return
     elif stype == "bleed_crit":
         dmg = round(base * sk.get("mult",2.0) * 2)
-        add_charges(d, "bleed_stacks", 5)
-        d["bleed_pct"] = 15
-        lines.append(f"🩸 *Bleed ×5!* {d['username']} loses 15% max HP each of their next 5 attacks!")
+        new_bleed = min(5, max(0, 5 - safe_int(d.get("bleed_stacks", 0))))
+        if new_bleed > 0:
+            add_charges(d, "bleed_stacks", new_bleed)
+            d["bleed_pct"] = 10
+            lines.append(f"🩸 *Bleed ×{new_bleed}!* {d['username']} loses 10% max HP each of their next {new_bleed} attacks!")
+        else:
+            lines.append(f"🩸 *{sk['name']}!* {d['username']} is *Bleed Immune* (max stacks).")
     elif stype == "drain":
         steal = round(d["hp"] * sk.get("drain_pct",0.30))
         dmg   = round(base * sk.get("mult",1.0))
@@ -16393,13 +16427,17 @@ async def _execute_skill(update, context, p, sk):
         lines.append(f"☠️ *Holy Wrath!* All buffs stripped — Hexed ×5, Weakened ×5!")
     elif stype == "void_nuke":
         dmg = min(d["hp"] // 2, round(calc_max_hp(p) * 0.6))
-        add_charges(d, "heal_blocked_turns", 5)
-        lines.append(f"🌑 *Void Collapse!* {d['username']} loses 50% HP — Healing blocked ×5!")
+        if safe_int(d.get("heal_blocked_turns", 0)) < 5:
+            add_charges(d, "heal_blocked_turns", min(3, 5 - safe_int(d.get("heal_blocked_turns", 0))))
+        lines.append(f"🌑 *Void Collapse!* {d['username']} loses 50% HP — Healing blocked!")
     elif stype == "freeze_nuke":
         int_v = get_stat(p,"INT")
         dmg   = int_v * 6
-        add_charges(d, "freeze_turns", 2)
-        lines.append(f"🧊 *Absolute Zero!* {d['username']} frozen for 2 turns!")
+        if safe_int(d.get("freeze_turns", 0)) < 3:
+            add_charges(d, "freeze_turns", 2)
+            lines.append(f"🧊 *Absolute Zero!* {d['username']} frozen for 2 turns!")
+        else:
+            lines.append(f"🧊 *Absolute Zero!* {d['username']} is *Freeze Immune* (max stacks).")
     elif stype == "bounty":
         # Railrunner: Execution Order — 2000g bounty + Marked debuff (+20% dmg taken 30 min)
         dmg = round(base * 0.6)
@@ -20718,7 +20756,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             elif da == "lifesteal":
                 pet_dmg = max(1, int(patk * 1.5 * random.uniform(0.9, 1.1)))
                 enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
-                heal_amt = round(enc["p_max_hp"] * 0.30)
+                heal_amt = round(enc["p_max_hp"] * 0.20)
                 enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal_amt)
                 action_txt = f"🐾 *{pname}* drains *{pet_dmg}* dmg and heals you *{heal_amt}* HP! 💜"
             elif da == "shield":
@@ -21071,7 +21109,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             elif da == "lifesteal":
                 pet_dmg = max(1, int(patk * 1.5 * random.uniform(0.9, 1.1)))
                 enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
-                heal_amt = round(enc["p_max_hp"] * 0.30)
+                heal_amt = round(enc["p_max_hp"] * 0.20)
                 enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal_amt)
                 action_txt = f"🐾 *{pname}* drains *{pet_dmg}* dmg and heals you *{heal_amt}* HP! 💜"
             elif da == "shield":
@@ -22395,7 +22433,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 log_entry = f"☠️ {atk_name} uses *{sk['name']}*! {dmg} dmg + {def_state['dot_type']} DOT!"
             elif stype == "hp_drain":
                 drain = round(arena[def_hp_key] * sk.get("drain_pct", 0.35))
-                heal  = round(drain * sk.get("heal_pct", 0.50))
+                heal  = round(drain * sk.get("heal_pct", 0.25))
                 arena[def_hp_key] = max(0, arena[def_hp_key] - drain)
                 if atk_state.get("heal_block_turns", 0) <= 0:
                     arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
@@ -22403,7 +22441,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif stype == "lifesteal":
                 dmg = round(base_dmg * sk.get("dmg_mult", 1.0))
                 arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                heal = round(dmg * sk.get("steal_pct", 0.25))
+                heal = round(dmg * sk.get("steal_pct", 0.12))
                 if atk_state.get("heal_block_turns", 0) <= 0:
                     arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
                 log_entry = f"🩸 {atk_name} uses *{sk['name']}*! {dmg} dmg, +{heal} HP!"
@@ -26515,13 +26553,15 @@ async def fixbounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── IDLE REWARD SYSTEM ────────────────────────────────────────────────────────
-def _calc_idle_exp(idle_secs: float) -> int:
-    """Compound EXP for being offline. 0 if < 30 min. Caps at 5000 EXP at 72 h."""
+def _calc_idle_exp(idle_secs: float, player_level: int = 1) -> int:
+    """Compound EXP for being offline. 0 if < 30 min. Scales with level, no hard time cap."""
     if idle_secs < 1800:
         return 0
-    idle_hours = min(idle_secs / 3600, 72.0)
-    exp = int((idle_hours / 72.0) ** 1.2 * 5000)
-    return max(50, min(5000, exp))
+    idle_hours = idle_secs / 3600
+    # Hourly rate scales with level; power < 1 gives diminishing returns over time
+    rate = 300 + player_level * 40
+    exp = int(rate * (idle_hours ** 0.65))
+    return max(50, exp)
 
 async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
     """Award idle EXP to shadow + RPG player, send DM. Call before updating last_seen."""
@@ -26531,7 +26571,9 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
         return  # already awarded within last 60 s (rapid messages)
     try:
         idle_secs = (datetime.now() - datetime.fromisoformat(prev_seen_iso)).total_seconds()
-        idle_exp = _calc_idle_exp(idle_secs)
+        p = get_player(uid)
+        plvl = p["level"] if p else 1
+        idle_exp = _calc_idle_exp(idle_secs, plvl)
         if idle_exp <= 0:
             return
         _idle_last_awarded[uid] = now_ts
@@ -26542,7 +26584,6 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
         if s:
             add_shadow_exp(s, idle_exp)
             save_shadow(s)
-        p = get_player(uid)
         if p and not is_defeated(p):
             add_exp(p, idle_exp)
             save_player(p)
@@ -26552,7 +26593,7 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
                 f"🎱 *Welcome back!*\n\n"
                 f"You were away for *{away_str}*.\n"
                 f"💫 Idle reward: *+{idle_exp:,} EXP*\n"
-                f"_(Compounds up to 5,000 EXP over 3 days)_",
+                f"_(Scales with your level — the higher your level, the more you earn)_",
                 parse_mode="Markdown")
         except Exception:
             pass
