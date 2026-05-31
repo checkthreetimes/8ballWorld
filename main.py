@@ -3573,30 +3573,14 @@ def _encounter_battle_card(enc):
 def _encounter_battle_markup(enc, p=None):
     uid  = enc["uid"]
     mode = enc["mode"]
-    pet_cd = enc.get("pet_ability_used", False)
     rows = []
-    # Row 1: Attack + Guard
     rows.append([
-        InlineKeyboardButton("⚔️ Attack",   callback_data=f"enc_atk_{uid}"),
-        InlineKeyboardButton("🛡️ Guard",    callback_data=f"enc_guard_{uid}"),
+        InlineKeyboardButton("⚔️ Attack", callback_data=f"enc_atk_{uid}"),
+        InlineKeyboardButton("🛡️ Guard",  callback_data=f"enc_guard_{uid}"),
     ])
-    # Row 2: Potion + Pet Special
-    pet_label = "🐾 Pet Strike" if not pet_cd else "🐾 Pet (used)"
     rows.append([
-        InlineKeyboardButton("🧪 Use Potion", callback_data=f"enc_heal_{uid}"),
-        InlineKeyboardButton(pet_label,       callback_data=f"enc_pet_{uid}"),
+        InlineKeyboardButton("🧪 Potion", callback_data=f"enc_heal_{uid}"),
     ])
-    # Class skills — only from the player's current class path
-    if p:
-        p_skills = get_combat_skills(p)
-        skill_btns = [
-            InlineKeyboardButton(sk.get("name", "Skill"),
-                                 callback_data=f"enc_skl_{uid}_{i}")
-            for i, sk in enumerate(p_skills)
-        ]
-        for i in range(0, len(skill_btns), 2):
-            rows.append(skill_btns[i:i+2])
-    # Bottom row
     if mode == "hunt":
         bottom = []
         if enc["e_hp"] / max(1, enc["e_max_hp"]) <= 0.5:
@@ -20503,26 +20487,28 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         owner_uid = int(_enc_combat_match.group(1))
         if query.from_user.id != owner_uid:
             await query.answer("Not your encounter!", show_alert=True); return
-        uid = owner_uid  # use owner's uid for enc lookup and button comparisons
+        uid = owner_uid
 
-    # ── All in-combat actions require an active encounter ────────────────────
-    enc = active_encounters.get(uid)
-    if not enc:
-        # Battle already ended (duplicate tap or Telegram callback retry).
-        # Silently dismiss and strip buttons from the stale card so it can't be re-pressed.
-        await query.answer()
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        return
-
-    # Answer the callback immediately so Telegram stops the spinner and won't
-    # resend the callback (resends cause the "already ended" false-positive).
+    # Stop Telegram's spinner immediately — before any DB operations
     try:
         await query.answer()
     except Exception:
         pass
+
+    # ── All in-combat actions require an active encounter ────────────────────
+    enc = active_encounters.get(uid)
+    if not enc:
+        try:
+            await query.edit_message_text(
+                "⚠️ *Encounter session expired.*\nThe bot may have restarted. Use /encounter to start a new one.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("▶️ New Encounter", callback_data=f"enc_mode_{uid}_battle"),
+                    InlineKeyboardButton("🌿 New Hunt", callback_data=f"enc_mode_{uid}_hunt"),
+                ]]))
+        except Exception:
+            pass
+        return
 
     p = get_player(uid)
     if not p: return
@@ -20705,8 +20691,14 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if "Grand Restorative Flask" in _inv:   _potion, _heal = "Grand Restorative Flask", 4000
             elif "Greater Health Potion" in _inv:   _potion, _heal = "Greater Health Potion", 1500
             elif "Health Potion" in _inv:           _potion, _heal = "Health Potion", 800
-            else:
-                await query.answer("No potions in inventory!", show_alert=True); return
+            if not _potion:
+                enc.setdefault("action_log", []).append("🧪 No potions in your bag!")
+                if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
+                try:
+                    await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                                  reply_markup=_encounter_battle_markup(enc))
+                except Exception: pass
+                return
             _inv.remove(_potion); p["inventory"] = json.dumps(_inv); save_player(p)
             _hex_note = ""
             if enc.pop("p_hexed", False): _heal = max(1, _heal // 2); _hex_note = " *(Hexed — half heal)*"
@@ -20997,8 +20989,14 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if "Grand Restorative Flask" in _inv:   _potion, _heal = "Grand Restorative Flask", 4000
             elif "Greater Health Potion" in _inv:   _potion, _heal = "Greater Health Potion", 1500
             elif "Health Potion" in _inv:           _potion, _heal = "Health Potion", 800
-            else:
-                await query.answer("No potions in inventory!", show_alert=True); return
+            if not _potion:
+                enc.setdefault("action_log", []).append("🧪 No potions in your bag!")
+                if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
+                try:
+                    await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                                                  reply_markup=_encounter_battle_markup(enc))
+                except Exception: pass
+                return
             _inv.remove(_potion); p["inventory"] = json.dumps(_inv); save_player(p)
             _hex_note = ""
             if enc.pop("p_hexed", False): _heal = max(1, _heal // 2); _hex_note = " *(Hexed — half heal)*"
