@@ -11865,7 +11865,13 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False, uid
     lines.append("\n_💰 Use /sell to sell items by rarity_")
     text = "\n".join(lines)[:4096]
     if edit:
-        await target.edit_message_text(text=text, parse_mode="Markdown", reply_markup=markup)
+        try:
+            await target.edit_message_text(text=text, parse_mode="Markdown", reply_markup=markup)
+        except Exception:
+            try:
+                await target.edit_message_text(text=text, reply_markup=markup)
+            except Exception:
+                pass
     else:
         try:
             await target.message.delete()
