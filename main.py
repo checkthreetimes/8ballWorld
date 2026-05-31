@@ -513,9 +513,9 @@ CLASS_TREE = {
         "stat_bonus":{"STR":6,"DEF":3},
         "skills":[
             {"tier":5,"unlock":100,"name":"Conqueror",
-             "passive":"Every PVP kill restores 20% HP. Defeated targets take +25% more damage from all sources for 1 hour.",
-             "active":"Decimation","type":"execute_nuke",
-             "desc":"STR x6 damage, ignores all defense. On kill: target is weakened  -  takes 25% more damage for 10 actions.",
+             "passive":"Every PVP kill restores 20% HP. Defeated targets take +25% more damage for 10 actions.",
+             "active":"Decimation","type":"execute_nuke","mult":4,
+             "desc":"STR x4 damage. On kill: target is weakened — takes 25% more damage for 10 actions.",
              "passive_key":"conqueror"},
         ]
     },
@@ -655,9 +655,9 @@ CLASS_TREE = {
         "stat_bonus":{"INT":6,"AGI":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Void Rift",
-             "passive":"25% chance any attack against you misses  -  absorbed by the void.",
+             "passive":"15% chance any attack against you misses  -  absorbed by the void.",
              "active":"Void Collapse","type":"void_nuke",
-             "desc":"Target loses 50% of current HP instantly. Cannot be healed for 10 actions.",
+             "desc":"Target loses 35% of current HP. Cannot be healed for 5 actions.",
              "passive_key":"void_rift"},
         ]
     },
@@ -752,10 +752,10 @@ CLASS_TREE = {
             {"tier":2,"unlock":10,"name":"Marked",
              "passive":"First attack on any target deals +25% bonus damage.",
              "active":"Cheap Shot","type":"silence",
-             "desc":"150% damage. Target silenced for 2 skill uses.",
+             "desc":"150% damage. Target silenced for 1 skill use.",
              "passive_key":"marked","mult":1.5},
             {"tier":2,"unlock":10,"name":"Throat Cut",
-             "passive":"5% chance each hit silences target for 10 seconds.",
+             "passive":"5% chance each hit silences target for 1 skill use.",
              "active":"Throat Cut","type":"silence",
              "desc":"100% damage. Target cannot use /skill for 1 hit.",
              "passive_key":"throat_cut","mult":1.0},
@@ -878,7 +878,7 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":5,"DEF":3},
         "skills":[
             {"tier":5,"unlock":100,"name":"Railfinder",
-             "passive":"Cannot be rooted, frozen or stunned by any skill ever.",
+             "passive":"Cannot be stunned by any skill.",
              "active":"Storm of Arrows","type":"aoe_recent_attackers",
              "desc":"DEX x6 precision strike — cannot miss, ignores dodge.",
              "passive_key":"pathfinder","mult":6.0,"stat":"DEX"},
@@ -939,7 +939,7 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":6,"STR":3},
         "skills":[
             {"tier":5,"unlock":100,"name":"Dead or Alive",
-             "passive":"Every kill permanently adds +2 to your max damage ceiling. Stacks forever.",
+             "passive":"Every kill permanently adds +2 to your max damage ceiling. Caps at +50 damage (25 kills).",
              "active":"Last Shot","type":"execution_shot",
              "desc":"On kill: target defeated timer doubled to 1 hour. You earn triple gold and EXP. Public announcement names you.",
              "passive_key":"dead_or_alive"},
@@ -1451,7 +1451,7 @@ CLASS_TREE = {
         "stat_bonus":{"STR":5,"DEF":6,"WIS":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Immortal Aegis",
-             "passive":"Cannot be defeated by a single hit. Resurrect once per fight at 50% HP. All guild members gain +5% DEF while you are in chat.",
+             "passive":"Cannot be defeated by a single hit. All guild members gain +5% DEF while you are in chat.",
              "active":"Bifrost Descent","type":"holy_warrior_nuke",
              "desc":"STR x4 + DEF x4 combined holy strike. Stun target 60s. All guild members heal 30% max HP.",
              "passive_key":"immortal_aegis"},
@@ -1515,7 +1515,7 @@ CLASS_TREE = {
             {"tier":5,"unlock":100,"name":"Celestial Wrath",
              "passive":"+25% crit damage. Crits apply lingering lightning (+10 dmg/min for 3 min). On kill: lightning arcs to all recent attackers.",
              "active":"Valhalla's Thunder","type":"godlike_lightning",
-             "desc":"STR x8 lightning strike. On kill: gain +50 temp HP, and deal STR x2 AOE lightning to all recent attackers.",
+             "desc":"STR x5 lightning strike. On kill: gain +50 temp HP, and deal STR x2 AOE lightning to all recent attackers.",
              "passive_key":"celestial_wrath"},
         ]
     },
@@ -1595,9 +1595,9 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":6,"STR":3},
         "skills":[
             {"tier":5,"unlock":100,"name":"Final Performance",
-             "passive":"On kill: reset all cooldowns and gain +50% crit chance for 60 seconds. Stacks to 3 kills.",
-             "active":"Macabre Finale","type":"execute_nuke",
-             "desc":"AGI x10 damage: 60% primary + 40% secondary strike. On kill: AOE AGI x3 to all recent attackers. Cannot be blocked or dodged.",
+             "passive":"On kill: reset 1 cooldown and gain +50% crit chance for 60 seconds. Stacks to 3 kills.",
+             "active":"Macabre Finale","type":"execute_nuke","mult":5,
+             "desc":"AGI x5 damage. On kill: AOE AGI x2 to all recent attackers. Cannot be blocked or dodged.",
              "passive_key":"final_performance"},
         ]
     },
@@ -3909,7 +3909,7 @@ def _enc_process_skill(enc, p, sk):
     elif stype == "silence":
         dmg = max(1, round(base * 1.5))
         enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 1
-        txt = f"🤐 *{sk_name}*! *{dmg}* damage! Enemy silenced (stunned 1 turn)!{pet_extra}"
+        txt = f"⚡ *{sk_name}*! *{dmg}* damage! Enemy stunned — loses next turn!{pet_extra}"
     elif stype == "debuff":
         dmg = max(1, round(base * 0.8))
         enc["e_weakened"] = True
@@ -6635,7 +6635,7 @@ def check_miss(attacker, defender):
         pk = cls_d.get("passive_key","")
         if pk == "evasion":       dodge += 0.15
         if pk == "ghost_form":    dodge += 0.20
-        if pk == "void_rift":     dodge += 0.25
+        if pk == "void_rift":     dodge += 0.15
         if pk == "quick_hands":   dodge += get_stat(defender, "AGI") * 0.005
         # New class passives
         if pk == "waltz":         dodge += 0.15
@@ -9066,7 +9066,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         if cls_a and cls_a.get("passive_key") == "conqueror":
             restore = round(a["max_hp"] * 0.20)
             a["hp"] = min(a["max_hp"], a["hp"] + restore)
-            add_charges(d, "weakened_hits", 10)
+            _wk_add = min(5, max(0, 5 - safe_int(d.get("weakened_hits", 0))))
+            if _wk_add: add_charges(d, "weakened_hits", _wk_add)
         _fire(check_and_claim_bounty(bot, a, d, chat_id))
         a_guild = get_guild(a.get("guild_id")) if a.get("guild_id") else None
         d_guild = get_guild(d.get("guild_id")) if d.get("guild_id") else None
@@ -9081,7 +9082,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
                 _db_kw.commit()
                 action += f"\n⚔️ *Guild War kill!* Score updated for {a_guild['name']}."
         if cls_a and cls_a.get("passive_key") == "dead_or_alive":
-            a["deadeye_kill_bonus"] = safe_int(a.get("deadeye_kill_bonus")) + 2
+            a["deadeye_kill_bonus"] = min(50, safe_int(a.get("deadeye_kill_bonus")) + 2)
         if cls_a and cls_a.get("passive_key") == "marked_for_death":
             mfd_bonus = round((d.get("gold", 0) * 0.05 + 25) * 0.25)
             a["gold"] = a.get("gold", 0) + mfd_bonus
@@ -14223,7 +14224,7 @@ async def guilddonate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if amount <= 0 or p.get("gold", 0) < amount:
             await send_group(update, f"Not enough gold! Have {p.get('gold',0)}g.", delay=9); return
         p["gold"] -= amount; g["bank"] = safe_int(g.get("bank")) + amount
-        gmsgs = add_guild_exp(g, amount//10); save_guild(g); save_player(p)
+        gmsgs = add_guild_exp(g, amount//10); save_player(p); save_guild(g)
         msg = f"💰 *{user.first_name}* donated {amount}g to *{g['name']}*! Bank: {safe_int(g.get('bank'))}g"
         if gmsgs: msg += "\n" + "\n".join(gmsgs)
         await send_group(update, msg, delay=15)
@@ -15647,7 +15648,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             out.append("🏹 *Piercing Shot!*")
         elif stype == "stun":
             dmg = round(base * 1.0)
-            if safe_int(tp.get("stun_turns", 0)) >= 3 or is_stunned(tp):
+            _tp_cls = get_player_class(tp)
+            if _tp_cls and _tp_cls.get("passive_key") == "pathfinder":
+                out.append(f"⚡ *{sk['name']}!* {tp['username']} is *Stun Immune* (Strider).")
+            elif safe_int(tp.get("stun_turns", 0)) >= 3 or is_stunned(tp):
                 out.append(f"⚡ *{sk['name']}!* {tp['username']} is *Stun Immune* (max stacks).")
             elif random.random() < 0.25:
                 add_charges(tp, "stun_turns", 1)
@@ -15731,7 +15735,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             out.append(f"🔥 *{sk['name']}!* Stripped {buffs_stripped} buff(s) — Healing blocked ×5!")
         elif stype == "condemn":
             wis = get_stat(p, "WIS")
-            dmg = wis * 8
+            dmg = wis * 5
             for _bf in ["blessed_until", "holy_field_until"]:
                 tp[_bf] = None
             tp["blessed_turns"] = 0; tp["ward_charges"] = 0
@@ -15739,12 +15743,12 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             _wk_add  = min(3, max(0, 5 - safe_int(tp.get("weakened_hits", 0))))
             if _hex_add: add_charges(tp, "hex_turns", _hex_add)
             if _wk_add:  add_charges(tp, "weakened_hits", _wk_add)
-            out.append(f"☠️ *{sk['name']}!* WIS×8 = {dmg}! All buffs stripped — Hexed ×{_hex_add}, Weakened ×{_wk_add}!")
+            out.append(f"☠️ *{sk['name']}!* WIS×5 = {dmg}! All buffs stripped — Hexed ×{_hex_add}, Weakened ×{_wk_add}!")
         elif stype == "void_nuke":
-            dmg = min(tp["hp"] // 2, round(calc_max_hp(p) * 0.6))
+            dmg = round(tp["hp"] * 0.35)
             if safe_int(tp.get("heal_blocked_turns", 0)) < 5:
                 add_charges(tp, "heal_blocked_turns", min(3, 5 - safe_int(tp.get("heal_blocked_turns", 0))))
-            out.append(f"🌑 *{sk['name']}!* {tp['username']} loses *50% HP* ({dmg} dmg) — Healing blocked!")
+            out.append(f"🌑 *{sk['name']}!* {tp['username']} loses *35% HP* ({dmg} dmg) — Healing blocked!")
         elif stype == "freeze_nuke":
             int_v = get_stat(p, "INT")
             dmg = int_v * 6
@@ -15864,10 +15868,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 out.append(f"⚡ *{sk['name']}!* STR×4+DEF×4 = {dmg} holy damage! ({tp['username']} Stun Immune)")
         elif stype == "godlike_lightning":
             str_v = get_stat(p, "STR")
-            dmg = round(str_v * 8)
+            dmg = round(str_v * 5)
             add_charges(tp, "hex_turns", 3)
             add_charges(tp, "weakened_hits", 3)
-            out.append(f"⚡ *{sk['name']}!* STR×8 = {dmg} divine lightning! Hexed ×3 + Weakened ×3!")
+            out.append(f"⚡ *{sk['name']}!* STR×5 = {dmg} divine lightning! Hexed ×3 + Weakened ×3!")
         elif stype == "execute_multihit":
             hits = sk.get("hits", 8)
             hp_pct = tp["hp"] / max(1, tp["max_hp"])
@@ -16337,7 +16341,10 @@ async def _execute_skill(update, context, p, sk):
         await send_group(update, "\n".join(lines), delay=15); return
     elif stype == "stun":
         dmg = round(base * 1.0)
-        if safe_int(d.get("stun_turns", 0)) >= 3 or is_stunned(d):
+        _d_cls = get_player_class(d)
+        if _d_cls and _d_cls.get("passive_key") == "pathfinder":
+            lines.append(f"⚡ *{sk['name']}!* {d['username']} is *Stun Immune* (Strider).")
+        elif safe_int(d.get("stun_turns", 0)) >= 3 or is_stunned(d):
             lines.append(f"⚡ *{sk['name']}!* {d['username']} is *Stun Immune* (max stacks).")
         elif random.random() < 0.25:
             add_charges(d, "stun_turns", 1)
@@ -16418,7 +16425,7 @@ async def _execute_skill(update, context, p, sk):
     elif stype == "condemn":
         # Holy Wrath  -  Zealot ultimate
         wis = get_stat(p,"WIS")
-        dmg = wis * 8
+        dmg = wis * 5
         for bf in ["blessed_until","holy_field_until"]:
             d[bf] = None
         d["blessed_turns"] = 0; d["ward_charges"] = 0
@@ -16426,10 +16433,10 @@ async def _execute_skill(update, context, p, sk):
         add_charges(d, "weakened_hits", 5)
         lines.append(f"☠️ *Holy Wrath!* All buffs stripped — Hexed ×5, Weakened ×5!")
     elif stype == "void_nuke":
-        dmg = min(d["hp"] // 2, round(calc_max_hp(p) * 0.6))
+        dmg = round(d["hp"] * 0.35)
         if safe_int(d.get("heal_blocked_turns", 0)) < 5:
             add_charges(d, "heal_blocked_turns", min(3, 5 - safe_int(d.get("heal_blocked_turns", 0))))
-        lines.append(f"🌑 *Void Collapse!* {d['username']} loses 50% HP — Healing blocked!")
+        lines.append(f"🌑 *Void Collapse!* {d['username']} loses 35% HP — Healing blocked!")
     elif stype == "freeze_nuke":
         int_v = get_stat(p,"INT")
         dmg   = int_v * 6
@@ -16542,16 +16549,20 @@ async def _execute_skill(update, context, p, sk):
             lines.append(f"⚡ *Bifrost Descent!* STR×4+DEF×4 = {dmg} holy damage! ({d['username']} Stun Immune)")
     elif stype == "godlike_lightning":
         str_v = get_stat(p, "STR")
-        dmg = round(str_v * 8)
+        dmg = round(str_v * 5)
         add_charges(d, "hex_turns", 3)
         add_charges(d, "weakened_hits", 3)
-        lines.append(f"⚡ *Valhalla's Thunder!* STR×8 = {dmg} divine lightning! Hexed ×3 + Weakened ×3!")
+        lines.append(f"⚡ *Valhalla's Thunder!* STR×5 = {dmg} divine lightning! Hexed ×3 + Weakened ×3!")
     elif stype == "aoe_bleed_multihit":
         hits = sk.get("hits", 4)
         dmg = sum(round(base * sk.get("mult", 0.6)) for _ in range(hits))
-        add_charges(d, "bleed_stacks", hits)
-        d["bleed_pct"] = 15
-        lines.append(f"🌀 *Blade Storm!* {hits}-hit combo ({dmg} total)! Bleed ×{hits} (15% max HP/action) on {d['username']}!")
+        new_bleed = min(5, max(0, 5 - safe_int(d.get("bleed_stacks", 0))))
+        if new_bleed > 0:
+            add_charges(d, "bleed_stacks", new_bleed)
+            d["bleed_pct"] = 10
+            lines.append(f"🌀 *Blade Storm!* {hits}-hit combo ({dmg} total)! Bleed ×{new_bleed} (10% max HP/action) on {d['username']}!")
+        else:
+            lines.append(f"🌀 *Blade Storm!* {hits}-hit combo ({dmg} total)! ({d['username']} Bleed Immune — max stacks)")
     elif stype == "execute_multihit":
         hits = sk.get("hits", 8)
         hp_pct = d["hp"] / max(1, d["max_hp"])
