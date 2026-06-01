@@ -28400,8 +28400,14 @@ def main():
                 "SELECT last_seen FROM shadow_profiles WHERE user_id=?", (u.id,)).fetchone()
             if _row and _row["last_seen"] and _is_grp:
                 asyncio.create_task(_try_idle_reward(u.id, context.bot, _row["last_seen"]))
-            _lc.execute("UPDATE shadow_profiles SET last_seen=? WHERE user_id=?",
-                        (datetime.now().isoformat(), u.id))
+            if _is_grp:
+                global _megaphone_group
+                _megaphone_group = update.effective_chat.id
+                _lc.execute("UPDATE shadow_profiles SET last_seen=?, home_group=? WHERE user_id=?",
+                            (datetime.now().isoformat(), update.effective_chat.id, u.id))
+            else:
+                _lc.execute("UPDATE shadow_profiles SET last_seen=? WHERE user_id=?",
+                            (datetime.now().isoformat(), u.id))
             _lc.commit(); _lc.close()
         except Exception: pass
         # Keep tg_username fresh so /attack @handle works reliably
