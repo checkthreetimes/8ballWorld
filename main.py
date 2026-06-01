@@ -13684,9 +13684,14 @@ async def megaphone_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await update.message.delete()
         except: pass
         return
-    text = " ".join(context.args).strip() if context.args else ""
-    if not text:
-        await update.message.reply_text("Usage: /megaphone <your message>\n\nSends your message to the group anonymously.")
+    msg = update.message
+    caption = " ".join(context.args).strip() if context.args else ""
+    # Require either text or media
+    if not caption and not msg.photo and not msg.animation and not msg.video and not msg.sticker:
+        await msg.reply_text(
+            "Usage:\n"
+            "• /megaphone <text> — send anonymous text\n"
+            "• Send a photo/GIF/video with /megaphone as caption — send anonymous media")
         return
     # Resolve the group: user's own home_group → global cache → any known group in DB
     s = get_shadow(update.effective_user.id)
@@ -13700,11 +13705,20 @@ async def megaphone_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
     if not home_group:
-        await update.message.reply_text("Couldn't find the group. Send any message in the group first, then try again.")
+        await msg.reply_text("Couldn't find the group. Use any command in the group first, then try again.")
         return
     try:
-        await context.bot.send_message(home_group, text)
-        await update.message.reply_text("📣 Sent.")
+        if msg.photo:
+            await context.bot.send_photo(home_group, msg.photo[-1].file_id, caption=caption or None)
+        elif msg.animation:
+            await context.bot.send_animation(home_group, msg.animation.file_id, caption=caption or None)
+        elif msg.video:
+            await context.bot.send_video(home_group, msg.video.file_id, caption=caption or None)
+        elif msg.sticker:
+            await context.bot.send_sticker(home_group, msg.sticker.file_id)
+        else:
+            await context.bot.send_message(home_group, caption)
+        await msg.reply_text("📣 Sent.")
     except Exception:
         await update.message.reply_text("Failed to send — make sure the bot is still in the group.")
 
