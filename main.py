@@ -13679,9 +13679,16 @@ _RUMOR_TPL = [
     "Evidence suggests {name} once lost a duel to someone who was AFK.",
 ]
 
-async def _megaphone_resolve_group(uid):
-    """Return the group chat ID to use for /megaphone, or None."""
-    s = get_shadow(uid)
+async def megaphone_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private":
+        try: await update.message.delete()
+        except: pass
+        return
+    text = " ".join(context.args).strip() if context.args else ""
+    if not text:
+        await update.message.reply_text("Usage: /megaphone <your message>")
+        return
+    s = get_shadow(update.effective_user.id)
     home_group = (s.get("home_group") if s else None) or _megaphone_group
     if not home_group:
         try:
@@ -13691,62 +13698,17 @@ async def _megaphone_resolve_group(uid):
             if row: home_group = row[0]
         except Exception:
             pass
-    return home_group
-
-async def _megaphone_send(bot, home_group, msg, text):
-    """Send msg contents anonymously to home_group."""
-    if msg.photo:
-        await bot.send_photo(home_group, msg.photo[-1].file_id, caption=text or None)
-    elif msg.animation:
-        await bot.send_animation(home_group, msg.animation.file_id, caption=text or None)
-    elif msg.video:
-        await bot.send_video(home_group, msg.video.file_id, caption=text or None)
-    elif msg.sticker:
-        await bot.send_sticker(home_group, msg.sticker.file_id)
-    else:
-        await bot.send_message(home_group, text)
-
-async def megaphone_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != "private":
-        try: await update.message.delete()
-        except: pass
-        return
-    msg = update.message
-    text = " ".join(context.args).strip() if context.args else ""
-    if not text:
-        await msg.reply_text(
-            "Usage:\n"
-            "• /megaphone <text> — anonymous text\n"
-            "• Send a photo/GIF/video to this DM with /megaphone as caption — anonymous media")
-        return
-    home_group = await _megaphone_resolve_group(update.effective_user.id)
     if not home_group:
-        await msg.reply_text("Couldn't find the group. Use any command in the group first, then try again.")
+        await update.message.reply_text("Couldn't find the group. Use any command in the group first, then try again.")
         return
     try:
-        await _megaphone_send(context.bot, home_group, msg, text)
-        await msg.reply_text("📣 Sent.")
+        await context.bot.send_message(home_group, text)
+        await update.message.reply_text("📣 Sent.")
     except Exception:
-        await msg.reply_text("Failed to send — make sure the bot is still in the group.")
+        await update.message.reply_text("Failed to send — make sure the bot is still in the group.")
 
 async def megaphone_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle photo/GIF/video/sticker sent to bot DM with /megaphone caption."""
-    msg = update.message
-    if not msg or update.effective_chat.type != "private":
-        return
-    cap = (msg.caption or "").strip()
-    if not cap.lower().startswith("/megaphone"):
-        return
-    text = cap[len("/megaphone"):].strip()
-    home_group = await _megaphone_resolve_group(update.effective_user.id)
-    if not home_group:
-        await msg.reply_text("Couldn't find the group. Use any command in the group first, then try again.")
-        return
-    try:
-        await _megaphone_send(context.bot, home_group, msg, text)
-        await msg.reply_text("📣 Sent.")
-    except Exception:
-        await msg.reply_text("Failed to send — make sure the bot is still in the group.")
+    pass
 
 async def rumor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(update.effective_user.id)
@@ -28370,9 +28332,6 @@ def main():
     app.add_handler(CallbackQueryHandler(boss_act_callback,     pattern="^boss_act_"))
     # Social orders & secrets
     app.add_handler(CommandHandler("megaphone", megaphone_cmd))
-    app.add_handler(MessageHandler(
-        filters.PRIVATE & (filters.PHOTO | filters.ANIMATION | filters.VIDEO | filters.Sticker.ALL),
-        megaphone_media_handler))
     app.add_handler(CommandHandler("alliance",  alliance_cmd))
     app.add_handler(CommandHandler("rumor",     rumor_cmd))
     app.add_handler(CommandHandler("secrets",   secrets_cmd))
