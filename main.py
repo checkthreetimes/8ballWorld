@@ -153,6 +153,8 @@ _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
 _PVP_ACTION_CD     = 0.0  # no cooldown between PvP card button presses
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
 _megaphone_state   = {"group": None}  # last known group chat ID for /megaphone DMs
+_broadcast_quest   = None   # {"id": str, "phrase": str, "exp": int, "expires": float}
+_broadcast_claims  = set()  # user_ids who already claimed the active broadcast quest
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
@@ -9166,10 +9168,6 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         None, lambda: (save_player(_a_snap), save_player(_d_snap)))
 
     if d["hp"] > 0:
-        hp_pct = d["hp"] / max(1, d["max_hp"])
-        filled = round(hp_pct * 10)
-        bar = "█" * filled + "░" * (10 - filled)
-        action += f"\n❤️ {d['username']}: *{d['hp']}/{d['max_hp']}* [{bar}]"
         asyncio.create_task(_notify_attack(bot, d, a["username"], dmg_after_def))
 
     statuses = get_active_statuses(d)
@@ -13373,6 +13371,24 @@ async def _try_complete_quest_phrase(p, text, reply_to_id, bot):
     add_item(p, "Greater Health Potion")
     p["active_quest"] = None; save_player(p)
     try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r} EXP | +{inf_r} Influence | 🧪 Greater Health Potion", parse_mode="Markdown")
+    except: pass
+
+async def _try_complete_broadcast_quest(p, text, bot):
+    global _broadcast_quest, _broadcast_claims
+    if not _broadcast_quest: return
+    if _broadcast_quest["expires"] < time.time():
+        _broadcast_quest = None; _broadcast_claims = set(); return
+    uid = p["user_id"]
+    if uid in _broadcast_claims: return
+    if _broadcast_quest["phrase"].lower() not in text.lower(): return
+    exp = _broadcast_quest["exp"]
+    add_exp(p, exp)
+    save_player(p)
+    _broadcast_claims.add(uid)
+    try:
+        await bot.send_message(uid,
+            f"✅ *Quest Complete!*\n\n_{_broadcast_quest['phrase']}_\n\n+{exp} EXP rewarded!",
+            parse_mode="Markdown")
     except: pass
 
 # ─── Alliance Main Menu Helper ──────────────────────────────
@@ -26029,6 +26045,89 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 
+# ── SEND QUEST (admin only) ───────────────────────────────────────────────────
+async def sendquest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global _broadcast_quest, _broadcast_claims
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        return
+    if update.effective_chat.type != "private":
+        try: await update.message.delete()
+        except: pass
+        return
+
+    # Format: /sendquest <exp> <phrase…>
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /sendquest <exp> <phrase>\n\n"
+            "Example: /sendquest 500 Lets go team!\n\n"
+            "Players earn the EXP by saying the exact phrase in the group.\n"
+            "Use /cancelquest to end it early."
+        )
+        return
+
+    try:
+        exp = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("First argument must be a number (EXP amount).\nExample: /sendquest 500 Lets go team!")
+        return
+
+    phrase = " ".join(context.args[1:]).strip()
+    quest_id = str(int(time.time()))
+    _broadcast_quest  = {"id": quest_id, "phrase": phrase, "exp": exp, "expires": time.time() + 86400}
+    _broadcast_claims = set()
+
+    c = _db().cursor()
+    c.execute("SELECT DISTINCT user_id FROM players")
+    user_ids = [row[0] for row in c.fetchall()]
+
+    dm_text = (
+        f"📜 *Special Quest*\n\n"
+        f"Say this phrase in the group chat to earn your reward:\n\n"
+        f"*\"{phrase}\"*\n\n"
+        f"💫 Reward: *{exp} EXP*\n"
+        f"⏳ Expires in 24 hours"
+    )
+
+    sent = 0; failed = 0
+    status_msg = await update.message.reply_text(f"📡 Sending quest to {len(user_ids)} players...")
+    for uid in user_ids:
+        try:
+            await context.bot.send_message(chat_id=uid, text=dm_text, parse_mode="Markdown")
+            sent += 1
+        except Exception:
+            failed += 1
+
+    try:
+        await status_msg.edit_text(
+            f"✅ *Quest sent!*\n\n"
+            f"Phrase: *\"{phrase}\"*\n"
+            f"Reward: *{exp} EXP*\n\n"
+            f"📨 Delivered: *{sent}* | ❌ Failed: *{failed}*\n"
+            f"_Use /cancelquest to end it early._",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
+
+async def cancelquest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global _broadcast_quest, _broadcast_claims
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if _broadcast_quest is None:
+        await update.message.reply_text("No active broadcast quest.")
+        return
+    phrase = _broadcast_quest["phrase"]
+    claimed = len(_broadcast_claims)
+    _broadcast_quest  = None
+    _broadcast_claims = set()
+    await update.message.reply_text(
+        f"🚫 Quest cancelled.\n\nPhrase: *\"{phrase}\"*\n{claimed} player(s) had already claimed it.",
+        parse_mode="Markdown"
+    )
+
+
 # ── WIPE (admin only) ─────────────────────────────────────────────────────────
 async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -26875,6 +26974,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                       if update.message.reply_to_message and update.message.reply_to_message.from_user
                       else None)
         await _try_complete_quest_phrase(_p_msg, update.message.text, _reply_uid, context.bot)
+    # Admin broadcast quest: phrase completion check
+    if _p_msg and update.message.text and _broadcast_quest:
+        await _try_complete_broadcast_quest(_p_msg, update.message.text, context.bot)
     # Quest dispatch trigger (20% chance if no active quest, 8h+ since last)
     if _p_msg and random.random() < 0.20:
         await _dispatch_secret_quest(user.id, context.bot)
@@ -28373,8 +28475,10 @@ def main():
     app.add_handler(CallbackQueryHandler(soloraid_act_callback, pattern="^sr_act_"))
     app.add_handler(CallbackQueryHandler(boss_act_callback,     pattern="^boss_act_"))
     # Social orders & secrets
-    app.add_handler(CommandHandler("megaphone",  megaphone_cmd))
-    app.add_handler(CommandHandler("broadcast",  broadcast_cmd))
+    app.add_handler(CommandHandler("megaphone",    megaphone_cmd))
+    app.add_handler(CommandHandler("broadcast",    broadcast_cmd))
+    app.add_handler(CommandHandler("sendquest",    sendquest_cmd))
+    app.add_handler(CommandHandler("cancelquest",  cancelquest_cmd))
     app.add_handler(CommandHandler("alliance",  alliance_cmd))
     app.add_handler(CommandHandler("rumor",     rumor_cmd))
     app.add_handler(CommandHandler("secrets",   secrets_cmd))
