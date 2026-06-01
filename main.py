@@ -25986,6 +25986,49 @@ async def resetstats_callback(update, context):
     finally:
         _cb_unlock(caller_id)
 
+# ── BROADCAST (admin only) ────────────────────────────────────────────────────
+async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        return
+    if update.effective_chat.type != "private":
+        try: await update.message.delete()
+        except: pass
+        return
+
+    text = " ".join(context.args).strip() if context.args else ""
+    if not text:
+        await update.message.reply_text(
+            "Usage: /broadcast <message>\n\n"
+            "Sends a DM to every player in the database."
+        )
+        return
+
+    c = _db().cursor()
+    c.execute("SELECT DISTINCT user_id FROM players")
+    user_ids = [row[0] for row in c.fetchall()]
+
+    sent = 0; failed = 0
+    status_msg = await update.message.reply_text(f"📡 Broadcasting to {len(user_ids)} players...")
+
+    for uid in user_ids:
+        try:
+            await context.bot.send_message(chat_id=uid, text=text)
+            sent += 1
+        except Exception:
+            failed += 1
+
+    try:
+        await status_msg.edit_text(
+            f"📣 *Broadcast complete.*\n"
+            f"✅ Delivered: *{sent}*\n"
+            f"❌ Failed: *{failed}* _(blocked or never DM'd bot)_",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
+
 # ── WIPE (admin only) ─────────────────────────────────────────────────────────
 async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -28330,7 +28373,8 @@ def main():
     app.add_handler(CallbackQueryHandler(soloraid_act_callback, pattern="^sr_act_"))
     app.add_handler(CallbackQueryHandler(boss_act_callback,     pattern="^boss_act_"))
     # Social orders & secrets
-    app.add_handler(CommandHandler("megaphone", megaphone_cmd))
+    app.add_handler(CommandHandler("megaphone",  megaphone_cmd))
+    app.add_handler(CommandHandler("broadcast",  broadcast_cmd))
     app.add_handler(CommandHandler("alliance",  alliance_cmd))
     app.add_handler(CommandHandler("rumor",     rumor_cmd))
     app.add_handler(CommandHandler("secrets",   secrets_cmd))
