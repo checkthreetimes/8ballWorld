@@ -150,7 +150,7 @@ _pvp_cur_page      = {}   # pair -> int, current page index (0 = oldest)
 _pvp_player_cards  = {}   # uid -> (chat_id, message_id) — each player's own battle card
 _pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
-_PVP_ACTION_CD     = 3.0  # seconds between PvP card button presses
+_PVP_ACTION_CD     = 0.0  # no cooldown between PvP card button presses
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
 
 def _pvp_pair_key(a, b):
@@ -2346,69 +2346,102 @@ PERSONALITY_BATTLE = {
 # Each species: name, element, rarity, base_atk, base_def, personality, emoji, desc, egg
 PET_SPECIES = {
     # ── DOGS ─────────────────────────────────────────────────────────────────
-    "iron_hound":       {"name":"Iron Hound",       "element":"earth",    "rarity":"uncommon","base_atk":6, "base_def":4, "personality":"loyal",      "emoji":"🐕","desc":"A rugged mutt with iron-hard hide. Stubborn and reliable.","def_ability":"intercept"},
-    "thunder_mastiff":  {"name":"Thunder Mastiff",  "element":"lightning","rarity":"rare",    "base_atk":10,"base_def":5, "personality":"fierce",     "emoji":"🐕","desc":"A massive war-bred mastiff cracking with static charge.","def_ability":"counter"},
-    "shadow_pup":       {"name":"Shadow Pup",       "element":"shadow",   "rarity":"uncommon","base_atk":5, "base_def":3, "personality":"mischievous","emoji":"🐕","desc":"A tiny hound that phases in and out of darkness. Trouble magnet.","def_ability":"stun"},
-    "frost_husky":      {"name":"Frost Husky",      "element":"water",    "rarity":"rare",    "base_atk":8, "base_def":6, "personality":"playful",    "emoji":"🐕","desc":"A snow-white husky with ice-blue eyes. Loves cold and chaos equally.","def_ability":"shield"},
-    "emberpaw":         {"name":"Emberpaw",          "element":"fire",     "rarity":"epic",    "base_atk":14,"base_def":7, "personality":"fierce",     "emoji":"🐕","desc":"A hound wreathed in embers. Leaves scorched pawprints everywhere it walks.","def_ability":"counter"},
-    "celestial_shepherd":{"name":"Celestial Shepherd","element":"holy",   "rarity":"legendary","base_atk":20,"base_def":12,"personality":"loyal",     "emoji":"🐕","desc":"Blessed guardian. It has watched over the same bloodline for centuries.","def_ability":"intercept"},
+    "iron_hound":       {"name":"Iron Hound",       "element":"earth",    "rarity":"uncommon","base_atk":24, "base_def":4, "personality":"loyal",      "emoji":"🐕","desc":"A rugged mutt with iron-hard hide. Stubborn and reliable.","def_ability":"intercept"},
+    "thunder_mastiff":  {"name":"Thunder Mastiff",  "element":"lightning","rarity":"rare",    "base_atk":40,"base_def":5, "personality":"fierce",     "emoji":"🐕","desc":"A massive war-bred mastiff cracking with static charge.","def_ability":"counter"},
+    "shadow_pup":       {"name":"Shadow Pup",       "element":"shadow",   "rarity":"uncommon","base_atk":20, "base_def":3, "personality":"mischievous","emoji":"🐕","desc":"A tiny hound that phases in and out of darkness. Trouble magnet.","def_ability":"stun"},
+    "frost_husky":      {"name":"Frost Husky",      "element":"water",    "rarity":"rare",    "base_atk":32, "base_def":6, "personality":"playful",    "emoji":"🐕","desc":"A snow-white husky with ice-blue eyes. Loves cold and chaos equally.","def_ability":"shield"},
+    "emberpaw":         {"name":"Emberpaw",          "element":"fire",     "rarity":"epic",    "base_atk":56,"base_def":7, "personality":"fierce",     "emoji":"🐕","desc":"A hound wreathed in embers. Leaves scorched pawprints everywhere it walks.","def_ability":"counter"},
+    "celestial_shepherd":{"name":"Celestial Shepherd","element":"holy",   "rarity":"legendary","base_atk":80,"base_def":12,"personality":"loyal",     "emoji":"🐕","desc":"Blessed guardian. It has watched over the same bloodline for centuries.","def_ability":"intercept"},
     # ── CATS ─────────────────────────────────────────────────────────────────
-    "soot_cat":         {"name":"Soot Cat",         "element":"shadow",   "rarity":"common",  "base_atk":4, "base_def":2, "personality":"mischievous","emoji":"🐈","desc":"Always covered in ash. Knocks things off tables on purpose.","def_ability":"shield"},
-    "ember_tabby":      {"name":"Ember Tabby",      "element":"fire",     "rarity":"uncommon","base_atk":6, "base_def":3, "personality":"playful",    "emoji":"🐈","desc":"An orange tabby with a perpetually warm belly and a flair for drama.","def_ability":"stun"},
-    "moonwhisker":      {"name":"Moonwhisker",       "element":"void",     "rarity":"rare",    "base_atk":9, "base_def":5, "personality":"calm",       "emoji":"🐈","desc":"Silver-furred and ancient-eyed. It always knows where the danger is.","def_ability":"shield"},
-    "storm_lynx":       {"name":"Storm Lynx",        "element":"lightning","rarity":"rare",    "base_atk":11,"base_def":4, "personality":"fierce",     "emoji":"🐈","desc":"A wild lynx that crackles with electricity. Doesn't do cuddling.","def_ability":"stun"},
-    "crystal_manx":     {"name":"Crystal Manx",      "element":"earth",    "rarity":"epic",    "base_atk":13,"base_def":9, "personality":"calm",       "emoji":"🐈","desc":"Its fur has crystallized into translucent armor. Unbothered by everything.","def_ability":"intercept"},
-    "spectre_panther":  {"name":"Spectre Panther",   "element":"shadow",   "rarity":"legendary","base_atk":22,"base_def":10,"personality":"fierce",    "emoji":"🐈","desc":"A panther that walks between worlds. You only see it when it wants you to.","def_ability":"counter"},
+    "soot_cat":         {"name":"Soot Cat",         "element":"shadow",   "rarity":"common",  "base_atk":16, "base_def":2, "personality":"mischievous","emoji":"🐈","desc":"Always covered in ash. Knocks things off tables on purpose.","def_ability":"shield"},
+    "ember_tabby":      {"name":"Ember Tabby",      "element":"fire",     "rarity":"uncommon","base_atk":24, "base_def":3, "personality":"playful",    "emoji":"🐈","desc":"An orange tabby with a perpetually warm belly and a flair for drama.","def_ability":"stun"},
+    "moonwhisker":      {"name":"Moonwhisker",       "element":"void",     "rarity":"rare",    "base_atk":36, "base_def":5, "personality":"calm",       "emoji":"🐈","desc":"Silver-furred and ancient-eyed. It always knows where the danger is.","def_ability":"shield"},
+    "storm_lynx":       {"name":"Storm Lynx",        "element":"lightning","rarity":"rare",    "base_atk":44,"base_def":4, "personality":"fierce",     "emoji":"🐈","desc":"A wild lynx that crackles with electricity. Doesn't do cuddling.","def_ability":"stun"},
+    "crystal_manx":     {"name":"Crystal Manx",      "element":"earth",    "rarity":"epic",    "base_atk":52,"base_def":9, "personality":"calm",       "emoji":"🐈","desc":"Its fur has crystallized into translucent armor. Unbothered by everything.","def_ability":"intercept"},
+    "spectre_panther":  {"name":"Spectre Panther",   "element":"shadow",   "rarity":"legendary","base_atk":88,"base_def":10,"personality":"fierce",    "emoji":"🐈","desc":"A panther that walks between worlds. You only see it when it wants you to.","def_ability":"counter"},
     # ── DRAGONS ──────────────────────────────────────────────────────────────
-    "cave_drake":       {"name":"Cave Drake",        "element":"earth",    "rarity":"uncommon","base_atk":8, "base_def":6, "personality":"lazy",       "emoji":"🐉","desc":"A squat cave-dwelling drake. Prefers sleeping on gold to doing anything.","def_ability":"shield"},
-    "flame_whelp":      {"name":"Flame Whelp",       "element":"fire",     "rarity":"rare",    "base_atk":11,"base_def":5, "personality":"playful",    "emoji":"🐉","desc":"A baby fire dragon. Adorable. Also highly flammable to everything nearby.","def_ability":"counter"},
-    "frost_wyrm":       {"name":"Frost Wyrm",         "element":"water",    "rarity":"rare",    "base_atk":10,"base_def":7, "personality":"calm",       "emoji":"🐉","desc":"A serpentine ice dragon. Glacially patient. Glacially powerful.","def_ability":"intercept"},
-    "storm_drake":      {"name":"Storm Drake",        "element":"lightning","rarity":"epic",    "base_atk":16,"base_def":8, "personality":"fierce",     "emoji":"🐉","desc":"A drake born from a lightning storm. Every battle is a thunderstorm.","def_ability":"counter"},
-    "void_drake":       {"name":"Void Drake",         "element":"void",     "rarity":"epic",    "base_atk":15,"base_def":9, "personality":"mischievous","emoji":"🐉","desc":"A dragon that exists partially in another dimension. Bites from angles that shouldn't exist.","def_ability":"stun"},
-    "ancient_dragon":   {"name":"Ancient Dragon",     "element":"fire",     "rarity":"legendary","base_atk":24,"base_def":14,"personality":"loyal",     "emoji":"🐉","desc":"A dragon old enough to remember the first age. Chooses its partners wisely.","def_ability":"counter"},
-    "prismatic_dragon": {"name":"Prismatic Dragon",   "element":"holy",     "rarity":"mythic",  "base_atk":35,"base_def":20,"personality":"timid",     "emoji":"🐉","desc":"A dragon of pure light. Its colors shift with every heartbeat. Extraordinarily rare.","def_ability":"lifesteal"},
+    "cave_drake":       {"name":"Cave Drake",        "element":"earth",    "rarity":"uncommon","base_atk":32, "base_def":6, "personality":"lazy",       "emoji":"🐉","desc":"A squat cave-dwelling drake. Prefers sleeping on gold to doing anything.","def_ability":"shield"},
+    "flame_whelp":      {"name":"Flame Whelp",       "element":"fire",     "rarity":"rare",    "base_atk":44,"base_def":5, "personality":"playful",    "emoji":"🐉","desc":"A baby fire dragon. Adorable. Also highly flammable to everything nearby.","def_ability":"counter"},
+    "frost_wyrm":       {"name":"Frost Wyrm",         "element":"water",    "rarity":"rare",    "base_atk":40,"base_def":7, "personality":"calm",       "emoji":"🐉","desc":"A serpentine ice dragon. Glacially patient. Glacially powerful.","def_ability":"intercept"},
+    "storm_drake":      {"name":"Storm Drake",        "element":"lightning","rarity":"epic",    "base_atk":64,"base_def":8, "personality":"fierce",     "emoji":"🐉","desc":"A drake born from a lightning storm. Every battle is a thunderstorm.","def_ability":"counter"},
+    "void_drake":       {"name":"Void Drake",         "element":"void",     "rarity":"epic",    "base_atk":60,"base_def":9, "personality":"mischievous","emoji":"🐉","desc":"A dragon that exists partially in another dimension. Bites from angles that shouldn't exist.","def_ability":"stun"},
+    "ancient_dragon":   {"name":"Ancient Dragon",     "element":"fire",     "rarity":"legendary","base_atk":96,"base_def":14,"personality":"loyal",     "emoji":"🐉","desc":"A dragon old enough to remember the first age. Chooses its partners wisely.","def_ability":"counter"},
+    "prismatic_dragon": {"name":"Prismatic Dragon",   "element":"holy",     "rarity":"mythic",  "base_atk":140,"base_def":20,"personality":"timid",     "emoji":"🐉","desc":"A dragon of pure light. Its colors shift with every heartbeat. Extraordinarily rare.","def_ability":"lifesteal"},
     # ── SNAKES ───────────────────────────────────────────────────────────────
-    "viridian_cobra":   {"name":"Viridian Cobra",    "element":"nature",   "rarity":"common",  "base_atk":5, "base_def":2, "personality":"timid",     "emoji":"🐍","desc":"A bright green cobra. Shy until provoked — then very much not shy.","def_ability":"poison"},
-    "crimson_viper":    {"name":"Crimson Viper",     "element":"fire",     "rarity":"uncommon","base_atk":7, "base_def":3, "personality":"fierce",     "emoji":"🐍","desc":"A blood-red viper with venom that burns like magma. Aggressive by nature.","def_ability":"poison"},
-    "shadow_boa":       {"name":"Shadow Boa",         "element":"shadow",   "rarity":"rare",    "base_atk":9, "base_def":6, "personality":"calm",       "emoji":"🐍","desc":"A massive boa that melts into darkness. Wraps enemies in crushing silence.","def_ability":"intercept"},
-    "frost_asp":        {"name":"Frost Asp",          "element":"water",    "rarity":"rare",    "base_atk":10,"base_def":5, "personality":"calm",       "emoji":"🐍","desc":"A pale blue asp whose bite freezes the wound instantly. Eerily quiet.","def_ability":"stun"},
-    "ghost_mamba":      {"name":"Ghost Mamba",        "element":"shadow",   "rarity":"epic",    "base_atk":15,"base_def":7, "personality":"mischievous","emoji":"🐍","desc":"A translucent mamba that strikes from inside your shadow. You won't see it coming.","def_ability":"poison"},
-    "oracle_python":    {"name":"Oracle Python",      "element":"holy",     "rarity":"legendary","base_atk":21,"base_def":12,"personality":"calm",      "emoji":"🐍","desc":"An ancient python with golden eyes that have seen everything. Strikes only when certain.","def_ability":"lifesteal"},
+    "viridian_cobra":   {"name":"Viridian Cobra",    "element":"nature",   "rarity":"common",  "base_atk":20, "base_def":2, "personality":"timid",     "emoji":"🐍","desc":"A bright green cobra. Shy until provoked — then very much not shy.","def_ability":"poison"},
+    "crimson_viper":    {"name":"Crimson Viper",     "element":"fire",     "rarity":"uncommon","base_atk":28, "base_def":3, "personality":"fierce",     "emoji":"🐍","desc":"A blood-red viper with venom that burns like magma. Aggressive by nature.","def_ability":"poison"},
+    "shadow_boa":       {"name":"Shadow Boa",         "element":"shadow",   "rarity":"rare",    "base_atk":36, "base_def":6, "personality":"calm",       "emoji":"🐍","desc":"A massive boa that melts into darkness. Wraps enemies in crushing silence.","def_ability":"intercept"},
+    "frost_asp":        {"name":"Frost Asp",          "element":"water",    "rarity":"rare",    "base_atk":40,"base_def":5, "personality":"calm",       "emoji":"🐍","desc":"A pale blue asp whose bite freezes the wound instantly. Eerily quiet.","def_ability":"stun"},
+    "ghost_mamba":      {"name":"Ghost Mamba",        "element":"shadow",   "rarity":"epic",    "base_atk":60,"base_def":7, "personality":"mischievous","emoji":"🐍","desc":"A translucent mamba that strikes from inside your shadow. You won't see it coming.","def_ability":"poison"},
+    "oracle_python":    {"name":"Oracle Python",      "element":"holy",     "rarity":"legendary","base_atk":84,"base_def":12,"personality":"calm",      "emoji":"🐍","desc":"An ancient python with golden eyes that have seen everything. Strikes only when certain.","def_ability":"lifesteal"},
     # ── BEARS ────────────────────────────────────────────────────────────────
-    "forest_cub":       {"name":"Forest Cub",         "element":"nature",   "rarity":"common",  "base_atk":5, "base_def":5, "personality":"playful",   "emoji":"🐻","desc":"A roly-poly cub that plays more than it fights. Plenty of time to grow into danger.","def_ability":"intercept"},
-    "cave_bear":        {"name":"Cave Bear",           "element":"earth",    "rarity":"uncommon","base_atk":8, "base_def":8, "personality":"fierce",    "emoji":"🐻","desc":"A boulder with fur and opinions. Will protect its partner with everything it has.","def_ability":"intercept"},
-    "frost_bear":       {"name":"Frost Bear",          "element":"water",    "rarity":"rare",    "base_atk":11,"base_def":10,"personality":"loyal",     "emoji":"🐻","desc":"A glacier-white bear of immense size and patience. Nothing moves it until it decides to move.","def_ability":"intercept"},
-    "shadow_grizzly":   {"name":"Shadow Grizzly",      "element":"shadow",   "rarity":"epic",    "base_atk":17,"base_def":11,"personality":"fierce",    "emoji":"🐻","desc":"A grizzly that hunts in pitch darkness. The only warning is the sound of impact.","def_ability":"counter"},
+    "forest_cub":       {"name":"Forest Cub",         "element":"nature",   "rarity":"common",  "base_atk":20, "base_def":5, "personality":"playful",   "emoji":"🐻","desc":"A roly-poly cub that plays more than it fights. Plenty of time to grow into danger.","def_ability":"intercept"},
+    "cave_bear":        {"name":"Cave Bear",           "element":"earth",    "rarity":"uncommon","base_atk":32, "base_def":8, "personality":"fierce",    "emoji":"🐻","desc":"A boulder with fur and opinions. Will protect its partner with everything it has.","def_ability":"intercept"},
+    "frost_bear":       {"name":"Frost Bear",          "element":"water",    "rarity":"rare",    "base_atk":44,"base_def":10,"personality":"loyal",     "emoji":"🐻","desc":"A glacier-white bear of immense size and patience. Nothing moves it until it decides to move.","def_ability":"intercept"},
+    "shadow_grizzly":   {"name":"Shadow Grizzly",      "element":"shadow",   "rarity":"epic",    "base_atk":68,"base_def":11,"personality":"fierce",    "emoji":"🐻","desc":"A grizzly that hunts in pitch darkness. The only warning is the sound of impact.","def_ability":"counter"},
     # ── HAWKS & BIRDS ─────────────────────────────────────────────────────────
-    "swift_sparrow":    {"name":"Swift Sparrow",       "element":"wind",     "rarity":"common",  "base_atk":4, "base_def":2, "personality":"playful",   "emoji":"🦅","desc":"A tiny sparrow with ridiculous speed. Darts in, strikes, gone.","def_ability":"stun"},
-    "storm_hawk":       {"name":"Storm Hawk",           "element":"lightning","rarity":"uncommon","base_atk":7, "base_def":3, "personality":"fierce",    "emoji":"🦅","desc":"A raptor that dives through storm clouds. Talons charged with electricity.","def_ability":"stun"},
-    "ember_falcon":     {"name":"Ember Falcon",         "element":"fire",     "rarity":"rare",    "base_atk":11,"base_def":4, "personality":"fierce",    "emoji":"🦅","desc":"A falcon trailing fire from its wingtips. Precision predator.","def_ability":"counter"},
-    "frost_raven":      {"name":"Frost Raven",           "element":"water",    "rarity":"rare",    "base_atk":9, "base_def":5, "personality":"calm",      "emoji":"🦅","desc":"A raven carved from ice. It watches everything and judges silently.","def_ability":"shield"},
-    "shadow_eagle":     {"name":"Shadow Eagle",         "element":"shadow",   "rarity":"epic",    "base_atk":16,"base_def":6, "personality":"mischievous","emoji":"🦅","desc":"An eagle that vanishes into shadow mid-dive. Hits before the target knows it's there.","def_ability":"stun"},
-    "celestial_phoenix":{"name":"Celestial Phoenix",   "element":"holy",     "rarity":"legendary","base_atk":23,"base_def":11,"personality":"loyal",    "emoji":"🦅","desc":"A phoenix reborn each dawn. Fights alongside its partner through every kind of death.","def_ability":"lifesteal"},
+    "swift_sparrow":    {"name":"Swift Sparrow",       "element":"wind",     "rarity":"common",  "base_atk":16, "base_def":2, "personality":"playful",   "emoji":"🦅","desc":"A tiny sparrow with ridiculous speed. Darts in, strikes, gone.","def_ability":"stun"},
+    "storm_hawk":       {"name":"Storm Hawk",           "element":"lightning","rarity":"uncommon","base_atk":28, "base_def":3, "personality":"fierce",    "emoji":"🦅","desc":"A raptor that dives through storm clouds. Talons charged with electricity.","def_ability":"stun"},
+    "ember_falcon":     {"name":"Ember Falcon",         "element":"fire",     "rarity":"rare",    "base_atk":44,"base_def":4, "personality":"fierce",    "emoji":"🦅","desc":"A falcon trailing fire from its wingtips. Precision predator.","def_ability":"counter"},
+    "frost_raven":      {"name":"Frost Raven",           "element":"water",    "rarity":"rare",    "base_atk":36, "base_def":5, "personality":"calm",      "emoji":"🦅","desc":"A raven carved from ice. It watches everything and judges silently.","def_ability":"shield"},
+    "shadow_eagle":     {"name":"Shadow Eagle",         "element":"shadow",   "rarity":"epic",    "base_atk":64,"base_def":6, "personality":"mischievous","emoji":"🦅","desc":"An eagle that vanishes into shadow mid-dive. Hits before the target knows it's there.","def_ability":"stun"},
+    "celestial_phoenix":{"name":"Celestial Phoenix",   "element":"holy",     "rarity":"legendary","base_atk":92,"base_def":11,"personality":"loyal",    "emoji":"🦅","desc":"A phoenix reborn each dawn. Fights alongside its partner through every kind of death.","def_ability":"lifesteal"},
     # ── WOLVES ───────────────────────────────────────────────────────────────
-    "timber_wolf":      {"name":"Timber Wolf",         "element":"earth",    "rarity":"common",  "base_atk":5, "base_def":3, "personality":"fierce",    "emoji":"🐺","desc":"A pack hunter from the deep forest. Loyal to its chosen pack.","def_ability":"intercept"},
-    "shadow_wolf":      {"name":"Shadow Wolf",          "element":"shadow",   "rarity":"rare",    "base_atk":10,"base_def":5, "personality":"mischievous","emoji":"🐺","desc":"A wolf that hunts between dimensions. Impossible to track. Loves to play.","def_ability":"stun"},
-    "frost_wolf":       {"name":"Frost Wolf",            "element":"water",    "rarity":"rare",    "base_atk":9, "base_def":7, "personality":"loyal",     "emoji":"🐺","desc":"A white wolf born in a blizzard. It would die before abandoning its partner.","def_ability":"intercept"},
-    "thunder_wolf":     {"name":"Thunder Wolf",          "element":"lightning","rarity":"epic",    "base_atk":16,"base_def":7, "personality":"fierce",    "emoji":"🐺","desc":"A wolf that outruns lightning. It strikes before the thunder arrives.","def_ability":"counter"},
-    "dire_wolf":        {"name":"Dire Wolf",             "element":"void",     "rarity":"legendary","base_atk":25,"base_def":13,"personality":"fierce",   "emoji":"🐺","desc":"An ancient apex predator. Commands silence in any room it enters.","def_ability":"counter"},
+    "timber_wolf":      {"name":"Timber Wolf",         "element":"earth",    "rarity":"common",  "base_atk":20, "base_def":3, "personality":"fierce",    "emoji":"🐺","desc":"A pack hunter from the deep forest. Loyal to its chosen pack.","def_ability":"intercept"},
+    "shadow_wolf":      {"name":"Shadow Wolf",          "element":"shadow",   "rarity":"rare",    "base_atk":40,"base_def":5, "personality":"mischievous","emoji":"🐺","desc":"A wolf that hunts between dimensions. Impossible to track. Loves to play.","def_ability":"stun"},
+    "frost_wolf":       {"name":"Frost Wolf",            "element":"water",    "rarity":"rare",    "base_atk":36, "base_def":7, "personality":"loyal",     "emoji":"🐺","desc":"A white wolf born in a blizzard. It would die before abandoning its partner.","def_ability":"intercept"},
+    "thunder_wolf":     {"name":"Thunder Wolf",          "element":"lightning","rarity":"epic",    "base_atk":64,"base_def":7, "personality":"fierce",    "emoji":"🐺","desc":"A wolf that outruns lightning. It strikes before the thunder arrives.","def_ability":"counter"},
+    "dire_wolf":        {"name":"Dire Wolf",             "element":"void",     "rarity":"legendary","base_atk":100,"base_def":13,"personality":"fierce",   "emoji":"🐺","desc":"An ancient apex predator. Commands silence in any room it enters.","def_ability":"counter"},
     # ── HORSES ───────────────────────────────────────────────────────────────
-    "wild_stallion":    {"name":"Wild Stallion",        "element":"earth",    "rarity":"uncommon","base_atk":7, "base_def":5, "personality":"fierce",    "emoji":"🐴","desc":"An untamed horse from the open plains. Respects strength. Nothing else.","def_ability":"shield"},
-    "nightmare_steed":  {"name":"Nightmare",            "element":"shadow",   "rarity":"epic",    "base_atk":18,"base_def":9, "personality":"fierce",    "emoji":"🐴","desc":"A horse of living shadow and hellfire. Its hoofbeats echo in places they shouldn't.","def_ability":"counter"},
-    "celestial_steed":  {"name":"Celestial Steed",     "element":"holy",     "rarity":"legendary","base_atk":22,"base_def":13,"personality":"loyal",    "emoji":"🐴","desc":"A white war horse that gallops between stars. Chosen few ever ride it.","def_ability":"shield"},
+    "wild_stallion":    {"name":"Wild Stallion",        "element":"earth",    "rarity":"uncommon","base_atk":28, "base_def":5, "personality":"fierce",    "emoji":"🐴","desc":"An untamed horse from the open plains. Respects strength. Nothing else.","def_ability":"shield"},
+    "nightmare_steed":  {"name":"Nightmare",            "element":"shadow",   "rarity":"epic",    "base_atk":72,"base_def":9, "personality":"fierce",    "emoji":"🐴","desc":"A horse of living shadow and hellfire. Its hoofbeats echo in places they shouldn't.","def_ability":"counter"},
+    "celestial_steed":  {"name":"Celestial Steed",     "element":"holy",     "rarity":"legendary","base_atk":88,"base_def":13,"personality":"loyal",    "emoji":"🐴","desc":"A white war horse that gallops between stars. Chosen few ever ride it.","def_ability":"shield"},
     # ── FANTASY BEASTS ───────────────────────────────────────────────────────
-    "slime_wisp":       {"name":"Slime Wisp",           "element":"void",     "rarity":"common",  "base_atk":3, "base_def":4, "personality":"playful",   "emoji":"🫧","desc":"A blobby little wisp that bounces everywhere. Giggles. Somehow deals damage.","def_ability":"shield"},
-    "stone_golem_pup":  {"name":"Stone Golem Pup",     "element":"earth",    "rarity":"uncommon","base_atk":5, "base_def":8, "personality":"lazy",      "emoji":"🗿","desc":"A miniature stone golem that moves exactly as fast as it wants to. Very slow.","def_ability":"intercept"},
-    "fairy_fox":        {"name":"Fairy Fox",             "element":"wind",     "rarity":"uncommon","base_atk":6, "base_def":3, "personality":"playful",   "emoji":"🦊","desc":"A fox trailing sparkling dust. Charming, fast, and entirely too clever.","def_ability":"stun"},
-    "crystal_crab":     {"name":"Crystal Crab",          "element":"earth",    "rarity":"rare",    "base_atk":7, "base_def":12,"personality":"timid",     "emoji":"🦀","desc":"A crab with a shell of solid quartz. Near-impenetrable defense. Pinches only when startled.","def_ability":"intercept"},
-    "lava_toad":        {"name":"Lava Toad",             "element":"fire",     "rarity":"rare",    "base_atk":10,"base_def":8, "personality":"lazy",      "emoji":"🐸","desc":"A rotund toad that sweats magma. It will not hurry. It doesn't need to.","def_ability":"counter"},
-    "shadow_sprite":    {"name":"Shadow Sprite",         "element":"shadow",   "rarity":"rare",    "base_atk":12,"base_def":4, "personality":"mischievous","emoji":"🌑","desc":"A tiny shadow elemental with a chaotic streak a mile wide.","def_ability":"poison"},
-    "arc_elemental":    {"name":"Arc Elemental",         "element":"lightning","rarity":"epic",    "base_atk":17,"base_def":6, "personality":"calm",      "emoji":"⚡","desc":"A being of pure lightning given shape. Measured, dangerous, exact.","def_ability":"stun"},
-    "bloodhound_specter":{"name":"Bloodhound Specter",  "element":"shadow",   "rarity":"epic",    "base_atk":19,"base_def":7, "personality":"fierce",    "emoji":"👻","desc":"The ghost of a legendary hunting hound. Still on the hunt. Always.","def_ability":"counter"},
-    "void_wisp":        {"name":"Void Wisp",             "element":"void",     "rarity":"epic",    "base_atk":16,"base_def":8, "personality":"mischievous","emoji":"🌀","desc":"A flickering wisp of void energy. It doesn't follow rules. Especially yours.","def_ability":"poison"},
-    "storm_titan":      {"name":"Storm Titan",           "element":"lightning","rarity":"legendary","base_atk":26,"base_def":14,"personality":"fierce",   "emoji":"⚡","desc":"An elemental titan born from the heart of the greatest storm ever recorded.","def_ability":"counter"},
-    "the_ancient_one":  {"name":"The Ancient One",       "element":"void",     "rarity":"mythic",  "base_atk":38,"base_def":22,"personality":"calm",     "emoji":"🌀","desc":"A being older than the world's name. It watches with the patience of eternity. Extraordinarily rare.","def_ability":"lifesteal"},
-    "celestial_pup":    {"name":"Celestial Pup",         "element":"holy",     "rarity":"mythic",  "base_atk":32,"base_def":25,"personality":"loyal",    "emoji":"✨","desc":"A small divine being that chose to look like a puppy. Nobody questions it. It's too cute.","def_ability":"intercept"},
+    "slime_wisp":       {"name":"Slime Wisp",           "element":"void",     "rarity":"common",  "base_atk":12, "base_def":4, "personality":"playful",   "emoji":"🫧","desc":"A blobby little wisp that bounces everywhere. Giggles. Somehow deals damage.","def_ability":"shield"},
+    "stone_golem_pup":  {"name":"Stone Golem Pup",     "element":"earth",    "rarity":"uncommon","base_atk":20, "base_def":8, "personality":"lazy",      "emoji":"🗿","desc":"A miniature stone golem that moves exactly as fast as it wants to. Very slow.","def_ability":"intercept"},
+    "fairy_fox":        {"name":"Fairy Fox",             "element":"wind",     "rarity":"uncommon","base_atk":24, "base_def":3, "personality":"playful",   "emoji":"🦊","desc":"A fox trailing sparkling dust. Charming, fast, and entirely too clever.","def_ability":"stun"},
+    "crystal_crab":     {"name":"Crystal Crab",          "element":"earth",    "rarity":"rare",    "base_atk":28, "base_def":12,"personality":"timid",     "emoji":"🦀","desc":"A crab with a shell of solid quartz. Near-impenetrable defense. Pinches only when startled.","def_ability":"intercept"},
+    "lava_toad":        {"name":"Lava Toad",             "element":"fire",     "rarity":"rare",    "base_atk":40,"base_def":8, "personality":"lazy",      "emoji":"🐸","desc":"A rotund toad that sweats magma. It will not hurry. It doesn't need to.","def_ability":"counter"},
+    "shadow_sprite":    {"name":"Shadow Sprite",         "element":"shadow",   "rarity":"rare",    "base_atk":48,"base_def":4, "personality":"mischievous","emoji":"🌑","desc":"A tiny shadow elemental with a chaotic streak a mile wide.","def_ability":"poison"},
+    "arc_elemental":    {"name":"Arc Elemental",         "element":"lightning","rarity":"epic",    "base_atk":68,"base_def":6, "personality":"calm",      "emoji":"⚡","desc":"A being of pure lightning given shape. Measured, dangerous, exact.","def_ability":"stun"},
+    "bloodhound_specter":{"name":"Bloodhound Specter",  "element":"shadow",   "rarity":"epic",    "base_atk":76,"base_def":7, "personality":"fierce",    "emoji":"👻","desc":"The ghost of a legendary hunting hound. Still on the hunt. Always.","def_ability":"counter"},
+    "void_wisp":        {"name":"Void Wisp",             "element":"void",     "rarity":"epic",    "base_atk":64,"base_def":8, "personality":"mischievous","emoji":"🌀","desc":"A flickering wisp of void energy. It doesn't follow rules. Especially yours.","def_ability":"poison"},
+    "storm_titan":      {"name":"Storm Titan",           "element":"lightning","rarity":"legendary","base_atk":104,"base_def":14,"personality":"fierce",   "emoji":"⚡","desc":"An elemental titan born from the heart of the greatest storm ever recorded.","def_ability":"counter"},
+    "the_ancient_one":  {"name":"The Ancient One",       "element":"void",     "rarity":"mythic",  "base_atk":152,"base_def":22,"personality":"calm",     "emoji":"🌀","desc":"A being older than the world's name. It watches with the patience of eternity. Extraordinarily rare.","def_ability":"lifesteal"},
+    "celestial_pup":    {"name":"Celestial Pup",         "element":"holy",     "rarity":"mythic",  "base_atk":128,"base_def":25,"personality":"loyal",    "emoji":"✨","desc":"A small divine being that chose to look like a puppy. Nobody questions it. It's too cute.","def_ability":"intercept"},
+    # ── NEW RARE PETS ─────────────────────────────────────────────────────────
+    "storm_beetle":     {"name":"Storm Beetle",          "element":"lightning","rarity":"rare",    "base_atk":36, "base_def":14,"personality":"fierce",    "emoji":"🪲","desc":"An armored beetle crackling with static. Hits like a thunderclap.","def_ability":"stun"},
+    "crystal_turtle":   {"name":"Crystal Turtle",        "element":"earth",    "rarity":"rare",    "base_atk":24, "base_def":22,"personality":"calm",      "emoji":"🐢","desc":"A tortoise with a shell of living quartz. Nearly unbreakable.","def_ability":"intercept"},
+    "wind_ferret":      {"name":"Wind Ferret",            "element":"wind",     "rarity":"rare",    "base_atk":40, "base_def":10,"personality":"playful",   "emoji":"🦡","desc":"Too fast to catch and too curious not to get into trouble.","def_ability":"counter"},
+    "void_jellyfish":   {"name":"Void Jellyfish",         "element":"void",     "rarity":"rare",    "base_atk":32, "base_def":14,"personality":"timid",     "emoji":"🪼","desc":"A floating anomaly of void energy. Touch it and regret it.","def_ability":"poison"},
+    "lava_salamander":  {"name":"Lava Salamander",        "element":"fire",     "rarity":"rare",    "base_atk":36, "base_def":12,"personality":"fierce",    "emoji":"🦎","desc":"A salamander that swims through magma like it's a warm puddle.","def_ability":"counter"},
+    "sacred_hare":      {"name":"Sacred Hare",            "element":"holy",     "rarity":"rare",    "base_atk":28, "base_def":16,"personality":"playful",   "emoji":"🐇","desc":"A rabbit blessed by old priests. Runs circles around everything.","def_ability":"shield"},
+    "nature_sprite":    {"name":"Nature Sprite",          "element":"nature",   "rarity":"rare",    "base_atk":32, "base_def":12,"personality":"calm",      "emoji":"🧚","desc":"A tiny forest spirit that wanders wherever it pleases. Deceptively dangerous.","def_ability":"poison"},
+    "shadow_koi":       {"name":"Shadow Koi",              "element":"shadow",   "rarity":"rare",    "base_atk":34, "base_def":10,"personality":"mischievous","emoji":"🐠","desc":"A koi that lives in shadow pools. Strikes from directions light can't reach.","def_ability":"stun"},
+    "glacier_fox":      {"name":"Glacier Fox",             "element":"water",    "rarity":"rare",    "base_atk":36, "base_def":14,"personality":"calm",      "emoji":"🦊","desc":"An arctic fox with fur cold enough to freeze anything it brushes.","def_ability":"intercept"},
+    "thunder_ferret":   {"name":"Thunder Ferret",          "element":"lightning","rarity":"rare",    "base_atk":40, "base_def":10,"personality":"mischievous","emoji":"🦡","desc":"A ferret made of pure restless energy. Strikes twice before you blink.","def_ability":"stun"},
+    # ── NEW LEGENDARY PETS ────────────────────────────────────────────────────
+    "inferno_lion":     {"name":"Inferno Lion",            "element":"fire",     "rarity":"legendary","base_atk":80,"base_def":20,"personality":"fierce",   "emoji":"🦁","desc":"A lion wreathed in living fire. Every roar ignites the air around it.","def_ability":"counter"},
+    "storm_serpent_l":  {"name":"Storm Serpent",           "element":"lightning","rarity":"legendary","base_atk":76,"base_def":22,"personality":"calm",     "emoji":"🐉","desc":"A sky serpent born from the eye of the oldest storm. Measures everything.","def_ability":"stun"},
+    "void_colossus":    {"name":"Void Colossus",           "element":"void",     "rarity":"legendary","base_atk":72,"base_def":32,"personality":"fierce",   "emoji":"🗿","desc":"A construct of compressed void matter. Cannot be moved. Will not stop.","def_ability":"intercept"},
+    "eclipse_owl":      {"name":"Eclipse Owl",             "element":"shadow",   "rarity":"legendary","base_atk":84,"base_def":18,"personality":"calm",     "emoji":"🦉","desc":"An owl that hunts during total eclipses. It sees everything in darkness.","def_ability":"lifesteal"},
+    "tidal_leviathan":  {"name":"Tidal Leviathan",         "element":"water",    "rarity":"legendary","base_atk":76,"base_def":28,"personality":"fierce",   "emoji":"🐋","desc":"A deep-ocean behemoth that surfaces only to fight. Tsunamis follow in its wake.","def_ability":"counter"},
+    "mountain_titan":   {"name":"Mountain Titan",          "element":"earth",    "rarity":"legendary","base_atk":70,"base_def":34,"personality":"loyal",    "emoji":"⛰️","desc":"A titan carved from a living mountain. It guards what it claims forever.","def_ability":"intercept"},
+    "sacred_unicorn":   {"name":"Sacred Unicorn",          "element":"holy",     "rarity":"legendary","base_atk":78,"base_def":24,"personality":"loyal",    "emoji":"🦄","desc":"A unicorn of pure divine light. Its horn shatters curses and armor alike.","def_ability":"shield"},
+    "chaos_drake":      {"name":"Chaos Drake",             "element":"void",     "rarity":"legendary","base_atk":88,"base_def":18,"personality":"mischievous","emoji":"🐲","desc":"A dragon of pure chaotic energy. Every bite tears a different kind of wound.","def_ability":"poison"},
+    "storm_rider":      {"name":"Storm Rider",             "element":"lightning","rarity":"legendary","base_atk":82,"base_def":22,"personality":"fierce",   "emoji":"🦅","desc":"An eagle that rides lightning bolts. Hits with the force of a direct strike.","def_ability":"counter"},
+    "wrath_bear":       {"name":"Wrath Bear",              "element":"shadow",   "rarity":"legendary","base_atk":80,"base_def":26,"personality":"fierce",   "emoji":"🐻","desc":"A shadow-infused grizzly of legendary fury. Wrath incarnate in fur and claw.","def_ability":"counter"},
+    # ── NEW MYTHIC PETS ───────────────────────────────────────────────────────
+    "death_phoenix":    {"name":"Death Phoenix",           "element":"fire",     "rarity":"mythic",  "base_atk":140,"base_def":28,"personality":"fierce",  "emoji":"🔥","desc":"A phoenix reborn not in light but in consuming flame and shadow. Unstoppable.","def_ability":"lifesteal"},
+    "world_serpent":    {"name":"World Serpent",           "element":"void",     "rarity":"mythic",  "base_atk":152,"base_def":32,"personality":"calm",    "emoji":"🌀","desc":"A serpent long enough to encircle worlds. It has patience measured in ages.","def_ability":"poison"},
+    "divine_dragon":    {"name":"Divine Dragon",           "element":"holy",     "rarity":"mythic",  "base_atk":144,"base_def":30,"personality":"loyal",   "emoji":"🐲","desc":"A dragon descended from the divine. Its breath rewrites reality briefly.","def_ability":"counter"},
+    "void_emperor":     {"name":"Void Emperor",            "element":"void",     "rarity":"mythic",  "base_atk":156,"base_def":26,"personality":"fierce",  "emoji":"👑","desc":"The sovereign of the void. All lesser creatures bow before it without knowing why.","def_ability":"stun"},
+    "chrono_leviathan": {"name":"Chrono Leviathan",        "element":"void",     "rarity":"mythic",  "base_atk":148,"base_def":34,"personality":"calm",   "emoji":"⏳","desc":"A beast from outside of time. It exists in all moments simultaneously.","def_ability":"intercept"},
+    "titan_wolf":       {"name":"Titan Wolf",              "element":"shadow",   "rarity":"mythic",  "base_atk":140,"base_def":30,"personality":"fierce",  "emoji":"🐺","desc":"A wolf the size of a small fortress. It hunted gods and found them wanting.","def_ability":"counter"},
+    "solar_dragon":     {"name":"Solar Dragon",            "element":"fire",     "rarity":"mythic",  "base_atk":152,"base_def":28,"personality":"fierce",  "emoji":"☀️","desc":"A dragon made of concentrated sunfire. Looks like a second sun on the horizon.","def_ability":"lifesteal"},
+    "storm_god":        {"name":"Storm God",               "element":"lightning","rarity":"mythic",  "base_atk":160,"base_def":24,"personality":"fierce",  "emoji":"⚡","desc":"Not a creature — a storm given will and purpose. It chose you. Be worthy.","def_ability":"counter"},
+    "shadow_sovereign": {"name":"Shadow Sovereign",        "element":"shadow",   "rarity":"mythic",  "base_atk":148,"base_def":32,"personality":"mischievous","emoji":"🌑","desc":"The ruler of all shadow. It plays games with reality for entertainment.","def_ability":"poison"},
+    "celestial_serpent":{"name":"Celestial Serpent",       "element":"holy",     "rarity":"mythic",  "base_atk":144,"base_def":36,"personality":"loyal",  "emoji":"🌟","desc":"A serpent woven from starlight and divine will. Ancient beyond measure.","def_ability":"intercept"},
 }
 
 # Defensive ability definitions
@@ -2557,19 +2590,31 @@ def _hatch_species(egg_name):
     return random.choice(candidates) if candidates else None
 
 def get_pet_atk_bonus(pet):
-    """Raw ATK a pet contributes per attack. Reduced by low hunger/mood."""
+    """Raw ATK a pet contributes per attack. Bonus when well-fed and happy; penalty when neglected."""
     sp = PET_SPECIES.get(pet.get("species"), {})
-    base = sp.get("base_atk", 0) + pet.get("level", 1) * 2
+    base = sp.get("base_atk", 0) + pet.get("level", 1) * 4
     passives = get_pet_passives(pet.get("level", 1))
     base += passives.get("atk_flat", 0)
     base += _get_bond_atk_bonus(pet)
     evo = pet.get("evolution_stage", 0)
-    if evo > 0: base += evo * 3
+    if evo > 0: base += evo * 8
     hunger = pet.get("hunger", 100)
     mood   = pet.get("mood", 100)
-    if hunger < 20: base = round(base * 0.5)
-    elif mood < 40: base = 0
-    return max(0, base)
+    # Well-fed AND happy: +25% bonus (reward for good care)
+    if hunger >= 70 and mood >= 70:
+        base = round(base * 1.25)
+    # Very hungry: severely reduced damage
+    elif hunger < 20:
+        base = round(base * 0.30)
+    # Hungry: reduced damage
+    elif hunger < 40:
+        base = round(base * 0.60)
+    # Sad (but not hungry): reduced damage
+    elif mood < 20:
+        base = round(base * 0.30)
+    elif mood < 40:
+        base = round(base * 0.60)
+    return max(1, base)
 
 def pet_status_tag(pet):
     """Short status summary for a pet."""
@@ -2767,6 +2812,7 @@ def _pet_view_markup(pet_id, is_active, uid=0, pet=None):
     rows.append([
         InlineKeyboardButton("🍖 Feed",  callback_data=f"petfeed_{pet_id}"),
         InlineKeyboardButton("🏋️ Train", callback_data=f"pettrain_{pet_id}"),
+        InlineKeyboardButton("🎮 Play",  callback_data=f"petplay_{pet_id}"),
     ])
     # Adventure button — show remaining time if on adventure
     if pet and _pet_is_on_adventure(pet):
@@ -3577,8 +3623,6 @@ def _encounter_battle_markup(enc, p=None):
     rows.append([
         InlineKeyboardButton("⚔️ Attack", callback_data=f"enc_atk_{uid}"),
         InlineKeyboardButton("🛡️ Guard",  callback_data=f"enc_guard_{uid}"),
-    ])
-    rows.append([
         InlineKeyboardButton("🧪 Potion", callback_data=f"enc_heal_{uid}"),
     ])
     if mode == "hunt":
@@ -3592,9 +3636,9 @@ def _encounter_battle_markup(enc, p=None):
     return InlineKeyboardMarkup(rows)
 
 _CHEST_TIERS = {
-    "wooden": {"emoji": "🪵", "gold": (20, 80),   "gear_chance": 0.20, "curse_chance": 0.10, "exp": (10, 30)},
-    "iron":   {"emoji": "⛏️",  "gold": (80, 250),  "gear_chance": 0.40, "curse_chance": 0.08, "exp": (30, 80)},
-    "golden": {"emoji": "✨",  "gold": (200, 600), "gear_chance": 0.65, "curse_chance": 0.05, "exp": (80, 200)},
+    "wooden": {"emoji": "🪵", "gold": (1000, 2000), "gear_chance": 0.70, "curse_chance": 0.0, "exp": (150, 350)},
+    "iron":   {"emoji": "⛏️",  "gold": (2000, 3500), "gear_chance": 0.90, "curse_chance": 0.0, "exp": (350, 700)},
+    "golden": {"emoji": "✨",  "gold": (3500, 5000), "gear_chance": 1.00, "curse_chance": 0.0, "exp": (700, 1200)},
 }
 
 _RANDOM_EVENTS = {
@@ -3621,12 +3665,12 @@ _RANDOM_EVENTS = {
 }
 
 _ENC_DIFFICULTY = {
-    "easy":        {"label":"Easy",         "emoji":"🟢", "weight":25, "hp_mult":(0.35,0.60), "atk_mult":(0.02,0.04), "reward":0.70, "gear":["common","common","uncommon"]},
-    "normal":      {"label":"Normal",       "emoji":"🔵", "weight":35, "hp_mult":(0.60,1.10), "atk_mult":(0.03,0.06), "reward":1.00, "gear":["common","uncommon","uncommon"]},
-    "hard":        {"label":"Hard",         "emoji":"🟡", "weight":22, "hp_mult":(1.00,1.60), "atk_mult":(0.05,0.08), "reward":1.75, "gear":["uncommon","rare","rare"]},
-    "challenging": {"label":"Challenging",  "emoji":"🟠", "weight":12, "hp_mult":(1.40,2.00), "atk_mult":(0.07,0.11), "reward":2.75, "gear":["rare","rare","epic"]},
-    "extreme":     {"label":"Extreme",      "emoji":"🔴", "weight":5,  "hp_mult":(1.80,2.60), "atk_mult":(0.09,0.14), "reward":4.50, "gear":["epic","epic","legendary"]},
-    "mythic":      {"label":"MYTHIC",       "emoji":"💜", "weight":1,  "hp_mult":(2.20,3.20), "atk_mult":(0.12,0.18), "reward":8.00, "gear":["legendary","legendary","legendary"]},
+    "easy":        {"label":"Easy",        "emoji":"🟢", "weight":25, "hp_mult":(0.25,0.45), "atk_mult":(0.02,0.03), "reward":1.5,  "gear":["common","uncommon","uncommon"]},
+    "normal":      {"label":"Normal",      "emoji":"🔵", "weight":35, "hp_mult":(0.40,0.70), "atk_mult":(0.03,0.05), "reward":2.5,  "gear":["uncommon","rare","rare"]},
+    "hard":        {"label":"Hard",        "emoji":"🟡", "weight":22, "hp_mult":(0.60,0.90), "atk_mult":(0.04,0.07), "reward":4.0,  "gear":["rare","rare","epic"]},
+    "challenging": {"label":"Challenging", "emoji":"🟠", "weight":12, "hp_mult":(0.75,1.10), "atk_mult":(0.05,0.08), "reward":6.5,  "gear":["rare","epic","epic"]},
+    "extreme":     {"label":"Extreme",     "emoji":"🔴", "weight":5,  "hp_mult":(0.90,1.30), "atk_mult":(0.06,0.10), "reward":12.0, "gear":["epic","legendary","legendary"]},
+    "mythic":      {"label":"MYTHIC",      "emoji":"💜", "weight":1,  "hp_mult":(1.10,1.60), "atk_mult":(0.08,0.13), "reward":20.0, "gear":["legendary","legendary","mythic"]},
 }
 
 def _treasure_card(enc):
@@ -4084,16 +4128,18 @@ def _enc_npc_attack(enc, p):
     atk_name, base_mult, effect = random.choice(attacks)
 
     # ── Strategy tier: varies each turn so NPC isn't always hitting max ───────
+    _NPC_HEALER_CLASSES = {"priest","cleric","bishop","high_priest","saint","paladin","wildflower","nature_chosen"}
+    _can_self_heal = enc.get("e_class", "fighter") in _NPC_HEALER_CLASSES
     strategy = random.choices(
         ["rest",  "light", "normal", "heavy"],
-        weights=[10,      25,      50,      15]
+        weights=[10 if _can_self_heal else 0, 25, 50, 15]
     )[0]
 
     if strategy == "rest":
-        # NPC recovers HP or taunts — no damage this turn
+        # Healer-class NPCs only: recover HP this turn
         heal = enc["e_max_hp"] // 10
         enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + heal)
-        return f"⛔ *{enc['e_name']}* catches their breath and recovers *{heal} HP*!"
+        return f"⛔ *{enc['e_name']}* channels healing energy and recovers *{heal} HP*!"
 
     if strategy == "light":
         dmg_mult  = base_mult * random.uniform(0.28, 0.52)
@@ -4136,10 +4182,13 @@ def _enc_npc_attack(enc, p):
     extra = ""
     if effect and random.random() < effect_chance:
         if effect == "heal_self":
-            heal = enc["e_max_hp"] // 8
-            enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + heal)
-            extra = f" (+{heal} HP restored)"
-            dmg = max(1, dmg // 2)
+            if _can_self_heal:
+                heal = enc["e_max_hp"] // 8
+                enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + heal)
+                extra = f" (+{heal} HP restored)"
+                dmg = max(1, dmg // 2)
+            else:
+                effect = None  # non-healer NPCs don't get heal_self
         elif effect == "stun":
             enc["p_stunned"] = True
             extra = " ⚡ You are stunned next turn!"
@@ -8172,19 +8221,38 @@ async def check_pet_notifications(p, bot):
     mood   = pet.get("mood", 100)
     changed = False
 
-    if hunger < 25 and _due("hunger", 6):
-        msgs.append(f"🍖 *{name}* is hungry (hunger: {hunger}/100)! Use /pet to feed them.")
+    if hunger < 30 and _due("hunger", 4):
+        msgs.append(f"🍖 *{name}* is hungry ({hunger}/100 hunger)! Use /pet to feed them.")
         cache["hunger"] = now; changed = True
-    if mood < 25 and _due("mood", 6):
-        msgs.append(f"😢 *{name}* is feeling down (mood: {mood}/100). Use /pet to cheer them up.")
+    if mood < 30 and _due("mood", 4):
+        msgs.append(f"😢 *{name}* is feeling low ({mood}/100 mood). Use /pet → 🎮 Play to cheer them up!")
         cache["mood"] = now; changed = True
     last_trained = pet.get("last_trained")
-    if last_trained and _due("train", 12):
+    if last_trained and _due("train", 8):
         try:
             hours_idle = (now - datetime.fromisoformat(last_trained)).total_seconds() / 3600
-            if hours_idle >= 8:
-                msgs.append(f"🏋️ *{name}* is eager to train! Use /pet to train them.")
+            if hours_idle >= 6:
+                msgs.append(f"🏋️ *{name}* is ready to train! Use /pet to train them.")
                 cache["train"] = now; changed = True
+        except Exception:
+            pass
+    last_play = pet.get("last_play")
+    if _due("play", 8):
+        play_due = True
+        if last_play:
+            try:
+                play_due = (now - datetime.fromisoformat(last_play)).total_seconds() / 3600 >= 6
+            except Exception:
+                pass
+        if play_due:
+            msgs.append(f"🎮 *{name}* wants to play! Use /pet → 🎮 Play to boost their mood.")
+            cache["play"] = now; changed = True
+    adv_end = pet.get("adventure_ends_at")
+    if adv_end and _due("adv_done", 4):
+        try:
+            if (datetime.fromisoformat(adv_end) - now).total_seconds() <= 0:
+                msgs.append(f"🗺️ *{name}* has returned from their adventure! Use /pet to claim the rewards.")
+                cache["adv_done"] = now; changed = True
         except Exception:
             pass
 
@@ -8982,14 +9050,16 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         pname   = _pet_display_name(active_pet)
         pers    = sp_pet.get("personality", "calm")
         emoji_p = sp_pet.get("emoji", "🐾")
-        if active_pet.get("hunger", 100) < 20:
-            action += f"\n{emoji_p} _{pname} is too hungry to fight!_"
-        elif active_pet.get("mood", 100) < 40:
-            action += f"\n{emoji_p} _{pname} is too sad to join in._"
-        elif pet_atk > 0:
-            pet_atk = round(pet_atk * get_weather().get("dmg_mod", 1.0))
-            d["hp"] = max(0, d["hp"] - pet_atk)
-            battle_msg = PERSONALITY_BATTLE.get(pers, "attacks")
+        _p_hunger = active_pet.get("hunger", 100)
+        _p_mood   = active_pet.get("mood", 100)
+        pet_atk = round(pet_atk * get_weather().get("dmg_mod", 1.0))
+        d["hp"] = max(0, d["hp"] - pet_atk)
+        battle_msg = PERSONALITY_BATTLE.get(pers, "attacks")
+        if _p_hunger >= 70 and _p_mood >= 70:
+            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*! ✨ _(well-fed bonus!)_"
+        elif _p_hunger < 40 or _p_mood < 40:
+            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg* 😞 _(neglected — weakened!)_"
+        else:
             action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*!"
 
     # kill_heal enchant
@@ -11430,9 +11500,14 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if gid and str(gid) != "None":
         g = get_guild(gid)
         if g: add_guild_exp(g, 20); save_guild(g)
-    lmsgs, leveled = add_exp(p, q["exp"], w)
+    # Always grant a health potion and influence
+    _q_inf = {"Easy": 15, "Medium": 30, "Hard": 50}.get(q["tier"], 15)
+    _add_influence(p, _q_inf)
+    _q_potion = "Greater Health Potion" if q["tier"] in ("Medium","Hard") else "Health Potion"
+    add_item(p, _q_potion)
+    lmsgs, leveled = add_exp(p, q["exp"] * 3, w)
     new_t = check_titles(p); save_player(p)
-    msg = f"🗺️ *Quest  -  {q['tier']}*\n\n{q['text']}\n\n✨ +{q['exp']} EXP | 💰 +{gold} Gold"
+    msg = f"🗺️ *Quest  -  {q['tier']}*\n\n{q['text']}\n\n✨ +{q['exp'] * 3} EXP | 💰 +{gold} Gold | +{_q_inf} Influence | 🧪 {_q_potion}"
     if item_found:
         rarity = ""
         for pool2 in [WEAPONS,ARMORS,ACCESSORIES,CONSUMABLES]:
@@ -13201,26 +13276,31 @@ _SOCIAL_QUEST_TPL = [
     ("slap","Someone stepped out of line. /slap {target} and say nothing.",380,22),
 ]
 _CHAT_QUEST_TPL = [
-    ("Has anyone seen my goat?",400,25),
-    ("The third moon is rising.",500,30),
-    ("the old ways remember",500,30),
-    ("Does anyone else hear that sound?",350,22),
-    ("I've made a terrible mistake. Anyway.",350,22),
-    ("The stars are wrong tonight.",400,25),
-    ("What's your 8-ball number?",300,18),
-    ("I know what you did last Thursday.",500,30),
-    ("Something is different about this place lately. Can you feel it?",450,28),
-    ("If you find a black feather, don't touch it.",400,25),
-    ("I consulted the ball. It said to say this.",350,22),
-    ("The 8-ball never lies. Remember that.",300,18),
-    ("Has the oracle spoken to anyone else recently?",400,25),
-    ("I had the dream again.",500,30),
-    ("Not everything that glows is gold. Not everything dark is gone.",550,35),
-    ("I saw something in the water. It looked back.",500,30),
-    ("The 8 always finds a way back.",350,22),
-    ("Who here actually trusts the oracle?",400,25),
-    ("Genuine question: is everyone here actually real?",450,28),
-    ("I tested the ball three times. Same answer. Every time.",500,30),
+    ("The 8-ball never lies.",800,50),
+    ("Has anyone seen my goat?",750,45),
+    ("The third moon is rising.",850,55),
+    ("Does anyone else hear that sound?",800,50),
+    ("I consulted the ball and it said yes.",750,45),
+    ("The stars are different tonight.",850,55),
+    ("Something feels off about this place.",800,50),
+    ("I had the dream again.",900,60),
+    ("I saw something in the water.",850,55),
+    ("The 8 always finds its way back.",750,45),
+    ("I tested the ball three times. Same answer.",900,60),
+    ("Not everything that glows is gold.",800,50),
+    ("If you find a black feather do not touch it.",850,55),
+    ("The oracle has been quiet for too long.",900,60),
+    ("I know what really happened that night.",800,50),
+    ("This place is not what it seems.",750,45),
+    ("Every choice leads back to the same door.",850,55),
+    ("The ball is warm tonight.",800,50),
+    ("I came here for a reason. I remember now.",900,60),
+    ("Something old is watching.",850,55),
+    ("We have all been here before.",800,50),
+    ("The number 8 keeps showing up.",750,45),
+    ("I do not trust the silence.",900,60),
+    ("There is always another layer.",850,55),
+    ("Stay ready. You never know.",800,50),
 ]
 _TARGETED_QUEST_TPL = [
     ("Do you dream of electric sheep?",400,25),
@@ -13250,29 +13330,14 @@ async def _dispatch_secret_quest(uid: int, bot):
     if not p: return
     if p.get("active_quest"): return
     if time.time() - p.get("last_quest_ts", 0) < 28800: return
-    conn = sqlite3.connect(DB_PATH); c2 = conn.cursor()
-    c2.execute("SELECT user_id, username, tg_username FROM players WHERE user_id != ? AND level >= 1 ORDER BY RANDOM() LIMIT 10", (uid,))
-    targets = [{"id": r[0], "username": r[1], "tg_username": r[2]} for r in c2.fetchall()]; conn.close()
-    qtype = random.choices(["social","chat","targeted"], weights=[35,35,30])[0]
-    if qtype == "social" and targets:
-        t = random.choice(targets)
-        t_handle = f"@{t['tg_username']}" if t.get("tg_username") else t["username"]
-        action, prompt_tpl, exp_r, inf_r = random.choice(_SOCIAL_QUEST_TPL)
-        quest = {"type":"social","action":action,"target_id":t["id"],"target_name":t["username"],"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
-        dm = f"🎱 *A secret task has found you.*\n\n_{prompt_tpl.format(target=t_handle)}_\n\n⏳ _Expires in 24 hours_\n💫 Reward: *{exp_r} EXP + {inf_r} Influence*"
-    elif qtype == "chat":
-        phrase, exp_r, inf_r = random.choice(_CHAT_QUEST_TPL)
-        quest = {"type":"chat","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
-        dm = f"🎱 *The oracle has an assignment.*\n\n_Say this in the group:_\n\n*\"{phrase}\"*\n\n⏳ _Expires in 24 hours_\n💫 Reward: *{exp_r} EXP + {inf_r} Influence*"
-    elif targets:
-        t = random.choice(targets)
-        t_handle = f"@{t['tg_username']}" if t.get("tg_username") else t["username"]
-        phrase, exp_r, inf_r = random.choice(_TARGETED_QUEST_TPL)
-        quest = {"type":"targeted","phrase":phrase,"target_id":t["id"],"target_name":t["username"],"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
-        dm = f"🎱 *A whisper from the order.*\n\n_Find {t_handle} and ask them:_\n\n*\"{phrase}\"*\n\n_(Reply to them or mention them)_\n\n⏳ _Expires in 24 hours_\n💫 Reward: *{exp_r} EXP + {inf_r} Influence*"
-    else:
-        return
+    phrase, exp_r, inf_r = random.choice(_CHAT_QUEST_TPL)
+    quest = {"type":"chat","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
     p["active_quest"] = json.dumps(quest); p["last_quest_ts"] = int(time.time()); save_player(p)
+    dm = (f"🎱 *The oracle has a task for you.*\n\n"
+          f"_Say this in the group:_\n\n"
+          f"*\"{phrase}\"*\n\n"
+          f"⏳ _Expires in 24 hours_\n"
+          f"💫 Reward: *{exp_r} EXP + {inf_r} Influence + Health Potion*")
     try: await bot.send_message(uid, dm, parse_mode="Markdown")
     except: pass
 
@@ -13298,10 +13363,11 @@ async def _try_complete_quest_phrase(p, text, reply_to_id, bot):
         phrase = q.get("phrase",""); tname = q.get("target_name","").lower(); tid = q.get("target_id")
         if phrase.lower() in text_l and (tname in text_l or (reply_to_id and reply_to_id == tid)): matched = True
     if not matched: return
-    exp_r = q.get("reward_exp", 300); inf_r = q.get("reward_inf", 20)
+    exp_r = q.get("reward_exp", 800); inf_r = q.get("reward_inf", 50)
     p["exp"] = p.get("exp", 0) + exp_r; _add_influence(p, inf_r)
+    add_item(p, "Greater Health Potion")
     p["active_quest"] = None; save_player(p)
-    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r} EXP  +{inf_r} Influence", parse_mode="Markdown")
+    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r} EXP | +{inf_r} Influence | 🧪 Greater Health Potion", parse_mode="Markdown")
     except: pass
 
 # ─── Alliance Main Menu Helper ──────────────────────────────
@@ -19973,13 +20039,11 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⚔️ Battle — fight an NPC", callback_data=f"enc_mode_{uid}_battle")],
         [InlineKeyboardButton("🌿 Hunt — fight wild monsters", callback_data=f"enc_mode_{uid}_hunt")],
-        [InlineKeyboardButton("🏰 Enter Dungeon — explore & loot", callback_data=f"enc_mode_{uid}_dungeon")],
         [InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")],
     ])
     await send_group(update, "🎱 *Encounter*\nChoose your mode:\n\n"
                     "⚔️ *Battle* — fight NPCs for EXP and gear\n"
-                    "🌿 *Hunt* — fight wild monsters with your class; weaken them to 🎯 catch for *Monster Cores*\n"
-                    "🏰 *Dungeon* — explore floors, fight monsters, find treasure. Loot banks when you surface.",
+                    "🌿 *Hunt* — fight wild monsters; weaken them to 🎯 catch for *Monster Cores*",
                     reply_markup=markup, permanent=True)
 
 async def squad_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -20086,11 +20150,11 @@ async def deposit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update, f"📦 *{name}* {elem_e} (Lv.{sm['level']}) moved to your Box.", delay=12)
 
 async def _start_encounter_battle(query, uid, p):
-    # 15% chance: treasure chest. 7% chance: random event.
+    # 5% chance: treasure chest. 7% chance: random event.
     _roll = random.random()
-    if _roll < 0.15:
+    if _roll < 0.05:
         await _start_encounter_treasure(query, uid, p, "battle"); return
-    elif _roll < 0.22:
+    elif _roll < 0.12:
         await _start_encounter_event(query, uid, p, "battle"); return
     # Roll difficulty tier
     _diff_keys = list(_ENC_DIFFICULTY.keys())
@@ -20139,9 +20203,9 @@ async def _start_encounter_battle(query, uid, p):
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
 
 async def _start_encounter_hunt(query, uid, p):
-    # 10% chance: treasure chest. 5% chance: random event.
+    # 3% chance: treasure chest. 5% chance: random event.
     _roll = random.random()
-    if _roll < 0.10:
+    if _roll < 0.03:
         await _start_encounter_treasure(query, uid, p, "hunt"); return
     elif _roll < 0.15:
         await _start_encounter_event(query, uid, p, "hunt"); return
@@ -20468,17 +20532,15 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 result_text = (f"⚔️ *Bandits defeated!*\nYou fought off the ambush in {rounds} strike(s)!\n"
                                f"💰 +{gold_stolen} gold from their pockets!")
             else:
-                gold_loss = max(0, safe_int(p.get("gold", 0)) // 15)
+                gold_loss = max(0, safe_int(p.get("gold", 0)) // 50)
                 p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-                result_text = f"⚠️ *Overwhelmed!*\nThe bandits robbed you for {gold_loss} gold before fleeing!"
+                result_text = f"⚠️ *Overwhelmed!*\nThe bandits grabbed {gold_loss} gold before fleeing!"
         elif etype == "ambush" and choice == "flee":
             _r = random.random()
             if _r < 0.65:
                 result_text = "🏃 *Escaped!*\nYou slipped away before they could grab you."
             else:
-                gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
-                p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-                result_text = f"⚠️ *Couldn't shake them!*\nLost {gold_loss} gold in the chaos."
+                result_text = f"⚠️ *Couldn't shake them!* Took damage in the chaos."
         save_player(p)
         try:
             await query.edit_message_text(result_text, parse_mode="Markdown", reply_markup=result_markup)
@@ -20574,9 +20636,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else:
             npc_act = _enc_npc_attack(enc, p) if enc["mode"] == "battle" else _enc_monster_attack(enc)
             if enc["p_hp"] <= 0:
-                gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
-                p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-                await _end_encounter(f"💀 *You were knocked out trying to flee!*\nLost {gold_loss} gold.")
+                await _end_encounter(f"💀 *You were knocked out trying to flee!*")
             else:
                 enc.setdefault("action_log",[]).append(f"🏃 Flee failed!")
                 enc.setdefault("action_log",[]).append(npc_act)
@@ -20666,9 +20726,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 dot_txt = _apply_dot_tick(enc)
                 if dot_txt: npc_act += f"\n_{dot_txt}_"
                 if enc["p_hp"] <= 0:
-                    gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
-                    p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-                    await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold.")
+                    await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*")
                     return
                 enc.setdefault("action_log", []).append(action_txt)
                 enc.setdefault("action_log", []).append(npc_act)
@@ -20714,9 +20772,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             dot_txt = _apply_dot_tick(enc)
             if dot_txt: npc_act += f"\n_{dot_txt}_"
             if enc["p_hp"] <= 0:
-                gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
-                p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-                await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold.")
+                await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*")
                 return
             enc.setdefault("action_log",[]).append(action_txt)
             enc.setdefault("action_log",[]).append(npc_act)
@@ -20789,11 +20845,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _kh)
             e_level = enc.get("e_level", 1)
             gold_r = enc.get("e_gold_range", (5, 15))
-            gold   = (random.randint(*gold_r) if isinstance(gold_r, tuple) else random.randint(5, 30)) + e_level * 6
+            gold   = (random.randint(*gold_r) if isinstance(gold_r, tuple) else random.randint(5, 30)) * 4 + e_level * 20
             exp_r  = enc.get("e_exp_range", (20, 60))
-            exp    = (random.randint(*exp_r) if isinstance(exp_r, tuple) else random.randint(20, 60)) + e_level * 25
+            exp    = (random.randint(*exp_r) if isinstance(exp_r, tuple) else random.randint(20, 60)) * 3 + e_level * 60
 
-            # Close-fight bonus: reward surviving tough battles
+            # Close-fight bonus
             hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
             close_bonus = ""
             if hp_pct <= 0.15:
@@ -20805,53 +20861,61 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
             # Apply difficulty reward multiplier
             _diff = _ENC_DIFFICULTY.get(enc.get("difficulty", "normal"), _ENC_DIFFICULTY["normal"])
+            diff_key = enc.get("difficulty", "normal")
             reward_mult = _diff["reward"]
             gold = round(gold * reward_mult)
             exp  = round(exp  * reward_mult)
-            gear_drop_chance = min(0.90, 0.50 * reward_mult)
-            if hp_pct <= 0.15: gear_drop_chance = min(0.95, gear_drop_chance * 1.40)
-            elif hp_pct <= 0.30: gear_drop_chance = min(0.90, gear_drop_chance * 1.20)
 
             add_exp(p, exp)
             p["gold"] = safe_int(p.get("gold", 0)) + gold
+
+            # Multiple gear drops scaled by difficulty
+            _num_gear = {"easy":1,"normal":2,"hard":2,"challenging":3,"extreme":4,"mythic":5}.get(diff_key, 1)
+            _gear_all = {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}
+            gear_drops = []
+            for _gi in range(_num_gear):
+                if diff_key == "mythic":
+                    _rar = "mythic" if _gi == 0 else random.choice(["legendary","legendary","mythic"])
+                elif diff_key == "extreme":
+                    _rar = "legendary" if _gi == 0 else random.choice(["epic","legendary"])
+                else:
+                    _rar = random.choice(_diff["gear"])
+                _gp = [n for n, d in _gear_all.items() if d.get("rarity") == _rar]
+                if not _gp: _gp = [n for n, d in _gear_all.items() if d.get("rarity") == "legendary"]
+                if _gp:
+                    _gd = random.choice(_gp)
+                    gear_drops.append(_gd)
+                    add_item(p, _gd)
+
+            # Always drop potions (1-3 based on difficulty)
+            _num_pots = {"easy":1,"normal":1,"hard":2,"challenging":2,"extreme":3,"mythic":3}.get(diff_key, 1)
+            _potion_pool = ["Health Potion","Health Potion","Greater Health Potion","Greater Health Potion","Grand Restorative Flask"]
+            potion_drops = [random.choice(_potion_pool) for _ in range(_num_pots)]
+            for _pt in potion_drops: add_item(p, _pt)
+
+            # Extra consumable drop
+            extra_drop = None
+            if random.random() < 0.70:
+                _extras = ["Fortune Coin","Enchanting Scroll","Pet Snack","Iron Shard","Fortune Coin"]
+                extra_drop = random.choice(_extras); add_item(p, extra_drop)
+
             # Loot key item
             loot_key  = enc.get("e_loot_key", "Encounter Token")
-            loot_item = loot_key if random.random() < 0.40 else None
-            # Gear drop — rarity from difficulty tier
-            gear_drop = None
-            if random.random() < gear_drop_chance:
-                _rar = random.choice(_diff["gear"])
-                _gear_pool = [n for n, d in {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}.items() if d.get("rarity") == _rar]
-                gear_drop = random.choice(_gear_pool) if _gear_pool else None
-            if gear_drop:
-                inv = sjl(p.get("inventory"), []); inv.append(gear_drop); p["inventory"] = json.dumps(inv)
-            if loot_item:
-                inv = sjl(p.get("inventory"), []); inv.append(loot_item); p["inventory"] = json.dumps(inv)
-            # Potion drops — NPC mode is a reliable supply source
-            potion_drop = None
-            if random.random() < 0.45:
-                _potion_pool = ["Health Potion", "Health Potion", "Health Potion",
-                                "Greater Health Potion", "Greater Health Potion",
-                                "Grand Restorative Flask"]
-                potion_drop = random.choice(_potion_pool)
-                inv = sjl(p.get("inventory"), []); inv.append(potion_drop); p["inventory"] = json.dumps(inv)
-            # Pet material drops
-            pet_mat = None
-            if random.random() < 0.25:
-                _pet_mats = ["Pet Snack","Pet Snack","Pet Snack","Greater Health Potion","Fortune Coin"]
-                pet_mat = random.choice(_pet_mats)
-                inv = sjl(p.get("inventory"), []); inv.append(pet_mat); p["inventory"] = json.dumps(inv)
+            loot_item = loot_key if random.random() < 0.60 else None
+            if loot_item: add_item(p, loot_item)
+
             # Track in session
             _sess = _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})
             _sess["gold"] = _sess.get("gold", 0) + gold
             _sess["exp"]  = _sess.get("exp",  0) + exp
-            for _si in [gear_drop, loot_item, potion_drop, pet_mat]:
-                if _si: _sess.setdefault("items", []).append(_si)
+            for _si in gear_drops + potion_drops + ([extra_drop] if extra_drop else []) + ([loot_item] if loot_item else []):
+                _sess.setdefault("items", []).append(_si)
+
             loot_line = ""
-            if gear_drop:   loot_line += f"\n🎁 Found: *{gear_drop}*"
-            if loot_item:   loot_line += f"\n📦 Loot: *{loot_item}*"
-            if potion_drop: loot_line += f"\n🧪 *{potion_drop}*"
-            if pet_mat:     loot_line += f"\n🐾 Pet mat: *{pet_mat}*"
+            for _gd in gear_drops:   loot_line += f"\n🎁 *{_gd}*"
+            for _pt in potion_drops: loot_line += f"\n🧪 *{_pt}*"
+            if extra_drop:           loot_line += f"\n✨ *{extra_drop}*"
+            if loot_item:            loot_line += f"\n📦 *{loot_item}*"
             _diff_tag = f" {enc.get('diff_emoji','')} *{enc.get('diff_label','')}*" if enc.get('diff_label') else ""
             await _end_encounter(
                 f"✅ *Victory!*{_diff_tag}\n*{enc['e_name']}* was defeated!{close_bonus}\n"
@@ -20871,9 +20935,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
         # Check player dead
         if enc["p_hp"] <= 0:
-            gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
-            p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-            await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*\nLost {gold_loss} gold.")
+            await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*")
             return
         enc.setdefault("action_log",[]).append(action_txt)
         enc.setdefault("action_log",[]).append(npc_act)
@@ -20964,9 +21026,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 dot_txt = _apply_dot_tick(enc)
                 if dot_txt: mon_act += f"\n_{dot_txt}_"
                 if enc["p_hp"] <= 0:
-                    gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
-                    p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-                    await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold.")
+                    await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!")
                     return
                 enc.setdefault("action_log", []).append(action_txt)
                 enc.setdefault("action_log", []).append(mon_act)
@@ -21012,9 +21072,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             dot_txt = _apply_dot_tick(enc)
             if dot_txt: mon_act += f"\n_{dot_txt}_"
             if enc["p_hp"] <= 0:
-                gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
-                p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-                await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold.")
+                await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!")
                 return
             enc.setdefault("action_log",[]).append(action_txt)
             enc.setdefault("action_log",[]).append(mon_act)
@@ -21077,9 +21135,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 enc.setdefault("action_log",[]).append(mon_act)
                 if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
                 if enc["p_hp"] <= 0:
-                    gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
-                    p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-                    await _end_encounter(f"💀 *{enc['e_name']}* broke free and knocked you out!\nLost {gold_loss} gold.")
+                    await _end_encounter(f"💀 *{enc['e_name']}* broke free and knocked you out!")
                     return
                 try:
                     await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
@@ -21143,8 +21199,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if enc["e_hp"] <= 0:
             _kh = get_enchant_bonus(p, "kill_heal")
             if _kh: enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _kh)
-            exp_gain  = enc["e_level"] * 18
-            gold_gain = enc["e_level"] * 9
+            exp_gain  = enc["e_level"] * 55
+            gold_gain = enc["e_level"] * 28
             hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
             close_bonus = ""
             if hp_pct <= 0.15:
@@ -21153,65 +21209,58 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             elif hp_pct <= 0.30:
                 exp_gain = int(exp_gain * 1.5); gold_gain = int(gold_gain * 1.5)
                 close_bonus = "\n⚔️ *Close Fight Bonus!*"
-            # Apply difficulty reward multiplier
             _diff = _ENC_DIFFICULTY.get(enc.get("difficulty","normal"), _ENC_DIFFICULTY["normal"])
+            diff_key_h = enc.get("difficulty", "normal")
             reward_mult = _diff["reward"]
             exp_gain  = round(exp_gain  * reward_mult)
             gold_gain = round(gold_gain * reward_mult)
-            _hunt_gear_chance = min(0.70, 0.30 * reward_mult)
-            if hp_pct <= 0.15: _hunt_gear_chance = min(0.85, _hunt_gear_chance * 1.40)
-            elif hp_pct <= 0.30: _hunt_gear_chance = min(0.75, _hunt_gear_chance * 1.20)
             add_exp(p, exp_gain)
             p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
-            # Element-based loot drops
             elem = enc.get("element","")
             elem_e = ELEMENT_EMOJI.get(elem, "")
-            _elem_mats = {
-                "fire":      ["Pet Snack","Enchanting Scroll","Grand Restorative Flask"],
-                "water":     ["Pet Snack","Fortune Coin","Greater Health Potion"],
-                "earth":     ["Pet Snack","Pet Snack","Fortune Coin"],
-                "wind":      ["Pet Snack","Enchanting Scroll","Fortune Coin"],
-                "lightning": ["Pet Snack","Enchanting Scroll","Grand Restorative Flask"],
-                "shadow":    ["Pet Snack","Scroll of Revival","Fortune Coin"],
-                "holy":      ["Pet Snack","Scroll of Revival","Grand Restorative Flask"],
-                "void":      ["Pet Snack","Scroll of Revival","Enchanting Scroll"],
-                "nature":    ["Pet Snack","Pet Snack","Fortune Coin"],
-            }
-            hunt_loot = None
-            if random.random() < 0.40:
-                pool = _elem_mats.get(elem, ["Pet Snack","Fortune Coin","Greater Health Potion"])
-                hunt_loot = random.choice(pool)
-                add_item(p, hunt_loot)
-            loot_txt = f"\n🎁 Drop: *{hunt_loot}*" if hunt_loot else ""
-            # Gear drop for hard+ difficulties
-            hunt_gear_drop = None
-            if _diff["reward"] >= 1.75 and random.random() < _hunt_gear_chance:
-                _rar = random.choice(_diff["gear"])
-                _gear_pool = [n for n, d in {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}.items() if d.get("rarity") == _rar]
-                hunt_gear_drop = random.choice(_gear_pool) if _gear_pool else None
-            if hunt_gear_drop:
-                add_item(p, hunt_gear_drop)
-                loot_txt += f"\n🎁 Gear Drop: *{hunt_gear_drop}*"
-            # Pet EXP from hunt
-            pet_info = enc.get("pet_info")
-            pet_exp_txt = ""
+            # Multiple gear drops
+            _hnum_gear = {"easy":1,"normal":2,"hard":2,"challenging":3,"extreme":4,"mythic":5}.get(diff_key_h, 1)
+            _gear_all_h = {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**HATS,**GLOVES,**BOOTS,**MASKS}
+            hunt_gear_drops = []
+            for _hgi in range(_hnum_gear):
+                if diff_key_h == "mythic":
+                    _hrar = "mythic" if _hgi == 0 else random.choice(["legendary","mythic"])
+                elif diff_key_h == "extreme":
+                    _hrar = "legendary" if _hgi == 0 else random.choice(["epic","legendary"])
+                else:
+                    _hrar = random.choice(_diff["gear"])
+                _hgp = [n for n, d in _gear_all_h.items() if d.get("rarity") == _hrar]
+                if not _hgp: _hgp = [n for n, d in _gear_all_h.items() if d.get("rarity") == "legendary"]
+                if _hgp:
+                    _hgd = random.choice(_hgp); hunt_gear_drops.append(_hgd); add_item(p, _hgd)
+            # Always 1-2 potions
+            _hpots = [random.choice(["Greater Health Potion","Greater Health Potion","Grand Restorative Flask"])
+                      for _ in range(2 if diff_key_h in ("extreme","mythic","challenging") else 1)]
+            for _hp2 in _hpots: add_item(p, _hp2)
+            # Element mat (always)
+            _elem_mats = {"fire":["Enchanting Scroll","Grand Restorative Flask"],"water":["Fortune Coin","Greater Health Potion"],
+                          "earth":["Fortune Coin","Pet Snack"],"wind":["Enchanting Scroll","Fortune Coin"],
+                          "lightning":["Enchanting Scroll","Grand Restorative Flask"],"shadow":["Scroll of Revival","Fortune Coin"],
+                          "holy":["Scroll of Revival","Grand Restorative Flask"],"void":["Scroll of Revival","Enchanting Scroll"]}
+            hunt_loot = random.choice(_elem_mats.get(elem, ["Fortune Coin","Greater Health Potion"]))
+            add_item(p, hunt_loot)
+            # Pet EXP
+            pet_info = enc.get("pet_info"); pet_exp_txt = ""
             if pet_info:
                 _pet_owner = get_active_pet_record(uid)
                 if _pet_owner:
-                    pet_exp = enc["e_level"] * 8
-                    give_pet_exp(uid, pet_exp)
+                    pet_exp = enc["e_level"] * 12; give_pet_exp(uid, pet_exp)
                     pet_exp_txt = f"\n🐾 *{pet_info['name']}* +{pet_exp} EXP"
-            # Track in session
             _sess = _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})
-            _sess["gold"] = _sess.get("gold", 0) + gold_gain
-            _sess["exp"]  = _sess.get("exp",  0) + exp_gain
-            for _si in [hunt_loot, hunt_gear_drop]:
-                if _si: _sess.setdefault("items", []).append(_si)
+            _sess["gold"] = _sess.get("gold", 0) + gold_gain; _sess["exp"] = _sess.get("exp", 0) + exp_gain
+            loot_txt = ""
+            for _hg in hunt_gear_drops: loot_txt += f"\n🎁 *{_hg}*"
+            for _hpt in _hpots:         loot_txt += f"\n🧪 *{_hpt}*"
+            loot_txt += f"\n✨ *{hunt_loot}*"
             _hdiff_tag = f" {enc.get('diff_emoji','')} *{enc.get('diff_label','')}*" if enc.get('diff_label') else ""
             await _end_encounter(
                 f"⚔️ *{enc['e_name']}* {elem_e} defeated!{_hdiff_tag}{close_bonus}\n"
-                f"💰 +{gold_gain:,} gold | ⭐ +{exp_gain:,} EXP{loot_txt}{pet_exp_txt}\n"
-                f"_Use 🎯 Catch to get Monster Cores next time!_")
+                f"💰 +{gold_gain:,} gold | ⭐ +{exp_gain:,} EXP{loot_txt}{pet_exp_txt}")
             return
 
         # Monster attacks back
@@ -21225,9 +21274,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await _end_encounter(f"☠️ *{enc['e_name']}* was defeated by status effects!\n✅ *Victory!*")
             return
         if enc["p_hp"] <= 0:
-            gold_loss = min(300, max(0, safe_int(p.get("gold", 0)) // 50))
-            p["gold"] = safe_int(p.get("gold", 0)) - gold_loss
-            await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!\nLost {gold_loss} gold.")
+            await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!")
             return
         enc.setdefault("action_log",[]).append(action_txt)
         enc.setdefault("action_log",[]).append(mon_act)
@@ -24265,7 +24312,8 @@ async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pid = pet["pet_id"]
         btn_rows = [
             [InlineKeyboardButton("🍖 Feed",    callback_data=f"petfeed_{pid}"),
-             InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pid}")],
+             InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pid}"),
+             InlineKeyboardButton("🎮 Play",    callback_data=f"petplay_{pid}")],
         ]
         # Adventure: show claim if returned, else show start/status
         adv_end = pet.get("adventure_ends_at")
@@ -24456,10 +24504,28 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             markup = _pet_main_markup()
         else:
             text = _build_pet_card(pet)
+            pid = pet["pet_id"]
+            adv_end = pet.get("adventure_ends_at")
+            adv_btn = None
+            if adv_end:
+                try:
+                    rem = (datetime.fromisoformat(adv_end) - datetime.now()).total_seconds()
+                    if rem <= 0:
+                        adv_btn = InlineKeyboardButton("🎉 Claim Adventure!", callback_data=f"petadv_status_{pid}")
+                    else:
+                        rm = f"{int(rem//3600)}h {int((rem%3600)//60)}m" if rem >= 3600 else f"{int(rem//60)}m"
+                        adv_btn = InlineKeyboardButton(f"🗺️ Adventure ({rm})", callback_data=f"petadv_status_{pid}")
+                except Exception:
+                    adv_btn = InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pid}")
+            else:
+                adv_btn = InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pid}")
             markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🍖 Feed",    callback_data=f"petfeed_{pet['pet_id']}"),
-                 InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pet['pet_id']}")],
-                [InlineKeyboardButton("📝 Rename",  callback_data=f"petrename_{pet['pet_id']}"),
+                [InlineKeyboardButton("🍖 Feed",    callback_data=f"petfeed_{pid}"),
+                 InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pid}"),
+                 InlineKeyboardButton("🎮 Play",    callback_data=f"petplay_{pid}")],
+                [InlineKeyboardButton("⚔️ Pet Battle", callback_data=f"petbattle_pick_{pid}"),
+                 adv_btn],
+                [InlineKeyboardButton("📝 Rename",  callback_data=f"petrename_{pid}"),
                  InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")],
                 [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
                  InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
@@ -24574,6 +24640,44 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(f"🏋️ {pname} trained! +{gain} EXP")
         await query.edit_message_text(
             f"🏋️ *{pname}* {train_msg}\n+{gain} EXP gained!{lvl_note}\n\n" + _build_pet_card(pet),
+            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet)); return
+
+    if data.startswith("petplay_"):
+        pid = int(data.split("_")[1])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); _decay_pet(pet)
+        sp = PET_SPECIES.get(pet["species"], {})
+        pname = _pet_display_name(pet)
+        pers  = sp.get("personality","calm")
+        last_play = pet.get("last_play")
+        if last_play:
+            try:
+                elapsed = (datetime.now() - datetime.fromisoformat(last_play)).total_seconds()
+                if elapsed < 3600:
+                    remaining = round((3600 - elapsed) / 60)
+                    await query.answer(f"😴 {pname} is tired. Play again in {remaining} min.", show_alert=True); return
+            except Exception: pass
+        pet["mood"] = min(100, pet.get("mood", 100) + 20)
+        pet["bond_score"] = min(200, pet.get("bond_score", 0) + 8)
+        pet["last_play"] = datetime.now().isoformat()
+        save_pet(pet)
+        play_msgs = {
+            "playful": "zooms around like a tiny hurricane!",
+            "fierce": "pounces on a toy with total commitment!",
+            "calm": "stretches luxuriously and nuzzles up to you.",
+            "mischievous": "immediately steals something and won't give it back.",
+            "loyal": "sits by your side and leans against you warmly.",
+            "lazy": "rolls over, demands belly rubs, gets belly rubs.",
+            "timid": "peeks out shyly then slowly relaxes into the fun.",
+            "greedy": "plays enthusiastically until they spot something shiny.",
+        }
+        play_msg = play_msgs.get(pers, "plays happily!")
+        await query.answer(f"🎮 Played with {pname}! +20 Mood +8 Bond")
+        await query.edit_message_text(
+            f"🎮 *{pname}* {play_msg}\n+20 Mood  |  +8 Bond\n\n" + _build_pet_card(pet),
             parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet)); return
 
     if data.startswith("petrelease_"):
@@ -28237,7 +28341,7 @@ def main():
     app.add_handler(CallbackQueryHandler(petshop_callback,    pattern="^(petshop|pbuy_)"))
     app.add_handler(CallbackQueryHandler(hatch_egg_callback,  pattern="^hatch_egg$"))
     app.add_handler(CallbackQueryHandler(pet_main_callback,
-        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petrelease_|petrename_|petadv_|petevolve_|petbattle_)"))
+        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petplay_|petrelease_|petrename_|petadv_|petevolve_|petbattle_)"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
