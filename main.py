@@ -7148,6 +7148,13 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Track the group chat the user is most recently active in (for /megaphone DM)
+    try:
+        conn.execute("ALTER TABLE shadow_profiles ADD COLUMN home_group INTEGER DEFAULT NULL")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
     # ── v25 Charge-based status effects (replaces time-based _until fields) ──
     _charge_cols = [
         ("players", "stun_turns",         "INTEGER DEFAULT 0"),
@@ -8796,10 +8803,6 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
                     f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
         check_titles(a); check_titles(d)
         save_player(a); save_player(d)
-        if d["hp"] > 0:
-            hp_pct = d["hp"] / max(1, d["max_hp"])
-            bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
-            action += f"\n❤️ {d['username']}: *{d['hp']}/{d['max_hp']}* [{bar}]"
         if lvl_msgs: action += "\n\n" + "\n".join(lvl_msgs)
         return action, lvl_msgs, "defeat" if d["hp"] <= 0 else "hit"
 
@@ -13673,6 +13676,26 @@ _RUMOR_TPL = [
     "Four separate sources confirm {name} talks to their inventory.",
     "Evidence suggests {name} once lost a duel to someone who was AFK.",
 ]
+
+async def megaphone_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private":
+        try: await update.message.delete()
+        except: pass
+        return
+    text = " ".join(context.args).strip() if context.args else ""
+    if not text:
+        await update.message.reply_text("Usage: /megaphone <your message>\n\nSends your message to the group anonymously.")
+        return
+    s = get_shadow(update.effective_user.id)
+    home_group = s.get("home_group") if s else None
+    if not home_group:
+        await update.message.reply_text("You haven't been seen in the group yet. Send a message there first, then try again.")
+        return
+    try:
+        await context.bot.send_message(home_group, text)
+        await update.message.reply_text("📣 Message sent.")
+    except Exception:
+        await update.message.reply_text("Failed to send — make sure the bot is still in the group.")
 
 async def rumor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(update.effective_user.id)
@@ -26884,6 +26907,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     _is_group = update.effective_chat.type in ("group", "supergroup")
 
+    if _is_group:
+        s["home_group"] = update.effective_chat.id
+
     p = get_player(user.id) if s.get("ascended") else None
     asyncio.create_task(check_pet_notifications(p, context.bot))
 
@@ -28290,6 +28316,7 @@ def main():
     app.add_handler(CallbackQueryHandler(soloraid_act_callback, pattern="^sr_act_"))
     app.add_handler(CallbackQueryHandler(boss_act_callback,     pattern="^boss_act_"))
     # Social orders & secrets
+    app.add_handler(CommandHandler("megaphone", megaphone_cmd))
     app.add_handler(CommandHandler("alliance",  alliance_cmd))
     app.add_handler(CommandHandler("rumor",     rumor_cmd))
     app.add_handler(CommandHandler("secrets",   secrets_cmd))
