@@ -31,7 +31,7 @@ _db_local = threading.local()
 def _db() -> sqlite3.Connection:
     conn = getattr(_db_local, "conn", None)
     if conn is None:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
@@ -152,7 +152,7 @@ _pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
 _PVP_ACTION_CD     = 0.0  # no cooldown between PvP card button presses
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
-_megaphone_group   = None # last known group chat ID for /megaphone DMs
+_megaphone_state   = {"group": None}  # last known group chat ID for /megaphone DMs
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
@@ -8637,16 +8637,12 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p):
 async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, query=None):
     """Each player's card is updated in place wherever it already lives.
     Fallback: attacker → group chat, defender → their DM (uid == DM chat_id).
+    Both cards are updated in parallel via asyncio.gather.
     """
-    card_targets = [
-        (au_id, a, du_id, group_chat_id),  # attacker fallback: group
-        (du_id, d, au_id, du_id),           # defender fallback: their DM
-    ]
-    for viewer_uid, player_p, opp_uid, fallback_chat in card_targets:
+    async def _update_one(viewer_uid, player_p, opp_uid, fallback_chat):
         card_text = _pvp_pokemon_card(viewer_uid, a, d, pair)
         markup    = _build_pvp_card_markup(viewer_uid, opp_uid, player_p)
         updated   = False
-        # If this is the player who pressed the button, edit that message directly
         if query and query.from_user.id == viewer_uid:
             try:
                 await query.edit_message_text(card_text, parse_mode="Markdown", reply_markup=markup)
@@ -8659,7 +8655,6 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
         if not updated:
             existing = _pvp_player_cards.get(viewer_uid)
             if existing:
-                # Always edit in the tracked location, regardless of which role the player has now
                 try:
                     await bot.edit_message_text(chat_id=existing[0], message_id=existing[1],
                         text=card_text, parse_mode="Markdown", reply_markup=markup)
@@ -8668,7 +8663,6 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
                     if "not modified" in str(_be).lower():
                         updated = True
         if not updated:
-            # Create a new card in the fallback location
             existing = _pvp_player_cards.get(viewer_uid)
             if existing:
                 try: await bot.delete_message(chat_id=existing[0], message_id=existing[1])
@@ -8680,6 +8674,11 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
                 _pvp_cards.setdefault(pair, {})[viewer_uid] = msg.message_id
             except Exception:
                 pass
+
+    await asyncio.gather(
+        _update_one(au_id, a, du_id, group_chat_id),
+        _update_one(du_id, d, au_id, du_id),
+    )
 
 
 async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
@@ -8941,7 +8940,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     if safe_int(d.get("shield_charges")) > 0:
         d["shield_charges"] -= 1
         _sc_rem = d["shield_charges"]
-        save_player(d)
+        save_player(d); save_player(a)
         return (f"🛡️ *{d['username']}*'s *Shield* negated the attack!" +
                 (f" ({_sc_rem} charges left)" if _sc_rem else " *(shield broken!)*"),
                 [], "miss")
@@ -9162,7 +9161,9 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         d["pvp_history"] = json.dumps(hist_nl[:5])
 
     check_titles(a); check_titles(d)
-    save_player(a); save_player(d)
+    _a_snap, _d_snap = a.copy(), d.copy()
+    await asyncio.get_running_loop().run_in_executor(
+        None, lambda: (save_player(_a_snap), save_player(_d_snap)))
 
     if d["hp"] > 0:
         hp_pct = d["hp"] / max(1, d["max_hp"])
@@ -9315,7 +9316,6 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
     chat_id = query.message.chat_id
     w = get_weather()
     action_text, _, result_type = await _execute_pvp_hit(a, d, uid, target_uid, w, chat_id, context.bot)
-    save_player(a); save_player(d)
 
     _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": chat_id}
 
@@ -13689,7 +13689,7 @@ async def megaphone_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /megaphone <your message>")
         return
     s = get_shadow(update.effective_user.id)
-    home_group = (s.get("home_group") if s else None) or _megaphone_group
+    home_group = (s.get("home_group") if s else None) or _megaphone_state.get("group")
     if not home_group:
         try:
             c = _db().cursor()
@@ -26921,8 +26921,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _is_group = update.effective_chat.type in ("group", "supergroup")
 
     if _is_group:
-        global _megaphone_group
-        _megaphone_group = update.effective_chat.id
+        _megaphone_state["group"] = update.effective_chat.id
         s["home_group"] = update.effective_chat.id
 
     p = get_player(user.id) if s.get("ascended") else None
@@ -28403,8 +28402,7 @@ def main():
             if _row and _row["last_seen"] and _is_grp:
                 asyncio.create_task(_try_idle_reward(u.id, context.bot, _row["last_seen"]))
             if _is_grp:
-                global _megaphone_group
-                _megaphone_group = update.effective_chat.id
+                _megaphone_state["group"] = update.effective_chat.id
                 _lc.execute("UPDATE shadow_profiles SET last_seen=?, home_group=? WHERE user_id=?",
                             (datetime.now().isoformat(), update.effective_chat.id, u.id))
             else:
