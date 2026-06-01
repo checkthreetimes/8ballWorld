@@ -7624,13 +7624,14 @@ def save_shadow(s):
     conn = _db(); c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO shadow_profiles
         (user_id,username,level,exp,total_exp,message_count,
-         passive_cooldowns,ascended,last_seen,last_pool,pending_items,pet_notify_ts)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+         passive_cooldowns,ascended,last_seen,last_pool,pending_items,pet_notify_ts,home_group)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (s["user_id"],s["username"],s["level"],s["exp"],
          safe_int(s.get("total_exp")),s.get("message_count",0),
          s.get("passive_cooldowns","{}"),s.get("ascended",0),
          datetime.now().isoformat(),s.get("last_pool"),
-         s.get("pending_items","[]"),s.get("pet_notify_ts","{}")))
+         s.get("pending_items","[]"),s.get("pet_notify_ts","{}"),
+         s.get("home_group")))
     conn.commit()
 
 # Normalizes pool-hall item names → RPG names at save time (catches loot drops too)
