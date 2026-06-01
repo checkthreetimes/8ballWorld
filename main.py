@@ -152,6 +152,7 @@ _pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
 _PVP_ACTION_CD     = 0.0  # no cooldown between PvP card button presses
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
+_megaphone_group   = None # last known group chat ID for /megaphone DMs
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
@@ -13687,14 +13688,23 @@ async def megaphone_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         await update.message.reply_text("Usage: /megaphone <your message>\n\nSends your message to the group anonymously.")
         return
+    # Resolve the group: user's own home_group → global cache → any known group in DB
     s = get_shadow(update.effective_user.id)
-    home_group = s.get("home_group") if s else None
+    home_group = (s.get("home_group") if s else None) or _megaphone_group
     if not home_group:
-        await update.message.reply_text("You haven't been seen in the group yet. Send a message there first, then try again.")
+        try:
+            conn = _db(); c = conn.cursor()
+            c.execute("SELECT home_group FROM shadow_profiles WHERE home_group IS NOT NULL LIMIT 1")
+            row = c.fetchone()
+            if row: home_group = row[0]
+        except Exception:
+            pass
+    if not home_group:
+        await update.message.reply_text("Couldn't find the group. Send any message in the group first, then try again.")
         return
     try:
         await context.bot.send_message(home_group, text)
-        await update.message.reply_text("📣 Message sent.")
+        await update.message.reply_text("📣 Sent.")
     except Exception:
         await update.message.reply_text("Failed to send — make sure the bot is still in the group.")
 
@@ -26909,6 +26919,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _is_group = update.effective_chat.type in ("group", "supergroup")
 
     if _is_group:
+        global _megaphone_group
+        _megaphone_group = update.effective_chat.id
         s["home_group"] = update.effective_chat.id
 
     p = get_player(user.id) if s.get("ascended") else None
