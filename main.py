@@ -156,6 +156,9 @@ _megaphone_state   = {"group": None}  # last known group chat ID for /megaphone 
 _broadcast_quest   = None   # {"id": str, "phrase": str, "exp": int, "expires": float}
 _broadcast_claims  = set()  # user_ids who already claimed the active broadcast quest
 _wild_pet_offers   = {}     # uid -> {"species": str, "expires": float}
+_pet_trade_offers   = {}  # offeror_uid -> {"target_uid": int, "pet_id": int, "expires": float}
+_pet_breed_sessions = {}  # uid -> {"pet1_id": int, "pet2_id": int, "started": float}
+_active_pet_duels   = {}  # (uid1,uid2) tuple key -> duel state dict
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
@@ -2347,6 +2350,27 @@ PERSONALITY_BATTLE = {
     "timid":      "musters its courage and strikes",
 }
 
+EVO_STAGE_TITLES = {
+    1: {"fire":"Blazing","water":"Rushing","lightning":"Charged","earth":"Stout",
+        "nature":"Budding","shadow":"Lurking","void":"Fractured","holy":"Radiant","wind":"Swift"},
+    2: {"fire":"Inferno","water":"Torrent","lightning":"Thunder","earth":"Ironside",
+        "nature":"Thornborn","shadow":"Umbral","void":"Rift","holy":"Sacred","wind":"Gale"},
+    3: {"fire":"Eternal Flame","water":"Abyssal","lightning":"Stormlord","earth":"Primordial",
+        "nature":"Verdant Elder","shadow":"Eternal Shadow","void":"Void Eternal","holy":"Divine","wind":"Celestial"},
+}
+
+PET_COMBAT_SKILLS = {
+    "fire":      {"name":"Ember Blast",    "mult":1.75, "msg":"unleashes *Ember Blast*! 🔥"},
+    "water":     {"name":"Tidal Wave",     "mult":1.50, "msg":"crashes with *Tidal Wave*! 🌊", "heal_pct":0.20},
+    "lightning": {"name":"Thunder Strike", "mult":2.00, "msg":"strikes with *Thunder Strike*! ⚡"},
+    "earth":     {"name":"Stone Crush",    "mult":1.60, "msg":"slams with *Stone Crush*! 🪨"},
+    "nature":    {"name":"Vine Snare",     "mult":1.40, "msg":"strikes with *Vine Snare*! 🌿"},
+    "shadow":    {"name":"Shadow Claw",    "mult":1.80, "msg":"tears with *Shadow Claw*! 🌑"},
+    "void":      {"name":"Void Tear",      "mult":2.20, "msg":"rips open *Void Tear*! 🌀"},
+    "holy":      {"name":"Divine Smite",   "mult":1.60, "msg":"smites with *Divine Smite*! ✨"},
+    "wind":      {"name":"Gale Slash",     "mult":1.90, "msg":"slashes with *Gale Slash*! 💨"},
+}
+
 # Each species: name, element, rarity, base_atk, base_def, personality, emoji, desc, egg
 PET_SPECIES = {
     # ── DOGS ─────────────────────────────────────────────────────────────────
@@ -2698,22 +2722,66 @@ def save_pet(pet):
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO pets
         (pet_id,owner_id,species,nickname,level,exp,hunger,mood,last_fed,last_trained,
-         is_active,created_at,bond_score,adventure_ends_at,last_battle,evolution_stage)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+         is_active,created_at,bond_score,adventure_ends_at,last_battle,evolution_stage,
+         is_shiny,job_ends_at,daycare_until)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (pet.get("pet_id"), pet["owner_id"], pet["species"],
          pet.get("nickname"), pet.get("level",1), pet.get("exp",0),
          pet.get("hunger",100), pet.get("mood",100),
          pet.get("last_fed"), pet.get("last_trained"),
          pet.get("is_active",0), pet.get("created_at", datetime.now().isoformat()),
          pet.get("bond_score",0), pet.get("adventure_ends_at"),
-         pet.get("last_battle"), pet.get("evolution_stage",0)))
+         pet.get("last_battle"), pet.get("evolution_stage",0),
+         pet.get("is_shiny",0), pet.get("job_ends_at"),
+         pet.get("daycare_until")))
     conn.commit(); conn.close()
 
+def get_retired_pet_atk_bonus(p):
+    return safe_int(p.get("pet_retire_atk"))
+
+def get_retired_pet_hp_bonus(p):
+    return safe_int(p.get("pet_retire_hp"))
+
+def _get_pet_element_mult(atk_pet, def_pet):
+    """Element matchup multiplier between two pets: 1.25 strong, 0.75 weak, 1.0 neutral."""
+    if not atk_pet or not def_pet:
+        return 1.0
+    atk_elem = PET_SPECIES.get(atk_pet.get("species",""), {}).get("element","")
+    def_elem = PET_SPECIES.get(def_pet.get("species",""), {}).get("element","")
+    if not atk_elem or not def_elem:
+        return 1.0
+    matchup = ELEMENT_MATCHUPS.get(atk_elem, {})
+    if matchup.get("strong") == def_elem:
+        return 1.25
+    if matchup.get("weak") == def_elem:
+        return 0.75
+    return 1.0
+
+def _pet_skill_check(pet):
+    """Returns (triggered: bool, skill: dict|None). Skills unlock at lv 10."""
+    lvl  = pet.get("level", 1)
+    if lvl < 10:
+        return False, None
+    elem  = PET_SPECIES.get(pet.get("species",""), {}).get("element","")
+    skill = PET_COMBAT_SKILLS.get(elem)
+    if not skill:
+        return False, None
+    chance = 0.15 + (0.05 if lvl >= 25 else 0) + (0.05 if lvl >= 40 else 0)
+    return random.random() < chance, skill
+
 def _pet_display_name(pet):
-    sp = PET_SPECIES.get(pet.get("species"), {})
+    sp   = PET_SPECIES.get(pet.get("species"), {})
     nick = pet.get("nickname")
-    base = sp.get("name", pet.get("species","Unknown"))
-    return f"{nick} ({base})" if nick else base
+    base = sp.get("name", pet.get("species", "Unknown"))
+    evo  = pet.get("evolution_stage", 0)
+    if evo > 0:
+        elem  = sp.get("element", "")
+        title = EVO_STAGE_TITLES.get(evo, {}).get(elem, "")
+        if title:
+            base = f"{title} {base}"
+    shiny   = "✨ " if pet.get("is_shiny") else ""
+    display = f"{nick} ({base})" if nick else base
+    return f"{shiny}{display}"
 
 def _build_pet_card(pet):
     """Build full status card text for a pet."""
@@ -5548,7 +5616,9 @@ def calc_max_hp(p):
     temp   = safe_int(p.get("temp_hp_bonus")) if _ts_active(p, "temp_hp_until") else 0
     set_bonuses, _ = get_active_set_bonuses(p)
     set_hp = set_bonuses.get("hp", 0)
-    return base + acc_hp + enc_hp + temp + set_hp
+    def_hp = round(get_stat(p, "DEF") * 10)
+    retire_hp = safe_int(p.get("pet_retire_hp"))
+    return base + acc_hp + enc_hp + temp + set_hp + def_hp + retire_hp
 
 TIER_THRESHOLDS = {1: 5, 2: 10, 3: 30, 4: 60, 5: 100}
  
@@ -5669,11 +5739,8 @@ def calc_attack_damage(attacker, weather=None):
     stats     = safe_stats(attacker)
     primary   = get_primary_stat(attacker)
     stat_val  = get_stat(attacker, primary)
-    # Mages get full INT-to-damage scaling (1.0×); all other classes 0.75×
-    if get_class_line(attacker) == "mage":
-        stat_bonus = round(stat_val * 1.0)
-    else:
-        stat_bonus = round(stat_val * 0.75)   # 75% of primary stat
+    # All classes scale 1.0× their primary stat
+    stat_bonus = round(stat_val * 1.0)
     level_bonus = attacker["level"] // 2
     dex_val   = get_stat(attacker, "DEX")
     luk_val   = get_stat(attacker, "LUK")
@@ -5684,7 +5751,8 @@ def calc_attack_damage(attacker, weather=None):
         dex_bonus = dex_val // 3
     luk_bonus = luk_val // 5
 
-    raw = base + weapon + perm + acc_atk + stat_bonus + level_bonus + dex_bonus + luk_bonus
+    retire_atk = safe_int(attacker.get("pet_retire_atk"))
+    raw = base + weapon + perm + acc_atk + stat_bonus + level_bonus + dex_bonus + luk_bonus + retire_atk
 
     # Weather
     if weather: raw = round(raw * weather.get("dmg_mod", 1.0))
@@ -5813,7 +5881,15 @@ def calc_attack_damage(attacker, weather=None):
         if hp_pct < 0.30:
             buff_mod += get_accessory_bonus(attacker, "low_hp_dmg_bonus")
 
-    return max(1, round(raw * buff_mod))
+    # Combat Power multiplier: higher CP = higher damage
+    # +30% base, +3% per 300 CP tier, no cap
+    try:
+        _cp = calc_combat_power(attacker)
+        cp_mult = 1.30 + (_cp // 300) * 0.03
+    except Exception:
+        cp_mult = 1.30
+
+    return max(1, round(raw * buff_mod * cp_mult))
 
 def calc_defense(defender, dmg):
     stats      = safe_stats(defender)
@@ -7386,7 +7462,8 @@ def init_db():
     try:
         for col, typedef in [("bond_score","INTEGER DEFAULT 0"), ("adventure_ends_at","TEXT"),
                               ("last_battle","TEXT"), ("evolution_stage","INTEGER DEFAULT 0"),
-                              ("is_shiny","INTEGER DEFAULT 0"), ("job_ends_at","TEXT")]:
+                              ("is_shiny","INTEGER DEFAULT 0"), ("job_ends_at","TEXT"),
+                              ("daycare_until","TEXT")]:
             try:
                 _pets_conn.execute(f"ALTER TABLE pets ADD COLUMN {col} {typedef}")
                 _pets_conn.commit()
@@ -7405,6 +7482,20 @@ def init_db():
             except Exception:
                 pass
         _acc_conn.close()
+    except Exception:
+        pass
+    # Retired pet stat columns
+    try:
+        _ret_conn = sqlite3.connect(DB_PATH)
+        for _col, _def in [("pet_retire_atk","INTEGER DEFAULT 0"),
+                            ("pet_retire_hp","INTEGER DEFAULT 0"),
+                            ("retired_pets","TEXT DEFAULT '[]'")]:
+            try:
+                _ret_conn.execute(f"ALTER TABLE players ADD COLUMN {_col} {_def}")
+                _ret_conn.commit()
+            except Exception:
+                pass
+        _ret_conn.close()
     except Exception:
         pass
     # Re-open connection for the v22 consumable rename migration
@@ -9086,22 +9177,37 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     active_pet = get_active_pet_record(au_id)
     if active_pet:
-        pet_atk = get_pet_atk_bonus(active_pet)
-        sp_pet  = PET_SPECIES.get(active_pet.get("species"), {})
-        pname   = _pet_display_name(active_pet)
-        pers    = sp_pet.get("personality", "calm")
-        emoji_p = sp_pet.get("emoji", "🐾")
-        _p_hunger = active_pet.get("hunger", 100)
-        _p_mood   = active_pet.get("mood", 100)
-        pet_atk = round(pet_atk * get_weather().get("dmg_mod", 1.0))
-        d["hp"] = max(0, d["hp"] - pet_atk)
-        battle_msg = PERSONALITY_BATTLE.get(pers, "attacks")
-        if _p_hunger >= 70 and _p_mood >= 70:
-            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*! ✨ _(well-fed bonus!)_"
-        elif _p_hunger < 40 or _p_mood < 40:
-            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg* 😞 _(neglected — weakened!)_"
+        pet_atk    = get_pet_atk_bonus(active_pet)
+        sp_pet     = PET_SPECIES.get(active_pet.get("species"), {})
+        pname      = _pet_display_name(active_pet)
+        pers       = sp_pet.get("personality", "calm")
+        emoji_p    = sp_pet.get("emoji", "🐾")
+        _p_hunger  = active_pet.get("hunger", 100)
+        _p_mood    = active_pet.get("mood", 100)
+        # Elemental matchup vs defender's active pet
+        def_pet      = get_active_pet_record(du_id)
+        elem_mult    = _get_pet_element_mult(active_pet, def_pet)
+        # Skill proc
+        skill_fired, pskill = _pet_skill_check(active_pet)
+        if skill_fired and pskill:
+            pet_atk  = round(pet_atk * pskill["mult"])
+            skill_tag = f" _{pskill['name']}_"
+            # Water skill heals owner
+            if pskill.get("heal_pct") and active_pet.get("hunger",100) >= 40:
+                heal_from_skill = round(pet_atk * pskill["heal_pct"])
+                a["hp"] = min(calc_max_hp(a), a["hp"] + heal_from_skill)
         else:
-            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*!"
+            skill_tag = ""
+        pet_atk = round(pet_atk * elem_mult * get_weather().get("dmg_mod", 1.0))
+        d["hp"]  = max(0, d["hp"] - pet_atk)
+        battle_msg  = PERSONALITY_BATTLE.get(pers, "attacks")
+        elem_tag    = " 🌟*(type adv!)*" if elem_mult > 1.0 else (" *(resisted)*" if elem_mult < 1.0 else "")
+        if _p_hunger >= 70 and _p_mood >= 70:
+            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*{skill_tag}{elem_tag}! ✨"
+        elif _p_hunger < 40 or _p_mood < 40:
+            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*{skill_tag}{elem_tag} 😞"
+        else:
+            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*{skill_tag}{elem_tag}!"
 
     # kill_heal enchant
     kh = get_enchant_bonus(a, "kill_heal")
@@ -13212,6 +13318,25 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
         f"⚔️ *{user.first_name}* strikes *{boss_dict['data']['name']}* for *{dmg}!*",
         f"❤️ Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}"
     ]
+
+    # Pet attacks alongside player (with skill proc)
+    _boss_pet = get_active_pet_record(user.id)
+    if _boss_pet:
+        _pet_atk    = get_pet_atk_bonus(_boss_pet)
+        _sp_pet     = PET_SPECIES.get(_boss_pet.get("species"), {})
+        _pname      = _pet_display_name(_boss_pet)
+        _pers       = _sp_pet.get("personality", "calm")
+        _emoji_p    = _sp_pet.get("emoji", "🐾")
+        _battle_msg = PERSONALITY_BATTLE.get(_pers, "attacks")
+        _skill_fired, _pskill = _pet_skill_check(_boss_pet)
+        if _skill_fired and _pskill:
+            _pet_atk   = round(_pet_atk * _pskill["mult"])
+            _skill_tag = f" _{_pskill['name']}_"
+        else:
+            _skill_tag = ""
+        boss_dict["hp"] = max(0, boss_dict["hp"] - _pet_atk)
+        participant["dmg"] += _pet_atk
+        lines.append(f"{_emoji_p} *{_pname}* {_battle_msg} for *{_pet_atk}*{_skill_tag}!")
 
     # Boss counter-attack (90% chance)
     alive = [u for u in boss_dict["participants"]
@@ -23328,6 +23453,32 @@ async def arena_act_callback(update, context):
     if log_entry:
         arena["log"].append(log_entry)
 
+    # Pet attacks alongside the player whenever they deal direct damage
+    if action == "atk" or (action == "skl" and dmg > 0):
+        _arena_pet = get_active_pet_record(uid)
+        if _arena_pet:
+            _pet_atk    = get_pet_atk_bonus(_arena_pet)
+            _sp_pet     = PET_SPECIES.get(_arena_pet.get("species"), {})
+            _pname      = _pet_display_name(_arena_pet)
+            _pers       = _sp_pet.get("personality", "calm")
+            _emoji_p    = _sp_pet.get("emoji", "🐾")
+            _battle_msg = PERSONALITY_BATTLE.get(_pers, "attacks")
+            # Elemental matchup vs defender's pet
+            _def_uid    = arena["p2_id"] if is_p1 else arena["p1_id"]
+            _def_pet    = get_active_pet_record(_def_uid)
+            _elem_mult  = _get_pet_element_mult(_arena_pet, _def_pet)
+            # Skill proc
+            _skill_fired, _pskill = _pet_skill_check(_arena_pet)
+            if _skill_fired and _pskill:
+                _pet_atk  = round(_pet_atk * _pskill["mult"])
+                _skill_tag = f" _{_pskill['name']}_"
+            else:
+                _skill_tag = ""
+            _pet_atk = round(_pet_atk * _elem_mult)
+            _elem_tag = " 🌟*(type adv!)*" if _elem_mult > 1.0 else (" *(resisted)*" if _elem_mult < 1.0 else "")
+            arena[def_hp_key] = max(0, arena[def_hp_key] - _pet_atk)
+            arena["log"].append(f"{_emoji_p} *{_pname}* {_battle_msg} for *{_pet_atk}*{_skill_tag}{_elem_tag}!")
+
     if arena["p1_hp"] <= 0 or arena["p2_hp"] <= 0:
         arena["status"] = "done"
         winner_id = arena["p1_id"] if arena["p1_hp"] > 0 else arena["p2_id"]
@@ -23857,6 +24008,7 @@ GUIDE_PAGES = [
         "🎱 *8Ball World  -  Daily Activities* (3/14)\n"
         "\n"
         "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
+        "💡 */activities* — Open the Activities Hub for a button menu covering every daily activity, challenge, and character command.\n"
         "\n"
         "*Activities and their cooldowns:*\n"
         "/claim  -  Daily streak reward. Gold + bonus materials every day. Streak builds over consecutive days (24 hours)\n"
@@ -23945,6 +24097,8 @@ GUIDE_PAGES = [
     (
         "🎱 *8Ball World  -  Gear & Economy* (5/14)\n"
         "\n"
+        "💡 */gearhub* — One hub for all gear commands: equipment, upgrades, and economy (3 pages).\n"
+        "\n"
         "*Gear Slots*\n"
         "⚔️ Weapon, 🛡️ Armor, 🔰 Shield, 💍 Accessory, 🎩 Hat, 🧤 Gloves, 👢 Boots, 🎭 Mask.\n"
         "Use /equip to browse your bag and tap to equip. Use /unequip to remove gear.\n"
@@ -23987,6 +24141,14 @@ GUIDE_PAGES = [
     # Page 6 - Command Reference (Core)
     (
         "🎱 *8Ball World  -  Commands: Core* (6/14)\n"
+        "\n"
+        "*⚡ Command Hubs*\n"
+        "/empire  -  Master hub — one place to open every system\n"
+        "/combat  -  Combat hub (attacks, raids, dungeons, CP)\n"
+        "/activities  -  Daily activities, challenges, and character\n"
+        "/gearhub  -  Equipment, upgrades, and economy\n"
+        "/social  -  Relationships, guilds, and recognition\n"
+        "/pethub  -  Everything pets in one place\n"
         "\n"
         "*Character*\n"
         "/ascend  -  Create your RPG character (DM only)\n"
@@ -24136,55 +24298,55 @@ GUIDE_PAGES = [
     ),
     # Page 8 - Pets
     (
-        "🎱 *8Ball World  -  Pets* (9/14)\n"
+        "🎱 *8Ball World  -  Pets & Pet Hub* (9/14)\n"
+        "\n"
+        "*Central Hub: /pethub*\n"
+        "Access every pet feature from one place. All actions, info, and management in a single menu.\n"
         "\n"
         "*Getting a Pet*\n"
-        "Buy eggs from the Pet Shop (/petshop) or find them in dungeons and quests.\n"
-        "Use /hatch to hatch an egg. You can own multiple pets but only one is active at a time.\n"
+        "Buy eggs from /petshop or find them in dungeons and quests. Use /hatch to hatch. Manage everything from /pethub.\n"
         "\n"
         "*Pet Combat (Automatic)*\n"
-        "Your active pet auto-attacks alongside you every /attack or /skill.\n"
-        "Well-fed pets (hunger > 20) with good mood (mood > 40) join the fight.\n"
-        "When YOU are attacked, your pet may trigger its defensive ability:\n"
-        "🛡️ Intercept — absorbs a portion of incoming damage\n"
-        "⚔️ Counter Strike — retaliates against the attacker\n"
-        "🐍 Venom Bite — poisons the attacker\n"
-        "⚡ Stunning Blow — stuns the attacker (miss next attack)\n"
-        "💜 Life Drain — steals HP from attacker and heals you\n"
-        "✨ Aura Shield — reduces incoming damage\n"
-        "Defensive abilities unlock at pet Level 10.\n"
+        "Active pet auto-attacks alongside you every /attack, /skill, arena turn, and boss strike.\n"
+        "• Elemental matchup: your pet's element vs defender's pet — 🌟 +25% strong / resisted -25% weak\n"
+        "• Lv 10+: Pet learns a combat skill (Ember Blast, Thunder Strike, Void Tear, etc.) — 15–25% proc chance\n"
+        "• Well-fed (hunger > 70, mood > 70): +25% ATK; neglected (< 40): severely reduced\n"
+        "• ✨ Shiny pets: +10% ATK and displayed with ✨ in all battle text\n"
         "\n"
-        "*Pet Care*\n"
-        "Use /pet to manage your pet. Feed with 🍖 and train with 🏋️.\n"
-        "Hungry or sad pets won't fight at full power.\n"
-        "Keep hunger > 20 and mood > 40 for full combat effectiveness.\n"
+        "*Evolution — /pethub → My Pet → Evolve*\n"
+        "Pets evolve at Lv 15 (✦), 30 (✦✦), 50 (✦✦✦). Each stage gives a new name and stat boost.\n"
+        "Stage 1: element-based title prefix (e.g. Blazing Iron Hound)\n"
+        "Stage 2: stronger title (e.g. Inferno Iron Hound)\n"
+        "Stage 3: legendary title (e.g. Eternal Flame Iron Hound)\n"
         "\n"
-        "*Pet Leveling*\n"
-        "Your pet earns 15% of all EXP you gain — passively, with no effort required.\n"
-        "Pets level from 1 to 100. As they grow:\n"
-        "  L5+: Attack bonus begins\n"
-        "  L10: Defensive ability unlocks\n"
-        "  L15: Crit bonus starts\n"
-        "  L25: Dodge bonus starts\n"
-        "  L40: Lifesteal passive starts\n"
-        "  L75–100: Elite tier bonuses\n"
+        "*Retirement — /pethub → Retire Pet*\n"
+        "Retire a pet at Lv 30+ or ✦✦✦ evolution for permanent player bonuses:\n"
+        "+ATK and +Max HP that persist forever, scaling with rarity and level.\n"
+        "Retirements stack — retire multiple pets for cumulative bonuses.\n"
         "\n"
-        "*Species & Rarity*\n"
-        "Common → Uncommon → Rare → Epic → Legendary → Mythic\n"
-        "Higher rarity = higher base stats and better ability proc chance.\n"
-        "55+ species: dogs, cats, dragons, wolves, bears, birds, snakes, horses, fantasy beasts.\n"
+        "*Breeding — /pethub → Breed*\n"
+        "Breed two pets (both Lv 15+) to produce offspring. Offspring inherits traits and element from parents.\n"
+        "5% shiny chance (+5% if either parent is shiny). 12-hour breeding cooldown.\n"
         "\n"
-        "*Commands*\n"
-        "/pet — manage your active pet\n"
-        "/petshop — buy eggs and snacks\n"
-        "/hatch — hatch an egg from your inventory\n"
-        "/petrename [name] — rename your active pet\n"
+        "*Pet Daycare — /pethub → Daycare*\n"
+        "Drop your pet off for up to 8 hours — hunger and mood won't decay while they're there.\n"
+        "Pick them up for a bonus EXP reward based on time spent.\n"
         "\n"
-        "*Pet Notifications*\n"
-        "The bot DMs you automatically when your active pet needs attention:\n"
-        "🍖 Hungry (hunger below 25) — notified once every 6 hours\n"
-        "😢 Sad (mood below 25) — notified once every 6 hours\n"
-        "🏋️ Ready to train (8+ hours since last training) — notified once every 12 hours\n"
+        "*Pet Trading — /pethub → Trade Pet*\n"
+        "Post a trade offer in the group. Any player can accept and offer their own pet in return.\n"
+        "Both pets swap ownership instantly. Offers expire in 5 minutes.\n"
+        "\n"
+        "*Pet Duels — /pethub → Pet Battle*\n"
+        "Challenge another player to a 1v1 pet fight. Pets battle using ATK, level, skills, and element matchups.\n"
+        "Winner earns EXP and bond; loser still earns bond for participating.\n"
+        "\n"
+        "*Other Pet Commands*\n"
+        "/pettop — Top 10 active pets by level\n"
+        "/petdex — Your species collection tracker\n"
+        "/petrename [name] — Rename your active pet\n"
+        "\n"
+        "*Pet Notifications (DM)*\n"
+        "🍖 Hungry (hunger < 25) | 😢 Sad (mood < 25) | 🏋️ Ready to train (8h+ since last)"
     ),
     # Page 9 - Marriage & Social
     (
@@ -25378,6 +25540,1214 @@ async def petrename_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_pet(pet)
     sp = PET_SPECIES.get(pet["species"],{})
     await send_group(update, f"📝 Your {sp.get('name','pet')} is now called *{nickname}*!", delay=15)
+
+# ── Hub shared helper ─────────────────────────────────────────────────────────
+def _hub_nav_row(prefix, page, total, uid):
+    """Return a navigation row for a paginated hub."""
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"{prefix}pg_{page-1}_{uid}"))
+    nav.append(InlineKeyboardButton(f"· {page}/{total} ·", callback_data="noop"))
+    if page < total:
+        nav.append(InlineKeyboardButton("Next ▶", callback_data=f"{prefix}pg_{page+1}_{uid}"))
+    return nav
+
+# ── /pethub — Central Pet Hub ─────────────────────────────────────────────────
+def _pethub_markup(uid, pet, page=1):
+    """Build the paginated /pethub InlineKeyboardMarkup."""
+    pid = pet["pet_id"] if pet else None
+
+    if pet:
+        pages = [
+            # Page 1 — Manage
+            [
+                [InlineKeyboardButton("🐾 My Pet",     callback_data=f"petmain_{uid}"),
+                 InlineKeyboardButton("📋 All Pets",   callback_data="petlist_0")],
+                [InlineKeyboardButton("⚔️ Pet Battle", callback_data=f"petduel_pick_{uid}"),
+                 InlineKeyboardButton("🤝 Trade Pet",  callback_data=f"pettrade_pick_{uid}")],
+                [InlineKeyboardButton("🗺️ Adventure",  callback_data=f"petadv_pick_{pid}"),
+                 InlineKeyboardButton("💼 Jobs",       callback_data=f"petjob_pick_{pid}")],
+            ],
+            # Page 2 — Care & Breeding
+            [
+                [InlineKeyboardButton("🔬 Breed",      callback_data=f"petbreed_pick_{uid}"),
+                 InlineKeyboardButton("🏠 Daycare",    callback_data=f"petdaycare_{pid}")],
+                [InlineKeyboardButton("🌟 Retire Pet", callback_data=f"petretire_confirm_{pid}"),
+                 InlineKeyboardButton("📝 Rename",     callback_data=f"petrename_{pid}")],
+                [InlineKeyboardButton("🛒 Pet Shop",   callback_data="petshop"),
+                 InlineKeyboardButton("🥚 Hatch Egg",  callback_data="hatch_egg")],
+            ],
+            # Page 3 — Stats & Community
+            [
+                [InlineKeyboardButton("📖 PetDex",     callback_data="pethub_dex"),
+                 InlineKeyboardButton("🏆 Pet Top",    callback_data="pethub_top")],
+            ],
+        ]
+    else:
+        pages = [
+            [
+                [InlineKeyboardButton("🥚 Hatch Egg",  callback_data="hatch_egg"),
+                 InlineKeyboardButton("🛒 Pet Shop",   callback_data="petshop")],
+                [InlineKeyboardButton("📖 PetDex",     callback_data="pethub_dex"),
+                 InlineKeyboardButton("🏆 Pet Top",    callback_data="pethub_top")],
+            ],
+        ]
+
+    page = max(1, min(page, len(pages)))
+    rows = list(pages[page - 1])
+    rows.append(_hub_nav_row("pethub_", page, len(pages), uid))
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return InlineKeyboardMarkup(rows)
+
+async def pethub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p    = get_player(user.id)
+    if not p:
+        await send_group(update, "🐾 Register first with /start.", delay=9); return
+    try: await update.message.delete()
+    except: pass
+    pet  = get_active_pet_record(user.id)
+    if pet:
+        sp    = PET_SPECIES.get(pet.get("species"), {})
+        pname = _pet_display_name(pet)
+        evo   = pet.get("evolution_stage", 0)
+        evo_str = " ✦" * evo if evo else ""
+        text = (
+            f"🐾 *{p['username']}'s Pet Hub*\n\n"
+            f"{sp.get('emoji','🐾')} *{pname}*{evo_str}\n"
+            f"Lv {pet.get('level',1)} | Bond {pet.get('bond_score',0)} | "
+            f"{'✨ Shiny' if pet.get('is_shiny') else sp.get('rarity','?').capitalize()}\n"
+            f"Hunger: {pet.get('hunger',100)} | Mood: {pet.get('mood',100)}\n\n"
+            f"Page 1: Manage  |  Page 2: Care & Breeding  |  Page 3: Community"
+        )
+    else:
+        text = (
+            f"🐾 *{p['username']}'s Pet Hub*\n\n"
+            "No active pet yet. Buy an egg from 🛒 Pet Shop and hatch it!"
+        )
+    markup = _pethub_markup(user.id, pet, page=1)
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
+        reply_markup=markup)
+    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, 120))
+
+async def pethub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data  = query.data
+    uid   = query.from_user.id
+
+    # Page navigation
+    if data.startswith("pethub_pg_"):
+        parts = data.split("_")  # pethub_pg_{page}_{uid}
+        try:
+            page    = int(parts[2])
+            req_uid = int(parts[3])
+        except (IndexError, ValueError):
+            return
+        if uid != req_uid:
+            await query.answer("Not your hub.", show_alert=True); return
+        pet    = get_active_pet_record(uid)
+        markup = _pethub_markup(uid, pet, page=page)
+        try: await query.edit_message_reply_markup(reply_markup=markup)
+        except Exception: pass
+        return
+
+    if data == "pethub_dex":
+        p = get_player(uid)
+        if not p: return
+        owned   = {pt.get("species","") for pt in get_all_pets(uid)}
+        total   = len(PET_SPECIES)
+        owned_c = len(owned)
+        pct     = round(owned_c / max(1, total) * 100)
+        bar     = "█" * round(pct / 10) + "░" * (10 - round(pct / 10))
+        lines   = [f"📖 *{p['username']}'s PetDex* — {owned_c}/{total} [{bar}] {pct}%\n"]
+        by_rar  = {}
+        for sid, sp in PET_SPECIES.items():
+            by_rar.setdefault(sp.get("rarity","common"), []).append(sid)
+        for rar in ["common","uncommon","rare","epic","legendary","mythic"]:
+            sids = by_rar.get(rar, [])
+            if not sids: continue
+            got = sum(1 for s in sids if s in owned)
+            lines.append(f"{RARITY_EMOJI.get(rar,'')} {rar.capitalize()}: {got}/{len(sids)}")
+        try: await query.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                                           reply_markup=query.message.reply_markup)
+        except: pass
+        return
+
+    if data == "pethub_top":
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE is_active=1 ORDER BY level DESC, bond_score DESC LIMIT 10")
+        rows = [dict(r) for r in c.fetchall()]; conn.close()
+        if not rows:
+            try: await query.edit_message_text("No active pets found.", reply_markup=query.message.reply_markup)
+            except: pass
+            return
+        lines = ["🏆 *Pet Leaderboard* (Top 10 Active)\n"]
+        for i, pet in enumerate(rows, 1):
+            sp = PET_SPECIES.get(pet.get("species"), {})
+            em = sp.get("emoji","🐾") if sp else "🐾"
+            re = RARITY_EMOJI.get(sp.get("rarity",""),"") if sp else ""
+            pn   = _pet_display_name(pet)
+            evo  = "✦" * pet.get("evolution_stage", 0)
+            own  = get_player(pet["owner_id"])
+            oname = own["username"] if own else f"#{pet['owner_id']}"
+            lines.append(f"{i}. {em} *{pn}*{evo} Lv{pet['level']} {re} — {oname}")
+        try: await query.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                                           reply_markup=query.message.reply_markup)
+        except: pass
+        return
+
+# ── PET DAYCARE ────────────────────────────────────────────────────────────────
+async def petdaycare_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle daycare: drop off / pick up pet. While in daycare hunger/mood don't decay."""
+    query = update.callback_query
+    await query.answer()
+    uid   = query.from_user.id
+    parts = query.data.split("_")  # petdaycare_{pet_id} or petdaycare_pickup_{pet_id}
+    if len(parts) < 2: return
+    action = parts[1] if parts[1] in ("pickup",) else None
+    pid    = int(parts[-1]) if parts[-1].isdigit() else None
+    if not pid: return
+    pet = None
+    for pp in get_all_pets(uid):
+        if pp.get("pet_id") == pid:
+            pet = pp; break
+    if not pet:
+        await query.answer("Pet not found.", show_alert=True); return
+    if action == "pickup":
+        if not pet.get("daycare_until"):
+            await query.answer("Your pet isn't at the daycare.", show_alert=True); return
+        # Bonus EXP for time spent
+        try:
+            started = datetime.fromisoformat(pet["daycare_until"]) - timedelta(hours=8)
+            hours_in = min(48, (datetime.now() - started).total_seconds() / 3600)
+        except Exception:
+            hours_in = 0
+        bonus_exp = int(hours_in * 10)
+        pet["daycare_until"] = None
+        pet["exp"] = pet.get("exp", 0) + bonus_exp
+        save_pet(pet)
+        pname = _pet_display_name(pet)
+        await query.edit_message_text(
+            f"🏠 *{pname}* was picked up from daycare!\n"
+            f"They rested well — +{bonus_exp} pet EXP!",
+            parse_mode="Markdown")
+        return
+    # Drop off
+    if pet.get("daycare_until"):
+        try:
+            rem = (datetime.fromisoformat(pet["daycare_until"]) - datetime.now()).total_seconds()
+            if rem > 0:
+                rms = f"{int(rem//3600)}h {int((rem%3600)//60)}m"
+                await query.answer(f"Already in daycare for {rms}.", show_alert=True); return
+        except: pass
+    pet["daycare_until"] = (datetime.now() + timedelta(hours=8)).isoformat()
+    save_pet(pet)
+    pname = _pet_display_name(pet)
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🏠 Pick Up Early", callback_data=f"petdaycare_pickup_{pid}")]])
+    await query.edit_message_text(
+        f"🏠 *{pname}* is now at the daycare for 8 hours!\n"
+        f"Hunger and mood won't decay. Pick them up anytime for a bonus EXP reward.",
+        parse_mode="Markdown", reply_markup=markup)
+
+# ── PET RETIREMENT ─────────────────────────────────────────────────────────────
+async def petretire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Retire a max-level or fully evolved pet for permanent player stat bonuses."""
+    query = update.callback_query
+    await query.answer()
+    uid   = query.from_user.id
+    parts = query.data.split("_")
+    # petretire_confirm_{pid} or petretire_do_{pid}
+    sub   = parts[1] if len(parts) > 1 else ""
+    pid   = int(parts[-1]) if parts[-1].isdigit() else None
+    if not pid: return
+    pet = None
+    for pp in get_all_pets(uid):
+        if pp.get("pet_id") == pid:
+            pet = pp; break
+    if not pet:
+        await query.answer("Pet not found.", show_alert=True); return
+    lvl = pet.get("level", 1)
+    evo = pet.get("evolution_stage", 0)
+    if lvl < 30 and evo < 3:
+        await query.answer("Pet must be Level 30+ or fully evolved (✦✦✦) to retire.", show_alert=True); return
+    sp   = PET_SPECIES.get(pet.get("species"), {})
+    rar  = sp.get("rarity", "common")
+    pname = _pet_display_name(pet)
+    # Bonus scales with rarity and level
+    rar_mult = {"common":1,"uncommon":1.2,"rare":1.5,"epic":2.0,"legendary":3.0,"mythic":4.0}.get(rar,1.0)
+    atk_bonus = int(round((10 + lvl // 5) * rar_mult))
+    hp_bonus  = int(round((100 + lvl * 2) * rar_mult))
+    if sub == "confirm":
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Yes, Retire", callback_data=f"petretire_do_{pid}"),
+            InlineKeyboardButton("❌ Cancel",      callback_data=f"close_msg_{uid}"),
+        ]])
+        await query.edit_message_text(
+            f"🌟 *Retire {pname}?*\n\n"
+            f"This will permanently release your pet and grant you:\n"
+            f"⚔️ +{atk_bonus} permanent ATK\n"
+            f"❤️ +{hp_bonus} permanent Max HP\n\n"
+            f"*This cannot be undone.* Are you sure?",
+            parse_mode="Markdown", reply_markup=markup)
+        return
+    if sub == "do":
+        p = get_player(uid)
+        if not p: return
+        p["pet_retire_atk"] = safe_int(p.get("pet_retire_atk")) + atk_bonus
+        p["pet_retire_hp"]  = safe_int(p.get("pet_retire_hp"))  + hp_bonus
+        p["max_hp"] = calc_max_hp(p)
+        # Log retirement
+        retired = sjl(p.get("retired_pets"), [])
+        retired.append({"species": pet.get("species"), "level": lvl, "evo": evo,
+                         "atk": atk_bonus, "hp": hp_bonus,
+                         "date": datetime.now().isoformat()})
+        p["retired_pets"] = json.dumps(retired)
+        save_player(p)
+        # Delete pet record
+        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        c.execute("DELETE FROM pets WHERE pet_id=?", (pid,))
+        conn.commit(); conn.close()
+        await query.edit_message_text(
+            f"🌟 *{pname} has been retired!*\n\n"
+            f"Their spirit now lives within you permanently:\n"
+            f"⚔️ +{atk_bonus} ATK  |  ❤️ +{hp_bonus} Max HP\n\n"
+            f"Total retirement bonuses: ⚔️ {p['pet_retire_atk']} ATK | ❤️ {p['pet_retire_hp']} Max HP",
+            parse_mode="Markdown")
+
+# ── PET BREEDING ───────────────────────────────────────────────────────────────
+async def petbreed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Breed two pets to produce a new egg with mixed traits."""
+    query = update.callback_query
+    await query.answer()
+    uid   = query.from_user.id
+    parts = query.data.split("_")
+    sub   = parts[1] if len(parts) > 1 else ""
+
+    if sub == "pick":
+        pets = [p for p in get_all_pets(uid) if p.get("level",1) >= 15]
+        if len(pets) < 2:
+            await query.answer("Need at least 2 pets at Level 15+ to breed.", show_alert=True); return
+        rows = []
+        for pt in pets[:8]:
+            pn = _pet_display_name(pt)
+            rows.append([InlineKeyboardButton(
+                f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']}",
+                callback_data=f"petbreed_sel1_{pt['pet_id']}")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
+        await query.edit_message_text("🔬 *Pet Breeding*\nSelect the first parent:",
+                                      parse_mode="Markdown",
+                                      reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if sub == "sel1":
+        pid1 = int(parts[2])
+        pets = [p for p in get_all_pets(uid) if p.get("level",1) >= 15 and p.get("pet_id") != pid1]
+        if not pets:
+            await query.answer("Need another Lv 15+ pet.", show_alert=True); return
+        rows = []
+        for pt in pets[:8]:
+            pn = _pet_display_name(pt)
+            rows.append([InlineKeyboardButton(
+                f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']}",
+                callback_data=f"petbreed_start_{pid1}_{pt['pet_id']}")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
+        await query.edit_message_text("🔬 *Pet Breeding*\nSelect the second parent:",
+                                      parse_mode="Markdown",
+                                      reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if sub == "start":
+        pid1, pid2 = int(parts[2]), int(parts[3])
+        all_pets = get_all_pets(uid)
+        pet1 = next((p for p in all_pets if p.get("pet_id") == pid1), None)
+        pet2 = next((p for p in all_pets if p.get("pet_id") == pid2), None)
+        if not pet1 or not pet2:
+            await query.answer("Pet not found.", show_alert=True); return
+        # Breeding cooldown via module state
+        session = _pet_breed_sessions.get(uid)
+        if session and time.time() - session.get("started",0) < 43200:
+            rem = 43200 - (time.time() - session["started"])
+            rms = f"{int(rem//3600)}h {int((rem%3600)//60)}m"
+            await query.answer(f"Breeding on cooldown — {rms} left.", show_alert=True); return
+        _pet_breed_sessions[uid] = {"pet1_id": pid1, "pet2_id": pid2, "started": time.time()}
+        # Drain hunger from parents
+        pet1["hunger"] = max(0, pet1.get("hunger",100) - 20)
+        pet2["hunger"] = max(0, pet2.get("hunger",100) - 20)
+        save_pet(pet1); save_pet(pet2)
+        sp1 = PET_SPECIES.get(pet1["species"],{}); sp2 = PET_SPECIES.get(pet2["species"],{})
+        pn1 = _pet_display_name(pet1); pn2 = _pet_display_name(pet2)
+        # Produce offspring: random species biased toward parents, chance of shiny
+        # inherit element from either parent
+        species_pool = [pet1["species"], pet2["species"]]
+        # Add 1-2 species that share element with either parent
+        parent_elems = {sp1.get("element",""), sp2.get("element","")}
+        for sid, sp in PET_SPECIES.items():
+            if sp.get("element","") in parent_elems:
+                species_pool.append(sid)
+        offspring_species = random.choice(species_pool)
+        offs_sp = PET_SPECIES.get(offspring_species, {})
+        # Shiny: 5% base + 5% if either parent is shiny
+        shiny_chance = 0.05 + (0.05 if pet1.get("is_shiny") or pet2.get("is_shiny") else 0)
+        is_shiny = random.random() < shiny_chance
+        # Starting level = avg of parents // 3
+        start_lvl = max(1, (pet1.get("level",1) + pet2.get("level",1)) // 6)
+        new_pet = {
+            "owner_id": uid, "species": offspring_species,
+            "nickname": None, "level": start_lvl, "exp": 0,
+            "hunger": 80, "mood": 80, "last_fed": None, "last_trained": None,
+            "is_active": 0, "created_at": datetime.now().isoformat(),
+            "bond_score": 0, "is_shiny": 1 if is_shiny else 0,
+        }
+        save_pet(new_pet)
+        shiny_tag = " ✨ *SHINY!*" if is_shiny else ""
+        await query.edit_message_text(
+            f"🔬 *Breeding Complete!*{shiny_tag}\n\n"
+            f"Parents: {pn1} × {pn2}\n\n"
+            f"{offs_sp.get('emoji','🐾')} *{offs_sp.get('name','?')}* was born!\n"
+            f"Lv {start_lvl} | {offs_sp.get('element','?').capitalize()} | {offs_sp.get('rarity','?').capitalize()}\n\n"
+            f"_{offs_sp.get('desc','A new companion joins your team.')}_\n\n"
+            f"_(Breeding cooldown: 12 hours)_",
+            parse_mode="Markdown")
+
+# ── PET TRADING ────────────────────────────────────────────────────────────────
+async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle pet trade offer flow."""
+    query = update.callback_query
+    await query.answer()
+    uid   = query.from_user.id
+    data  = query.data
+    parts = data.split("_")
+    sub   = parts[1] if len(parts) > 1 else ""
+
+    if sub == "pick":
+        pets = get_all_pets(uid)
+        if not pets:
+            await query.answer("No pets to trade.", show_alert=True); return
+        rows = []
+        for pt in pets[:8]:
+            pn = _pet_display_name(pt)
+            rows.append([InlineKeyboardButton(
+                f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']}",
+                callback_data=f"pettrade_offer_{pt['pet_id']}")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
+        await query.edit_message_text(
+            "🤝 *Pet Trade*\nSelect a pet to offer for trade.\n"
+            "Your offer will be visible to the group for 5 minutes.",
+            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if sub == "offer":
+        pid = int(parts[2])
+        pet = next((p for p in get_all_pets(uid) if p.get("pet_id") == pid), None)
+        if not pet:
+            await query.answer("Pet not found.", show_alert=True); return
+        _pet_trade_offers[uid] = {"pet_id": pid, "target_uid": None, "expires": time.time() + 300}
+        sp   = PET_SPECIES.get(pet.get("species"),{})
+        pname = _pet_display_name(pet)
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Cancel Offer", callback_data=f"pettrade_cancel_{uid}")]])
+        # Send offer visible to others
+        try:
+            await query.edit_message_text(
+                f"🤝 *Trade Offer!*\n\n"
+                f"*{query.from_user.first_name}* is offering:\n"
+                f"{sp.get('emoji','🐾')} *{pname}* | Lv {pet.get('level',1)} | "
+                f"{sp.get('rarity','?').capitalize()}\n\n"
+                f"Tap below to accept this trade (offer expires in 5 min).\n"
+                f"You must offer one of your own pets back.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🤝 Accept Trade", callback_data=f"pettrade_accept_{uid}_{pid}"),
+                    InlineKeyboardButton("❌ Cancel", callback_data=f"pettrade_cancel_{uid}"),
+                ]]))
+        except Exception: pass
+        return
+
+    if sub == "accept":
+        offeror_uid = int(parts[2])
+        offered_pid = int(parts[3])
+        if uid == offeror_uid:
+            await query.answer("Can't accept your own trade.", show_alert=True); return
+        offer = _pet_trade_offers.get(offeror_uid)
+        if not offer or offer.get("expires", 0) < time.time():
+            await query.answer("That offer has expired.", show_alert=True); return
+        if offer.get("pet_id") != offered_pid:
+            await query.answer("Offer changed.", show_alert=True); return
+        # Acceptor picks their pet to offer back
+        my_pets = get_all_pets(uid)
+        if not my_pets:
+            await query.answer("You have no pets to offer.", show_alert=True); return
+        rows = []
+        for pt in my_pets[:8]:
+            pn = _pet_display_name(pt)
+            rows.append([InlineKeyboardButton(
+                f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']}",
+                callback_data=f"pettrade_complete_{offeror_uid}_{offered_pid}_{pt['pet_id']}")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
+        await query.edit_message_text("Choose a pet to offer back:",
+                                      parse_mode="Markdown",
+                                      reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if sub == "complete":
+        offeror_uid  = int(parts[2])
+        offered_pid  = int(parts[3])
+        acceptor_pid = int(parts[4])
+        if uid == offeror_uid:
+            await query.answer("Can't complete your own trade.", show_alert=True); return
+        offer = _pet_trade_offers.pop(offeror_uid, None)
+        if not offer or offer.get("expires", 0) < time.time():
+            await query.answer("Trade expired.", show_alert=True); return
+        # Fetch both pets
+        offeror_pet  = next((p for p in get_all_pets(offeror_uid) if p.get("pet_id") == offered_pid), None)
+        acceptor_pet = next((p for p in get_all_pets(uid) if p.get("pet_id") == acceptor_pid), None)
+        if not offeror_pet or not acceptor_pet:
+            await query.answer("Pet not found.", show_alert=True); return
+        # Swap ownership
+        offeror_pet["owner_id"]  = uid;          offeror_pet["is_active"]  = 0
+        acceptor_pet["owner_id"] = offeror_uid;  acceptor_pet["is_active"] = 0
+        save_pet(offeror_pet); save_pet(acceptor_pet)
+        sp1 = PET_SPECIES.get(offeror_pet["species"],{})
+        sp2 = PET_SPECIES.get(acceptor_pet["species"],{})
+        await query.edit_message_text(
+            f"🤝 *Trade Complete!*\n\n"
+            f"{sp1.get('emoji','🐾')} *{_pet_display_name(offeror_pet)}* → "
+            f"*{query.from_user.first_name}*\n"
+            f"{sp2.get('emoji','🐾')} *{_pet_display_name(acceptor_pet)}* → "
+            f"*trade partner*\n\n"
+            f"Both pets moved to their new owners' collection!",
+            parse_mode="Markdown")
+        return
+
+    if sub == "cancel":
+        cancel_uid = int(parts[2]) if len(parts) > 2 else uid
+        _pet_trade_offers.pop(cancel_uid, None)
+        await query.edit_message_text("🤝 Trade offer cancelled.")
+
+# ── PET DUEL ──────────────────────────────────────────────────────────────────
+async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pet vs Pet duel — each player's active pet fights."""
+    query = update.callback_query
+    await query.answer()
+    uid   = query.from_user.id
+    parts = query.data.split("_")
+    sub   = parts[1] if len(parts) > 1 else ""
+
+    if sub == "pick":
+        # Show online players who have active pets
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT DISTINCT p.user_id, p.username FROM players p "
+                  "JOIN pets pet ON pet.owner_id=p.user_id AND pet.is_active=1 "
+                  "WHERE p.user_id != ? LIMIT 10", (uid,))
+        rows = [dict(r) for r in c.fetchall()]; conn.close()
+        if not rows:
+            await query.answer("No other players with active pets found.", show_alert=True); return
+        my_pet = get_active_pet_record(uid)
+        if not my_pet:
+            await query.answer("You need an active pet to duel.", show_alert=True); return
+        rows_btn = []
+        for r in rows:
+            rows_btn.append([InlineKeyboardButton(
+                f"⚔️ Challenge {r['username']}",
+                callback_data=f"petduel_challenge_{uid}_{r['user_id']}")])
+        rows_btn.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
+        await query.edit_message_text("⚔️ *Pet Duel*\nChoose an opponent:",
+                                      parse_mode="Markdown",
+                                      reply_markup=InlineKeyboardMarkup(rows_btn))
+        return
+
+    if sub == "challenge":
+        challenger_uid = int(parts[2])
+        target_uid     = int(parts[3])
+        if uid != challenger_uid:
+            await query.answer("Not your challenge.", show_alert=True); return
+        c_pet = get_active_pet_record(challenger_uid)
+        t_pet = get_active_pet_record(target_uid)
+        if not c_pet or not t_pet:
+            await query.answer("One player has no active pet.", show_alert=True); return
+        c_sp  = PET_SPECIES.get(c_pet.get("species"),{})
+        t_sp  = PET_SPECIES.get(t_pet.get("species"),{})
+        duel_key = (min(challenger_uid,target_uid), max(challenger_uid,target_uid))
+        if duel_key in _active_pet_duels:
+            await query.answer("A duel is already active between these players.", show_alert=True); return
+        _active_pet_duels[duel_key] = {
+            "c_uid": challenger_uid, "t_uid": target_uid,
+            "expires": time.time() + 60,
+        }
+        c_name = _pet_display_name(c_pet); t_name = _pet_display_name(t_pet)
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⚔️ Accept Duel!", callback_data=f"petduel_accept_{challenger_uid}_{target_uid}"),
+            InlineKeyboardButton("❌ Decline",       callback_data=f"petduel_decline_{challenger_uid}"),
+        ]])
+        await query.edit_message_text(
+            f"⚔️ *Pet Duel Challenge!*\n\n"
+            f"{c_sp.get('emoji','🐾')} *{c_name}* vs {t_sp.get('emoji','🐾')} *{t_name}*\n\n"
+            f"<target player> — accept within 60 seconds!",
+            parse_mode="Markdown", reply_markup=markup)
+        return
+
+    if sub == "decline":
+        challenger_uid = int(parts[2])
+        duel_key = next((k for k in _active_pet_duels if challenger_uid in k), None)
+        if duel_key: _active_pet_duels.pop(duel_key, None)
+        await query.edit_message_text("⚔️ Duel declined.")
+        return
+
+    if sub == "accept":
+        challenger_uid = int(parts[2])
+        target_uid     = int(parts[3])
+        if uid != target_uid:
+            await query.answer("Only the challenged player can accept.", show_alert=True); return
+        duel_key = (min(challenger_uid,target_uid), max(challenger_uid,target_uid))
+        duel = _active_pet_duels.pop(duel_key, None)
+        if not duel or duel.get("expires",0) < time.time():
+            await query.answer("Challenge expired.", show_alert=True); return
+        c_pet = get_active_pet_record(challenger_uid)
+        t_pet = get_active_pet_record(target_uid)
+        if not c_pet or not t_pet:
+            await query.answer("One player's pet is gone.", show_alert=True); return
+        # Simulate duel: turn-by-turn until one reaches 0 HP
+        c_sp  = PET_SPECIES.get(c_pet.get("species"),{})
+        t_sp  = PET_SPECIES.get(t_pet.get("species"),{})
+        c_name = _pet_display_name(c_pet); t_name = _pet_display_name(t_pet)
+        c_hp = max(10, c_pet.get("level",1) * 20 + c_sp.get("base_atk",10) * 3)
+        t_hp = max(10, t_pet.get("level",1) * 20 + t_sp.get("base_atk",10) * 3)
+        c_hp_max = c_hp; t_hp_max = t_hp
+        log = [f"⚔️ *Pet Duel!*\n{c_sp.get('emoji','🐾')} {c_name} vs {t_sp.get('emoji','🐾')} {t_name}\n"]
+        elem_mult_c = _get_pet_element_mult(c_pet, t_pet)
+        elem_mult_t = _get_pet_element_mult(t_pet, c_pet)
+        rounds = 0
+        while c_hp > 0 and t_hp > 0 and rounds < 20:
+            rounds += 1
+            # Challenger attacks
+            c_atk = round(get_pet_atk_bonus(c_pet) * elem_mult_c * random.uniform(0.85,1.15))
+            skill_c, pskill_c = _pet_skill_check(c_pet)
+            if skill_c and pskill_c:
+                c_atk = round(c_atk * pskill_c["mult"])
+                log.append(f"Rnd {rounds}: {c_sp.get('emoji','🐾')} {c_name} {pskill_c['msg']} *{c_atk} dmg*!")
+            else:
+                log.append(f"Rnd {rounds}: {c_sp.get('emoji','🐾')} {c_name} strikes *{c_atk} dmg*!")
+            t_hp = max(0, t_hp - c_atk)
+            if t_hp <= 0: break
+            # Target attacks
+            t_atk = round(get_pet_atk_bonus(t_pet) * elem_mult_t * random.uniform(0.85,1.15))
+            skill_t, pskill_t = _pet_skill_check(t_pet)
+            if skill_t and pskill_t:
+                t_atk = round(t_atk * pskill_t["mult"])
+                log.append(f"       {t_sp.get('emoji','🐾')} {t_name} {pskill_t['msg']} *{t_atk} dmg*!")
+            else:
+                log.append(f"       {t_sp.get('emoji','🐾')} {t_name} strikes *{t_atk} dmg*!")
+            c_hp = max(0, c_hp - t_atk)
+        # Determine winner
+        if c_hp > t_hp:
+            winner_pet = c_pet; loser_pet = t_pet
+            winner_name = c_name; w_sp = c_sp
+        else:
+            winner_pet = t_pet; loser_pet = c_pet
+            winner_name = t_name; w_sp = t_sp
+        # Award EXP and bond
+        exp_gain  = 30 + winner_pet.get("level",1) * 2
+        bond_gain = 10
+        winner_pet["exp"]        = winner_pet.get("exp",0) + exp_gain
+        winner_pet["bond_score"] = winner_pet.get("bond_score",0) + bond_gain
+        loser_pet["bond_score"]  = loser_pet.get("bond_score",0) + 3
+        save_pet(winner_pet); save_pet(loser_pet)
+        log.append(f"\n🏆 *{w_sp.get('emoji','🐾')} {winner_name}* wins!\n+{exp_gain} EXP | +{bond_gain} Bond")
+        # Keep log to last 12 lines to fit in Telegram message
+        display_log = log[:3] + ["..."] + log[-6:] if len(log) > 10 else log
+        await query.edit_message_text("\n".join(display_log), parse_mode="Markdown")
+
+# ── /combat Hub ────────────────────────────────────────────────────────────────
+_COMBAT_HUB_PAGES = [
+    # Page 1 — Direct Combat
+    [
+        [("⚔️ Attack (PvP)",  "combathub_attack"),  ("✨ Use Skill",    "combathub_skill")],
+        [("🏟️ Arena Duel",    "combathub_arena"),   ("🗡️ Duel (Wager)", "combathub_duel")],
+        [("🛡️ Defend",        "combathub_defend"),  ("💊 Heal",         "combathub_heal")],
+    ],
+    # Page 2 — Raids & War
+    [
+        [("🐉 Boss Raid",     "combathub_boss"),    ("⚔️ Guild War",    "combathub_war")],
+        [("🛡️ Guild Raid",   "combathub_raid"),    ("🗡️ Solo Raid",    "combathub_soloraid")],
+        [("👥 Raid Party",    "combathub_raidparty"),("📊 Combat Power", "combathub_cp")],
+    ],
+    # Page 3 — Exploration & Dungeons
+    [
+        [("🌍 Explore",       "combathub_explore"), ("🗡️ Encounter",    "combathub_encounter")],
+        [("🏚️ Dungeon",       "combathub_dungeon"), ("🔥 Dungeon Hard", "combathub_dungeonhard")],
+        [("💀 Dungeon Leg.",  "combathub_dungeonleg"),("🐾 Pet (battle)","combathub_petbattle")],
+    ],
+]
+
+def _combat_hub_markup(uid, page=1):
+    page  = max(1, min(page, len(_COMBAT_HUB_PAGES)))
+    rows  = []
+    for btn_row in _COMBAT_HUB_PAGES[page - 1]:
+        rows.append([InlineKeyboardButton(label, callback_data=f"{cb}_{uid}")
+                     for label, cb in btn_row])
+    rows.append(_hub_nav_row("combathub_", page, len(_COMBAT_HUB_PAGES), uid))
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return InlineKeyboardMarkup(rows)
+
+async def combat_hub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p    = get_player(user.id)
+    try: await update.message.delete()
+    except: pass
+    if not p:
+        await send_group(update, "Use /ascend first to join the RPG!", delay=9); return
+    hp_pct = p.get("hp", 1) / max(1, p.get("max_hp", 1))
+    hp_bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
+    cp     = calc_combat_power(p)
+    status = "💀 Defeated (30 min)" if is_defeated(p) else ("⚔️ Ready" if hp_pct > 0.50 else "🩸 Wounded")
+    text   = (
+        f"⚔️ *{p['username']}'s Combat Hub*\n\n"
+        f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
+        f"⚡ CP: {cp:,}  |  {status}\n\n"
+        f"Page 1: Direct  |  Page 2: Raids & War  |  Page 3: Exploration"
+    )
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
+        reply_markup=_combat_hub_markup(user.id, page=1))
+    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, 120))
+
+async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query  = update.callback_query
+    await query.answer()
+    uid    = query.from_user.id
+    data   = query.data
+    parts  = data.split("_")
+
+    # Page navigation
+    if data.startswith("combathub_pg_"):
+        try:
+            page    = int(parts[2])
+            req_uid = int(parts[3])
+        except (IndexError, ValueError): return
+        if uid != req_uid:
+            await query.answer("Not your hub.", show_alert=True); return
+        try: await query.edit_message_reply_markup(reply_markup=_combat_hub_markup(uid, page=page))
+        except: pass
+        return
+
+    action = parts[1] if len(parts) > 1 else ""
+    p      = get_player(uid)
+    if not p:
+        await query.answer("Register first.", show_alert=True); return
+
+    TIPS = {
+        "attack":     "⚔️ *Attack (PvP)*\nReply to a player's message and use */attack*, or use */attack* alone to open a target picker.",
+        "skill":      "✨ *Skills*\nUse */skill* to open your skill menu and pick a target. Skills deal class-specific damage and effects.",
+        "arena":      "🏟️ *Arena Duel*\nUse */arena @player [wager]* to challenge someone to a wager duel. Turn-based, winner takes the gold.",
+        "duel":       "🗡️ *Duel*\nUse */duel @player* for a quick public challenge fight in the group.",
+        "defend":     "🛡️ *Defend*\nUse */defend* to raise your shield before being hit. Use */defend core* with a Monster Core to upgrade it.",
+        "heal":       "💊 *Heal*\nUse */heal* to use a Health Potion. Priests can */heal @player* to heal others.",
+        "boss":       "🐉 *Boss Raid*\nBosses spawn automatically in chat. Use */attack* to hit it — all players share damage and rewards.",
+        "war":        "⚔️ *Guild War*\nUse */war* to declare guild war. Requires an active guild. All members can participate.",
+        "raid":       "🛡️ *Guild Raid*\nUse */raid* to start a guild raid. Use */raidstrike* to attack, */raidstatus* to check progress.",
+        "soloraid":   "🗡️ *Solo Raid*\nUse */soloraid* to take on a raid boss alone. Use */solostrike* to attack.",
+        "raidparty":  "👥 *Raid Party*\nUse */raidparty* to see your current raid party members and their status.",
+        "cp":         f"📊 *Your Combat Power*\n\nCP: *{calc_combat_power(p):,}*\n\nCP scales your damage — higher CP = harder hits. Build it with better gear, skills, enchants, and pets.",
+        "explore":    "🌍 *Explore*\nUse */explore* for an expedition — loot drops, random encounters, and wild pet encounters.",
+        "encounter":  "🗡️ *Encounter*\nRandom monsters appear during explore. Use the fight buttons — your pet joins automatically.",
+        "dungeon":    "🏚️ *Dungeon*\nUse */dungeon* for a dungeon run. Rooms include monsters, traps, puzzles, and treasure.",
+        "dungeonhard":"🔥 *Dungeon Hard*\nUse */dungeonhard* (Lv 15+). Better rewards, harder enemies.",
+        "dungeonleg": "💀 *Dungeon Legendary*\nUse */dungeonlegendary* (Lv 40+). The hardest dungeon — best loot in the game.",
+        "petbattle":  "🐾 *Pet (in battle)*\nYour active pet auto-attacks alongside you. Use */pethub* to manage your pet.",
+    }
+    tip = TIPS.get(action)
+    if tip:
+        try:
+            await query.edit_message_text(tip, parse_mode="Markdown",
+                                          reply_markup=query.message.reply_markup)
+        except Exception: pass
+
+# ── /social Hub ───────────────────────────────────────────────────────────────
+_SOCIAL_HUB_PAGES = [
+    # Page 1 — Relationships
+    [
+        [("💍 Marry",        "socialhub_info_marry"),    ("💔 Divorce",      "socialhub_info_divorce")],
+        [("🤝 Hold Hands",   "socialhub_info_holdhands"),("🔓 Release Hands","socialhub_info_releasehands")],
+        [("🔗 My Bonds",     "socialhub_bonds"),         ("👁️ Who's Online", "socialhub_who")],
+    ],
+    # Page 2 — Emotes
+    [
+        [("🫂 Hug",          "socialhub_info_hug"),      ("💋 Kiss",          "socialhub_info_kiss")],
+        [("👋 Wave",         "socialhub_info_wave"),     ("🖐 Pat",           "socialhub_info_pat")],
+        [("👉 Poke",         "socialhub_info_poke"),     ("👋 Slap",          "socialhub_info_slap")],
+        [("📣 Rumor",        "socialhub_info_rumor"),    ("📜 History",       "socialhub_info_history")],
+    ],
+    # Page 3 — Guilds & Alliances
+    [
+        [("🛡️ My Guild",    "socialhub_info_guild"),    ("📋 Guild List",    "socialhub_info_guildlist")],
+        [("🤝 Alliance",     "socialhub_info_alliance"), ("🏦 Guild Bank",    "socialhub_info_gbank")],
+        [("⚔️ Guild War",    "socialhub_info_guildwar"), ("📊 Guild Info",    "socialhub_info_guildinfo")],
+    ],
+    # Page 4 — Recognition
+    [
+        [("🏅 My Titles",    "socialhub_info_title"),    ("🌟 Influence",     "socialhub_influence")],
+        [("🎯 Bounties",     "socialhub_info_bounties"), ("🏆 Leaderboard",   "socialhub_rank")],
+        [("👥 Squad",        "socialhub_info_squad"),    ("🎁 Gift",          "socialhub_info_gift")],
+    ],
+]
+
+def _social_hub_markup(uid, page=1):
+    page  = max(1, min(page, len(_SOCIAL_HUB_PAGES)))
+    rows  = []
+    for btn_row in _SOCIAL_HUB_PAGES[page - 1]:
+        rows.append([InlineKeyboardButton(label, callback_data=cb if "{" not in cb else cb.format(uid=uid))
+                     for label, cb in btn_row])
+    rows.append(_hub_nav_row("socialhub_", page, len(_SOCIAL_HUB_PAGES), uid))
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return InlineKeyboardMarkup(rows)
+
+async def socialhub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p    = get_player(user.id)
+    try: await update.message.delete()
+    except: pass
+    if not p:
+        await send_group(update, "Use /ascend first to join!", delay=9); return
+    marriages  = _get_marriages(p)
+    hands_list = _get_holding_hands(p)
+    partner_line = ""
+    if marriages:
+        partner_line = "💍 " + ", ".join(f"*{m['name']}*" for m in marriages[:2]) + "\n"
+    if hands_list:
+        partner_line += "🤝 " + ", ".join(f"*{h['name']}*" for h in hands_list[:2]) + "\n"
+    guild_line = f"🛡️ Guild: *{p.get('guild_name', str(p.get('guild_id','')))}*\n" if p.get("guild_id") else ""
+    text = (
+        f"💬 *{p['username']}'s Social Hub*\n\n"
+        f"{partner_line}{guild_line}"
+        f"🌟 Influence: {safe_int(p.get('influence'))}\n\n"
+        f"Page 1: Relationships  |  Page 2: Emotes\n"
+        f"Page 3: Guilds  |  Page 4: Recognition"
+    )
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
+        reply_markup=_social_hub_markup(user.id, page=1))
+    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, 120))
+
+async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid   = query.from_user.id
+    data  = query.data
+    parts = data.split("_")
+    sub   = parts[1] if len(parts) > 1 else ""
+
+    # Page navigation
+    if data.startswith("socialhub_pg_"):
+        try:
+            page    = int(parts[2])
+            req_uid = int(parts[3])
+        except (IndexError, ValueError): return
+        if uid != req_uid:
+            await query.answer("Not your hub.", show_alert=True); return
+        try: await query.edit_message_reply_markup(reply_markup=_social_hub_markup(uid, page=page))
+        except: pass
+        return
+
+    TIPS = {
+        "marry":       ("💍 *Marry*", "Reply to someone and use */marry* to propose. They must accept.\nUse */divorce* to end a marriage."),
+        "divorce":     ("💔 *Divorce*", "Reply to your partner and use */divorce*."),
+        "holdhands":   ("🤝 *Hold Hands*", "Reply to someone and use */holdhands*.\nUse */releasehands* to let go."),
+        "releasehands":("🔓 *Release Hands*", "Use */releasehands* to stop holding hands with your current partner."),
+        "hug":         ("🫂 *Hug*", "Reply to someone and use */hug*."),
+        "kiss":        ("💋 *Kiss*", "Reply to someone and use */kiss*."),
+        "wave":        ("👋 *Wave*", "Use */wave* alone to wave at the group, or reply to wave at a specific player."),
+        "pat":         ("🖐 *Pat*", "Reply to someone and use */pat*."),
+        "poke":        ("👉 *Poke*", "Reply to someone and use */poke*."),
+        "slap":        ("👋 *Slap*", "Reply to someone and use */slap*."),
+        "rumor":       ("📣 *Rumor*", "Use */rumor [text]* to post a rumor in the group that other players will see."),
+        "history":     ("📜 *History*", "Use */history* to see your recent combat log — wins, losses, and notable events."),
+        "guild":       ("🛡️ *Guild*", "*/guild* — view your guild\n*/guildcreate [name]* — create\n*/guildjoin [name]* — apply\n*/guildinfo* — stats\n*/guilddonate [amt]* — donate\n*/guildkick @user* — kick\n*/guildleave* — leave\n*/guilddisband* — disband"),
+        "guildlist":   ("📋 *Guild List*", "Use */guildlist* to see all active guilds and their member counts."),
+        "alliance":    ("🤝 *Alliance*", "Use */alliance* to manage inter-guild alliances. Allied guilds can't attack each other."),
+        "gbank":       ("🏦 *Guild Bank*", "Use */gbank* to view and interact with your guild's shared gold vault."),
+        "guildwar":    ("⚔️ *Guild War*", "Use */guildwar @guild* to declare war. All guild members join the fight."),
+        "guildinfo":   ("📊 *Guild Info*", "Use */guildinfo* to view your guild's stats, members, and vault."),
+        "title":       ("🏅 *Titles*", "Use */title* to browse and equip earned titles. Titles display next to your name."),
+        "bounties":    ("🎯 *Bounties*", "*/bounties* — see the board\n*/bounty @player [amt]* — place a bounty\nKill a wanted player to collect."),
+        "squad":       ("👥 *Squad*", "Use */squad* to manage your squad. Members share EXP bonuses on group activities."),
+        "gift":        ("🎁 *Gift*", "Reply to a player and use */gift [item]* or */gift [amount]g* to send items or gold."),
+    }
+
+    if sub == "info":
+        cmd_key = parts[2] if len(parts) > 2 else ""
+        tip = TIPS.get(cmd_key)
+        if tip:
+            try:
+                await query.edit_message_text(f"{tip[0]}\n\n{tip[1]}", parse_mode="Markdown",
+                                              reply_markup=query.message.reply_markup)
+            except Exception: pass
+        return
+
+    if sub == "bonds":
+        try:
+            rows = _bonds_fetch_rows()
+            await query.edit_message_text(_bonds_build_page(rows, 1), parse_mode="Markdown",
+                                          reply_markup=query.message.reply_markup)
+        except Exception: pass
+        return
+
+    if sub == "who":
+        c = _db().cursor()
+        c.execute("SELECT username, level, last_active FROM players "
+                  "ORDER BY last_active DESC LIMIT 15")
+        rows  = [dict(r) for r in c.fetchall()]
+        lines = ["👁️ *Who's Online — Recently Active*\n"]
+        now   = datetime.now()
+        for r in rows:
+            try:
+                mins = int((now - datetime.fromisoformat(r["last_active"])).total_seconds() / 60)
+                when = f"{mins}m ago" if mins < 60 else f"{mins//60}h ago"
+            except Exception:
+                when = "recently"
+            lines.append(f"• *{r['username']}* Lv{r['level']} — {when}")
+        try:
+            await query.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                                          reply_markup=query.message.reply_markup)
+        except Exception: pass
+        return
+
+    if sub == "influence":
+        p = get_player(uid)
+        if not p: return
+        inf  = safe_int(p.get("influence"))
+        tier = ("🌑 Shadow" if inf < 10 else "🌟 Rising" if inf < 50 else
+                "⭐ Notable" if inf < 150 else "💫 Renowned" if inf < 300 else "🌠 Legendary")
+        try:
+            await query.edit_message_text(
+                f"🌟 *{p['username']}'s Influence: {inf}* — {tier}\n\n"
+                f"Earned through PvP wins, boss kills, bounty claims, and guild wars.",
+                parse_mode="Markdown", reply_markup=query.message.reply_markup)
+        except Exception: pass
+        return
+
+    if sub == "rank":
+        c = _db().cursor()
+        c.execute("SELECT user_id, username, level, wins FROM players ORDER BY level DESC, wins DESC LIMIT 10")
+        rows   = [dict(r) for r in c.fetchall()]
+        medals = {1:"🥇", 2:"🥈", 3:"🥉"}
+        lines  = ["🏆 *Leaderboard — Top Players*\n"]
+        for i, r in enumerate(rows, 1):
+            me = " ← you" if r["user_id"] == uid else ""
+            lines.append(f"{medals.get(i,str(i)+'.')} *{r['username']}* — Lv {r['level']} | {r['wins']} wins{me}")
+        try:
+            await query.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                                          reply_markup=query.message.reply_markup)
+        except Exception: pass
+        return
+
+
+# ── GEAR HUB ─────────────────────────────────────────────────────────────────
+_GEAR_HUB_TIPS = {
+    "inv":       ("🎒 *Inventory*",      "Use */inventory* to browse your bag by category. Tap 💰 Sell to sell items directly."),
+    "gear":      ("⚔️ *Gear*",           "Use */gear* to view all your currently equipped items and their stats."),
+    "equip":     ("👕 *Equip*",           "Use */equip* to browse your bag and tap items to equip them."),
+    "unequip":   ("❌ *Unequip*",         "Use */unequip* to remove equipped gear. Tap the slot you want to clear."),
+    "shop":      ("🏪 *Shop*",            "Use */shop* for the full tabbed item shop — weapons, armor, accessories, and consumables."),
+    "sell":      ("💰 *Sell*",            "Use */sell* or */sell [rarity]* to bulk-sell items from your bag."),
+    "enhance":   ("✨ *Enhance*",         "Use */enhance* to upgrade gear +1 to +10 using Iron Shards. Higher levels can fail."),
+    "reinforce": ("🔩 *Reinforce*",       "Use */reinforce* — sacrifice a duplicate item to raise its base stats permanently. Up to ★★★."),
+    "forge":     ("⚒️ *Forge*",          "Use */forge* to craft items from materials like Iron Shards. View available recipes."),
+    "perma":     ("💎 *Perma Enchant*",   "Use */perma* to apply a permanent enchant to a piece of gear. Requires special materials."),
+    "enchant":   ("🔮 *Enchant*",         "Use */enchant* to add random enchants to gear via Enchanting Scrolls (up to 3 per item)."),
+    "pool":      ("🎱 *Pool*",            "Use */pool* for a quick round — earns EXP, gold, and loot. 8-second cooldown."),
+    "trade":     ("🤝 *Trade*",           "Reply to a player and use */trade* to open the trade menu. Pick item + price. They type */accept*."),
+    "accept":    ("✅ *Accept Trade*",    "Use */accept* to accept a pending trade offer from another player."),
+    "decline":   ("❌ *Decline Trade*",   "Use */decline* to reject a pending trade offer."),
+    "deposit":   ("🏦 *Deposit*",         "Use */deposit [amount]* to deposit gold into your guild bank."),
+    "withdraw":  ("💵 *Withdraw*",        "Use */withdraw [amount]* to take gold from your guild bank (leader/officer only)."),
+    "cp":        ("📊 *Combat Power*",    "Open the */combat* hub and tap Combat Power to see your CP score. Higher CP = higher damage scaling."),
+    "permpool":  ("🔁 *Perma Pool*",      "Use */pool* to roll for EXP, gold, and loot. Permanent upgrades accumulate automatically over time."),
+}
+
+_GEAR_HUB_PAGES = [
+    # Page 1 — Equipment
+    [
+        [("🎒 Inventory",  "gearhub_inv"),      ("⚔️ Gear",          "gearhub_gear")],
+        [("👕 Equip",       "gearhub_equip"),    ("❌ Unequip",        "gearhub_unequip")],
+        [("🏪 Shop",        "gearhub_shop"),     ("💰 Sell",           "gearhub_sell")],
+    ],
+    # Page 2 — Upgrades
+    [
+        [("✨ Enhance",     "gearhub_enhance"),  ("🔩 Reinforce",      "gearhub_reinforce")],
+        [("⚒️ Forge",      "gearhub_forge"),    ("💎 Perma",           "gearhub_perma")],
+        [("🔮 Enchant",     "gearhub_enchant"),  ("🎱 Pool",            "gearhub_pool")],
+    ],
+    # Page 3 — Economy
+    [
+        [("🤝 Trade",       "gearhub_trade"),    ("✅ Accept Trade",    "gearhub_accept"),   ("❌ Decline", "gearhub_decline")],
+        [("🏦 Deposit",     "gearhub_deposit"),  ("💵 Withdraw",        "gearhub_withdraw")],
+        [("📊 Combat Power","gearhub_cp"),        ("🔁 Perma Pool",      "gearhub_permpool")],
+    ],
+]
+
+def _gearhub_markup(uid: int, page: int = 1) -> InlineKeyboardMarkup:
+    total = len(_GEAR_HUB_PAGES)
+    page  = max(1, min(page, total))
+    rows  = []
+    for btn_row in _GEAR_HUB_PAGES[page - 1]:
+        rows.append([InlineKeyboardButton(lbl, callback_data=f"{cb}_{uid}") for lbl, cb in btn_row])
+    rows.append(_hub_nav_row("gearhub_", page, total, uid))
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return InlineKeyboardMarkup(rows)
+
+async def gearhub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    try: await update.message.delete()
+    except: pass
+    if not p:
+        await send_group(update, "Use /ascend first to join!", delay=9); return
+    text = (
+        f"⚔️ *{p['username']}'s Gear Hub*\n\n"
+        f"Page 1: Equipment  |  Page 2: Upgrades\n"
+        f"Page 3: Economy"
+    )
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
+        reply_markup=_gearhub_markup(user.id, page=1))
+    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, 120))
+
+async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid   = query.from_user.id
+    data  = query.data
+    parts = data.split("_")
+
+    if data.startswith("gearhub_pg_"):
+        try:
+            page    = int(parts[2])
+            req_uid = int(parts[3])
+        except (IndexError, ValueError): return
+        if uid != req_uid:
+            await query.answer("Not your hub.", show_alert=True); return
+        try: await query.edit_message_reply_markup(reply_markup=_gearhub_markup(uid, page=page))
+        except: pass
+        return
+
+    # Ownership check for action buttons (format: gearhub_{action}_{uid})
+    try:
+        req_uid = int(parts[-1])
+    except (IndexError, ValueError):
+        req_uid = 0
+    if uid != req_uid:
+        await query.answer("Not your hub.", show_alert=True); return
+
+    action = parts[1] if len(parts) > 1 else ""
+    tip = _GEAR_HUB_TIPS.get(action)
+    if tip:
+        try:
+            await query.edit_message_text(f"{tip[0]}\n\n{tip[1]}", parse_mode="Markdown",
+                                          reply_markup=query.message.reply_markup)
+        except Exception: pass
+
+# ── ACTIVITIES HUB ────────────────────────────────────────────────────────────
+_ACTIVITIES_HUB_PAGES = [
+    # Page 1 — Daily Activities
+    [
+        [("⚡ Hustle All",    "acthub_hustle"),     ("📅 Daily",          "acthub_daily")],
+        [("🎁 Claim",         "acthub_claim"),      ("🏋️ Train",         "acthub_train")],
+        [("📜 Quest",         "acthub_quest"),      ("🌍 Explore",        "acthub_explore")],
+    ],
+    # Page 2 — Challenges
+    [
+        [("🏚️ Dungeon",      "acthub_dungeon"),    ("🔥 Dungeon Hard",    "acthub_dungeonhard")],
+        [("💀 Dungeon Leg.",  "acthub_dungeonleg"), ("🔮 Oracle",          "acthub_oracle")],
+        [("🎯 Objectives",    "acthub_objectives"), ("⏱️ Cooldowns",      "acthub_cooldowns")],
+    ],
+    # Page 3 — Character
+    [
+        [("📊 Stats",         "acthub_stats"),      ("⬆️ Allocate",      "acthub_allocate")],
+        [("🎓 Class",         "acthub_class"),      ("⭐ Prestige",        "acthub_prestige")],
+        [("✨ Skills",         "acthub_skills"),     ("📋 Changelog",      "acthub_changelog")],
+    ],
+]
+
+_ACTIVITIES_HUB_TIPS = {
+    "hustle":      ("⚡ *Hustle All*",        "Use */hustle* to run all ready cooldowns at once — daily, train, quest, pool, claim, and explore."),
+    "daily":       ("📅 *Daily*",              "Use */daily* for your 24-hour gold + EXP reward. Consecutive-day streak bonuses apply."),
+    "claim":       ("🎁 *Claim*",              "Use */claim* for your daily streak reward — Iron Shards on Day 3+, Enchanting Scrolls on Day 14+."),
+    "train":       ("🏋️ *Train*",             "Use */train* to gain EXP. 30-minute cooldown. Class bonus applies."),
+    "quest":       ("📜 *Quest*",              "Use */quest* for EXP + gold + possible loot drop. 1-hour cooldown."),
+    "explore":     ("🌍 *Explore*",            "Use */explore* for the best loot drops and big EXP. 1-hour cooldown, 2× per day. Wild pet encounters possible."),
+    "dungeon":     ("🏚️ *Dungeon*",           "Use */dungeon* for a daily solo dungeon run — rooms, monsters, traps, and treasure."),
+    "dungeonhard": ("🔥 *Dungeon Hard*",       "Use */dungeonhard* (Lv 15+) for harder floors. Better rewards, tougher enemies."),
+    "dungeonleg":  ("💀 *Dungeon Legendary*",  "Use */dungeonlegendary* (Lv 40+) — the hardest dungeon. Best loot in the game."),
+    "oracle":      ("🔮 *Oracle*",             "Use */oracle* to receive a cryptic prophecy about upcoming events and world changes."),
+    "objectives":  ("🎯 *Objectives*",         "Use */objectives* to see your active daily objectives and current progress toward each."),
+    "cooldowns":   ("⏱️ *Cooldowns*",          "Use */cooldowns* to see how long until each activity is ready to run again."),
+    "stats":       ("📊 *Stats*",              "Use */stats* to see your full character profile — HP, ATK, DEF, gear, titles, and more."),
+    "allocate":    ("⬆️ *Allocate Stats*",    "Use */allocate [stat] [amount]* to spend stat points into STR, DEX, INT, WIS, LUK, or AGI."),
+    "class":       ("🎓 *Class*",              "Use */class* to view or change your class (Lv 5+)."),
+    "prestige":    ("⭐ *Prestige*",            "Use */prestige* to choose your Path A or Path B advanced class (Lv 10+)."),
+    "skills":      ("✨ *Skills*",              "Use */skill* to open your skill picker and select a target. Skills use class-specific effects."),
+    "changelog":   ("📋 *Changelog*",          "Use */changelog* to see recent game updates and patch notes."),
+}
+
+def _activities_hub_markup(uid: int, page: int = 1) -> InlineKeyboardMarkup:
+    total = len(_ACTIVITIES_HUB_PAGES)
+    page  = max(1, min(page, total))
+    rows  = []
+    for btn_row in _ACTIVITIES_HUB_PAGES[page - 1]:
+        rows.append([InlineKeyboardButton(lbl, callback_data=f"{cb}_{uid}") for lbl, cb in btn_row])
+    rows.append(_hub_nav_row("acthub_", page, total, uid))
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return InlineKeyboardMarkup(rows)
+
+async def activitieshub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    try: await update.message.delete()
+    except: pass
+    if not p:
+        await send_group(update, "Use /ascend first to join!", delay=9); return
+    text = (
+        f"🌍 *{p['username']}'s Activities Hub*\n\n"
+        f"Page 1: Daily Activities  |  Page 2: Challenges\n"
+        f"Page 3: Character"
+    )
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
+        reply_markup=_activities_hub_markup(user.id, page=1))
+    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, 120))
+
+async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid   = query.from_user.id
+    data  = query.data
+    parts = data.split("_")
+
+    if data.startswith("acthub_pg_"):
+        try:
+            page    = int(parts[2])
+            req_uid = int(parts[3])
+        except (IndexError, ValueError): return
+        if uid != req_uid:
+            await query.answer("Not your hub.", show_alert=True); return
+        try: await query.edit_message_reply_markup(reply_markup=_activities_hub_markup(uid, page=page))
+        except: pass
+        return
+
+    # Ownership check for action buttons (format: acthub_{action}_{uid})
+    try:
+        req_uid = int(parts[-1])
+    except (IndexError, ValueError):
+        req_uid = 0
+    if uid != req_uid:
+        await query.answer("Not your hub.", show_alert=True); return
+
+    action = parts[1] if len(parts) > 1 else ""
+    tip = _ACTIVITIES_HUB_TIPS.get(action)
+    if tip:
+        try:
+            await query.edit_message_text(f"{tip[0]}\n\n{tip[1]}", parse_mode="Markdown",
+                                          reply_markup=query.message.reply_markup)
+        except Exception: pass
+
+# ── EMPIRE (Master Hub) ───────────────────────────────────────────────────────
+def _empire_markup(uid: int) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton("⚔️ Combat",     callback_data=f"empire_combat_{uid}"),
+         InlineKeyboardButton("🌍 Activities", callback_data=f"empire_activities_{uid}")],
+        [InlineKeyboardButton("⚙️ Gear",       callback_data=f"empire_gear_{uid}"),
+         InlineKeyboardButton("💬 Social",     callback_data=f"empire_social_{uid}")],
+        [InlineKeyboardButton("🐾 Pet Hub",    callback_data=f"empire_pethub_{uid}")],
+        [InlineKeyboardButton("❌ Close",       callback_data=f"close_msg_{uid}")],
+    ]
+    return InlineKeyboardMarkup(rows)
+
+async def empire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    try: await update.message.delete()
+    except: pass
+    if not p:
+        await send_group(update, "Use /ascend first to join!", delay=9); return
+    text = (
+        f"🎱 *{p['username']}'s Empire*\n\n"
+        f"_Your master command center. One button for every hub._\n\n"
+        f"⚔️ Combat  |  🌍 Activities\n"
+        f"⚙️ Gear  |  💬 Social  |  🐾 Pet Hub"
+    )
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
+        reply_markup=_empire_markup(user.id))
+    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, 120))
+
+async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid   = query.from_user.id
+    data  = query.data
+    parts = data.split("_")
+
+    try: req_uid = int(parts[-1])
+    except (IndexError, ValueError): req_uid = 0
+    if uid != req_uid:
+        await query.answer("Not your menu.", show_alert=True); return
+
+    hub = parts[1] if len(parts) > 1 else ""
+    p   = get_player(uid)
+    if not p: return
+
+    if hub == "combat":
+        try:
+            await query.edit_message_text(
+                f"⚔️ *{p['username']}'s Combat Hub*\n\nPage 1: Direct  |  Page 2: Raids & War\nPage 3: Exploration",
+                parse_mode="Markdown", reply_markup=_combat_hub_markup(uid, page=1))
+        except Exception: pass
+
+    elif hub == "activities":
+        try:
+            await query.edit_message_text(
+                f"🌍 *{p['username']}'s Activities Hub*\n\nPage 1: Daily  |  Page 2: Challenges\nPage 3: Character",
+                parse_mode="Markdown", reply_markup=_activities_hub_markup(uid, page=1))
+        except Exception: pass
+
+    elif hub == "gear":
+        try:
+            await query.edit_message_text(
+                f"⚙️ *{p['username']}'s Gear Hub*\n\nPage 1: Equipment  |  Page 2: Upgrades\nPage 3: Economy",
+                parse_mode="Markdown", reply_markup=_gearhub_markup(uid, page=1))
+        except Exception: pass
+
+    elif hub == "social":
+        marriages  = _get_marriages(p)
+        hands_list = _get_holding_hands(p)
+        partner_line = ""
+        if marriages:
+            partner_line = "💍 " + ", ".join(f"*{m['name']}*" for m in marriages[:2]) + "\n"
+        if hands_list:
+            partner_line += "🤝 " + ", ".join(f"*{h['name']}*" for h in hands_list[:2]) + "\n"
+        text = (
+            f"💬 *{p['username']}'s Social Hub*\n\n"
+            f"{partner_line}"
+            f"🌟 Influence: {safe_int(p.get('influence'))}\n\n"
+            f"Page 1: Relationships  |  Page 2: Emotes\n"
+            f"Page 3: Guilds & Alliances  |  Page 4: Recognition"
+        )
+        try:
+            await query.edit_message_text(text, parse_mode="Markdown",
+                                          reply_markup=_social_hub_markup(uid, page=1))
+        except Exception: pass
+
+    elif hub == "pethub":
+        try:
+            pet = get_active_pet_record(uid)
+            await query.edit_message_text(
+                "🐾 *Pet Hub* — All things pets.\n_Page 1: Manage  |  Page 2: Care & Breeding  |  Page 3: Community_",
+                parse_mode="Markdown", reply_markup=_pethub_markup(uid, pet, page=1))
+        except Exception: pass
+
 
 async def guide_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -28648,6 +30018,8 @@ def main():
     app.add_handler(CommandHandler("petrename",    petrename_cmd))
     app.add_handler(CommandHandler("pettop",       pettop_cmd))
     app.add_handler(CommandHandler("petdex",       petdex_cmd))
+    app.add_handler(CommandHandler("pethub",      pethub_cmd))
+    app.add_handler(CommandHandler("combat",      combat_hub_cmd))
     app.add_handler(CommandHandler("weather",      weather_cmd))
     app.add_handler(CommandHandler("ascend",       ascend_cmd))
     app.add_handler(CommandHandler("cooldowns",    cooldowns_cmd))
@@ -28702,6 +30074,21 @@ def main():
     app.add_handler(CallbackQueryHandler(encounter_callback, pattern="^enc_"))
     app.add_handler(CallbackQueryHandler(dungeon_wiz_callback, pattern="^dng_"))
 
+    # Empire master hub
+    app.add_handler(CommandHandler("empire",       empire_cmd))
+    app.add_handler(CallbackQueryHandler(empire_callback, pattern="^empire_"))
+
+    # Gear hub
+    app.add_handler(CommandHandler("gearhub",      gearhub_cmd))
+    app.add_handler(CallbackQueryHandler(gearhub_callback, pattern="^gearhub_"))
+
+    # Activities hub
+    app.add_handler(CommandHandler("activities",   activitieshub_cmd))
+    app.add_handler(CallbackQueryHandler(activitieshub_callback, pattern="^acthub_"))
+
+    # Social hub
+    app.add_handler(CommandHandler("social",       socialhub_cmd))
+    app.add_handler(CallbackQueryHandler(socialhub_callback, pattern="^socialhub_"))
     # Marriage
     app.add_handler(CommandHandler("marry",        marry_cmd))
     app.add_handler(CommandHandler("divorce",      divorce_cmd))
@@ -28720,6 +30107,7 @@ def main():
     app.add_handler(CallbackQueryHandler(holdhands_callback,   pattern="^hh_(accept|decline)_"))
     app.add_handler(CallbackQueryHandler(releasehands_callback, pattern="^rh_pick_"))
     app.add_handler(CallbackQueryHandler(close_callback,   pattern="^close_msg"))
+    app.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern="^noop$"))
 
     # Combat & Dungeons
     app.add_handler(CommandHandler("duel",       duel_cmd))
@@ -28857,6 +30245,13 @@ def main():
     app.add_handler(CallbackQueryHandler(petcatch_callback,   pattern="^petcatch_"))
     app.add_handler(CallbackQueryHandler(pet_main_callback,
         pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petplay_|petrelease_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
+    app.add_handler(CallbackQueryHandler(pethub_callback,    pattern="^pethub_"))
+    app.add_handler(CallbackQueryHandler(petdaycare_callback, pattern="^petdaycare_"))
+    app.add_handler(CallbackQueryHandler(petretire_callback,  pattern="^petretire_"))
+    app.add_handler(CallbackQueryHandler(petbreed_callback,   pattern="^petbreed_"))
+    app.add_handler(CallbackQueryHandler(pettrade_callback,   pattern="^pettrade_"))
+    app.add_handler(CallbackQueryHandler(petduel_callback,    pattern="^petduel_"))
+    app.add_handler(CallbackQueryHandler(combat_hub_callback, pattern="^combathub_"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
