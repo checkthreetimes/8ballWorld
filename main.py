@@ -229,7 +229,7 @@ async def send_group(update: Update, text: str, parse_mode="Markdown",
             parse_mode=parse_mode, reply_markup=reply_markup),
         update.get_bot().delete_message(chat_id=chat_id, message_id=old_id)
             if old_id else asyncio.sleep(0),
-        update.message.delete(),
+        update.message.delete() if update.message else asyncio.sleep(0),
         return_exceptions=True
     )
     new_msg = results[0]
@@ -10328,7 +10328,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
     viewing_other = False
-    if update.message.reply_to_message:
+    if update.message and update.message.reply_to_message:
         target_uid = update.message.reply_to_message.from_user.id
         if target_uid != user.id:
             viewing_other = True
@@ -15145,10 +15145,9 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sk = all_skills[0]
             else:
                 markup = _build_skill_picker_keyboard(all_skills, user.id, 0)
-                await update.message.reply_text(
+                await send_group(update,
                     f"🔮 *vs {raid_state['enemy']['name']}* — choose a skill:",
-                    parse_mode="Markdown", reply_markup=markup)
-                await update.message.delete()
+                    reply_markup=markup, permanent=True)
                 return
 
         w = get_weather()
@@ -15225,16 +15224,15 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     boss_dict = active_bosses.get(chat_id) or secret_boss_active.get(chat_id)
     is_secret_boss = chat_id in secret_boss_active
     player_in_boss = boss_dict and user.id in [u["id"] for u in boss_dict["participants"]]
-    if (player_in_boss or (boss_dict and not update.message.reply_to_message)) and not raid_state:
+    if (player_in_boss or (boss_dict and not (update.message and update.message.reply_to_message))) and not raid_state:
         if sk is None:
             if len(all_skills) == 1:
                 sk = all_skills[0]
             else:
                 markup = _build_skill_picker_keyboard(all_skills, user.id, 0)
-                await update.message.reply_text(
+                await send_group(update,
                     f"🔮 *vs {boss_dict['data']['name']}* — choose a skill:",
-                    parse_mode="Markdown", reply_markup=markup)
-                await update.message.delete()
+                    reply_markup=markup, permanent=True)
                 return
 
         if user.id not in [u["id"] for u in boss_dict["participants"]]:
