@@ -24440,7 +24440,23 @@ async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 btn_rows.append([InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pid}")])
         else:
             btn_rows.append([InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pid}")])
+        # Job button state
+        job_end = pet.get("job_ends_at")
+        if job_end:
+            try:
+                jrem = (datetime.fromisoformat(job_end) - datetime.now()).total_seconds()
+                if jrem <= 0:
+                    job_btn = InlineKeyboardButton("💼 Claim Job!", callback_data=f"petjob_claim_{pid}")
+                else:
+                    jrm = f"{int(jrem//3600)}h {int((jrem%3600)//60)}m" if jrem >= 3600 else f"{int(jrem//60)}m"
+                    job_btn = InlineKeyboardButton(f"💼 Job ({jrm})", callback_data=f"petjob_status_{pid}")
+            except Exception:
+                job_btn = InlineKeyboardButton("💼 Send on Job", callback_data=f"petjob_pick_{pid}")
+        else:
+            job_btn = InlineKeyboardButton("💼 Send on Job", callback_data=f"petjob_pick_{pid}")
         btn_rows.append([InlineKeyboardButton("⚔️ Pet Battle", callback_data=f"petbattle_pick_{pid}"),
+                         job_btn])
+        btn_rows.append([InlineKeyboardButton("📝 Rename",   callback_data=f"petrename_{pid}"),
                          InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")])
         btn_rows.append([InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
                          InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")])
