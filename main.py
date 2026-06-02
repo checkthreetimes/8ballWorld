@@ -9583,14 +9583,14 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = chat_id
     du_id = None; du_name = None
 
-    if update.message.reply_to_message:
+    if update.message and update.message.reply_to_message:
         _du = update.message.reply_to_message.from_user
         du_id = _du.id; du_name = _du.first_name
     elif context.args:
         # Check for text_mention entity first \u2014 this fires for users without @handles.
         # A text_mention entity has entity.user.id even when the user has no @username.
         found = None
-        if update.message.entities:
+        if update.message and update.message.entities:
             for ent in update.message.entities:
                 if ent.type == "text_mention" and ent.user:
                     found = get_player(ent.user.id)
@@ -9899,7 +9899,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     h  = get_player(hu.id)
     if not h:
         await send_group(update, "Use /ascend first!", delay=9); return
-    if not update.message.reply_to_message:
+    if not (update.message and update.message.reply_to_message):
         # No reply — heal yourself
         tu = hu
         t  = h
@@ -15116,7 +15116,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "revive_heal", "self_heal_buff", "regen", "heal_shield",
     }
 
-    replying = update.message.reply_to_message is not None
+    replying = bool(update.message and update.message.reply_to_message)
 
     # Resolve which skill to use from args (name or number)
     sk = None
@@ -26238,32 +26238,39 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not p:
         await query.answer("Register first.", show_alert=True); return
 
-    TIPS = {
-        "attack":     "⚔️ *Attack (PvP)*\nReply to a player's message and use */attack*, or use */attack* alone to open a target picker.",
-        "skill":      "✨ *Skills*\nUse */skill* to open your skill menu and pick a target. Skills deal class-specific damage and effects.",
-        "arena":      "🏟️ *Arena Duel*\nUse */arena @player [wager]* to challenge someone to a wager duel. Turn-based, winner takes the gold.",
-        "duel":       "🗡️ *Duel*\nUse */duel @player* for a quick public challenge fight in the group.",
-        "defend":     "🛡️ *Defend*\nUse */defend* to raise your shield before being hit. Use */defend core* with a Monster Core to upgrade it.",
-        "heal":       "💊 *Heal*\nUse */heal* to use a Health Potion. Priests can */heal @player* to heal others.",
-        "boss":       "🐉 *Boss Raid*\nBosses spawn automatically in chat. Use */attack* to hit it — all players share damage and rewards.",
-        "war":        "⚔️ *Guild War*\nUse */war* to declare guild war. Requires an active guild. All members can participate.",
-        "raid":       "🛡️ *Guild Raid*\nUse */raid* to start a guild raid. Use */raidstrike* to attack, */raidstatus* to check progress.",
-        "soloraid":   "🗡️ *Solo Raid*\nUse */soloraid* to take on a raid boss alone. Use */solostrike* to attack.",
-        "raidparty":  "👥 *Raid Party*\nUse */raidparty* to see your current raid party members and their status.",
-        "cp":         f"📊 *Your Combat Power*\n\nCP: *{calc_combat_power(p):,}*\n\nCP scales your damage — higher CP = harder hits. Build it with better gear, skills, enchants, and pets.",
-        "explore":    "🌍 *Explore*\nUse */explore* for an expedition — loot drops, random encounters, and wild pet encounters.",
-        "encounter":  "🗡️ *Encounter*\nRandom monsters appear during explore. Use the fight buttons — your pet joins automatically.",
-        "dungeon":    "🏚️ *Dungeon*\nUse */dungeon* for a dungeon run. Rooms include monsters, traps, puzzles, and treasure.",
-        "dungeonhard":"🔥 *Dungeon Hard*\nUse */dungeonhard* (Lv 15+). Better rewards, harder enemies.",
-        "dungeonleg": "💀 *Dungeon Legendary*\nUse */dungeonlegendary* (Lv 40+). The hardest dungeon — best loot in the game.",
-        "petbattle":  "🐾 *Pet (in battle)*\nYour active pet auto-attacks alongside you. Use */pethub* to manage your pet.",
+    # Direct dispatch — run the real command so the existing menu/picker appears
+    DISPATCH = {
+        "attack":      attack_cmd,
+        "skill":       skill_cmd,
+        "defend":      defend_cmd,
+        "heal":        heal_cmd,
+        "raid":        raid_cmd,
+        "soloraid":    soloraid_cmd,
+        "raidparty":   raidparty_cmd,
+        "explore":     explore_cmd,
+        "dungeon":     dungeon_cmd,
+        "dungeonhard": dungeonhard_cmd,
+        "dungeonleg":  dungeonlegendary_cmd,
     }
-    tip = TIPS.get(action)
-    if tip:
+    POPUPS = {
+        "arena":      "Use /arena @player [wager] for a turn-based wager duel.",
+        "duel":       "Use /duel @player for a quick challenge fight.",
+        "boss":       "Bosses spawn in chat automatically. Use /attack to hit them.",
+        "war":        "Use /guildwar @guild to declare war on another guild.",
+        "cp":         f"Your Combat Power: {calc_combat_power(p):,}  ·  Higher CP = harder hits.",
+        "encounter":  "Random monsters appear during /explore. Use the fight buttons to engage.",
+        "petbattle":  "Your active pet auto-attacks alongside you every /attack and /skill.",
+    }
+    fn = DISPATCH.get(action)
+    if fn:
         try:
-            await query.edit_message_text(tip, parse_mode="Markdown",
-                                          reply_markup=query.message.reply_markup)
-        except Exception: pass
+            await fn(update, context)
+        except Exception:
+            pass
+        return
+    msg = POPUPS.get(action)
+    if msg:
+        await query.answer(msg[:200], show_alert=True)
 
 # ── /social Hub ───────────────────────────────────────────────────────────────
 _SOCIAL_HUB_PAGES = [
@@ -26380,10 +26387,8 @@ async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         cmd_key = parts[2] if len(parts) > 2 else ""
         tip = TIPS.get(cmd_key)
         if tip:
-            try:
-                await query.edit_message_text(f"{tip[0]}\n\n{tip[1]}", parse_mode="Markdown",
-                                              reply_markup=query.message.reply_markup)
-            except Exception: pass
+            plain = f"{tip[0].replace('*','').replace('_','').strip()}: {tip[1].replace('*','').replace('_','').strip()}"
+            await query.answer(plain[:200], show_alert=True)
         return
 
     if sub == "bonds":
@@ -26542,12 +26547,38 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Not your hub.", show_alert=True); return
 
     action = parts[1] if len(parts) > 1 else ""
-    tip = _GEAR_HUB_TIPS.get(action)
-    if tip:
+    DISPATCH = {
+        "inventory": inventory_cmd,
+        "gear":      gear_cmd,
+        "equip":     equip_cmd,
+        "unequip":   unequip_cmd,
+        "shop":      shop_cmd,
+        "sell":      sell_cmd,
+        "enhance":   enhance_cmd,
+        "reinforce": reinforce_cmd,
+        "forge":     forge_cmd,
+        "perma":     perma_cmd,
+        "enchant":   enchant_cmd,
+        "pool":      pool_cmd,
+        "accept":    accept_trade_cmd,
+        "decline":   decline_trade_cmd,
+        "deposit":   deposit_cmd,
+        "withdraw":  withdraw_cmd,
+    }
+    POPUPS = {
+        "trade": "Use /trade @player [item] to send a trade offer to another player.",
+        "cp":    f"Use /cp to check your Combat Power rating.",
+    }
+    fn = DISPATCH.get(action)
+    if fn:
         try:
-            await query.edit_message_text(f"{tip[0]}\n\n{tip[1]}", parse_mode="Markdown",
-                                          reply_markup=query.message.reply_markup)
-        except Exception: pass
+            await fn(update, context)
+        except Exception:
+            pass
+        return
+    msg = POPUPS.get(action)
+    if msg:
+        await query.answer(msg[:200], show_alert=True)
 
 # ── ACTIVITIES HUB ────────────────────────────────────────────────────────────
 _ACTIVITIES_HUB_PAGES = [
@@ -26646,12 +26677,38 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("Not your hub.", show_alert=True); return
 
     action = parts[1] if len(parts) > 1 else ""
-    tip = _ACTIVITIES_HUB_TIPS.get(action)
-    if tip:
+    DISPATCH = {
+        "hustle":      hustle_cmd,
+        "daily":       daily_cmd,
+        "claim":       claim_cmd,
+        "train":       train_cmd,
+        "quest":       quest_cmd,
+        "explore":     explore_cmd,
+        "dungeon":     dungeon_cmd,
+        "dungeonhard": dungeonhard_cmd,
+        "dungeonleg":  dungeonlegendary_cmd,
+        "oracle":      oracle_cmd,
+        "objectives":  objectives_cmd,
+        "cooldowns":   cooldowns_cmd,
+        "stats":       stats_cmd,
+        "class":       class_cmd,
+        "prestige":    prestige_cmd,
+        "skills":      skill_cmd,
+        "changelog":   changelog_cmd,
+    }
+    POPUPS = {
+        "allocate": "Use /allocate [stat] [amount] to spend stat points — e.g. /allocate STR 5",
+    }
+    fn = DISPATCH.get(action)
+    if fn:
         try:
-            await query.edit_message_text(f"{tip[0]}\n\n{tip[1]}", parse_mode="Markdown",
-                                          reply_markup=query.message.reply_markup)
-        except Exception: pass
+            await fn(update, context)
+        except Exception:
+            pass
+        return
+    msg = POPUPS.get(action)
+    if msg:
+        await query.answer(msg[:200], show_alert=True)
 
 # ── EMPIRE (Master Hub) ───────────────────────────────────────────────────────
 def _empire_markup(uid: int) -> InlineKeyboardMarkup:
