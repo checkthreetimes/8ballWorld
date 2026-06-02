@@ -155,6 +155,7 @@ ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
 _megaphone_state   = {"group": None}  # last known group chat ID for /megaphone DMs
 _broadcast_quest   = None   # {"id": str, "phrase": str, "exp": int, "expires": float}
 _broadcast_claims  = set()  # user_ids who already claimed the active broadcast quest
+_wild_pet_offers   = {}     # uid -> {"species": str, "expires": float}
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
@@ -2576,6 +2577,31 @@ PET_EGG_POOLS = {
     "Mythic Egg":   {"epic":0.40,"legendary":0.45,"mythic":0.15},
 }
 
+# Elemental advantage table: strong_against → bonus; weak_against → penalty
+ELEMENT_MATCHUPS = {
+    "fire":      {"strong": "nature",    "weak": "water"},
+    "water":     {"strong": "fire",      "weak": "lightning"},
+    "lightning": {"strong": "water",     "weak": "earth"},
+    "earth":     {"strong": "lightning", "weak": "nature"},
+    "nature":    {"strong": "earth",     "weak": "fire"},
+    "shadow":    {"strong": "holy",      "weak": "void"},
+    "void":      {"strong": "shadow",    "weak": "holy"},
+    "holy":      {"strong": "void",      "weak": "shadow"},
+    "wind":      {"strong": "earth",     "weak": "lightning"},
+}
+
+# Personality → ATK multiplier in combat
+PERSONALITY_ATK_MOD = {
+    "fierce":      1.15,  # +15% — aggressive striker
+    "mischievous": 1.08,  # +8%  — sneaky hits land harder
+    "loyal":       1.05,  # +5%  — steady and reliable
+    "lazy":        0.90,  # -10% — doesn't put in full effort
+    "calm":        1.00,
+    "playful":     1.00,
+    "timid":       1.00,
+    "greedy":      1.00,
+}
+
 def _hatch_species(egg_name):
     """Pick a random species from egg pool, weighted by rarity."""
     pool = PET_EGG_POOLS.get(egg_name)
@@ -2601,6 +2627,11 @@ def get_pet_atk_bonus(pet):
     base += _get_bond_atk_bonus(pet)
     evo = pet.get("evolution_stage", 0)
     if evo > 0: base += evo * 8
+    # Personality modifier
+    pers = sp.get("personality", "calm")
+    base = round(base * PERSONALITY_ATK_MOD.get(pers, 1.0))
+    # Shiny bonus: +10% ATK
+    if pet.get("is_shiny"): base = round(base * 1.10)
     hunger = pet.get("hunger", 100)
     mood   = pet.get("mood", 100)
     # Well-fed AND happy: +25% bonus (reward for good care)
@@ -2709,9 +2740,12 @@ def _build_pet_card(pet):
     exp_bar_pct = min(1.0, exp / max(1, exp_needed))
     exp_bar     = "█" * int(exp_bar_pct * 8) + "░" * (8 - int(exp_bar_pct * 8))
 
+    shiny_badge = " ✨ *SHINY*" if pet.get("is_shiny") else ""
+    pers_mod = PERSONALITY_ATK_MOD.get(pers, 1.0)
+    pers_note = (" _(+ATK)_" if pers_mod > 1.0 else " _(-ATK)_" if pers_mod < 1.0 else "")
     lines = [
-        f"{emoji} *{dname}*  {rar_e} {rar.capitalize()}",
-        f"{elem_e} {elem.capitalize()}  |  {pers_e} {pers.capitalize()}",
+        f"{emoji} *{dname}*{shiny_badge}  {rar_e} {rar.capitalize()}",
+        f"{elem_e} {elem.capitalize()}  |  {pers_e} {pers.capitalize()}{pers_note}",
         f"_{sp.get('desc','')}_",
         "",
         f"*Level {lvl}*",
@@ -4528,14 +4562,14 @@ SOLO_QUESTS = [
 RANDOM_EVENTS = [
     {"key":"traveler","freq":"common",
      "msg":"🎱 *A Road Player has set up at the far table.*\nFirst to /greet gets a tip and something useful.",
-     "exp":300,"loot_table":[("Health Potion",0.40),("Iron Shard",0.20),("Iron Shard Ring",0.20),("Scout's Pendant",0.20)]},
+     "exp":1500,"loot_table":[("Health Potion",0.40),("Iron Shard",0.20),("Iron Shard Ring",0.20),("Scout's Pendant",0.20)]},
     {"key":"bandit","freq":"common",
-     "msg":"🗡️ *A rogue warrior who lost badly is looking for someone to blame.* 150 HP. Use /fight. Take them down for +250 EXP.",
-     "enemy_hp":150,"exp_reward":250,
+     "msg":"🗡️ *A rogue warrior who lost badly is looking for someone to blame.* 150 HP. Use /fight. Take them down for +1250 EXP.",
+     "enemy_hp":150,"exp_reward":1250,
      "loot_table":[("Health Potion",0.30),("Rusty Shiv",0.15),("Brass Ring",0.10)]},
     {"key":"ghost","freq":"common",
-     "msg":"👻 *Something that used to wander here doesn't know it's gone.* 200 HP. Use /shoot to send it off. +300 EXP.",
-     "enemy_hp":200,"exp_reward":300,
+     "msg":"👻 *Something that used to wander here doesn't know it's gone.* 200 HP. Use /shoot to send it off. +1500 EXP.",
+     "enemy_hp":200,"exp_reward":1500,
      "loot_table":[("Greater Health Potion",0.20),("Worn Leather Band",0.15)]},
     {"key":"merchant","freq":"uncommon",
      "msg":"🛍️ *A traveling merchant just arrived.*\n/greet them for 20% off at the shop for 30m.",
@@ -4544,7 +4578,7 @@ RANDOM_EVENTS = [
      "msg":"⚔️ *Someone walked in looking for action.*\nFirst to /fight claims the table. Winner gets bonus EXP and gold."},
     {"key":"drake","freq":"uncommon",
      "msg":"🎱 *A legendary raider just walked in uninvited.* 500 HP. Reply with /strike to run them off. Rewards split by damage dealt.",
-     "enemy_hp":500,"exp_reward":1000,
+     "enemy_hp":500,"exp_reward":5000,
      "loot_table":[("Iron Shard",0.50),("Enchanting Scroll",0.20),("Scroll of Revival",0.10)]},
     {"key":"cache","freq":"uncommon",
      "msg":"💰 *Someone left a bag in the corner and didn't come back.*\nFirst to /claim gets what's inside.",
@@ -7351,7 +7385,8 @@ def init_db():
     # Migrate existing pets table with new columns
     try:
         for col, typedef in [("bond_score","INTEGER DEFAULT 0"), ("adventure_ends_at","TEXT"),
-                              ("last_battle","TEXT"), ("evolution_stage","INTEGER DEFAULT 0")]:
+                              ("last_battle","TEXT"), ("evolution_stage","INTEGER DEFAULT 0"),
+                              ("is_shiny","INTEGER DEFAULT 0"), ("job_ends_at","TEXT")]:
             try:
                 _pets_conn.execute(f"ALTER TABLE pets ADD COLUMN {col} {typedef}")
                 _pets_conn.commit()
@@ -11622,6 +11657,29 @@ async def explore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 asyncio.create_task(announce(bot, chat_id,
                     f"🎉 *{pp['username']}* reached *Level {pp['level']}* from exploring! 🗺️",
                     delay=60))
+            # 5% chance: wild pet encounter
+            if random.random() < 0.05:
+                _zone_elem = zone.get("element", None)
+                _wild_candidates = [sid for sid, sd in PET_SPECIES.items()
+                                    if sd["rarity"] in ("common","uncommon","rare")
+                                    and (not _zone_elem or sd.get("element") == _zone_elem)]
+                if not _wild_candidates:
+                    _wild_candidates = [sid for sid, sd in PET_SPECIES.items() if sd["rarity"] in ("common","uncommon")]
+                _wild_sid = random.choice(_wild_candidates)
+                _wild_sp  = PET_SPECIES[_wild_sid]
+                _wild_pet_offers[user.id] = {"species": _wild_sid, "expires": time.time() + 120}
+                _rar_e = RARITY_EMOJI.get(_wild_sp["rarity"],""); _elem_e = ELEMENT_EMOJI.get(_wild_sp["element"],"")
+                _catch_markup = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(f"🥚 Catch {_wild_sp['name']}!", callback_data=f"petcatch_{user.id}_{_wild_sid}")
+                ]])
+                try:
+                    _cm = await bot.send_message(chat_id,
+                        f"🐾 *A wild {_wild_sp['emoji']} {_wild_sp['name']} appeared during the expedition!*\n"
+                        f"{_rar_e} {_wild_sp['rarity'].capitalize()}  |  {_elem_e} {_wild_sp['element'].capitalize()}\n\n"
+                        f"_{_wild_sp['desc']}_\n\n"
+                        f"⏳ *2 minutes* to catch it!", parse_mode="Markdown", reply_markup=_catch_markup)
+                    asyncio.create_task(_auto_delete(bot, chat_id, _cm.message_id, 120))
+                except Exception: pass
         else:
             cons = random.randint(5,20)
             pp["gold"] = pp.get("gold",0) + cons; save_player(pp)
@@ -24425,6 +24483,48 @@ def _build_petshop_menu(p):
     ])
     return text, markup
 
+async def petcatch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle 🥚 Catch wild pet button from explore encounters."""
+    query = update.callback_query
+    user  = query.from_user
+    parts = query.data.split("_")  # petcatch_{owner_uid}_{species_id}
+    try: owner_uid = int(parts[1]); species_id = "_".join(parts[2:])
+    except (IndexError, ValueError): await query.answer(); return
+    if user.id != owner_uid:
+        await query.answer("That's not your wild encounter!", show_alert=True); return
+    offer = _wild_pet_offers.get(owner_uid)
+    if not offer or offer.get("species") != species_id:
+        await query.answer("That wild pet already fled!", show_alert=True); return
+    if offer.get("expires", 0) < time.time():
+        _wild_pet_offers.pop(owner_uid, None)
+        await query.answer("It got away — too slow!", show_alert=True); return
+    _wild_pet_offers.pop(owner_uid, None)
+    sp = PET_SPECIES.get(species_id)
+    if not sp: await query.answer("Unknown species.", show_alert=True); return
+    is_shiny = random.random() < 0.01  # 1% shiny for wild catches
+    new_pet = {
+        "owner_id": owner_uid, "species": species_id,
+        "nickname": None, "level": 1, "exp": 0,
+        "hunger": 70, "mood": 70,
+        "last_fed": None, "last_trained": None,
+        "is_active": 0, "created_at": datetime.now().isoformat(),
+        "is_shiny": 1 if is_shiny else 0,
+    }
+    all_pets = get_all_pets(owner_uid)
+    if not any(p.get("is_active") for p in all_pets):
+        new_pet["is_active"] = 1
+    save_pet(new_pet)
+    rar_e = RARITY_EMOJI.get(sp["rarity"],""); elem_e = ELEMENT_EMOJI.get(sp["element"],"")
+    shiny_line = " ✨ *SHINY!*" if is_shiny else ""
+    await query.edit_message_text(
+        f"🥚 *Caught!*{shiny_line}\n\n"
+        f"{sp['emoji']} *{sp['name']}* joined your team!\n"
+        f"{rar_e} {sp['rarity'].capitalize()}  |  {elem_e} {sp['element'].capitalize()}\n\n"
+        f"_{sp['desc']}_",
+        parse_mode="Markdown")
+    await query.answer(f"Caught {sp['name']}!")
+
+
 async def petshop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user  = query.from_user
@@ -24471,12 +24571,14 @@ async def hatch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not species_id:
         await send_group(update, "❌ The egg crumbled. Nothing hatched.", delay=10); return
     sp = PET_SPECIES[species_id]
+    is_shiny = random.random() < 0.02
     new_pet = {
         "owner_id": user.id, "species": species_id,
         "nickname": None, "level": 1, "exp": 0,
         "hunger": 100, "mood": 100,
         "last_fed": None, "last_trained": None,
         "is_active": 0, "created_at": datetime.now().isoformat(),
+        "is_shiny": 1 if is_shiny else 0,
     }
     # Auto-activate if no active pet
     all_pets = get_all_pets(user.id)
@@ -24485,9 +24587,10 @@ async def hatch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_pet(new_pet)
     rar_e = RARITY_EMOJI.get(sp["rarity"],"")
     elem_e = ELEMENT_EMOJI.get(sp["element"],"")
+    shiny_line = "\n✨ *✨ SHINY! ✨* This is incredibly rare! +10% permanent ATK bonus!" if is_shiny else ""
     active_note = " They're now your active companion!" if new_pet["is_active"] else " Use /pet → All Pets to activate them."
     text = (f"🥚 *Hatch!*\n\n"
-            f"{sp['emoji']} *{sp['name']}* appeared!\n"
+            f"{sp['emoji']} *{sp['name']}* appeared!{shiny_line}\n"
             f"{rar_e} {sp['rarity'].capitalize()}  |  {elem_e} {sp['element'].capitalize()}\n\n"
             f"_{sp['desc']}_\n\n"
             f"Base ATK: +{sp['base_atk']}  |  Base DEF: +{sp['base_def']}\n"
@@ -24517,12 +24620,14 @@ async def hatch_egg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not species_id:
         await query.answer("❌ The egg crumbled. Nothing hatched.", show_alert=True); return
     sp = PET_SPECIES[species_id]
+    is_shiny = random.random() < 0.02
     new_pet = {
         "owner_id": user.id, "species": species_id,
         "nickname": None, "level": 1, "exp": 0,
         "hunger": 100, "mood": 100,
         "last_fed": None, "last_trained": None,
         "is_active": 0, "created_at": datetime.now().isoformat(),
+        "is_shiny": 1 if is_shiny else 0,
     }
     all_pets = get_all_pets(user.id)
     if not any(pet.get("is_active") for pet in all_pets):
@@ -24530,9 +24635,10 @@ async def hatch_egg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     save_pet(new_pet)
     rar_e  = RARITY_EMOJI.get(sp["rarity"],"")
     elem_e = ELEMENT_EMOJI.get(sp["element"],"")
+    shiny_line = "\n✨ *✨ SHINY! ✨* This is incredibly rare! +10% permanent ATK bonus!" if is_shiny else ""
     active_note = " Now your active companion!" if new_pet["is_active"] else " Activate via /pet → All Pets."
     text = (f"🥚 *Hatch!*\n\n"
-            f"{sp['emoji']} *{sp['name']}* appeared!\n"
+            f"{sp['emoji']} *{sp['name']}* appeared!{shiny_line}\n"
             f"{rar_e} {sp['rarity'].capitalize()}  |  {elem_e} {sp['element'].capitalize()}\n\n"
             f"_{sp['desc']}_\n\n"
             f"Base ATK: +{sp['base_atk']}  |  Base DEF: +{sp['base_def']}\n"
@@ -24571,12 +24677,27 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     adv_btn = InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pid}")
             else:
                 adv_btn = InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pid}")
+            # Job button state
+            job_end = pet.get("job_ends_at")
+            if job_end:
+                try:
+                    _jrem = (datetime.fromisoformat(job_end) - datetime.now()).total_seconds()
+                    if _jrem <= 0:
+                        job_btn = InlineKeyboardButton("💼 Claim Job!", callback_data=f"petjob_claim_{pid}")
+                    else:
+                        _jrm = f"{int(_jrem//3600)}h {int((_jrem%3600)//60)}m" if _jrem >= 3600 else f"{int(_jrem//60)}m"
+                        job_btn = InlineKeyboardButton(f"💼 Job ({_jrm})", callback_data=f"petjob_status_{pid}")
+                except Exception:
+                    job_btn = InlineKeyboardButton("💼 Job", callback_data=f"petjob_pick_{pid}")
+            else:
+                job_btn = InlineKeyboardButton("💼 Send on Job", callback_data=f"petjob_pick_{pid}")
             markup = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🍖 Feed",    callback_data=f"petfeed_{pid}"),
                  InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pid}"),
                  InlineKeyboardButton("🎮 Play",    callback_data=f"petplay_{pid}")],
                 [InlineKeyboardButton("⚔️ Pet Battle", callback_data=f"petbattle_pick_{pid}"),
                  adv_btn],
+                [job_btn],
                 [InlineKeyboardButton("📝 Rename",  callback_data=f"petrename_{pid}"),
                  InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")],
                 [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
@@ -24974,6 +25095,18 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      + my_sp.get("base_def",3) + random.randint(1,20))
         opp_score = (opp_sp.get("base_atk",5) + opp_pet["level"] * 2 + opp_pet.get("bond_score",0) // 10
                      + opp_sp.get("base_def",3) + random.randint(1,20))
+        # Elemental matchup bonus/penalty
+        my_elem  = my_sp.get("element","")
+        opp_elem = opp_sp.get("element","")
+        _my_mu  = ELEMENT_MATCHUPS.get(my_elem,{})
+        _opp_mu = ELEMENT_MATCHUPS.get(opp_elem,{})
+        if _my_mu.get("strong") == opp_elem:  my_score  = round(my_score  * 1.20)
+        if _my_mu.get("weak")   == opp_elem:  my_score  = round(my_score  * 0.85)
+        if _opp_mu.get("strong") == my_elem:  opp_score = round(opp_score * 1.20)
+        if _opp_mu.get("weak")   == my_elem:  opp_score = round(opp_score * 0.85)
+        # Shiny bonus: +15% score
+        if my_pet.get("is_shiny"):  my_score  = round(my_score  * 1.15)
+        if opp_pet.get("is_shiny"): opp_score = round(opp_score * 1.15)
         i_won = my_score > opp_score
         my_exp_gain  = 100 if i_won else 40
         opp_exp_gain = 40  if i_won else 100
@@ -24994,9 +25127,12 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         opp_pname = _pet_display_name(opp_pet)
         my_e  = my_sp.get("emoji","🐾"); opp_e = opp_sp.get("emoji","🐾")
         result_txt = "🏆 *Victory!*" if i_won else "💔 *Defeat!*"
+        elem_note = ""
+        if _my_mu.get("strong") == opp_elem:   elem_note = f"\n🔥 *Type advantage!* {my_elem.capitalize()} → {opp_elem.capitalize()} (+20%)"
+        elif _my_mu.get("weak") == opp_elem:   elem_note = f"\n💧 *Type disadvantage!* {opp_elem.capitalize()} counters {my_elem.capitalize()} (-15%)"
         await query.edit_message_text(
             f"⚔️ *Pet Battle!*\n\n"
-            f"{my_e} *{my_pname}* (Score: {my_score})\nvs\n{opp_e} *{opp_pname}* (Score: {opp_score})\n\n"
+            f"{my_e} *{my_pname}* (Score: {my_score})\nvs\n{opp_e} *{opp_pname}* (Score: {opp_score})\n{elem_note}\n"
             f"{result_txt}\n"
             f"⭐ +{my_exp_gain} EXP  |  💞 +{my_bond_gain} Bond",
             parse_mode="Markdown",
@@ -25038,7 +25174,178 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet))
         await query.answer(f"🔮 Evolved to Stage {new_evo}!"); return
 
+    # ── Pet Jobs ──────────────────────────────────────────────────────────────
+    if data.startswith("petjob_pick_"):
+        pid = int(data.split("_")[2])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row)
+        if pet.get("job_ends_at"):
+            try:
+                rem = (datetime.fromisoformat(pet["job_ends_at"]) - datetime.now()).total_seconds()
+                if rem > 0:
+                    await query.answer("Your pet is already on a job!", show_alert=True); return
+            except Exception: pass
+        if _pet_is_on_adventure(pet):
+            await query.answer("Your pet is on an adventure!", show_alert=True); return
+        pname = _pet_display_name(pet)
+        sp = PET_SPECIES.get(pet["species"], {})
+        await query.edit_message_text(
+            f"💼 *Send {pname} on a Job?*\n\n"
+            f"Your pet earns gold while you're away. Longer jobs pay more!\n\n"
+            f"🕐 *4 hours* — 200–400 gold\n"
+            f"🕗 *8 hours* — 500–800 gold + item chance\n"
+            f"🕛 *12 hours* — 900–1400 gold + rare item chance",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🕐 4h Job",  callback_data=f"petjob_start_{pid}_4"),
+                 InlineKeyboardButton("🕗 8h Job",  callback_data=f"petjob_start_{pid}_8")],
+                [InlineKeyboardButton("🕛 12h Job", callback_data=f"petjob_start_{pid}_12")],
+                [InlineKeyboardButton("« Back",     callback_data="petmain")],
+            ]))
+        await query.answer(); return
+
+    if data.startswith("petjob_start_"):
+        parts = data.split("_"); pid = int(parts[2]); hours = int(parts[3])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row)
+        ends_at = (datetime.now() + timedelta(hours=hours)).isoformat()
+        conn2 = sqlite3.connect(DB_PATH); c2 = conn2.cursor()
+        c2.execute("UPDATE pets SET job_ends_at=? WHERE pet_id=?", (ends_at, pid))
+        conn2.commit(); conn2.close()
+        pet["job_ends_at"] = ends_at
+        pname = _pet_display_name(pet)
+        await query.edit_message_text(
+            f"💼 *{pname} is off to work!*\n\n"
+            f"They'll be back in *{hours} hours*.\n"
+            f"Come back to collect their earnings!",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="petmain")]]))
+        await query.answer(f"Job started! Back in {hours}h"); return
+
+    if data.startswith("petjob_status_"):
+        pid = int(data.split("_")[2])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row)
+        try:
+            rem = (datetime.fromisoformat(pet["job_ends_at"]) - datetime.now()).total_seconds()
+            rm_str = f"{int(rem//3600)}h {int((rem%3600)//60)}m" if rem >= 3600 else f"{int(rem//60)}m"
+            await query.answer(f"Still working — {rm_str} left!", show_alert=False)
+        except Exception:
+            await query.answer("Job status unavailable.", show_alert=False)
+        return
+
+    if data.startswith("petjob_claim_"):
+        pid = int(data.split("_")[2])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row)
+        if not pet.get("job_ends_at"):
+            await query.answer("No job to claim.", show_alert=True); return
+        try:
+            rem = (datetime.fromisoformat(pet["job_ends_at"]) - datetime.now()).total_seconds()
+            if rem > 0:
+                rm_str = f"{int(rem//3600)}h {int((rem%3600)//60)}m" if rem >= 3600 else f"{int(rem//60)}m"
+                await query.answer(f"Not done yet — {rm_str} remaining!", show_alert=True); return
+        except Exception: pass
+        # Determine job duration from start time (estimate from job_ends_at - now ≈ 0)
+        # Just give rewards based on time elapsed — we approximate by using bond_score and level
+        lvl = pet.get("level", 1); sp = PET_SPECIES.get(pet["species"], {})
+        rar_mult = {"common":1.0,"uncommon":1.2,"rare":1.5,"epic":2.0,"legendary":3.0,"mythic":4.0}.get(sp.get("rarity","common"),1.0)
+        gold_earned = round(random.randint(200, 400) * rar_mult * (1 + lvl * 0.02))
+        loot_item = None
+        loot_roll = random.random()
+        if loot_roll < 0.10: loot_item = random.choice(["Greater Health Potion","Iron Shard","Enchanting Scroll"])
+        elif loot_roll < 0.04: loot_item = random.choice(["Scroll of Revival","Crystal Bead Necklace","Silk Band"])
+        p = get_player(user.id)
+        if p:
+            p["gold"] = p.get("gold", 0) + gold_earned
+            if loot_item: add_item(p, loot_item)
+            save_player(p)
+        # Bond gain from working
+        pet["bond_score"] = min(200, pet.get("bond_score", 0) + 5)
+        conn3 = sqlite3.connect(DB_PATH); c3 = conn3.cursor()
+        c3.execute("UPDATE pets SET job_ends_at=NULL, bond_score=? WHERE pet_id=?", (pet["bond_score"], pid))
+        conn3.commit(); conn3.close()
+        pet["job_ends_at"] = None
+        pname = _pet_display_name(pet)
+        loot_line = f"\n🎒 Also found: *{loot_item}*!" if loot_item else ""
+        await query.edit_message_text(
+            f"💼 *{pname} is back from work!*\n\n"
+            f"💰 Earned: *{gold_earned} gold*{loot_line}\n"
+            f"💞 +5 Bond",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="petmain")]]))
+        await query.answer(f"+{gold_earned}g earned!"); return
+
     await query.answer()
+
+
+async def pettop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the top 10 highest-level pets across all players."""
+    c = _db().cursor()
+    c.execute("""
+        SELECT p.species, p.nickname, p.level, p.evolution_stage, p.bond_score, p.is_shiny,
+               pl.username
+        FROM pets p
+        LEFT JOIN players pl ON pl.user_id = p.owner_id
+        WHERE p.is_active = 1
+        ORDER BY p.level DESC, p.bond_score DESC
+        LIMIT 10
+    """)
+    rows = c.fetchall()
+    if not rows:
+        await send_group(update, "🐾 No pets registered yet!", delay=10); return
+    lines = ["🏆 *Pet Leaderboard* — Top Active Pets\n"]
+    medals = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
+    for i, row in enumerate(rows):
+        sp   = PET_SPECIES.get(row[0], {})
+        name = row[1] or sp.get("name", row[0])
+        lvl  = row[2]; evo = row[3]; bond = row[4]
+        shiny = " ✨" if row[5] else ""
+        owner = row[6] or "Unknown"
+        evo_str = " " + "✦" * evo if evo else ""
+        rar_e = RARITY_EMOJI.get(sp.get("rarity",""),"")
+        lines.append(f"{medals[i]} {sp.get('emoji','🐾')} *{name}*{shiny}{evo_str}  {rar_e}\n"
+                     f"   Lv *{lvl}*  |  Bond {bond}  |  Owner: {owner}")
+    await send_group(update, "\n".join(lines), permanent=True)
+
+
+async def petdex_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show how many unique pet species this player has collected."""
+    user = update.effective_user
+    c = _db().cursor()
+    c.execute("SELECT DISTINCT species FROM pets WHERE owner_id=?", (user.id,))
+    owned = {row[0] for row in c.fetchall()}
+    total = len(PET_SPECIES)
+    pct   = round(len(owned) / total * 100) if total else 0
+    bar   = "█" * (pct // 10) + "░" * (10 - pct // 10)
+    lines = [f"📖 *PetDex* — {len(owned)}/{total} species collected  [{bar}] {pct}%\n"]
+    # Show by rarity
+    for rar in ("mythic","legendary","epic","rare","uncommon","common"):
+        rar_ids    = [sid for sid, sd in PET_SPECIES.items() if sd["rarity"] == rar]
+        owned_rar  = [sid for sid in rar_ids if sid in owned]
+        rar_e      = RARITY_EMOJI.get(rar,"")
+        lines.append(f"{rar_e} {rar.capitalize()}: *{len(owned_rar)}/{len(rar_ids)}*")
+    # Completion rewards
+    milestones = [(10,"🎁 Bronze Collector title"), (25,"🎁 Silver Collector title"),
+                  (50,"🎁 Gold Collector title"),   (total,"🎁 *COMPLETE DEX* — Legendary reward!")]
+    for thresh, label in milestones:
+        if len(owned) < thresh:
+            lines.append(f"\n🔒 Next milestone at *{thresh}* species: _{label}_")
+            break
+    await send_group(update, "\n".join(lines), permanent=True)
+
 
 async def petrename_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -27308,8 +27615,8 @@ async def fight_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Rival event: first player to /fight claims it ────────────────────────
     if event["key"] == "rival":
         active_events.pop(chat_id, None)
-        gold_prize = random.randint(80, 200)
-        exp_prize  = random.randint(200, 450)
+        gold_prize = random.randint(400, 1000)
+        exp_prize  = random.randint(1000, 2250)
         lines = [f"⚔️ *{user.first_name}* steps up first and claims the table!"]
         if p and not is_defeated(p):
             p["gold"] = p.get("gold", 0) + gold_prize
@@ -27330,20 +27637,20 @@ async def fight_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
              f"(HP: {max(0, event['enemy_hp'])}/150)"]
     if event["enemy_hp"] <= 0:
         active_events.pop(chat_id, None)
-        lines.append("💀 *Bandit defeated!* +250 EXP each!")
+        lines.append("💀 *Bandit defeated!* +1250 EXP each!")
         for fid in event["fighters"]:
             fp = get_player(fid); fs = get_shadow(fid)
             if fp and not is_defeated(fp):
                 loot = roll_loot_table(event.get("loot_table", []))
                 if loot: add_item(fp, loot)
-                lmsgs, leveled = add_exp(fp, 250); save_player(fp)
+                lmsgs, leveled = add_exp(fp, 1250); save_player(fp)
                 if loot: lines.append(f"🎒 *{fp['username']}* found *{loot}*!")
                 if leveled and fp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{fp['username']}* reached *Level {fp['level']}* from battle! ⚔️",
                         delay=60))
             elif fs:
-                lmsgs, leveled = add_shadow_exp(fs, 250); save_shadow(fs)
+                lmsgs, leveled = add_shadow_exp(fs, 1250); save_shadow(fs)
     await send_group(update, "\n".join(lines), delay=15)
 
 async def shoot_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -27359,20 +27666,20 @@ async def shoot_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
              f"(HP: {max(0,event['enemy_hp'])}/200)"]
     if event["enemy_hp"] <= 0:
         active_events.pop(chat_id, None)
-        lines.append("✨ *Spirit banished!* +300 EXP each!")
+        lines.append("✨ *Spirit banished!* +1500 EXP each!")
         for fid in event["fighters"]:
             fp = get_player(fid); fs = get_shadow(fid)
             if fp and not is_defeated(fp):
                 loot = roll_loot_table(event.get("loot_table",[]))
                 if loot: add_item(fp, loot)
-                lmsgs, leveled = add_exp(fp, 300); save_player(fp)
+                lmsgs, leveled = add_exp(fp, 1500); save_player(fp)
                 if loot: lines.append(f"🎒 *{fp['username']}* found *{loot}*!")
                 if leveled and fp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{fp['username']}* reached *Level {fp['level']}* from the ghost! 👻",
                         delay=60))
             elif fs:
-                lmsgs, leveled = add_shadow_exp(fs, 300); save_shadow(fs)
+                lmsgs, leveled = add_shadow_exp(fs, 1500); save_shadow(fs)
     await send_group(update, "\n".join(lines), delay=15)
 
 async def claim_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -27382,7 +27689,7 @@ async def claim_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_events.pop(chat_id, None)
     p = get_player(user.id)
     loot = roll_loot_table(event.get("loot_table",[]))
-    gold = random.randint(50,200)
+    gold = random.randint(250,1000)
     if p:
         if loot: add_item(p, loot)
         p["gold"] = p.get("gold",0) + gold; save_player(p)
@@ -28323,6 +28630,8 @@ def main():
     app.add_handler(CommandHandler("petshop",      petshop_cmd))
     app.add_handler(CommandHandler("hatch",        hatch_cmd))
     app.add_handler(CommandHandler("petrename",    petrename_cmd))
+    app.add_handler(CommandHandler("pettop",       pettop_cmd))
+    app.add_handler(CommandHandler("petdex",       petdex_cmd))
     app.add_handler(CommandHandler("weather",      weather_cmd))
     app.add_handler(CommandHandler("ascend",       ascend_cmd))
     app.add_handler(CommandHandler("cooldowns",    cooldowns_cmd))
@@ -28529,8 +28838,9 @@ def main():
     # ── Pets ──────────────────────────────────────────────────────────────────
     app.add_handler(CallbackQueryHandler(petshop_callback,    pattern="^(petshop|pbuy_)"))
     app.add_handler(CallbackQueryHandler(hatch_egg_callback,  pattern="^hatch_egg$"))
+    app.add_handler(CallbackQueryHandler(petcatch_callback,   pattern="^petcatch_"))
     app.add_handler(CallbackQueryHandler(pet_main_callback,
-        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petplay_|petrelease_|petrename_|petadv_|petevolve_|petbattle_)"))
+        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petplay_|petrelease_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
 
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
