@@ -25594,7 +25594,8 @@ def _pethub_markup(uid, pet, page=1):
     page = max(1, min(page, len(pages)))
     rows = list(pages[page - 1])
     rows.append(_hub_nav_row("pethub_", page, len(pages), uid))
-    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    rows.append([InlineKeyboardButton("🏠 Home", callback_data=f"empire_home_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return InlineKeyboardMarkup(rows)
 
 async def pethub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -26187,7 +26188,8 @@ def _combat_hub_markup(uid, page=1):
         rows.append([InlineKeyboardButton(label, callback_data=f"{cb}_{uid}")
                      for label, cb in btn_row])
     rows.append(_hub_nav_row("combathub_", page, len(_COMBAT_HUB_PAGES), uid))
-    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    rows.append([InlineKeyboardButton("🏠 Home", callback_data=f"empire_home_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return InlineKeyboardMarkup(rows)
 
 async def combat_hub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -26214,7 +26216,6 @@ async def combat_hub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query  = update.callback_query
-    await query.answer()
     uid    = query.from_user.id
     data   = query.data
     parts  = data.split("_")
@@ -26224,19 +26225,27 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         try:
             page    = int(parts[2])
             req_uid = int(parts[3])
-        except (IndexError, ValueError): return
+        except (IndexError, ValueError):
+            await query.answer(); return
         if uid != req_uid:
             await query.answer("Not your hub.", show_alert=True); return
+        await query.answer()
         try: await query.edit_message_reply_markup(reply_markup=_combat_hub_markup(uid, page=page))
         except: pass
         return
+
+    try:
+        req_uid = int(parts[-1])
+    except (IndexError, ValueError):
+        req_uid = 0
+    if uid != req_uid:
+        await query.answer("Not your hub.", show_alert=True); return
 
     action = parts[1] if len(parts) > 1 else ""
     p      = get_player(uid)
     if not p:
         await query.answer("Register first.", show_alert=True); return
 
-    # Direct dispatch — run the real command so the existing menu/picker appears
     DISPATCH = {
         "attack":      attack_cmd,
         "skill":       skill_cmd,
@@ -26259,16 +26268,18 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         "encounter":  "Random monsters appear during /explore. Use the fight buttons to engage.",
         "petbattle":  "Your active pet auto-attacks alongside you every /attack and /skill.",
     }
+    popup_msg = POPUPS.get(action)
+    if popup_msg:
+        await query.answer(popup_msg[:200], show_alert=True)
+        return
+    await query.answer()
     fn = DISPATCH.get(action)
     if fn:
         try:
             await fn(update, context)
-        except Exception:
-            pass
+        except Exception as e:
+            await send_group(update, "❌ Command failed — try typing it directly.", delay=9)
         return
-    msg = POPUPS.get(action)
-    if msg:
-        await query.answer(msg[:200], show_alert=True)
 
 # ── /social Hub ───────────────────────────────────────────────────────────────
 _SOCIAL_HUB_PAGES = [
@@ -26306,7 +26317,8 @@ def _social_hub_markup(uid, page=1):
         rows.append([InlineKeyboardButton(label, callback_data=cb if "{" not in cb else cb.format(uid=uid))
                      for label, cb in btn_row])
     rows.append(_hub_nav_row("socialhub_", page, len(_SOCIAL_HUB_PAGES), uid))
-    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    rows.append([InlineKeyboardButton("🏠 Home", callback_data=f"empire_home_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return InlineKeyboardMarkup(rows)
 
 async def socialhub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -26498,7 +26510,8 @@ def _gearhub_markup(uid: int, page: int = 1) -> InlineKeyboardMarkup:
     for btn_row in _GEAR_HUB_PAGES[page - 1]:
         rows.append([InlineKeyboardButton(lbl, callback_data=f"{cb}_{uid}") for lbl, cb in btn_row])
     rows.append(_hub_nav_row("gearhub_", page, total, uid))
-    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    rows.append([InlineKeyboardButton("🏠 Home", callback_data=f"empire_home_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return InlineKeyboardMarkup(rows)
 
 async def gearhub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -26520,7 +26533,6 @@ async def gearhub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     uid   = query.from_user.id
     data  = query.data
     parts = data.split("_")
@@ -26529,14 +26541,15 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             page    = int(parts[2])
             req_uid = int(parts[3])
-        except (IndexError, ValueError): return
+        except (IndexError, ValueError):
+            await query.answer(); return
         if uid != req_uid:
             await query.answer("Not your hub.", show_alert=True); return
+        await query.answer()
         try: await query.edit_message_reply_markup(reply_markup=_gearhub_markup(uid, page=page))
         except: pass
         return
 
-    # Ownership check for action buttons (format: gearhub_{action}_{uid})
     try:
         req_uid = int(parts[-1])
     except (IndexError, ValueError):
@@ -26565,18 +26578,20 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     POPUPS = {
         "trade": "Use /trade @player [item] to send a trade offer to another player.",
-        "cp":    f"Use /cp to check your Combat Power rating.",
+        "cp":    "Use /cp to check your Combat Power rating.",
     }
+    popup_msg = POPUPS.get(action)
+    if popup_msg:
+        await query.answer(popup_msg[:200], show_alert=True)
+        return
+    await query.answer()
     fn = DISPATCH.get(action)
     if fn:
         try:
             await fn(update, context)
         except Exception:
-            pass
+            await send_group(update, "❌ Command failed — try typing it directly.", delay=9)
         return
-    msg = POPUPS.get(action)
-    if msg:
-        await query.answer(msg[:200], show_alert=True)
 
 # ── ACTIVITIES HUB ────────────────────────────────────────────────────────────
 _ACTIVITIES_HUB_PAGES = [
@@ -26628,7 +26643,8 @@ def _activities_hub_markup(uid: int, page: int = 1) -> InlineKeyboardMarkup:
     for btn_row in _ACTIVITIES_HUB_PAGES[page - 1]:
         rows.append([InlineKeyboardButton(lbl, callback_data=f"{cb}_{uid}") for lbl, cb in btn_row])
     rows.append(_hub_nav_row("acthub_", page, total, uid))
-    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    rows.append([InlineKeyboardButton("🏠 Home", callback_data=f"empire_home_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return InlineKeyboardMarkup(rows)
 
 async def activitieshub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -26650,7 +26666,6 @@ async def activitieshub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     uid   = query.from_user.id
     data  = query.data
     parts = data.split("_")
@@ -26659,14 +26674,15 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         try:
             page    = int(parts[2])
             req_uid = int(parts[3])
-        except (IndexError, ValueError): return
+        except (IndexError, ValueError):
+            await query.answer(); return
         if uid != req_uid:
             await query.answer("Not your hub.", show_alert=True); return
+        await query.answer()
         try: await query.edit_message_reply_markup(reply_markup=_activities_hub_markup(uid, page=page))
         except: pass
         return
 
-    # Ownership check for action buttons (format: acthub_{action}_{uid})
     try:
         req_uid = int(parts[-1])
     except (IndexError, ValueError):
@@ -26697,16 +26713,18 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
     POPUPS = {
         "allocate": "Use /allocate [stat] [amount] to spend stat points — e.g. /allocate STR 5",
     }
+    popup_msg = POPUPS.get(action)
+    if popup_msg:
+        await query.answer(popup_msg[:200], show_alert=True)
+        return
+    await query.answer()
     fn = DISPATCH.get(action)
     if fn:
         try:
             await fn(update, context)
         except Exception:
-            pass
+            await send_group(update, "❌ Command failed — try typing it directly.", delay=9)
         return
-    msg = POPUPS.get(action)
-    if msg:
-        await query.answer(msg[:200], show_alert=True)
 
 # ── EMPIRE (Master Hub) ───────────────────────────────────────────────────────
 def _empire_markup(uid: int) -> InlineKeyboardMarkup:
@@ -26740,7 +26758,6 @@ async def empire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     uid   = query.from_user.id
     data  = query.data
     parts = data.split("_")
@@ -26749,6 +26766,7 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except (IndexError, ValueError): req_uid = 0
     if uid != req_uid:
         await query.answer("Not your menu.", show_alert=True); return
+    await query.answer()
 
     hub = parts[1] if len(parts) > 1 else ""
     p   = get_player(uid)
@@ -26801,6 +26819,13 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 "🐾 *Pet Hub* — All things pets.\n_Page 1: Manage  |  Page 2: Care & Breeding  |  Page 3: Community_",
                 parse_mode="Markdown", reply_markup=_pethub_markup(uid, pet, page=1))
+        except Exception: pass
+
+    elif hub == "home":
+        try:
+            await query.edit_message_text(
+                f"🌌 *{p['username']}'s Empire*\n\nYour command center. Choose a hub:",
+                parse_mode="Markdown", reply_markup=_empire_markup(uid))
         except Exception: pass
 
 
