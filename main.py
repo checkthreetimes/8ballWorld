@@ -7646,6 +7646,32 @@ def init_db():
         except sqlite3.OperationalError:
             pass  # column already exists
 
+    # ── One-time migrations table ────────────────────────────────────────────
+    try:
+        _mig_conn = sqlite3.connect(DB_PATH)
+        _mig_conn.execute("CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, ran_at TEXT)")
+        _mig_conn.commit()
+        _mig_cur = _mig_conn.cursor()
+
+        # pet_level_cap_v1: demote pets whose level exceeds owner's player_level * 3
+        _mig_cur.execute("SELECT 1 FROM _migrations WHERE name='pet_level_cap_v1'")
+        if not _mig_cur.fetchone():
+            _mig_conn.execute("""
+                UPDATE pets
+                SET level = MIN(level,
+                    (SELECT MAX(1, MIN(100, p.level * 3))
+                     FROM players p WHERE p.user_id = pets.owner_id))
+                WHERE level > 1
+            """)
+            _mig_conn.execute("INSERT INTO _migrations (name, ran_at) VALUES ('pet_level_cap_v1', ?)",
+                              (datetime.now().isoformat(),))
+            _mig_conn.commit()
+            logger.info("Migration pet_level_cap_v1: pet levels capped to player_level * 3")
+
+        _mig_conn.close()
+    except Exception as _me:
+        logger.error(f"Migration error: {_me}")
+
     conn = sqlite3.connect(DB_PATH)  # reopen for remaining setup
 
     # Clear stale explore locks on startup
@@ -8272,12 +8298,15 @@ def give_pet_exp(owner_id, raw_amount):
     """Award exp to owner's active pet. Returns level-up message or ''."""
     pet = get_active_pet_record(owner_id)
     if not pet: return ""
-    if pet.get("level", 1) >= 100: return ""
+    _p = get_player(owner_id)
+    _p_level = _p["level"] if _p else 1
+    _pet_cap = min(100, _p_level * 3)
+    if pet.get("level", 1) >= _pet_cap: return ""
     amount = max(1, round(raw_amount * 0.15))
     pet["exp"] = pet.get("exp", 0) + amount
     leveled = False
     msg = ""
-    while pet["level"] < 100 and pet["exp"] >= pet_exp_for_level(pet["level"]):
+    while pet["level"] < _pet_cap and pet["exp"] >= pet_exp_for_level(pet["level"]):
         pet["exp"] -= pet_exp_for_level(pet["level"])
         pet["level"] += 1
         leveled = True
@@ -25244,9 +25273,11 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pet["mood"] = min(100, pet.get("mood",100) + 5)
         pet["bond_score"] = min(200, pet.get("bond_score",0) + 5)
         pet["last_trained"] = datetime.now().isoformat()
-        # Level up
+        # Level up (capped at player_level * 3)
+        _owner_p = get_player(user.id)
+        _pet_train_cap = min(100, (_owner_p["level"] if _owner_p else 1) * 3)
         lvl_ups = []
-        while pet["exp"] >= pet_exp_for_level(pet["level"]):
+        while pet["exp"] >= pet_exp_for_level(pet["level"]) and pet["level"] < _pet_train_cap:
             pet["exp"] -= pet_exp_for_level(pet["level"])
             pet["level"] += 1
             lvl_ups.append(pet["level"])
@@ -25409,8 +25440,10 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pet["exp"] = pet.get("exp", 0) + adv_exp
             pet["bond_score"] = min(200, pet.get("bond_score",0) + 15)
             pet["adventure_ends_at"] = None
+            _adv_p = get_player(user.id)
+            _adv_pet_cap = min(100, (_adv_p["level"] if _adv_p else 1) * 3)
             lvl_ups = []
-            while pet["exp"] >= pet_exp_for_level(pet["level"]):
+            while pet["exp"] >= pet_exp_for_level(pet["level"]) and pet["level"] < _adv_pet_cap:
                 pet["exp"] -= pet_exp_for_level(pet["level"])
                 pet["level"] += 1; lvl_ups.append(pet["level"])
             # Chance for item drop
@@ -25452,8 +25485,10 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pet["exp"] = pet.get("exp", 0) + adv_exp
         pet["bond_score"] = min(200, pet.get("bond_score",0) + hours * 2 + 9)
         pet["adventure_ends_at"] = None
+        _claim_p = get_player(user.id)
+        _claim_pet_cap = min(100, (_claim_p["level"] if _claim_p else 1) * 3)
         lvl_ups = []
-        while pet["exp"] >= pet_exp_for_level(pet["level"]):
+        while pet["exp"] >= pet_exp_for_level(pet["level"]) and pet["level"] < _claim_pet_cap:
             pet["exp"] -= pet_exp_for_level(pet["level"])
             pet["level"] += 1; lvl_ups.append(pet["level"])
         loot = None
