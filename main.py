@@ -26541,8 +26541,6 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         "skill":       ("✨ *Use Skill*",        "Type */skill* to pick a target and fire your class skill."),
         "arena":       ("🏟️ *Arena Duel*",       "Type */arena @player [wager]* for a turn-based wager duel."),
         "duel":        ("🗡️ *Duel*",             "Type */duel @player* for a quick challenge fight."),
-        "defend":      ("🛡️ *Defend*",           "Type */defend* to reduce damage until your next action."),
-        "heal":        ("💊 *Heal*",             "Type */heal @player* (or alone for self). Priests heal free; others need a potion."),
         "boss":        ("🐉 *Boss Raid*",        "Bosses spawn automatically. Type */attack* when one appears."),
         "war":         ("⚔️ *Guild War*",        "Type */guildwar @guild* to declare war. Both guilds fight over 24h."),
         "raid":        ("🛡️ *Guild Raid*",       "Type */raid* to start. Guild members join with */raidstrike*."),
@@ -26556,14 +26554,72 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         "dungeonleg":  ("💀 *Dungeon Legendary*","Type */dungeonlegendary* (Lv 40+) — hardest dungeon, best loot."),
         "petbattle":   ("🐾 *Pet Battle*",       "Your pet auto-attacks alongside you in every */attack* and */skill*."),
     }
-    tip = _TIPS.get(action)
-    if tip:
-        title, desc = tip
-        try: await query.edit_message_text(f"{title}\n\n{desc}", parse_mode="Markdown", reply_markup=back)
+
+    if action == "defend":
+        max_sh = _shield_max(p)
+        cur_sh = safe_int(p.get("shield_hp"))
+        used   = safe_int(p.get("shield_used"))
+        hp_pct = p.get("hp", 1) / max(1, p.get("max_hp", 1))
+        hp_bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
+        if is_defeated(p):
+            txt = f"🛡️ *Defend*\n\n💀 You're defeated — shield resets on revival."
+        elif used and cur_sh > 0:
+            sh_pct = cur_sh / max(1, max_sh)
+            sh_bar = "█" * round(sh_pct * 10) + "░" * (10 - round(sh_pct * 10))
+            txt = (f"🛡️ *Defend — Shield Active*\n\n"
+                   f"🛡️ Shield: {cur_sh}/{max_sh} [{sh_bar}]\n"
+                   f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n\n"
+                   f"Shield absorbs damage before your HP.\n"
+                   f"Use `/defend core` to spend a Monster Core and raise shield max.")
+        elif used and cur_sh <= 0:
+            txt = (f"🛡️ *Defend — Shield Depleted*\n\n"
+                   f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n\n"
+                   f"Shield is empty. Resets on revival.\n"
+                   f"Max capacity was *{max_sh} HP*.")
+        else:
+            txt = (f"🛡️ *Defend*\n\n"
+                   f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
+                   f"🛡️ Shield max: *{max_sh} HP* _(25% of max HP)_\n\n"
+                   f"Type `/defend` in chat to raise your shield.\n"
+                   f"Use `/defend core` to expand it with a Monster Core.")
+        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
+
+    elif action == "heal":
+        inv = Counter(sjl(p.get("inventory"), []))
+        potions = {
+            "Health Potion":          (inv.get("Health Potion", 0),          200),
+            "Greater Health Potion":  (inv.get("Greater Health Potion", 0),  500),
+            "Grand Restorative Flask":(inv.get("Grand Restorative Flask", 0),1000),
+        }
+        total_pots = sum(c for c, _ in potions.values())
+        hp_pct = p.get("hp", 1) / max(1, p.get("max_hp", 1))
+        hp_bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
+        cls = get_player_class(p)
+        is_healer = cls and cls.get("line") in ("priest", "botanist") if cls else False
+        lines = [f"💊 *Heal*\n\n"
+                 f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]  ({round(hp_pct*100)}%)\n"]
+        if is_healer:
+            lines.append("✨ As a healer you can `/heal` for free (no potion needed).")
+        else:
+            lines.append("*Potions available:*")
+            for name, (count, amt) in potions.items():
+                lines.append(f"{'✅' if count else '❌'} {name}: *{count}* _(+{amt} HP)_")
+            if total_pots == 0:
+                lines.append("\n_No potions — buy some at /shop!_")
+        lines.append("\nType `/heal` in chat to heal yourself, or reply to a teammate.")
+        try: await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
     else:
-        try: await query.edit_message_text(f"_{action}_ — use the command in chat.", parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
+        tip = _TIPS.get(action)
+        if tip:
+            title, desc = tip
+            try: await query.edit_message_text(f"{title}\n\n{desc}", parse_mode="Markdown", reply_markup=back)
+            except Exception: pass
+        else:
+            try: await query.edit_message_text(f"_{action}_ — use the command in chat.", parse_mode="Markdown", reply_markup=back)
+            except Exception: pass
 
 # ── /social Hub ───────────────────────────────────────────────────────────────
 _SOCIAL_HUB_PAGES = [
@@ -27147,6 +27203,97 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             try: await query.edit_message_text(_build_gear_text(p)[:4096], reply_markup=back)
             except Exception: pass
+    elif action == "shop":
+        discount = _shop_discount(p)
+        text, markup = _build_shop_view(p, "pot", uid, discount)
+        rows = list(markup.inline_keyboard)
+        rows.insert(-1, [InlineKeyboardButton("← Back to Gear Hub", callback_data=f"gearhub_back_1_{uid}")])
+        markup = InlineKeyboardMarkup(rows)
+        try: await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        except Exception:
+            try: await query.edit_message_text(text[:4096], reply_markup=markup)
+            except Exception: pass
+    elif action == "cp":
+        cp = calc_combat_power(p)
+        try: await query.edit_message_text(
+            f"📊 *Combat Power*\n\n*{p['username']}*: *{cp:,} CP*\n\n"
+            f"Higher CP = bigger damage multiplier.\n"
+            f"Improve it by upgrading gear, enhancing items, and reinforcing.",
+            parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action == "equip":
+        has_items, equip_markup = _build_equip_page_markup(p, uid, 0)
+        rows = list(equip_markup.inline_keyboard) if equip_markup else []
+        rows.append([InlineKeyboardButton("← Back", callback_data=f"gearhub_back_1_{uid}")])
+        txt = _build_gear_text(p) + ("\n\n_Select an item below to equip:_" if has_items
+                                     else "\n\n_No equippable items in bag — visit Shop!_")
+        try: await query.edit_message_text(txt[:4096], parse_mode="Markdown",
+                                           reply_markup=InlineKeyboardMarkup(rows))
+        except Exception:
+            try: await query.edit_message_text(txt[:4096],
+                                               reply_markup=InlineKeyboardMarkup(rows))
+            except Exception: pass
+
+    elif action == "sell":
+        inv = sjl(p.get("inventory"), [])
+        if not inv:
+            try: await query.edit_message_text(
+                "💰 *Sell*\n\nYour bag is empty.", parse_mode="Markdown", reply_markup=back)
+            except Exception: pass
+        else:
+            sell_rows = [
+                [InlineKeyboardButton("Sell All Common",    callback_data=f"sellr_{uid}_common"),
+                 InlineKeyboardButton("Sell All Uncommon",  callback_data=f"sellr_{uid}_uncommon")],
+                [InlineKeyboardButton("Sell All Rare",      callback_data=f"sellr_{uid}_rare"),
+                 InlineKeyboardButton("Sell All Epic",      callback_data=f"sellr_{uid}_epic")],
+                [InlineKeyboardButton("💰 Sell Everything (non-key)", callback_data=f"sellr_{uid}_all")],
+                [InlineKeyboardButton("⚔️ Sell Off-Class Items",      callback_data=f"selloffc_{uid}")],
+                [InlineKeyboardButton("← Back", callback_data=f"gearhub_back_1_{uid}")],
+            ]
+            try: await query.edit_message_text(
+                "💰 *Sell Items*\n\nBulk-sell by rarity, or clear off-class gear.\n"
+                "_Equipped gear and key materials are always protected._",
+                parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(sell_rows))
+            except Exception: pass
+
+    elif action in ("pool", "permpool"):
+        s_cd = get_shadow(uid)
+        pool_ts = p.get("last_pool") or (s_cd.get("last_pool") if s_cd else None)
+        if pool_ts:
+            try:
+                elapsed = (datetime.now() - datetime.fromisoformat(pool_ts)).total_seconds()
+                if elapsed < 8:
+                    remaining = int(8 - elapsed)
+                    try: await query.edit_message_text(
+                        f"🎱 *Pool*\n\n⏳ Cooldown: *{remaining}s*", parse_mode="Markdown", reply_markup=back)
+                    except Exception: pass
+                    return
+            except Exception:
+                pass
+        shot = roll_pool_shot_with_luk(p)
+        rarity_prefix = {"common":"🎱","uncommon":"🎯","rare":"🔵","epic":"🟣",
+                         "legendary":"🟡","mythic":"🔴"}.get(shot["rarity"], "🎱")
+        item_found = None
+        if shot.get("loot"):
+            item_found = roll_loot_table(shot["loot"])
+            if item_found: add_item(p, item_found)
+        lvl_bonus  = max(1.0, 1.0 + (p["level"] - 1) * 0.15)
+        gold_bonus = max(1.0, 1.0 + (p["level"] - 1) * 0.12)
+        exp_gain   = int(shot["exp"]  * lvl_bonus)
+        gold_gain  = int(shot["gold"] * gold_bonus)
+        p["gold"] = p.get("gold", 0) + gold_gain
+        p["last_pool"] = datetime.now().isoformat()
+        if s_cd: s_cd["last_pool"] = p["last_pool"]; save_shadow(s_cd)
+        lmsgs, _ = add_exp(p, exp_gain); save_player(p)
+        result = (f"{rarity_prefix} *Pool Shot — {shot['rarity'].capitalize()}*\n\n"
+                  f"_{shot['text']}_\n\n"
+                  f"✨ +{exp_gain} EXP  |  💰 +{gold_gain}g")
+        if item_found: result += f"  |  🎒 *{item_found}*!"
+        if lmsgs: result += "\n\n" + "\n".join(lmsgs[:2])
+        try: await query.edit_message_text(result, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
     else:
         tip = _GEAR_HUB_TIPS.get(action)
         if tip:
@@ -27274,8 +27421,98 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         try: await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
+    # ── Hustle: run all ready cooldowns inline ──────────────────────
+    if action == "hustle":
+        if is_defeated(p):
+            await _show("⚡ *Hustle*\n\n💀 Too beaten up to hustle right now."); return
+        now = datetime.now(); ran = []; skipped = []
+        if check_cooldown(p.get("last_daily"), 86400):
+            p["last_daily"] = now.isoformat()
+            gold = 50 + p["level"] * 5; p["gold"] = p.get("gold", 0) + gold
+            daily_exp = 200 + p["level"] * 10
+            lmsgs, _ = add_exp(p, daily_exp)
+            entry = f"🎁 Daily: +{daily_exp} EXP, +{gold}g"
+            if random.random() < 0.10:
+                item = random.choice(["Health Potion","Greater Health Potion","Grand Restorative Flask"])
+                add_item(p, item); entry += f", *{item}*"
+            ran.append(entry)
+        else: skipped.append(f"🎁 Daily — {time_remaining(p.get('last_daily'), 86400)}")
+        if check_cooldown(p.get("last_train"), 1800):
+            p["last_train"] = now.isoformat()
+            base = 150 + p["level"] * 5
+            cls = get_player_class(p)
+            if cls:
+                pk = cls.get("passive_key","")
+                if pk in ("arcane_mind","spell_surge","arcane_mastery","mana_overload","eternal_wisdom"): base = round(base*1.30)
+                elif pk in ("iron_will","holy_stance","devotion","bulwark","divine_judgment"):            base = round(base*1.20)
+                elif pk in ("quick_hands","evasion","shadowstep","ghost_form","deaths_shadow",
+                            "eagle_eye","trailblazer","natures_bond","guardian_stance","pathfinder"):    base = round(base*1.35)
+                elif pk in ("mending_aura","divine_grace","sacred_ground","resurrection","divine_presence",
+                            "dark_sense","purge","judgement","wrath_of_the_righteous"):                 base = round(base*1.15)
+            lmsgs, _ = add_exp(p, base); ran.append(f"🏋️ Train: +{base} EXP")
+        else: skipped.append(f"🏋️ Train — {time_remaining(p.get('last_train'), 1800)}")
+        today = now.strftime("%Y-%m-%d"); yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        last_claim = p.get("last_claim")
+        if last_claim != today:
+            streak = safe_int(p.get("claim_streak")); streak = streak+1 if last_claim==yesterday else 1
+            gold_reward = 50 + min(streak*10, 200); p["gold"] = p.get("gold",0) + gold_reward
+            if streak >= 3:  add_item(p, "Iron Shard")
+            if streak >= 14: add_item(p, "Enchanting Scroll")
+            p["last_claim"] = today; p["claim_streak"] = streak
+            ran.append(f"🎁 Claim: +{gold_reward}g (Day {streak})")
+        else: skipped.append("🎁 Claim — already claimed today")
+        s_cd = get_shadow(uid)
+        pool_ts = p.get("last_pool") or (s_cd.get("last_pool") if s_cd else None)
+        pool_ready = True
+        if pool_ts:
+            try:
+                if (now - datetime.fromisoformat(pool_ts)).total_seconds() < 8: pool_ready = False
+            except Exception: pass
+        if pool_ready:
+            shot = roll_pool_shot_with_luk(p)
+            exp_gain = int(shot["exp"] * max(1.0, 1.0+(p["level"]-1)*0.15))
+            gold_gain = int(shot["gold"] * max(1.0, 1.0+(p["level"]-1)*0.12))
+            p["gold"] = p.get("gold",0)+gold_gain; p["last_pool"] = now.isoformat()
+            if s_cd: s_cd["last_pool"] = p["last_pool"]; save_shadow(s_cd)
+            lmsgs, _ = add_exp(p, exp_gain)
+            entry = f"🎱 Pool ({shot['rarity']}): +{exp_gain} EXP, +{gold_gain}g"
+            if shot.get("loot"):
+                loot = roll_loot_table(shot["loot"])
+                if loot: add_item(p, loot); entry += f", *{loot}*"
+            ran.append(entry)
+        else: skipped.append("🎱 Pool — on cooldown")
+        save_player(p)
+        lines = ["⚡ *Hustle Results*\n"]
+        if ran:
+            lines.append("*Completed:*"); lines.extend(f"✅ {r}" for r in ran)
+        if skipped:
+            lines.append("\n*On cooldown:*"); lines.extend(f"⏳ {s}" for s in skipped)
+        if not ran and not skipped: lines.append("_Nothing ready to run._")
+        await _show("\n".join(lines))
+
+    # ── Claim: execute inline ────────────────────────────────────────
+    elif action == "claim":
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        last = p.get("last_claim")
+        if last == today:
+            await _show("🎁 *Claim*\n\n✅ Already claimed today! Come back tomorrow.")
+        else:
+            streak = safe_int(p.get("claim_streak"))
+            streak = streak+1 if last==yesterday else 1
+            gold_reward = 50 + min(streak*10, 200); inv_adds = []
+            if streak >= 3:  add_item(p, "Iron Shard"); inv_adds.append("🪨 +1 Iron Shard")
+            if streak >= 14: add_item(p, "Enchanting Scroll"); inv_adds.append("📜 +1 Enchanting Scroll")
+            p["gold"] = p.get("gold",0)+gold_reward; p["last_claim"] = today; p["claim_streak"] = streak
+            save_player(p)
+            streak_emojis = "🔥" * min(streak, 7)
+            lines = [f"🎁 *Daily Claim — Day {streak}!* {streak_emojis}\n",
+                     f"💰 +{gold_reward} gold"] + inv_adds
+            lines.append(f"\n_Streak: {streak} day{'s' if streak!=1 else ''} — claim again tomorrow!_")
+            await _show("\n".join(lines))
+
     # ── Daily: execute inline ────────────────────────────────────────
-    if action == "daily":
+    elif action == "daily":
         if not check_cooldown(p.get("last_daily"), 86400):
             await _show(f"📅 *Daily*\n\n⏳ Already claimed. Ready in {time_remaining(p.get('last_daily'), 86400)}.")
         else:
