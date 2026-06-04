@@ -5028,6 +5028,24 @@ def is_revival_blocked(p): return _ts_active(p, "revival_blocked_until") or safe
 def is_silenced(p):      return _ts_active(p, "silenced_until")   or safe_int(p.get("silence_turns")) > 0
 def is_rooted(p):        return is_entangled(p) or is_frozen(p)
 def cannot_attack(p):    return is_stunned(p) or is_rooted(p) or is_vanished(p)
+
+def _consume_cc(p) -> str | None:
+    """Consume one charge-based CC turn and return the block message, or None if free to act."""
+    if safe_int(p.get("stun_turns")) > 0:
+        p["stun_turns"] -= 1; save_player(p)
+        rem = p["stun_turns"]
+        return "⚡ Stunned — lost your action." + (f" ({rem} left)" if rem else " (cleared!)")
+    if safe_int(p.get("freeze_turns")) > 0:
+        p["freeze_turns"] -= 1; save_player(p)
+        rem = p["freeze_turns"]
+        return "🧊 Frozen — cannot act." + (f" ({rem} left)" if rem else " (cleared!)")
+    if safe_int(p.get("entangle_turns")) > 0:
+        p["entangle_turns"] -= 1; save_player(p)
+        rem = p["entangle_turns"]
+        return "🌿 Entangled — cannot move." + (f" ({rem} left)" if rem else " (cleared!)")
+    if _ts_active(p, "stunned_until") or _ts_active(p, "frozen_until") or _ts_active(p, "entangled_until"):
+        return "⚡ Status effect active — can't act right now."
+    return None
 def is_poisoned(p): return _ts_active(p, "poison_until") or safe_int(p.get("poison_stacks")) > 0
 def is_burning(p):  return _ts_active(p, "burn_until")   or safe_int(p.get("burn_stacks")) > 0
 def has_ward(p):    return _ts_active(p, "ward_until")    or safe_int(p.get("ward_charges")) > 0
@@ -8727,7 +8745,7 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── PVP COMBAT HELPERS ────────────────────────────────────────────────────────
 
 def _pvp_pokemon_card(viewer_uid, a, d, pair):
-    """Pokémon-style PvP card: opponent at top, self at bottom, last 3 log entries."""
+    """Pokémon-style PvP card: opponent at top, self at bottom, last 2 log entries."""
     logs = _pvp_battle_logs.get(pair, [])
     # Perspective: viewer sees their opponent at top, themselves at bottom
     if viewer_uid == a["user_id"]:
@@ -8747,8 +8765,16 @@ def _pvp_pokemon_card(viewer_uid, a, d, pair):
     if logs:
         lines.append("")
         lines.append("─────────────")
-        for entry in logs[-3:]:
-            lines.append(entry)
+        for entry in logs[-2:]:
+            parts = [l.strip() for l in entry.split("\n") if l.strip()]
+            if not parts:
+                continue
+            lines.append(parts[0])
+            if len(parts) > 1:
+                extras = "  ".join(parts[1:])
+                if len(extras) > 90:
+                    extras = extras[:87] + "…"
+                lines.append(f"  ↳ {extras}")
     return "\n".join(lines)[:4096]
 
 
@@ -9527,8 +9553,9 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("You're defeated!", show_alert=True); return
     if is_invincible(a):
         await query.answer("You're invincible — can't attack!", show_alert=True); return
-    if cannot_attack(a):
-        await query.answer("You're stunned/rooted!", show_alert=True); return
+    _cc = _consume_cc(a)
+    if _cc:
+        await query.answer(_cc, show_alert=True); return
 
     d = get_player(target_uid)
     if not d:
@@ -9667,8 +9694,9 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "🛡️ You're *Still Recovering*  -  you can't attack while invincible.", delay=9); return
     if is_vanished(a):
         await send_group(update, "👻 You're vanished  -  you can't attack while hidden.", delay=9); return
-    if cannot_attack(a):
-        await send_group(update, "⚡ You're stunned or rooted  -  can't attack right now.", delay=9); return
+    _cc = _consume_cc(a)
+    if _cc:
+        await send_group(update, _cc, delay=9); return
     chat = chat_id
     du_id = None; du_name = None
 
@@ -9876,8 +9904,9 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("You're invincible — can't attack!", show_alert=True); return
         if is_vanished(a):
             await query.answer("You're vanished — can't attack while hidden!", show_alert=True); return
-        if cannot_attack(a):
-            await query.answer("You're stunned or rooted — can't attack!", show_alert=True); return
+        _cc = _consume_cc(a)
+        if _cc:
+            await query.answer(_cc, show_alert=True); return
         if not _rate_ok(uid):
             await query.answer("Slow down!", show_alert=True); return
 
@@ -10609,8 +10638,9 @@ async def raidstrike_cmd(update, context):
         await send_group(update, "You're not in this raid!"); return
     if raid["player_hp"].get(user.id, 0) <= 0:
         await send_group(update, "💀 You're down  -  wait for the next raid!"); return
-    if cannot_attack(p):
-        await send_group(update, "⚡ Stunned or rooted!", delay=9); return
+    _cc = _consume_cc(p)
+    if _cc:
+        await send_group(update, _cc, delay=9); return
 
     # Enforce turn order
     alive = _get_alive_party(raid)
@@ -10824,8 +10854,9 @@ async def solostrike_cmd(update, context):
         await send_group(update, "No active solo raid! Use /soloraid."); return
     if is_defeated(p):
         await send_group(update, "💀 You're defeated  -  can't strike!"); return
-    if cannot_attack(p):
-        await send_group(update, "⚡ You're stunned or rooted  -  can't act!", delay=9); return
+    _cc = _consume_cc(p)
+    if _cc:
+        await send_group(update, _cc, delay=9); return
 
     sr = active_soloraids[user.id]
     enemy = sr["enemy"]
@@ -13367,8 +13398,9 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
 
     if is_defeated(p):
         await send_group(update, _defeated_msg(p), delay=15); return
-    if cannot_attack(p):
-        await send_group(update, "⚡ Stunned or rooted  -  can't act!", delay=9); return
+    _cc = _consume_cc(p)
+    if _cc:
+        await send_group(update, _cc, delay=9); return
 
     # Auto-join and init raid HP if not in participants
     if user.id not in [u["id"] for u in boss_dict["participants"]]:
@@ -15226,8 +15258,9 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raid_state, raid_kind = in_active_raid(user.id, chat_id)
     if raid_state:
         # Check player can act
-        if cannot_attack(p):
-            await send_group(update, "⚡ You're stunned or rooted  -  can't use skills!", delay=9); return
+        _cc = _consume_cc(p)
+        if _cc:
+            await send_group(update, _cc, delay=9); return
 
         if sk is None:
             if len(all_skills) == 1:
@@ -15629,9 +15662,9 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     # ── Raid context ──────────────────────────────────────────────────────────
     raid_state, raid_kind = in_active_raid(uid, chat_id)
     if raid_state:
-        if cannot_attack(p):
-            await send_result("⚡ You're stunned or rooted — can't use skills!")
-            return
+        _cc = _consume_cc(p)
+        if _cc:
+            await send_result(_cc); return
         sk_lines, sk_dmg = apply_skill_to_raid_enemy(p, sk, raid_state, w)
         enemy = raid_state["enemy"]
         out = [f"🎱 *{p['username']}* uses *{sk['name']}* on *{enemy['name']}*!"]
@@ -29356,8 +29389,9 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("No active solo raid! Use /soloraid.", show_alert=True); return
     if is_defeated(p):
         await query.answer("You're defeated — can't act!", show_alert=True); return
-    if cannot_attack(p):
-        await query.answer("You're stunned or rooted — can't act!", show_alert=True); return
+    _cc = _consume_cc(p)
+    if _cc:
+        await query.answer(_cc, show_alert=True); return
 
     chat_id = query.message.chat.id
 
@@ -29577,8 +29611,9 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Use /ascend first!", show_alert=True); return
     if is_defeated(p):
         await query.answer("You're defeated!", show_alert=True); return
-    if cannot_attack(p):
-        await query.answer("Stunned or rooted — can't act!", show_alert=True); return
+    _cc = _consume_cc(p)
+    if _cc:
+        await query.answer(_cc, show_alert=True); return
 
     boss_dict = active_bosses.get(chat_id) or secret_boss_active.get(chat_id)
     if not boss_dict:
