@@ -26634,57 +26634,340 @@ async def socialhub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     uid   = query.from_user.id
     data  = query.data
     parts = data.split("_")
     sub   = parts[1] if len(parts) > 1 else ""
 
-    # Page navigation
+    # ── Page navigation (buttons only) ──────────────────────────────
     if data.startswith("socialhub_pg_"):
         try:
             page    = int(parts[2])
             req_uid = int(parts[3])
-        except (IndexError, ValueError): return
+        except (IndexError, ValueError):
+            await query.answer(); return
         if uid != req_uid:
             await query.answer("Not your hub.", show_alert=True); return
+        await query.answer()
         try: await query.edit_message_reply_markup(reply_markup=_social_hub_markup(uid, page=page))
         except: pass
         return
 
-    TIPS = {
-        "marry":       ("💍 *Marry*", "Reply to someone and use */marry* to propose. They must accept.\nUse */divorce* to end a marriage."),
-        "divorce":     ("💔 *Divorce*", "Reply to your partner and use */divorce*."),
-        "holdhands":   ("🤝 *Hold Hands*", "Reply to someone and use */holdhands*.\nUse */releasehands* to let go."),
-        "releasehands":("🔓 *Release Hands*", "Use */releasehands* to stop holding hands with your current partner."),
-        "hug":         ("🫂 *Hug*", "Reply to someone and use */hug*."),
-        "kiss":        ("💋 *Kiss*", "Reply to someone and use */kiss*."),
-        "wave":        ("👋 *Wave*", "Use */wave* alone to wave at the group, or reply to wave at a specific player."),
-        "pat":         ("🖐 *Pat*", "Reply to someone and use */pat*."),
-        "poke":        ("👉 *Poke*", "Reply to someone and use */poke*."),
-        "slap":        ("👋 *Slap*", "Reply to someone and use */slap*."),
-        "rumor":       ("📣 *Rumor*", "Use */rumor [text]* to post a rumor in the group that other players will see."),
-        "history":     ("📜 *History*", "Use */history* to see your recent combat log — wins, losses, and notable events."),
-        "guild":       ("🛡️ *Guild*", "*/guild* — view your guild\n*/guildcreate [name]* — create\n*/guildjoin [name]* — apply\n*/guildinfo* — stats\n*/guilddonate [amt]* — donate\n*/guildkick @user* — kick\n*/guildleave* — leave\n*/guilddisband* — disband"),
-        "guildlist":   ("📋 *Guild List*", "Use */guildlist* to see all active guilds and their member counts."),
-        "alliance":    ("🤝 *Alliance*", "Use */alliance* to manage inter-guild alliances. Allied guilds can't attack each other."),
-        "gbank":       ("🏦 *Guild Bank*", "Use */gbank* to view and interact with your guild's shared gold vault."),
-        "guildwar":    ("⚔️ *Guild War*", "Use */guildwar @guild* to declare war. All guild members join the fight."),
-        "guildinfo":   ("📊 *Guild Info*", "Use */guildinfo* to view your guild's stats, members, and vault."),
-        "title":       ("🏅 *Titles*", "Use */title* to browse and equip earned titles. Titles display next to your name."),
-        "bounties":    ("🎯 *Bounties*", "*/bounties* — see the board\n*/bounty @player [amt]* — place a bounty\nKill a wanted player to collect."),
-        "squad":       ("👥 *Squad*", "Use */squad* to manage your squad. Members share EXP bonuses on group activities."),
-        "gift":        ("🎁 *Gift*", "Reply to a player and use */gift [item]* or */gift [amount]g* to send items or gold."),
-    }
-
-    if sub == "info":
-        cmd_key = parts[2] if len(parts) > 2 else ""
-        tip = TIPS.get(cmd_key)
-        if tip:
-            plain = f"{tip[0].replace('*','').replace('_','').strip()}: {tip[1].replace('*','').replace('_','').strip()}"
-            await query.answer(plain[:200], show_alert=True)
+    # ── Back: restore full hub header + buttons ──────────────────────
+    if data.startswith("socialhub_back_"):
+        try:
+            page    = int(parts[2])
+            req_uid = int(parts[3])
+        except (IndexError, ValueError):
+            await query.answer(); return
+        if uid != req_uid:
+            await query.answer("Not your hub.", show_alert=True); return
+        await query.answer()
+        p = get_player(uid)
+        if not p: return
+        marriages  = _get_marriages(p)
+        hands_list = _get_holding_hands(p)
+        partner_line = ""
+        if marriages:
+            partner_line = "💍 " + ", ".join(f"*{m['name']}*" for m in marriages[:2]) + "\n"
+        if hands_list:
+            partner_line += "🤝 " + ", ".join(f"*{h['name']}*" for h in hands_list[:2]) + "\n"
+        guild_line = f"🛡️ Guild: *{p.get('guild_name', str(p.get('guild_id','')))}*\n" if p.get("guild_id") else ""
+        text = (
+            f"💬 *{p['username']}'s Social Hub*\n\n"
+            f"{partner_line}{guild_line}"
+            f"🌟 Influence: {safe_int(p.get('influence'))}\n\n"
+            f"Page 1: Relationships  |  Page 2: Emotes\n"
+            f"Page 3: Guilds  |  Page 4: Recognition"
+        )
+        try: await query.edit_message_text(text, parse_mode="Markdown",
+                                           reply_markup=_social_hub_markup(uid, page=page))
+        except: pass
         return
 
+    await query.answer()
+    p = get_player(uid)
+    if not p: return
+
+    _PAGE_MAP = {
+        "marry":1,"divorce":1,"holdhands":1,"releasehands":1,
+        "hug":2,"kiss":2,"wave":2,"pat":2,"poke":2,"slap":2,"rumor":2,"history":2,
+        "guild":3,"guildlist":3,"alliance":3,"gbank":3,"guildwar":3,"guildinfo":3,
+        "title":4,"bounties":4,"squad":4,"gift":4,
+    }
+
+    def _back_markup(page=1):
+        return InlineKeyboardMarkup([[InlineKeyboardButton(
+            "← Back", callback_data=f"socialhub_back_{page}_{uid}")]])
+
+    async def _show(text, page=1):
+        try: await query.edit_message_text(text[:4096], parse_mode="Markdown",
+                                           reply_markup=_back_markup(page))
+        except Exception:
+            try: await query.edit_message_text(text[:4096], reply_markup=_back_markup(page))
+            except Exception: pass
+
+    # ── "info" sub-actions: show real content inline ─────────────────
+    if sub == "info":
+        cmd_key = parts[2] if len(parts) > 2 else ""
+        pg = _PAGE_MAP.get(cmd_key, 1)
+
+        # Emote commands — show personal count + instructions
+        if cmd_key == "poke":
+            cnt = safe_int(p.get("poke_count", 0))
+            await _show(f"👉 *Poke*\n\nYou've poked people *{cnt}* times total.\n\nReply to someone in chat and use `/poke` to poke them.", pg)
+        elif cmd_key == "wave":
+            await _show(f"👋 *Wave*\n\nUse `/wave` alone to wave at the whole group.\nReply to a player and use `/wave` to wave at them specifically.", pg)
+        elif cmd_key == "hug":
+            cnt = safe_int(p.get("hug_count", 0))
+            await _show(f"🫂 *Hug*\n\nYou've given *{cnt}* hugs.\n\nReply to someone in chat and use `/hug`.", pg)
+        elif cmd_key == "kiss":
+            cnt = safe_int(p.get("kiss_count", 0))
+            await _show(f"💋 *Kiss*\n\nYou've kissed *{cnt}* times.\n\nReply to a partner (spouse or hand-holder) and use `/kiss`.", pg)
+        elif cmd_key == "pat":
+            cnt = safe_int(p.get("pat_count", 0))
+            await _show(f"🖐 *Pat*\n\nYou've given *{cnt}* pats.\n\nReply to someone in chat and use `/pat`.", pg)
+        elif cmd_key == "slap":
+            cnt = safe_int(p.get("slap_count", 0))
+            await _show(f"👋 *Slap*\n\nYou've slapped people *{cnt}* times. _(costs 1 influence)_\n\nReply to someone in chat and use `/slap`.", pg)
+        elif cmd_key == "rumor":
+            await _show(f"📣 *Rumor*\n\nPost a message the whole group can see.\n\nUse `/rumor [text]` to spread a rumor.", pg)
+        elif cmd_key == "history":
+            await _show(f"📜 *Combat History*\n\nUse `/history` in chat to see your recent combat log — wins, losses, and notable events.", pg)
+
+        # Relationship commands — show live data
+        elif cmd_key == "marry":
+            marriages = _get_marriages(p)
+            if marriages:
+                lines = [f"💍 *{p['username']}'s Marriages*\n"]
+                for m in marriages:
+                    date_str = (m.get("date","")[:10]) if m.get("date") else "?"
+                    lines.append(f"💍 *{m['name']}*  _(since {date_str})_")
+                lines.append(f"\n_{len(marriages)} marriage{'s' if len(marriages)>1 else ''}_  ·  Reply to a spouse and `/divorce` to end one")
+                await _show("\n".join(lines), pg)
+            else:
+                await _show(
+                    "💍 *Marriage*\n\nYou're not married yet.\n\n"
+                    "Reply to someone in chat and use `/marry` to propose!\n\n"
+                    "*Benefits per spouse:*\n"
+                    "• 💍 Profile badge  •  🏅 Beloved title  •  ✨ +3% EXP (cap +15%)\n\n"
+                    "*Costs:* 1st: 1,000g · 2nd: 5,000g · 3rd: 15,000g · 4th+: 50,000g\n"
+                    "_Both partners must agree._", pg)
+        elif cmd_key == "divorce":
+            marriages = _get_marriages(p)
+            if not marriages:
+                await _show("💔 *Divorce*\n\nYou're not married.", pg)
+            else:
+                lines = [f"💔 *Divorce*\n\nYour marriages:\n"]
+                for m in marriages:
+                    lines.append(f"💍 *{m['name']}*")
+                lines.append("\nReply to a spouse in chat and use `/divorce` to end the marriage.")
+                await _show("\n".join(lines), pg)
+        elif cmd_key == "holdhands":
+            hands = _get_holding_hands(p)
+            if hands:
+                lines = [f"🤝 *{p['username']}* is holding hands with:\n"]
+                for h in hands:
+                    dur = _holdhands_duration(h.get("since",""))
+                    lines.append(f"🤝 *{h['name']}*  _({dur})_")
+                lines.append("\nUse `/releasehands` to let go of someone.")
+                await _show("\n".join(lines), pg)
+            else:
+                await _show(
+                    "🤝 *Hold Hands*\n\nYou're not holding anyone's hand.\n\n"
+                    "Reply to someone in chat and use `/holdhands` to reach out!\n"
+                    "_No limit, no cost. Both must agree._", pg)
+        elif cmd_key == "releasehands":
+            hands = _get_holding_hands(p)
+            if not hands:
+                await _show("🔓 *Release Hands*\n\nYou're not holding anyone's hand.", pg)
+            else:
+                lines = [f"🔓 *Release Hands*\n\nCurrently holding hands with:\n"]
+                for h in hands:
+                    dur = _holdhands_duration(h.get("since",""))
+                    lines.append(f"🤝 *{h['name']}*  _({dur})_")
+                lines.append("\nReply to one of them in chat and use `/releasehands`.")
+                await _show("\n".join(lines), pg)
+
+        # Guild commands — show live guild data
+        elif cmd_key == "guild":
+            gid = p.get("guild_id")
+            if not gid:
+                await _show(
+                    "🛡️ *Guild*\n\nYou're not in a guild.\n\n"
+                    "• `/guildcreate [name]` — start your own\n"
+                    "• `/guildjoin [name]` — join an existing guild\n"
+                    "• `/guildlist` — browse all guilds", pg)
+            else:
+                g = get_guild(gid)
+                if g:
+                    members = sjl(g.get("members"), [])
+                    role = "👑 Leader" if g.get("leader_id") == uid else "🛡️ Member"
+                    await _show(
+                        f"🛡️ *{g['name']}*\n\n"
+                        f"Role: {role}  |  Members: *{len(members)}/50*\n"
+                        f"Gold: *{safe_int(g.get('gold')):,}g*\n\n"
+                        f"Use `/guildinfo` for full details & member list.", pg)
+                else:
+                    await _show("🛡️ *Guild*\n\nGuild data not found.", pg)
+        elif cmd_key == "guildlist":
+            try:
+                conn_gl = sqlite3.connect(DB_PATH)
+                conn_gl.row_factory = sqlite3.Row
+                c_gl = conn_gl.cursor()
+                c_gl.execute("SELECT name, members, gold FROM guilds ORDER BY gold DESC LIMIT 8")
+                rows_gl = [dict(r) for r in c_gl.fetchall()]
+                conn_gl.close()
+            except Exception:
+                rows_gl = []
+            if not rows_gl:
+                await _show("📋 *Guild List*\n\nNo guilds yet. Use `/guildcreate [name]` to start one!", pg)
+            else:
+                lines = ["📋 *Top Guilds*\n"]
+                for i, gr in enumerate(rows_gl, 1):
+                    mem = len(sjl(gr.get("members","[]"), []))
+                    lines.append(f"{i}. *{gr['name']}* — {mem} members  💰{safe_int(gr.get('gold')):,}g")
+                await _show("\n".join(lines), pg)
+        elif cmd_key == "alliance":
+            aid = p.get("alliance_id")
+            if not aid:
+                await _show(
+                    "🤝 *Alliance*\n\nYou're not in an order/alliance.\n\n"
+                    "Use `/alliance` in chat to create or manage an alliance between guilds.", pg)
+            else:
+                try:
+                    a = get_alliance(aid)
+                    if a:
+                        members = sjl(a.get("members"), [])
+                        await _show(
+                            f"🤝 *{a.get('name','Alliance')}*\n\n"
+                            f"Members: *{len(members)}*\n\n"
+                            f"Use `/alliance` for full details.", pg)
+                    else:
+                        await _show("🤝 *Alliance*\n\nAlliance not found.", pg)
+                except Exception:
+                    await _show("🤝 *Alliance*\n\nUse `/alliance` to manage alliances.", pg)
+        elif cmd_key == "gbank":
+            gid = p.get("guild_id")
+            if not gid:
+                await _show("🏦 *Guild Bank*\n\nYou're not in a guild.", pg)
+            else:
+                g = get_guild(gid)
+                if g:
+                    await _show(
+                        f"🏦 *{g['name']} Bank*\n\n"
+                        f"Balance: *{safe_int(g.get('gold')):,}g*\n\n"
+                        f"• `/deposit [amount]` — add gold\n"
+                        f"• `/withdraw [amount]` — take gold (leader/officer)", pg)
+                else:
+                    await _show("🏦 *Guild Bank*\n\nGuild not found.", pg)
+        elif cmd_key == "guildwar":
+            gid = p.get("guild_id")
+            if not gid:
+                await _show("⚔️ *Guild War*\n\nJoin a guild first with `/guildjoin [name]`.", pg)
+            else:
+                try:
+                    g = get_guild(gid)
+                    war = get_active_war(gid) if g else None
+                    if war:
+                        my_gid = str(gid)
+                        our_k   = war["kills1"] if str(war["guild1_id"]) == my_gid else war["kills2"]
+                        their_k = war["kills2"] if str(war["guild1_id"]) == my_gid else war["kills1"]
+                        exp_str = time_until(war["expires_at"]) or "ending soon"
+                        await _show(
+                            f"⚔️ *Guild War Active!*\n\n"
+                            f"Our kills: *{our_k}*  |  Their kills: *{their_k}*\n"
+                            f"Ends in: *{exp_str}*\n\n"
+                            f"_Attack enemy members in chat to score kills!_", pg)
+                    elif g:
+                        await _show(
+                            f"⚔️ *Guild War*\n\n"
+                            f"*{g['name']}* has no active war.\n\n"
+                            f"Use `/guildwar @guild` to declare war on another guild.", pg)
+                    else:
+                        await _show("⚔️ *Guild War*\n\nGuild not found.", pg)
+                except Exception:
+                    await _show("⚔️ *Guild War*\n\nUse `/guildwar @guild` to declare war.", pg)
+        elif cmd_key == "guildinfo":
+            gid = p.get("guild_id")
+            if not gid:
+                await _show("📊 *Guild Info*\n\nYou're not in a guild.", pg)
+            else:
+                g = get_guild(gid)
+                if g:
+                    members = sjl(g.get("members"), [])
+                    role = "👑 Leader" if g.get("leader_id") == uid else "🛡️ Member"
+                    wins   = safe_int(g.get("war_wins", 0))
+                    losses = safe_int(g.get("war_losses", 0))
+                    await _show(
+                        f"📊 *{g['name']}*\n\n"
+                        f"Role: {role}  |  Members: *{len(members)}/50*\n"
+                        f"Gold: *{safe_int(g.get('gold')):,}g*\n"
+                        f"War Record: *{wins}W / {losses}L*\n\n"
+                        f"Use `/guildinfo` for the full member list.", pg)
+                else:
+                    await _show("📊 *Guild Info*\n\nGuild not found.", pg)
+
+        # Recognition commands — show live data
+        elif cmd_key == "title":
+            titles = sjl(p.get("titles"), [])
+            active = p.get("active_title", "")
+            if not titles:
+                await _show(
+                    "🏅 *Titles*\n\nNo titles earned yet.\n\n"
+                    "Earn titles by leveling up, winning PvP, completing objectives, and more.\n"
+                    "Use `/title` to equip one.", pg)
+            else:
+                lines = [f"🏅 *{p['username']}'s Titles*\n"]
+                for t in titles[:12]:
+                    mark = "✅ " if t == active else "·  "
+                    lines.append(f"{mark}{t}")
+                if len(titles) > 12:
+                    lines.append(f"_...and {len(titles)-12} more_")
+                lines.append("\n_Use `/title` to equip a different one._")
+                await _show("\n".join(lines), pg)
+        elif cmd_key == "bounties":
+            try:
+                conn_b = sqlite3.connect(DB_PATH)
+                conn_b.row_factory = sqlite3.Row
+                c_b = conn_b.cursor()
+                c_b.execute("SELECT b.*, p.username FROM bounties b "
+                            "JOIN players p ON b.target_id=p.user_id "
+                            "ORDER BY b.amount DESC LIMIT 8")
+                rows_b = [dict(r) for r in c_b.fetchall()]
+                conn_b.close()
+            except Exception:
+                rows_b = []
+            if not rows_b:
+                await _show("🎯 *Bounty Board*\n\nNo active bounties.\n\nUse `/bounty @player [amount]` to post one.", pg)
+            else:
+                lines = ["🎯 *Bounty Board*\n"]
+                for i, b_r in enumerate(rows_b, 1):
+                    lines.append(f"{i}. *{b_r['username']}* — {safe_int(b_r.get('amount')):,}g")
+                lines.append("\n_Kill a wanted player to collect their bounty._")
+                await _show("\n".join(lines), pg)
+        elif cmd_key == "squad":
+            squad_id = p.get("squad_id")
+            if not squad_id:
+                await _show(
+                    "👥 *Squad*\n\nYou're not in a squad.\n\n"
+                    "Use `/squad` to create or join a squad.\n"
+                    "Members share EXP bonuses on group activities.", pg)
+            else:
+                await _show(
+                    "👥 *Squad*\n\nYou're in a squad!\n\n"
+                    "Use `/squad` to see your members and shared bonuses.", pg)
+        elif cmd_key == "gift":
+            await _show(
+                "🎁 *Gift*\n\nSend items or gold to another player.\n\n"
+                "Reply to a player in chat and use:\n"
+                "• `/gift [item name]` — give an item\n"
+                "• `/gift [amount]g` — give gold", pg)
+        else:
+            await _show(f"_{cmd_key}_ — use the command in chat.", pg)
+        return
+
+    # ── Non-info sub-actions: bonds / who / influence / rank ─────────
     if sub == "bonds":
         try:
             rows = _bonds_fetch_rows()
@@ -26714,8 +26997,6 @@ async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     if sub == "influence":
-        p = get_player(uid)
-        if not p: return
         inf  = safe_int(p.get("influence"))
         tier = ("🌑 Shadow" if inf < 10 else "🌟 Rising" if inf < 50 else
                 "⭐ Notable" if inf < 150 else "💫 Renowned" if inf < 300 else "🌠 Legendary")
@@ -26729,7 +27010,8 @@ async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if sub == "rank":
         c = _db().cursor()
-        c.execute("SELECT user_id, username, level, wins FROM players ORDER BY level DESC, wins DESC LIMIT 10")
+        c.execute("SELECT user_id, username, level, wins FROM players "
+                  "ORDER BY level DESC, wins DESC LIMIT 10")
         rows   = [dict(r) for r in c.fetchall()]
         medals = {1:"🥇", 2:"🥈", 3:"🥉"}
         lines  = ["🏆 *Leaderboard — Top Players*\n"]
