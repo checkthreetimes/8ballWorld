@@ -393,14 +393,14 @@ CLASS_TREE = {
         "stat_bonus":{"STR":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Iron Will",
-             "passive":"Take 50% less damage from all sources.",
+             "passive":"15% damage reduction from all sources. When below 40% HP, deal 10% more damage.",
              "active":"Shield Bash","type":"stun",
-             "desc":"30% chance to stun target  -  they miss their next attack.",
+             "desc":"30% chance to stun target — they miss their next attack.",
              "passive_key":"iron_will"},
             {"tier":1,"unlock":5,"name":"Defensive Stance",
-             "passive":"Reduce incoming damage by 30 when HP is above 50%.",
+             "passive":"10% chance to completely block any incoming attack.",
              "active":"Brace","type":"def_buff",
-             "desc":"Gain +30 flat damage reduction for 3 hits.",
+             "desc":"Fortify: negate the next 3 incoming attacks completely.",
              "passive_key":"defensive_stance"},
         ]
     },
@@ -537,12 +537,12 @@ CLASS_TREE = {
             {"tier":1,"unlock":5,"name":"Arcane Mind",
              "passive":"Each INT point adds +1 spell damage.",
              "active":"Fireball","type":"spell",
-             "desc":"INT-scaled burst damage.",
-             "passive_key":"arcane_mind"},
+             "desc":"INT×2.5 arcane burst. Cannot be dodged or resisted.",
+             "passive_key":"arcane_mind","mult":2.5},
             {"tier":1,"unlock":5,"name":"Arcane Shield",
-             "passive":"10% chance to absorb a hit entirely with a mana barrier.",
-             "active":"Mana Barrier","type":"heal_shield",
-             "desc":"Absorb up to INT x2 incoming damage for 2 hits.",
+             "passive":"10% chance to completely absorb a hit with a mana barrier.",
+             "active":"Mana Barrier","type":"def_buff",
+             "desc":"Create a mana barrier: negate the next 2 incoming attacks completely.",
              "passive_key":"arcane_shield"},
         ]
     },
@@ -679,13 +679,13 @@ CLASS_TREE = {
             {"tier":1,"unlock":5,"name":"Quick Hands",
              "passive":"+15% crit chance on all attacks.",
              "active":"Backstab","type":"crit_dmg",
-             "desc":"180% damage. Guaranteed crit if target has not attacked yet.",
+             "desc":"180% damage. Guaranteed crit if target is Distracted or Hexed.",
              "passive_key":"quick_hands","mult":1.8},
             {"tier":1,"unlock":5,"name":"Feint",
-             "passive":"5% chance each hit causes target to miss their next attack.",
-             "active":"Feint","type":"acc_debuff_only",
-             "desc":"Target has 40% miss chance for their next attack.",
-             "passive_key":"feint"},
+             "passive":"5% chance each hit Distracts the target (30% miss chance for 1 hit).",
+             "active":"Feint","type":"miss_debuff",
+             "desc":"80% damage. Target Distracted ×2 (30% miss chance for 2 hits).",
+             "passive_key":"feint","mult":0.8,"debuff_stacks":2},
         ]
     },
     "rogue": {
@@ -819,15 +819,15 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Eagle Eye",
-             "passive":"Never miss when DEX beats target DEX, or AGI beats target DEF. All archer attacks gain DEX-based accuracy.",
+             "passive":"Your shots always find their mark — +15% accuracy. Never miss when your DEX exceeds the target's.",
              "active":"Aimed Shot","type":"pierce_dodge",
-             "desc":"180% damage. Ignores dodge completely.",
+             "desc":"180% damage. Ignores all dodge completely.",
              "passive_key":"eagle_eye","mult":1.8},
             {"tier":1,"unlock":5,"name":"Warning Shot",
-             "passive":"First attack each fight reduces target AGI by 2 for their next attack.",
-             "active":"Warning Shot","type":"dmg_acc_debuff",
-             "desc":"110% damage. Target has 25% increased miss chance for 3 hits.",
-             "passive_key":"warning_shot","mult":1.1},
+             "passive":"20% chance each hit to Distract the target (30% miss chance for 1 hit).",
+             "active":"Warning Shot","type":"miss_debuff",
+             "desc":"110% damage. Target Distracted ×3 (30% miss chance for 3 hits).",
+             "passive_key":"warning_shot","mult":1.1,"debuff_stacks":3},
         ]
     },
     "scout": {
@@ -962,13 +962,13 @@ CLASS_TREE = {
         "skills":[
             {"tier":1,"unlock":5,"name":"Mending Aura",
              "passive":"All heals you cast are 25% more effective.",
-             "active":"Holy Light","type":"revive_heal","mult":50,
-             "desc":"Heal target for WIS x50 HP. Revives defeated players at 70% HP.",
+             "active":"Holy Light","type":"revive_heal","mult":8,
+             "desc":"Heal target for WIS×8 HP. Revives defeated allies at 50% HP.",
              "passive_key":"mending_aura"},
             {"tier":1,"unlock":5,"name":"Mend",
-             "passive":"Regen 15 HP every 10m passively.",
-             "active":"Mend","type":"self_heal","mult":50,
-             "desc":"Restore WIS x50 HP to yourself.",
+             "passive":"20% chance when hit to regenerate WIS×2 HP (divine restoration).",
+             "active":"Mend","type":"self_heal","mult":8,
+             "desc":"Restore WIS×8 HP to yourself. Cleanse one active bleed or poison.",
              "passive_key":"mend"},
         ]
     },
@@ -1103,15 +1103,15 @@ CLASS_TREE = {
         "stat_bonus":{"WIS":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Natural Growth",
-             "passive":"Regen 20 HP every 5m. 12% chance each attack plants a poison seed on target (15 dmg/30s for 2 min).",
-             "active":"Healing Bloom","type":"revive_heal","mult":50,
-             "desc":"Bloom heals WIS x50 HP. Revives defeated allies at 70% HP.",
+             "passive":"After being hit, restore WIS HP. 15% chance on hit to poison the target (15 dmg × 5 hits).",
+             "active":"Healing Bloom","type":"revive_heal","mult":8,
+             "desc":"Bloom heals WIS×8 HP. Revives defeated allies at 50% HP.",
              "passive_key":"natural_growth"},
             {"tier":1,"unlock":5,"name":"Thorn Skin",
-             "passive":"Attackers take WIS x0.5 damage when hitting you.",
+             "passive":"Attackers take WIS×0.5 damage when hitting you.",
              "active":"Thorn Lash","type":"bleed_crit",
-             "desc":"WIS x2 nature strike + apply bleed (15 dmg ×10 actions).",
-             "passive_key":"thorn_skin"},
+             "desc":"WIS×2 nature damage + bleed: target bleeds for 5 hits (15 dmg/action).",
+             "passive_key":"thorn_skin","mult":2,"stat":"WIS"},
         ]
     },
     # Path A — Support/Healing
@@ -1247,15 +1247,15 @@ CLASS_TREE = {
         "stat_bonus":{"INT":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Allure",
-             "passive":"15% chance to fascinate any attacker — they deal 40% less damage for 2 hits.",
+             "passive":"15% chance to fascinate any attacker — they deal 25% less damage for 2 hits (hex).",
              "active":"Bewitch","type":"debuff",
-             "desc":"Reduce target ATK by 30% for 4 hits. They cannot be buffed during this time.",
-             "passive_key":"allure"},
+             "desc":"Hex target ×4 (deals 25% less damage for 4 hits). 80% base damage.",
+             "passive_key":"allure","mult":0.8,"debuff_stacks":4},
             {"tier":1,"unlock":5,"name":"Beguile",
-             "passive":"8% chance to reflect any skill back at its caster for 50% damage.",
+             "passive":"8% chance when hit to reflect 50% of incoming damage back at the attacker.",
              "active":"Hex Bolt","type":"spell",
-             "desc":"INT x1.5 arcane damage + 20% chance to stun target for 1 hit.",
-             "passive_key":"beguile"},
+             "desc":"INT×2 arcane damage. 20% chance to stun target for 1 hit.",
+             "passive_key":"beguile","mult":2},
         ]
     },
     # Path A — Curse/Hex
@@ -1391,14 +1391,14 @@ CLASS_TREE = {
         "stat_bonus":{"STR":2,"WIS":1},
         "skills":[
             {"tier":1,"unlock":5,"name":"Einherjar's Will",
-             "passive":"When below 30% HP, gain +40% ATK. Once per hour: survive a fatal blow at 1 HP.",
+             "passive":"When below 30% HP, gain +20% ATK. Once per battle: survive a fatal blow at 1 HP.",
              "active":"War Cry","type":"self_atk_buff",
-             "desc":"Unleash a battle cry: gain +30% ATK and +15% DEF for 3 hits.",
+             "desc":"Bellow a battle cry: gain +10% all stats for 3 attacks.",
              "passive_key":"einherjar_will"},
             {"tier":1,"unlock":5,"name":"Shield Maiden",
-             "passive":"Reduce incoming damage by 5 when above 50% HP.",
+             "passive":"15 flat damage reduction (always active). Your shield never wavers.",
              "active":"Aegis Wall","type":"def_buff",
-             "desc":"Block the next 3 incoming attacks completely (3 shield charges).",
+             "desc":"Iron aegis: negate the next 3 incoming attacks completely.",
              "passive_key":"shield_maiden"},
         ]
     },
@@ -1535,14 +1535,14 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Waltz",
-             "passive":"After dodging, next attack deals +60% bonus damage. All crits restore 5 HP.",
+             "passive":"After dodging, your next attack deals +60% bonus damage. Critical hits restore 5 HP.",
              "active":"Dancer's Step","type":"dodge_buff",
-             "desc":"Gain +35% dodge for 3 incoming hits. If any attack misses during this window, immediately counter for AGI x1.5 damage.",
-             "passive_key":"waltz"},
+             "desc":"Gain auto-dodge for the next 2 incoming attacks.",
+             "passive_key":"waltz","dodge_charges":2},
             {"tier":1,"unlock":5,"name":"Rhythm",
-             "passive":"Each consecutive hit on same target adds +8% damage (up to 4 stacks, resets on miss).",
+             "passive":"Each consecutive hit builds rhythm: +4% damage per stack (up to 4 stacks, 16% max). Resets on miss.",
              "active":"Spinning Blade","type":"multihit",
-             "desc":"Two rapid strikes: AGI x0.8 each, independent crits.",
+             "desc":"Two rapid strikes: AGI×0.8 each, independent crits.",
              "passive_key":"rhythm","hits":2,"mults":[0.8, 0.8]},
         ]
     },
@@ -5825,10 +5825,12 @@ def calc_attack_damage(attacker, weather=None):
         if "muses_grace" in active_pks:     buff_mod += 0.20
         if "lorekeeping" in active_pks:     buff_mod += 0.05
         # Valkyrie
+        if "iron_will" in active_pks:
+            _iw_hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
+            if _iw_hp_pct < 0.40: buff_mod += 0.10
         if "einherjar_will" in active_pks:
-            raw += get_stat(attacker, "STR") * 0.10
             _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
-            if _hp_pct < 0.30: buff_mod += 0.40
+            if _hp_pct < 0.30: buff_mod += 0.20
         if "thunder_step" in active_pks:
             if attacker.get("thunder_dodge_ready"):
                 buff_mod += 0.40; attacker["thunder_dodge_ready"] = 0
@@ -5838,11 +5840,11 @@ def calc_attack_damage(attacker, weather=None):
             buff_mod += min(0.30, safe_int(attacker.get("oath_stacks", 0)) * 0.10)
         if pk == "iron_bulwark":    buff_mod += 0.05
         # Phantom Dancer
-        if pk == "waltz":
+        if "waltz" in active_pks:
             if attacker.get("waltz_dodge_ready"):
                 buff_mod += 0.60; attacker["waltz_dodge_ready"] = 0
-        if pk == "rhythm":
-            buff_mod += min(0.20, safe_int(attacker.get("rhythm_stacks", 0)) * 0.04)
+        if "rhythm" in active_pks:
+            buff_mod += min(0.16, safe_int(attacker.get("rhythm_stacks", 0)) * 0.04)
         if pk == "flourish":
             buff_mod += min(0.15, safe_int(attacker.get("flourish_stacks", 0)) * 0.05)
         if pk == "adrenaline":
@@ -5928,7 +5930,7 @@ def calc_defense(defender, dmg):
     def_pks = get_all_passive_keys(defender)
     cls = get_player_class(defender)
     if cls:
-        if "iron_will" in def_pks:      def_reduction += 0.50
+        if "iron_will" in def_pks:      def_reduction += 0.15
         if "holy_stance" in def_pks:
             hp_pct = defender["hp"] / max(1, defender["max_hp"])
             if hp_pct < 0.50:
@@ -5943,10 +5945,12 @@ def calc_defense(defender, dmg):
         if "lorekeeping" in def_pks:    def_reduction += 0.15
         if "fog_of_war" in def_pks:     def_reduction += 0.10
         if "iron_bulwark" in def_pks:   def_reduction += 0.20
-        if "einherjar_will" in def_pks: def_reduction += 0.05
+        if "einherjar_will" in def_pks and not defender.get("einherjar_used"):
+            if defender["hp"] - dmg <= 0:
+                defender["einherjar_used"] = True
+                dmg = max(0, defender["hp"] - 1)
         if "shield_maiden" in def_pks:
-            if defender["hp"] > defender.get("max_hp", defender["hp"]) * 0.50:
-                def_reduction += 0.05
+            dmg = max(1, dmg - 15)
         if "defenders_oath" in def_pks:
             if defender["hp"] < defender.get("max_hp", defender["hp"]) * 0.50:
                 def_reduction += 0.10
@@ -5957,9 +5961,7 @@ def calc_defense(defender, dmg):
             if random.random() < 0.15: return 0
         if "empress_dread" in def_pks:  def_reduction += 0.10
         if "defensive_stance" in def_pks:
-            hp_pct = defender.get("hp", 1) / max(1, defender.get("max_hp", 1))
-            if hp_pct > 0.50:
-                dmg = max(1, dmg - 30)
+            if random.random() < 0.10: return 0
         if "arcane_shield" in def_pks:
             if random.random() < 0.10: return 0
         if "mana_overload" in def_pks:
@@ -5987,7 +5989,7 @@ def calc_defense(defender, dmg):
         if "divine_grace" in def_pks:
             if random.random() < 0.15: return 0  # 15% block chance (divine protection)
         if "runic_ward" in def_pks:     dmg = max(0, dmg - 20)
-        if "beguile" in def_pks and random.random() < 0.08: return 0
+        # beguile reflect handled in apply_reflect, not here
     # def_reflect — charge-based (new) or legacy timestamp
     if safe_int(defender.get("def_reflect_hits")) > 0:
         def_reduction += 0.40
@@ -6863,6 +6865,9 @@ def check_miss(attacker, defender):
         # thunder_step: mark next attack for +40% lightning bonus
         if pk == "thunder_step":
             defender["thunder_dodge_ready"] = 1
+        # waltz: mark next attack for +60% bonus damage
+        if pk == "waltz":
+            defender["waltz_dodge_ready"] = 1
     return did_dodge
 
 def check_crit(attacker):
@@ -8986,6 +8991,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             a["harmony_stacks"] = 0
         if "melody" in get_all_passive_keys(a):
             a["melody_stacks"] = 0
+        if "rhythm" in get_all_passive_keys(a):
+            a["rhythm_stacks"] = 0
         save_player(d); save_player(a)
         return f"🌀 *{a['username']}* swings at *{d['username']}*  -  *MISS!*", [], "miss"
 
@@ -9166,6 +9173,17 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             _dg_hp = round(calc_max_hp(d) * 0.05)
             d["hp"] = min(calc_max_hp(d), d["hp"] + _dg_hp)
             extra_notes.append(f"🙏 *Divine Grace!* +{_dg_hp} HP (5% max HP restored by faith)!")
+        if _pk_d_post == "mend" and random.random() < 0.20:
+            _mend_hp = max(1, round(safe_stats(d).get("WIS", 5) * 2))
+            d["hp"] = min(calc_max_hp(d), d["hp"] + _mend_hp)
+            extra_notes.append(f"✨ *Mend!* +{_mend_hp} HP divine restoration!")
+        if _pk_d_post == "natural_growth":
+            _ng_hp = max(1, round(safe_stats(d).get("WIS", 5)))
+            d["hp"] = min(calc_max_hp(d), d["hp"] + _ng_hp)
+            extra_notes.append(f"🌿 *Natural Growth!* +{_ng_hp} HP nature regen!")
+        if _pk_d_post == "allure" and random.random() < 0.15:
+            add_charges(a, "hex_turns", 2)
+            extra_notes.append(f"💫 *Allure!* {a['username']} fascinated (25% less damage for 2 hits)!")
 
     # Burn proc from weapon enchant
     if get_enchant_bonus(a, "burn_proc") and random.random() < 0.10:
@@ -9189,12 +9207,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
                 add_charges(d, "silence_turns", 1)
                 extra_notes.append(f"🤐 *Throat Cut!* {d['username']} silenced for 1 skill!")
         if pk_a == "cursed_blade": add_charges(d, "cursed_hits", 2)
-        if pk_a == "warning_shot":
-            ws_key = f"warning_shot_hit_{a.get('user_id', '')}"
-            if not _ts_active(d, ws_key):
-                set_status(d, ws_key, 60)
-                sd = safe_stats(d); sd["AGI"] = max(0, sd.get("AGI", 5) - 2)
-                d["stats"] = json.dumps(sd)
+        if pk_a == "warning_shot" and random.random() < 0.20 and safe_int(d.get("distract_turns", 0)) < 3:
+            add_charges(d, "distract_turns", 1)
+            extra_notes.append(f"🎯 *Warning Shot!* {d['username']} distracted (30% miss for 1 hit)!")
+        if pk_a == "natural_growth" and random.random() < 0.15:
+            add_charges(d, "poison_stacks", 5)
+            extra_notes.append(f"🌱 *Natural Growth!* {d['username']} poisoned (15 dmg × 5 hits)!")
         if pk_a == "purge":
             _purged = False
             for buf in ["blessed_until", "def_reflect_until", "invincible_until", "temp_hp_until"]:
@@ -9234,6 +9252,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             a["harmony_stacks"] = min(3, safe_int(a.get("harmony_stacks", 0)) + 1)
         if pk_a == "melody":
             a["melody_stacks"] = min(3, safe_int(a.get("melody_stacks", 0)) + 1)
+        if "rhythm" in get_all_passive_keys(a):
+            a["rhythm_stacks"] = min(4, safe_int(a.get("rhythm_stacks", 0)) + 1)
 
     update_recent_attackers(d, au_id)
     proc_fired, proc_msg, proc_extra = calc_proc_effect(a, d, dmg_after_def)
