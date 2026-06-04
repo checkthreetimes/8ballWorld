@@ -39,8 +39,11 @@ def _db() -> sqlite3.Connection:
     return conn
 
 # ── CHANGELOG ─────────────────────────────────────────────────────────────────
-CURRENT_VERSION = "v1.21"
+CURRENT_VERSION = "v1.4"
 CHANGELOG = [
+    {"version": "v1.4", "date": "2026-06-04", "changes": [
+        "Stable v14: encounter system overhaul, level-based enemy scaling, boosted encounter EXP, full item pool in encounters, pet level cap (player×3), HP rebalance, removed boss/raid/soloraid, fixed skill picker double-answer bug, fixed noop handler, trimmed dead code",
+    ]},
     {"version": "v1.21", "date": "2026-05-24", "changes": [
         "Killstreaks, revenge bonus, wanted system, /claim streak, /forge crafting, /war board, /history, guild wars, guild bank",
     ]},
@@ -3773,7 +3776,9 @@ def _enc_level_stats(enc_level, p_level):
     hp  = max(50, round(max_hp_for_level(enc_level) * random.uniform(0.80, 1.20)))
     atk = max(1, enc_level * 4 + random.randint(5, 15))
     diff = enc_level - p_level
-    reward_mult = max(0.5, round(1.0 + max(0, diff) * 0.12, 2))
+    # tier_bonus: each 20 levels adds 0.3× (level 20=+0.3, 40=+0.6, 60=+0.9, 80=+1.2, 100=+1.5)
+    tier_bonus = (enc_level // 20) * 0.3
+    reward_mult = max(0.5, round(1.0 + tier_bonus + max(0, diff) * 0.10, 2))
     num_gear = max(1, min(4, 1 + enc_level // 20))
     num_pots = max(1, min(3, 1 + enc_level // 30))
     if enc_level <= 10:
@@ -3835,14 +3840,14 @@ def _event_markup(enc):
     return InlineKeyboardMarkup(rows)
 
 def _pick_random_npc(p_level):
-    lo, hi = max(1, p_level - 10), p_level + 10
+    lo, hi = max(1, p_level - 5), p_level + 5
     eligible = [n for n in ENCOUNTER_NPCS if n[2] <= hi and n[3] >= lo]
     if not eligible:
         eligible = sorted(ENCOUNTER_NPCS, key=lambda n: abs(n[2] - p_level))[:5]
     return random.choice(eligible)
 
 def _pick_random_monster(p_level):
-    lo, hi = max(1, p_level - 10), p_level + 10
+    lo, hi = max(1, p_level - 5), p_level + 5
     eligible = [m for m in ENCOUNTER_MONSTERS if m[3][0] <= hi and m[3][1] >= lo]
     if not eligible:
         eligible = sorted(ENCOUNTER_MONSTERS, key=lambda m: abs(m[3][0] - p_level))[:5]
@@ -4143,15 +4148,15 @@ def _enc_process_skill(enc, p, sk):
 
 def _enc_monster_level(monster, base_level):
     lo, hi = monster[3]
-    band_lo = max(lo, max(1, base_level - 10))
-    band_hi = min(hi, base_level + 10)
+    band_lo = max(lo, max(1, base_level - 5))
+    band_hi = min(hi, base_level + 5)
     if band_lo > band_hi: band_lo, band_hi = lo, hi
     return random.randint(band_lo, band_hi)
 
 def _enc_npc_level(npc, p_level):
     lo, hi = npc[2], npc[3]
-    band_lo = max(lo, max(1, p_level - 10))
-    band_hi = min(hi, p_level + 10)
+    band_lo = max(lo, max(1, p_level - 5))
+    band_hi = min(hi, p_level + 5)
     if band_lo > band_hi: band_lo, band_hi = lo, hi
     return random.randint(band_lo, band_hi)
 
@@ -10625,277 +10630,27 @@ def _roll_boss_loot(boss_data):
 
 # ── RAID ──────────────────────────────────────────────────────────────────────
 async def raid_cmd(update, context):
-    await send_group(update, "🛡️ Party Raids have been removed. Use /encounter or /dungeon for group content!", delay=10); return
-    user = update.effective_user
-    p = get_player(user.id)
-    chat_id = update.effective_chat.id
-    if not p:
-        await send_group(update, "Use /ascend first!"); return
-    if is_defeated(p):
-        await send_group(update, "💀 You're defeated  -  can't raid!"); return
-
-    raid = active_raids.get(chat_id)
-
-    if raid and not raid["in_progress"]:
-        if datetime.now() > datetime.fromisoformat(raid["expires"]):
-            active_raids.pop(chat_id, None)
-            await send_group(update, "⏰ Raid lobby expired. Use /raid to start a new one.")
-            return
-        if user.id in [u["id"] for u in raid["party"]]:
-            count = len(raid["party"])
-            await send_group(update,
-                f"⚔️ You're already in the party! ({count} players)\n"
-                f"Use /raidstart when ready."); return
-        raid["party"].append({"id": user.id, "name": user.first_name})
-        count = len(raid["party"])
-        await send_group(update,
-            f"⚔️ *{user.first_name}* joins the raid party! ({count} players)\n"
-            f"Use /raidstart to begin (min 2)."); return
-
-    if raid and raid["in_progress"]:
-        await send_group(update,
-            f"⚔️ A raid is in progress!\n"
-            f"Use /raidstrike to attack."); return
-
-    active_raids[chat_id] = {
-        "party": [{"id": user.id, "name": user.first_name}],
-        "in_progress": False,
-        "wave": 0,
-        "tier": None,
-        "enemy": None,
-        "enemy_hp": 0,
-        "enemy_max_hp": 0,
-        "expires": (datetime.now() + timedelta(minutes=15)).isoformat(),
-        "damage_dealt": {},
-    }
-    await send_group(update,
-        f"🏰 *RAID LOBBY OPEN!*\n\n"
-        f"*{user.first_name}* is forming a raid party.\n"
-        f"Others: type /raid to join!\n"
-        f"Minimum 2 players required.\n\n"
-        f"_Leader: /raidstart when ready. Lobby expires in 15m._",
-        permanent=False, delay=180)
+    await send_group(update, "🛡️ Party Raids have been removed. Use /encounter or /dungeon for group content!", delay=10)
 
 
 async def raidstart_cmd(update, context):
-    await send_group(update, "🛡️ Party Raids have been removed.", delay=8); return
-    user = update.effective_user
-    chat_id = update.effective_chat.id
-    raid = active_raids.get(chat_id)
-
-    if not raid:
-        await send_group(update, "No raid lobby! Use /raid to start one."); return
-    if raid["in_progress"]:
-        await send_group(update, "Raid already in progress! Use /raidstrike."); return
-    if user.id != raid["party"][0]["id"]:
-        await send_group(update, "Only the raid leader can start."); return
-    if len(raid["party"]) < 2:
-        await send_group(update,
-            f"Need at least 2 players. Have {len(raid['party'])}."); return
-
-    levels = []
-    for u in raid["party"]:
-        pp = get_player(u["id"])
-        if pp: levels.append(pp["level"])
-    avg = sum(levels) / len(levels) if levels else 1
-    eligible = [t for t in RAID_TIERS if t["min_level"] <= avg]
-    tier = eligible[-1] if eligible else RAID_TIERS[0]
-
-    first_enemy = tier["wave_enemies"][0].copy()
-    raid["tier"] = tier
-    raid["in_progress"] = True
-    raid["wave"] = 1
-    raid["enemy"] = first_enemy
-    raid["enemy_hp"] = first_enemy["hp"]
-    raid["enemy_max_hp"] = first_enemy["hp"]
-    raid["damage_dealt"] = {u["id"]: 0 for u in raid["party"]}
-
-    # Initialize separate raid HP for each party member
-    raid["player_hp"] = {}
-    raid["player_max_hp"] = {}
-    for u in raid["party"]:
-        pp = get_player(u["id"])
-        if pp:
-            mhp = calc_max_hp(pp)
-            raid["player_hp"][u["id"]] = mhp
-            raid["player_max_hp"][u["id"]] = mhp
-
-    # Initialize turn tracking
-    raid["current_turn_idx"] = 0
-    raid["acted_this_round"] = set()
-    raid["turn_task"] = None
-
-    names = ", ".join(u["name"] for u in raid["party"])
-    wave_count = len(tier["wave_enemies"]) + 1
-    await send_group(update,
-        f"⚔️ *RAID BEGINS  -  {tier['name']}*\n\n"
-        f"👥 Party: {names}\n"
-        f"📊 Avg Level: {avg:.0f}\n"
-        f"🌊 {wave_count} waves total\n\n"
-        f"🌊 *Wave 1  -  {first_enemy['name']}*\n"
-        f"❤️ HP: {first_enemy['hp']}\n"
-        f"💀 Damage: {first_enemy['dmg_min']}-{first_enemy['dmg_max']}\n\n"
-        f"Use /raidstrike to attack!",
-        permanent=False, delay=180)
-
-    # Start first turn
-    await _announce_turn(context.bot, chat_id, raid)
+    await send_group(update, "🛡️ Party Raids have been removed.", delay=8)
 
 
 async def raidstrike_cmd(update, context):
-    await send_group(update, "🛡️ Party Raids have been removed.", delay=8); return
-    user = update.effective_user; p = get_player(user.id); chat_id = update.effective_chat.id
-    if not p: await send_group(update, "Use /ascend first!"); return
-    raid = active_raids.get(chat_id)
-    if not raid: await send_group(update, "No active raid! Use /raid."); return
-    if not raid["in_progress"]: await send_group(update, "Raid hasn't started! Use /raidstart."); return
-    if user.id not in [u["id"] for u in raid["party"]]:
-        await send_group(update, "You're not in this raid!"); return
-    if raid["player_hp"].get(user.id, 0) <= 0:
-        await send_group(update, "💀 You're down  -  wait for the next raid!"); return
-    _cc = _consume_cc(p)
-    if _cc:
-        await send_group(update, _cc, delay=9); return
-
-    # Enforce turn order
-    alive = _get_alive_party(raid)
-    if alive:
-        idx = raid.get("current_turn_idx", 0) % len(alive)
-        if alive[idx]["id"] != user.id:
-            current_name = alive[idx]["name"]
-            await send_group(update, f"⏳ It's *{current_name}'s* turn right now!", delay=9); return
-
-    # Cancel turn timer
-    old_task = raid.get("turn_task")
-    if old_task and not old_task.done():
-        old_task.cancel()
-    raid["turn_task"] = None
-
-    enemy = raid["enemy"]; w = get_weather()
-    dmg = calc_attack_damage(p, w); is_crit = check_crit(p)
-    if is_crit: dmg = apply_crit(p, dmg)
-    if safe_int(p.get("charging_killshot")):
-        p["charging_killshot"] = 0; dmg = get_stat(p,"AGI")*4; is_crit = False
-
-    raid["enemy_hp"] = max(0, raid["enemy_hp"] - dmg)
-    raid["damage_dealt"][user.id] = raid["damage_dealt"].get(user.id, 0) + dmg
-    for _d, _e, _g in track_objective(p, "raid_hit"):
-        p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
-
-    # Mark player as acted this round
-    if "acted_this_round" not in raid or not isinstance(raid["acted_this_round"], set):
-        raid["acted_this_round"] = set()
-    raid["acted_this_round"].add(user.id)
-
-    php  = raid["player_hp"].get(user.id, 0)
-    pmhp = raid["player_max_hp"].get(user.id, php)
-    lines = [
-        f"⚔️ *{user.first_name}* strikes *{enemy['name']}* for *{dmg}{'💥' if is_crit else ''}!*",
-        f"❤️ Enemy HP: {raid['enemy_hp']}/{raid['enemy_max_hp']}  |  Your HP: {php}/{pmhp}",
-    ]
-    bleed_dmg = tick_enemy_bleed(raid)
-    if bleed_dmg:
-        lines.append(f"🩸 *{enemy['name']}* bleeds for {bleed_dmg}!")
-
-    save_player(p)
-    await send_group(update, "\n".join(lines), delay=15)
-
-    if raid["enemy_hp"] <= 0:
-        await _handle_wave_clear(context.bot, chat_id, raid, p)
-    else:
-        await _advance_raid_turn(context.bot, chat_id, raid)
+    await send_group(update, "🛡️ Party Raids have been removed.", delay=8)
 
 
 async def raidabandon_cmd(update, context):
-    await send_group(update, "🛡️ Party Raids have been removed.", delay=8); return
-    user = update.effective_user
-    chat_id = update.effective_chat.id
-    raid = active_raids.get(chat_id)
-    if not raid:
-        await send_group(update, "No active raid to abandon."); return
-    if user.id != raid["party"][0]["id"]:
-        await send_group(update, "Only the raid leader can abandon the raid."); return
-    # Cancel any pending turn timer
-    old_task = raid.get("turn_task")
-    if old_task and not old_task.done():
-        old_task.cancel()
-    active_raids.pop(chat_id, None)
-    await send_group(update,
-        f"🏳️ *{user.first_name}* disbanded the raid. Better luck next time!")
+    await send_group(update, "🛡️ Party Raids have been removed.", delay=8)
 
 
 async def raidstatus_cmd(update, context):
-    await send_group(update, "🛡️ Party Raids have been removed.", delay=8); return
-    chat_id = update.effective_chat.id
-    raid = active_raids.get(chat_id)
-    if not raid:
-        await send_group(update, "No active raid."); return
+    await send_group(update, "🛡️ Party Raids have been removed.", delay=8)
 
-    if not raid["in_progress"]:
-        names = ", ".join(u["name"] for u in raid["party"])
-        await send_group(update,
-            f"🏰 *Raid Lobby*  -  {len(raid['party'])} players\n"
-            f"👥 {names}\n"
-            f"Use /raidstart when ready."); return
-
-    tier = raid["tier"]
-    enemy = raid["enemy"]
-    wave_count = len(tier["wave_enemies"]) + 1
-    names = ", ".join(u["name"] for u in raid["party"])
-
-    dmg_board = sorted(raid.get("damage_dealt", {}).items(), key=lambda x: x[1], reverse=True)
-    dmg_lines = []
-    for uid, dmg in dmg_board[:5]:
-        pp = get_player(uid)
-        name = pp["username"] if pp else str(uid)
-        dmg_lines.append(f"  {name}: {dmg:,} dmg")
-
-    await send_group(update,
-        f"⚔️ *{tier['name']}*\n"
-        f"👥 {names}\n"
-        f"🌊 Wave {raid['wave']}/{wave_count}  -  *{enemy['name']}*\n"
-        f"❤️ HP: {raid['enemy_hp']:,}/{raid['enemy_max_hp']:,}\n\n"
-        f"📊 *Damage dealt:*\n" + "\n".join(dmg_lines), delay=20)
 
 async def raidparty_cmd(update, context):
-    await send_group(update, "🛡️ Party Raids have been removed.", delay=8); return
-    user = update.effective_user
-    chat_id = update.effective_chat.id
-    raid = active_raids.get(chat_id)
-    sr   = active_soloraids.get(user.id)
-
-    if raid and raid.get("in_progress"):
-        lines = [f"👥 *Raid Party - {raid['tier']['name']}*\n"]
-        alive = _get_alive_party(raid)
-        alive_ids = {u["id"] for u in alive}
-        for u in raid["party"]:
-            uid = u["id"]
-            php  = raid["player_hp"].get(uid, 0)
-            pmhp = raid["player_max_hp"].get(uid, php)
-            dmg  = raid["damage_dealt"].get(uid, 0)
-            status = "✅" if uid in alive_ids else "💀"
-            bar_filled = int((php/max(1,pmhp))*10)
-            bar = "█"*bar_filled + "░"*(10-bar_filled)
-            lines.append(f"{status} *{u['name']}*\n  HP: [{bar}] {php}/{pmhp}\n  Dmg dealt: {dmg:,}")
-        # Current turn
-        if alive:
-            idx = raid.get("current_turn_idx",0) % len(alive)
-            lines.append(f"\n⚔️ Current turn: *{alive[idx]['name']}*")
-        await send_group(update, "\n".join(lines), delay=20); return
-
-    if sr:
-        php  = sr.get("player_hp", 0)
-        pmhp = sr.get("player_max_hp", php)
-        enemy = sr["enemy"]
-        bar_filled = int((php/max(1,pmhp))*10)
-        bar = "█"*bar_filled + "░"*(10-bar_filled)
-        await send_group(update,
-            f"🎱 *Solo Raid Status*\n\n"
-            f"Your HP: [{bar}] {php}/{pmhp}\n"
-            f"Enemy: *{enemy['name']}* ❤️ {sr['enemy_hp']}/{sr['enemy_max_hp']}\n"
-            f"Wave: {sr['wave']} - Total dmg: {sr.get('total_dmg',0):,}", delay=15); return
-
-    await send_group(update, "No active raid.", delay=9)
+    await send_group(update, "🛡️ Party Raids have been removed.", delay=8)
 
 async def raid_atk_callback(update, context):
     """Handle raid attack button press — delegates to raidstrike_cmd."""
@@ -10917,195 +10672,15 @@ async def raid_atk_callback(update, context):
 
 # ── SOLO RAID ─────────────────────────────────────────────────────────────────
 async def soloraid_cmd(update, context):
-    await send_group(update, "🗡️ Solo Raids have been removed. Use /dungeon for solo exploration!", delay=10); return
-    user = update.effective_user
-    p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!"); return
-    if is_defeated(p):
-        await send_group(update, "💀 You're defeated  -  can't solo raid!"); return
-
-    if user.id in active_soloraids:
-        sr = active_soloraids[user.id]
-        enemy = sr["enemy"]
-        await send_group(update,
-            f"⚔️ Solo raid in progress!\n"
-            f"🌊 Wave {sr['wave']}  -  *{enemy['name']}*\n"
-            f"❤️ Enemy HP: {sr['enemy_hp']}/{sr['enemy_max_hp']}\n"
-            f"Use /solostrike to attack."); return
-
-    tier = None
-    for t in reversed(SOLO_RAID_TIERS):
-        if p["level"] >= t["min_level"]:
-            tier = t; break
-    if not tier:
-        tier = SOLO_RAID_TIERS[0]
-
-    first_enemy = tier["wave_enemies"][0].copy()
-    mhp = calc_max_hp(p)
-    active_soloraids[user.id] = {
-        "tier": tier,
-        "wave": 1,
-        "enemy": first_enemy,
-        "enemy_hp": first_enemy["hp"],
-        "enemy_max_hp": first_enemy["hp"],
-        "total_dmg": 0,
-        "player_hp": mhp,
-        "player_max_hp": mhp,
-    }
-    wave_count = len(tier["wave_enemies"]) + 1
-    await send_group(update,
-        f"🎱 *SOLO RAID  -  {tier['name']}*\n\n"
-        f"🌊 {wave_count} waves + final boss\n\n"
-        f"🌊 *Wave 1  -  {first_enemy['name']}*\n"
-        f"❤️ HP: {first_enemy['hp']}\n"
-        f"💀 Damage: {first_enemy['dmg_min']}–{first_enemy['dmg_max']}\n\n"
-        f"Use the buttons or /solostrike to attack!",
-        permanent=False, delay=120, reply_markup=_build_sr_markup(user.id))
+    await send_group(update, "🗡️ Solo Raids have been removed. Use /dungeon for solo exploration!", delay=10)
 
 
 async def solostrike_cmd(update, context):
-    await send_group(update, "🗡️ Solo Raids have been removed.", delay=8); return
-    user = update.effective_user
-    p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!"); return
-    if user.id not in active_soloraids:
-        await send_group(update, "No active solo raid! Use /soloraid."); return
-    if is_defeated(p):
-        await send_group(update, "💀 You're defeated  -  can't strike!"); return
-    _cc = _consume_cc(p)
-    if _cc:
-        await send_group(update, _cc, delay=9); return
-
-    sr = active_soloraids[user.id]
-    enemy = sr["enemy"]
-    w = get_weather()
-    dmg = calc_attack_damage(p, w)
-    is_crit = check_crit(p)
-    if is_crit: dmg = apply_crit(p, dmg)
-    if safe_int(p.get("charging_killshot")):
-        p["charging_killshot"] = 0; dmg = get_stat(p, "AGI") * 4; is_crit = False
-
-    sr["enemy_hp"] = max(0, sr["enemy_hp"] - dmg)
-    sr["total_dmg"] = sr.get("total_dmg", 0) + dmg
-
-    lines = [
-        f"⚔️ *{user.first_name}* strikes *{enemy['name']}* for *{dmg}{'💥' if is_crit else ''}!*",
-        f"❤️ Enemy HP: {sr['enemy_hp']}/{sr['enemy_max_hp']}  |  Your HP: {sr['player_hp']}/{sr['player_max_hp']}",
-    ]
-    bleed_dmg = tick_enemy_bleed(sr)
-    if bleed_dmg:
-        lines.append(f"🩸 *{enemy['name']}* bleeds for {bleed_dmg}! HP: {sr['enemy_hp']}/{sr['enemy_max_hp']}")
-
-    if sr["enemy_hp"] <= 0:
-        tier = sr["tier"]; wave_enemies = tier["wave_enemies"]; cw = sr["wave"]
-        lines.append(f"\n✅ *Wave {cw} cleared!*")
-        sr.pop("enemy_statuses", None)
-        if cw < len(wave_enemies):
-            sr["wave"] += 1; ne = wave_enemies[cw].copy()
-            sr["enemy"] = ne; sr["enemy_hp"] = ne["hp"]; sr["enemy_max_hp"] = ne["hp"]
-            lines.append(f"\n🌊 *Wave {sr['wave']}  -  {ne['name']}*")
-            lines.append(f"❤️ HP: {ne['hp']} | 💀 {ne['dmg_min']}–{ne['dmg_max']}")
-        elif cw == len(wave_enemies):
-            bd = BOSSES[tier["wave_boss_key"]]; boss_hp = bd["max_hp"] // 2
-            sr["wave"] = len(wave_enemies) + 1
-            sr["enemy"] = {"name": bd["name"] + " ⚡","dmg_min": round(bd["dmg_min"]*0.6),"dmg_max": round(bd["dmg_max"]*0.6)}
-            sr["enemy_hp"] = boss_hp; sr["enemy_max_hp"] = boss_hp
-            lines.append(f"\n🎱 *FINAL BOSS  -  {bd['name']}!* ❤️ HP: {boss_hp}")
-        else:
-            active_soloraids.pop(user.id, None)
-            exp_r = tier["exp_reward"]; gold_r = tier["gold_reward"]
-            p["gold"] = p.get("gold",0) + gold_r; p["quests_done"] = p.get("quests_done",0) + 1
-            for _d, _e, _g in track_objective(p, "solo_win"):
-                p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
-            loot = roll_loot_table(tier.get("loot_table",[]), p)
-            loot_line = ""
-            if loot:
-                add_item(p, loot); r = ""
-                for pool in [WEAPONS,ARMORS,ACCESSORIES]:
-                    if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity",""),""); break
-                loot_line = f"\n🎒 Found: {r} *{loot}*!"
-            add_exp(p, exp_r, get_weather())
-            lines.append(f"\n🏆 *SOLO RAID COMPLETE  -  {tier['name']}!*")
-            lines.append(f"✅ +{exp_r:,} EXP | +{gold_r}g{loot_line}")
-            save_player(p); await send_group(update, "\n".join(lines), delay=25); return
-    else:
-        # Enemy counter-attack (solo  -  uses separate raid HP)
-        enemy = sr["enemy"]
-        if enemy_status_active(sr, "stunned_until"):
-            await send_group(update, f"⚡ *{enemy['name']}* is stunned  -  no counter!", delay=15)
-        elif enemy_status_active(sr, "frozen_until"):
-            await send_group(update, f"❄️ *{enemy['name']}* is frozen  -  no counter!", delay=15)
-        else:
-            raw = random.randint(enemy["dmg_min"], enemy["dmg_max"])
-            if enemy_status_active(sr, "weakened_until") or enemy_status_active(sr, "hexed_until"):
-                raw = round(raw * 0.75)
-            dodge = get_accessory_bonus(p, "dodge_bonus") + get_enchant_bonus(p, "dodge_bonus")
-            cls_p = get_player_class(p)
-            if cls_p and cls_p.get("passive_key") == "evasion": dodge += 0.10
-            if dodge > 0 and random.random() < dodge:
-                lines.append(f"💨 *{p['username']}* dodges!")
-            else:
-                edm = calc_defense(p, raw)
-                sr["player_hp"] = max(0, sr["player_hp"] - edm)
-                if sr["player_hp"] == 0:
-                    exp_loss = apply_pvp_death(p, killer_name=enemy["name"], cause="Solo Raid")
-                    asyncio.create_task(_notify_defeat(context.bot, p, enemy["name"] + " (Solo Raid)"))
-                    active_soloraids.pop(user.id, None)
-                    save_player(p)
-                    lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 30min defeat. -{exp_loss} EXP.")
-                    await send_group(update, "\n".join(lines), delay=20); return
-                else:
-                    lines.append(f"🩸 *{enemy['name']}* hits *{p['username']}* for *{edm}!* "
-                                 f"({sr['player_hp']}/{sr['player_max_hp']} raid HP)")
-                    if sr["player_hp"] > 0 and sr["player_hp"] <= round(sr["player_max_hp"] * 0.30):
-                        lines.append(f"⚠️ *Critically low HP!* ({sr['player_hp']}/{sr['player_max_hp']}) Use /skill or a vial!")
-
-    save_player(p)
-    await send_group(update, "\n".join(lines), delay=20, reply_markup=_build_sr_markup(user.id))
+    await send_group(update, "🗡️ Solo Raids have been removed.", delay=8)
 
 
 async def soloraidstatus_cmd(update, context):
-    await send_group(update, "🗡️ Solo Raids have been removed.", delay=8); return
-    user = update.effective_user
-    sr = active_soloraids.get(user.id)
-    if not sr:
-        await send_group(update, "No active solo raid. Use /soloraid to start one."); return
-    tier = sr["tier"]
-    enemy = sr["enemy"]
-    wave_count = len(tier["wave_enemies"]) + 1
-    p = get_player(user.id)
-    php  = sr.get("player_hp", 0)
-    pmhp = sr.get("player_max_hp", php)
-    hp_str = f"{php}/{pmhp} (raid HP)"
-
-    status_lines = []
-    es = sr.get("enemy_statuses", {})
-    if enemy_status_active(sr, "stunned_until"): status_lines.append("  ⚡ Stunned")
-    if enemy_status_active(sr, "frozen_until"):  status_lines.append("  ❄️ Frozen")
-    if enemy_status_active(sr, "bleed_until"):   status_lines.append("  🩸 Bleeding")
-    if enemy_status_active(sr, "hexed_until"):   status_lines.append("  💀 Hexed (-25% dmg)")
-    if enemy_status_active(sr, "weakened_until"):status_lines.append("  😵 Weakened (-25% dmg)")
-
-    # Player statuses
-    p_statuses = get_active_statuses(p) if p else []
-
-    out = [
-        f"🎱 *{tier['name']}*",
-        f"🌊 Wave {sr['wave']}/{wave_count}  -  *{enemy['name']}*",
-        f"❤️ Enemy HP: {sr['enemy_hp']:,}/{sr['enemy_max_hp']:,}",
-        f"🧍 Your HP: {hp_str}",
-        f"⚔️ Total dmg dealt: {sr.get('total_dmg',0):,}",
-    ]
-    if status_lines:
-        out.append(f"\n*Enemy Status:*")
-        out.extend(status_lines)
-    if p_statuses:
-        out.append(f"\n*Your Status:*")
-        for st in p_statuses: out.append(f"  {st}")
-
-    await send_group(update, "\n".join(out), delay=15)
+    await send_group(update, "🗡️ Solo Raids have been removed.", delay=8)
 
 
 # ── ASCEND ────────────────────────────────────────────────────────────────────
@@ -13409,66 +12984,7 @@ def _build_sr_markup(uid):
     ])
 
 async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_group(update, "🐉 Boss Raids have been removed. Use /encounter for combat!", delay=10); return
-    user = update.effective_user; p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    if is_defeated(p):
-        await send_group(update, _defeated_msg(p), delay=15); return
-    chat_id = update.effective_chat.id
-    if chat_id in active_bosses:
-        boss = active_bosses[chat_id]
-        summoner_id = boss.get("summoner_id")
-        # Solo fight — only the summoner can interact
-        if user.id != summoner_id:
-            await send_group(update,
-                f"⚔️ *{boss['data']['name']}* is already being fought here!\n"
-                f"Boss battles are solo — wait for it to finish.", delay=9)
-            return
-        # Summoner re-used /boss — resend the card with fresh buttons
-        old_card = boss.get("card_msg_id")
-        if old_card:
-            try: await update.get_bot().delete_message(chat_id=chat_id, message_id=old_card)
-            except Exception: pass
-        try: await update.message.delete()
-        except Exception: pass
-        bd = boss["data"]
-        msg = await update.get_bot().send_message(
-            chat_id=chat_id,
-            text=(f"🎱 *{bd['name']}*\n"
-                  f"❤️ {boss['hp']}/{bd['max_hp']} HP\n\n"
-                  f"Use the buttons to continue the fight!"),
-            parse_mode="Markdown",
-            reply_markup=_build_boss_markup(summoner_id))
-        boss["card_msg_id"] = msg.message_id
-        return
-    if not context.args:
-        lines = ["⚔️ *Choose a Boss to Summon:*\n"]
-        buttons = []
-        for k, v in BOSSES.items():
-            if v.get("secret"): continue
-            lines.append(f"🎱 *{v['name']}*  ❤️ {v['max_hp']} HP | +{v['exp']:,} EXP | +{v['gold']}g")
-            buttons.append([InlineKeyboardButton(
-                f"⚔️ {v['name']}  ({v['max_hp']} HP)",
-                callback_data=f"bossstart_{user.id}_{k}")])
-        markup = InlineKeyboardMarkup(buttons)
-        await send_group(update, "\n".join(lines), delay=60, reply_markup=markup); return
-    key = " ".join(context.args).lower(); bd = BOSSES.get(key)
-    if not bd or bd.get("secret"):
-        await send_group(update, "Unknown boss. Try `/boss` to see the list.", delay=9); return
-    active_bosses[chat_id] = {"data":bd.copy(),"hp":bd["max_hp"],
-                               "summoner_id": user.id,
-                               "participants":[{"id":user.id,"name":user.first_name,"dmg":0}]}
-    try: await update.message.delete()
-    except Exception: pass
-    msg = await update.get_bot().send_message(
-        chat_id=chat_id,
-        text=(f"🎱 *{bd['name']} HAS APPEARED!*\n\n_{bd['desc']}_\n\n"
-              f"❤️ HP: {bd['max_hp']} | 💀 {bd['dmg_min']}–{bd['dmg_max']} dmg\n\n"
-              f"*{user.first_name}* engaged! Use the buttons to fight."),
-        parse_mode="Markdown",
-        reply_markup=_build_boss_markup(user.id))
-    active_bosses[chat_id]["card_msg_id"] = msg.message_id
+    await send_group(update, "🐉 Boss Raids have been removed. Use /encounter for combat!", delay=10)
 
 async def boss_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle boss selection button from /boss menu."""
@@ -15747,7 +15263,6 @@ async def skillpage_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Inline button handler for skill picker in raids, boss fights, and PVP."""
     query = update.callback_query
-    await query.answer()
     parts = query.data.split("_")
     # formats: skillpick_{uid}_{idx}  or  skillpick_{uid}_{idx}_{target_uid}
     try:
@@ -15755,11 +15270,13 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         skill_idx = int(parts[2])
         target_uid = int(parts[3]) if len(parts) > 3 else None
     except (IndexError, ValueError):
+        await query.answer()
         return
 
     if query.from_user.id != uid:
         await query.answer("This skill picker isn't for you!", show_alert=True)
         return
+    await query.answer()
 
     p = get_player(uid)
     if not p:
@@ -31274,7 +30791,8 @@ def main():
     app.add_handler(CallbackQueryHandler(holdhands_callback,   pattern="^hh_(accept|decline)_"))
     app.add_handler(CallbackQueryHandler(releasehands_callback, pattern="^rh_pick_"))
     app.add_handler(CallbackQueryHandler(close_callback,   pattern="^close_msg"))
-    app.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern="^noop$"))
+    async def _noop_cb(u, c): await u.callback_query.answer()
+    app.add_handler(CallbackQueryHandler(_noop_cb, pattern="^noop$"))
 
     # Combat & Dungeons
     app.add_handler(CommandHandler("duel",       duel_cmd))
