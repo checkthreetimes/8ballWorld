@@ -2942,9 +2942,10 @@ def _pet_view_markup(pet_id, is_active, uid=0, pet=None):
             rows.append([InlineKeyboardButton("🔮 Evolve!", callback_data=f"petevolve_{pet_id}")])
     rows.append([InlineKeyboardButton("📝 Rename", callback_data=f"petrename_{pet_id}")])
     rows.append([
-        InlineKeyboardButton("🔙 All Pets", callback_data="petlist_0"),
-        InlineKeyboardButton("❌ Release",  callback_data=f"petrelease_{pet_id}"),
+        InlineKeyboardButton("💰 Sell Pet",  callback_data=f"petsell_{pet_id}"),
+        InlineKeyboardButton("❌ Release",   callback_data=f"petrelease_{pet_id}"),
     ])
+    rows.append([InlineKeyboardButton("🔙 All Pets", callback_data="petlist_0")])
     close_cb = f"close_msg_{uid}" if uid else "close_msg"
     rows.append([InlineKeyboardButton("❌ Close", callback_data=close_cb)])
     return InlineKeyboardMarkup(rows)
@@ -2972,10 +2973,10 @@ CONSUMABLES = {
     "Enchanting Scroll":      {"desc":"Used to enchant gear.","sell":150},
     # Pets
     "Pet Snack":              {"desc":"Feeds your active pet. Restores 30 hunger and 10 mood.","sell":20},
-    "Common Egg":             {"desc":"A warm egg. Common or uncommon pet inside.","sell":150},
-    "Rare Egg":               {"desc":"A glowing egg. Uncommon to rare pet inside.","sell":400},
-    "Dragon Egg":             {"desc":"A heavy scaled egg. Rare to epic pet inside.","sell":1000},
-    "Mythic Egg":             {"desc":"A shimmering egg. Epic to mythic pet inside.","sell":3000},
+    "Common Egg":             {"desc":"A warm egg. Common or uncommon pet inside.","sell":5000},
+    "Rare Egg":               {"desc":"A glowing egg. Uncommon to rare pet inside.","sell":15000},
+    "Dragon Egg":             {"desc":"A heavy scaled egg. Rare to epic pet inside.","sell":37000},
+    "Mythic Egg":             {"desc":"A shimmering egg. Epic to mythic pet inside.","sell":100000},
     # Monster Cores — dropped from caught monsters in /hunt
     "Monster Core (Fire)":      {"desc":"A blazing core from a fire monster. Used for crafting.","sell":80},
     "Monster Core (Water)":     {"desc":"A fluid core from a water monster. Used for crafting.","sell":80},
@@ -24456,16 +24457,16 @@ async def petshop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def _build_petshop_menu(p):
     text = (f"🐾 *Pet Shop*\n💰 Your Gold: *{p.get('gold',0):,}g*\n\n"
             "Buy eggs then tap *🥚 Hatch Egg* in your pet menu!\n\n"
-            "🥚 *Common Egg* — 300g\nCommon or Uncommon pet\n\n"
-            "🥚 *Rare Egg* — 800g\nUncommon to Rare pet\n\n"
-            "🥚 *Dragon Egg* — 2,000g\nRare to Epic pet\n\n"
-            "🥚 *Mythic Egg* — 5,000g\nEpic to Mythic pet\n\n"
+            "🥚 *Common Egg* — 10,000g\nCommon or Uncommon pet\n\n"
+            "🥚 *Rare Egg* — 30,000g\nUncommon to Rare pet\n\n"
+            "🥚 *Dragon Egg* — 75,000g\nRare to Epic pet\n\n"
+            "🥚 *Mythic Egg* — 200,000g\nEpic to Mythic pet\n\n"
             "🍖 *Pet Snack* — 25g\nFeeds your active pet")
     markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🥚 Common Egg  300g",  callback_data="pbuy_Common Egg_300"),
-         InlineKeyboardButton("🥚 Rare Egg  800g",    callback_data="pbuy_Rare Egg_800")],
-        [InlineKeyboardButton("🥚 Dragon Egg  2000g", callback_data="pbuy_Dragon Egg_2000"),
-         InlineKeyboardButton("🥚 Mythic Egg  5000g", callback_data="pbuy_Mythic Egg_5000")],
+        [InlineKeyboardButton("🥚 Common Egg  10,000g",  callback_data="pbuy_Common Egg_10000"),
+         InlineKeyboardButton("🥚 Rare Egg  30,000g",    callback_data="pbuy_Rare Egg_30000")],
+        [InlineKeyboardButton("🥚 Dragon Egg  75,000g",  callback_data="pbuy_Dragon Egg_75000"),
+         InlineKeyboardButton("🥚 Mythic Egg  200,000g", callback_data="pbuy_Mythic Egg_200000")],
         [InlineKeyboardButton("🍖 Pet Snack  25g",    callback_data="pbuy_Pet Snack_25")],
         [InlineKeyboardButton("🔙 Back",              callback_data="petmain"),
          InlineKeyboardButton("❌ Close",             callback_data=f"close_msg_{p['user_id']}")],
@@ -24874,6 +24875,49 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(f"💔 {pname} has been released.")
         await query.edit_message_text(
             f"💔 *{pname}* has been released into the wild.\n_Goodbye, old friend._",
+            parse_mode="Markdown"); return
+
+    # ── Sell Pet ──────────────────────────────────────────────────────────────
+    if data.startswith("petsell_") and not data.startswith("petsell_confirm_"):
+        pid = int(data.split("_")[1])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); sp = PET_SPECIES.get(pet["species"],{})
+        pname = _pet_display_name(pet)
+        rarity = sp.get("rarity","common")
+        _sell_base = {"common":500,"uncommon":1000,"rare":2500,"epic":5000,"legendary":15000,"mythic":50000}
+        _sell_per_lvl = {"common":100,"uncommon":150,"rare":200,"epic":300,"legendary":500,"mythic":1000}
+        sell_price = _sell_base.get(rarity,500) + pet.get("level",1) * _sell_per_lvl.get(rarity,100)
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"💰 Sell for {sell_price:,}g", callback_data=f"petsell_confirm_{pid}_{sell_price}"),
+            InlineKeyboardButton("❌ Cancel", callback_data=f"petview_{pid}"),
+        ]])
+        await query.edit_message_text(
+            f"💰 *Sell {pname}?*\n\n"
+            f"Rarity: {rarity.capitalize()} | Level {pet.get('level',1)}\n"
+            f"Sell price: *{sell_price:,}g*\n\n"
+            f"This is permanent.",
+            parse_mode="Markdown", reply_markup=markup)
+        await query.answer(); return
+
+    if data.startswith("petsell_confirm_"):
+        parts = data.split("_")
+        pid = int(parts[2]); sell_price = int(parts[3])
+        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone()
+        if not row: conn.close(); await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row); pname = _pet_display_name(pet)
+        c.execute("DELETE FROM pets WHERE pet_id=?", (pid,)); conn.commit(); conn.close()
+        p = get_player(user.id)
+        if p:
+            p["gold"] = safe_int(p.get("gold",0)) + sell_price
+            save_player(p)
+        await query.answer(f"💰 Sold {pname} for {sell_price:,}g!")
+        await query.edit_message_text(
+            f"💰 *{pname}* sold for *{sell_price:,}g*!\n_The gold has been added to your wallet._",
             parse_mode="Markdown"); return
 
     if data == "petshop":
@@ -30929,7 +30973,7 @@ def main():
     app.add_handler(CallbackQueryHandler(hatch_egg_callback,  pattern="^hatch_egg$"))
     app.add_handler(CallbackQueryHandler(petcatch_callback,   pattern="^petcatch_"))
     app.add_handler(CallbackQueryHandler(pet_main_callback,
-        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petplay_|petrelease_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
+        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petplay_|petrelease_|petsell_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
     app.add_handler(CallbackQueryHandler(pethub_callback,    pattern="^pethub_"))
     app.add_handler(CallbackQueryHandler(petdaycare_callback, pattern="^petdaycare_"))
     app.add_handler(CallbackQueryHandler(petretire_callback,  pattern="^petretire_"))
