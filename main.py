@@ -336,16 +336,16 @@ def get_weather():
 
 # ── EXP CURVE ─────────────────────────────────────────────────────────────────
 def exp_for_level(level):
-    if level <= 10:   return level * 200
-    elif level <= 20: return level * 500
-    elif level <= 30: return level * 1000
-    elif level <= 40: return level * 8000
-    elif level <= 50: return level * 25000
-    elif level <= 60: return level * 75000
-    elif level <= 70: return level * 200000
-    elif level <= 80: return level * 500000
-    elif level <= 90: return level * 1200000
-    else:             return level * 3000000
+    if level <= 10:   return level * 20000
+    elif level <= 20: return level * 100000
+    elif level <= 30: return level * 500000
+    elif level <= 40: return level * 3000000
+    elif level <= 50: return level * 10000000
+    elif level <= 60: return level * 40000000
+    elif level <= 70: return level * 150000000
+    elif level <= 80: return level * 500000000
+    elif level <= 90: return level * 1500000000
+    else:             return level * 5000000000
 
 def max_hp_for_level(level): return 1000 + (level - 1) * 580
 
@@ -5653,8 +5653,9 @@ def calc_max_hp(p):
     set_bonuses, _ = get_active_set_bonuses(p)
     set_hp = set_bonuses.get("hp", 0)
     def_hp = round(get_stat(p, "DEF") * 10)
+    str_hp = round(get_stat(p, "STR") * 2)   # secondary: physical constitution
     retire_hp = safe_int(p.get("pet_retire_hp"))
-    return base + acc_hp + enc_hp + temp + set_hp + def_hp + retire_hp
+    return base + acc_hp + enc_hp + temp + set_hp + def_hp + str_hp + retire_hp
 
 TIER_THRESHOLDS = {1: 5, 2: 10, 3: 30, 4: 60, 5: 100}
  
@@ -5777,18 +5778,12 @@ def calc_attack_damage(attacker, weather=None):
     stat_val  = get_stat(attacker, primary)
     # All classes scale 1.0× their primary stat
     stat_bonus = round(stat_val * 1.0)
-    level_bonus = attacker["level"] // 2
-    dex_val   = get_stat(attacker, "DEX")
-    luk_val   = get_stat(attacker, "LUK")
-    # Archers: DEX feeds attack the same way STR feeds warriors (full DEX//2 bonus on top of primary)
-    if get_class_line(attacker) == "archer":
-        dex_bonus = dex_val // 2
-    else:
-        dex_bonus = dex_val // 3
-    luk_bonus = luk_val // 5
+    # Level matters — 4 damage per level so level 30 = +120 (was +15)
+    level_bonus = attacker["level"] * 4
 
     retire_atk = safe_int(attacker.get("pet_retire_atk"))
-    raw = base + weapon + perm + acc_atk + stat_bonus + level_bonus + dex_bonus + luk_bonus + retire_atk
+    # Secondary stat bleed (DEX, LUK) removed — class passives handle stat identity
+    raw = base + weapon + perm + acc_atk + stat_bonus + level_bonus + retire_atk
 
     # Weather
     if weather: raw = round(raw * weather.get("dmg_mod", 1.0))
@@ -5814,7 +5809,7 @@ def calc_attack_damage(attacker, weather=None):
             recent_30 = [r for r in recent
                          if (now - datetime.fromisoformat(r["ts"])).total_seconds() < 1800]
             if len(recent_30) > 1: buff_mod += 0.20
-        if "arcane_mind" in active_pks:  raw += get_stat(attacker, "INT")
+        if "arcane_mind" in active_pks:  buff_mod += 0.20  # was raw+=INT (double-dip on primary)
         if "marked" in active_pks:
             if attacker.get("mark_first_hit"):
                 buff_mod += 0.25
@@ -5852,26 +5847,26 @@ def calc_attack_damage(attacker, weather=None):
         if "thunder_step" in active_pks:
             if attacker.get("thunder_dodge_ready"):
                 buff_mod += 0.40; attacker["thunder_dodge_ready"] = 0
-        if pk == "storms_eye":      buff_mod += 0.05
-        if pk == "celestial_wrath": buff_mod += 0.25
-        if pk == "defenders_oath":
+        if "storms_eye" in active_pks:      buff_mod += 0.05
+        if "celestial_wrath" in active_pks: buff_mod += 0.25
+        if "defenders_oath" in active_pks:
             buff_mod += min(0.30, safe_int(attacker.get("oath_stacks", 0)) * 0.10)
-        if pk == "iron_bulwark":    buff_mod += 0.05
+        if "iron_bulwark" in active_pks:    buff_mod += 0.05
         # Phantom Dancer
         if "waltz" in active_pks:
             if attacker.get("waltz_dodge_ready"):
                 buff_mod += 0.60; attacker["waltz_dodge_ready"] = 0
         if "rhythm" in active_pks:
             buff_mod += min(0.16, safe_int(attacker.get("rhythm_stacks", 0)) * 0.04)
-        if pk == "flourish":
+        if "flourish" in active_pks:
             buff_mod += min(0.15, safe_int(attacker.get("flourish_stacks", 0)) * 0.05)
-        if pk == "adrenaline":
+        if "adrenaline" in active_pks:
             _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
             if _hp_pct < 0.30: buff_mod += 0.30
-        if pk == "death_whirl":
+        if "death_whirl" in active_pks:
             _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
             if _hp_pct < 0.40: buff_mod += 0.30
-        if pk == "final_performance":
+        if "final_performance" in active_pks:
             _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
             if _hp_pct < 0.25: buff_mod += 0.50
         # Mage offensive passives
@@ -6811,6 +6806,9 @@ def check_miss(attacker, defender):
     else:
         dodge_stat = get_stat(defender, "AGI")
     dodge = min(0.40, dodge_stat * 0.008)
+    # DEX secondary: non-archers gain a smaller dodge benefit from DEX (0.3% per DEX, cap 12%)
+    if cls_d_line != "archer":
+        dodge += min(0.12, get_stat(defender, "DEX") * 0.003)
 
     # Accessory dodge bonus
     dodge += get_accessory_bonus(defender, "dodge_bonus")
@@ -6902,6 +6900,9 @@ def check_crit(attacker):
         base_crit = min(0.40, stat_val * 0.008)
     base_crit += get_accessory_bonus(attacker, "crit_bonus")
     base_crit += get_enchant_bonus(attacker, "crit_bonus")
+    # LUK secondary: non-thieves gain a smaller crit bonus from LUK (0.3% per LUK, cap 10%)
+    if line != "thief":
+        base_crit += min(0.10, get_stat(attacker, "LUK") * 0.003)
     if cls and cls.get("passive_key") == "quick_hands":
         base_crit += 0.15
     # New class passives
@@ -8666,7 +8667,7 @@ async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     PAGE_SIZE = 10
     page_entries = ranked[:PAGE_SIZE]
 
-    lines = ["🏆 *Guild Rankings*\n"]
+    lines = ["🏆 *Rankings*\n"]
     for i, e in enumerate(page_entries):
         lines.append(fmt_ranked(i, e))
 
@@ -8889,6 +8890,10 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             else:
                 _d_amt = max(1, safe_int(a.get(_dk, 6)))
                 _pct_txt = f"{_d_amt} flat"
+            # INT secondary: mental focus resists DoT ticks (0.5% per INT, cap 25%)
+            _int_resist = min(0.25, get_stat(a, "INT") * 0.005)
+            if _int_resist > 0:
+                _d_amt = max(1, round(_d_amt * (1 - _int_resist)))
             a["hp"] = max(0, a["hp"] - _d_amt)
             a[_sk] = _n - 1
             _rem = _n - 1
@@ -10087,7 +10092,12 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Apply — use calc_max_hp to handle stale max_hp values
     real_max_t = calc_max_hp(t)
     t["max_hp"] = real_max_t
+    _pre_heal_hp = t["hp"]
     was_defeated = target_is_dead
+    # WIS secondary on target: spiritual attunement boosts heals received (1% per WIS, cap 25%)
+    _t_wis_amp = min(0.25, get_stat(t, "WIS") * 0.01)
+    if _t_wis_amp > 0:
+        heal_amount = round(heal_amount * (1 + _t_wis_amp))
     t["hp"] = min(real_max_t, t["hp"] + heal_amount)
     if was_defeated:
         t["defeated_until"]  = None
@@ -10096,12 +10106,16 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         t["shield_used"] = 0; t["shield_hp"] = 0; t["shield_core_bonus"] = 0
 
     h["heals_given"] = h.get("heals_given",0) + 1
-    if tu.id != hu.id:
+    _heal_was_useful = t["hp"] > _pre_heal_hp  # only XP if HP actually increased
+    if tu.id != hu.id and _heal_was_useful:
         for _d, _e, _g in track_objective(h, "heal_ally"):
             h["gold"] = h.get("gold",0) + _g; add_exp(h, _e)
     new_t = check_titles(h)
-    _heal_exp = 50 if (tu.id != hu.id and h.get("guild_id") and str(h.get("guild_id")) == str(t.get("guild_id"))) else 20
-    lmsgs, leveled = add_exp(h, _heal_exp)
+    if _heal_was_useful:
+        _heal_exp = 50 if (tu.id != hu.id and h.get("guild_id") and str(h.get("guild_id")) == str(t.get("guild_id"))) else 20
+        lmsgs, leveled = add_exp(h, _heal_exp)
+    else:
+        lmsgs, leveled = [], False
     save_player(h)
     if tu.id != hu.id:
         save_player(t)
