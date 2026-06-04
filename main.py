@@ -153,6 +153,8 @@ _pvp_cur_page      = {}   # pair -> int, current page index (0 = oldest)
 _pvp_player_cards  = {}   # uid -> (chat_id, message_id) — each player's own battle card
 _pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
+_bal_expires       = {}   # uid -> float: time.time() when balance recovers
+_eq_expires        = {}   # uid -> float: time.time() when equilibrium recovers
 _PVP_ACTION_CD     = 0.0  # no cooldown between PvP card button presses
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
 _megaphone_state   = {"group": None}  # last known group chat ID for /megaphone DMs
@@ -363,6 +365,7 @@ _CLASS_LINE_HP_MULT = {
     "botanist":       0.90,
     "mage":           0.85,
     "enchantress":    0.85,
+    "serpent":        1.15,
 }
 
 RANK_TIERS = [
@@ -1673,6 +1676,150 @@ CLASS_TREE = {
              "passive_key":"sovereign_veil"},
         ]
     },
+    # ── SERPENT ──────────────────────────────────────────────────────────────
+    "serpent": {
+        "name":"Serpent","primary_stat":"STR","line":"serpent",
+        "weapon_types":["sword_1h","sword_2h"],
+        "armor_type":"warrior_armor",
+        "desc":"A warrior who fights like a viper — swift strikes laced with deadly venom. Part blade, part beast.",
+        "stat_bonus":{"STR":2,"AGI":1},
+        "skills":[
+            {"tier":1,"unlock":5,"name":"Viper's Edge",
+             "passive":"20% chance each hit applies Venom ×1 (stacking poison: 20% max HP/action). Venomous strikes deal +10% bonus damage.",
+             "active":"Envenom","type":"venom_strike","mult":1.5,"venom_stacks":4,
+             "desc":"STR×1.5 damage. Apply Venom ×4 — poison burns 20% max HP over 4 actions.",
+             "passive_key":"vipers_edge"},
+            {"tier":1,"unlock":5,"name":"Cold Blood",
+             "passive":"Immune to enemy poison. Your attacks ignore 5 flat DEF. Cannot be feared or charmed.",
+             "active":"Coil","type":"root","mult":2.0,
+             "desc":"STR×2 damage. Entangle target for 2 turns — cannot attack while coiled.",
+             "passive_key":"cold_blood"},
+        ]
+    },
+    # Path A — Cobra (Venom/Debuff)
+    "cobra": {
+        "name":"Cobra","primary_stat":"STR","line":"serpent","path":"A",
+        "weapon_types":["sword_1h"],
+        "armor_type":"warrior_armor",
+        "desc":"Strikes with precision. Every attack carries a lethal payload of venom.",
+        "stat_bonus":{"STR":3,"AGI":2},
+        "skills":[
+            {"tier":2,"unlock":10,"name":"Venom Spit",
+             "passive":"15% chance on hit to blind target (Distract ×2). Your venom stacks deal 35% more damage.",
+             "active":"Cobra Strike","type":"venom_strike","mult":2.0,"venom_stacks":2,"distract_stacks":2,
+             "desc":"STR×2 damage. Apply Venom ×2 + Distract ×2 (30% miss chance for 2 attacks).",
+             "passive_key":"venom_spit"},
+            {"tier":2,"unlock":10,"name":"Toxic Fangs",
+             "passive":"Your poison stacks deal 35% more damage. Poisoned targets take +10% damage from all sources.",
+             "active":"Fang Strike","type":"venom_strike","mult":2.0,"venom_stacks":2,"bonus_if_poisoned":True,
+             "desc":"STR×2 damage. Apply Venom ×2. If target already poisoned: +50% bonus damage.",
+             "passive_key":"toxic_fangs"},
+        ]
+    },
+    "asp": {
+        "name":"Asp","primary_stat":"STR","line":"serpent","path":"A",
+        "weapon_types":["sword_1h"],
+        "armor_type":"warrior_armor",
+        "desc":"Lightning fast. Her venom corrodes both armor and resolve.",
+        "stat_bonus":{"STR":4,"AGI":3},
+        "skills":[
+            {"tier":3,"unlock":30,"name":"Viper Scales",
+             "passive":"Attackers who hit you gain Venom ×1 (retaliatory poison). Your venom cannot be cleansed for 3 actions after application.",
+             "active":"Asp's Kiss","type":"venom_max","mult":2.5,"venom_stacks":6,"exposed_stacks":3,
+             "desc":"STR×2.5 damage. Apply max Venom ×6 + Exposed ×3 (target takes +15% damage next 3 hits).",
+             "passive_key":"viper_scales"},
+        ]
+    },
+    "serpent_queen": {
+        "name":"Serpent Queen","primary_stat":"STR","line":"serpent","path":"A",
+        "weapon_types":["sword_1h","sword_2h"],
+        "armor_type":"warrior_armor",
+        "desc":"Her venom is death itself. No antidote exists.",
+        "stat_bonus":{"STR":5,"AGI":4},
+        "skills":[
+            {"tier":4,"unlock":60,"name":"Death Venom",
+             "passive":"Poison you apply deals 50% more damage. Poisoned enemies take +15% damage from all sources.",
+             "active":"Neurotoxin","type":"venom_max","mult":3.5,"venom_stacks":8,"heal_block_turns":3,
+             "desc":"STR×3.5 damage. Max Venom ×8 + Healing Blocked ×3 — the venom cannot be purged.",
+             "passive_key":"death_venom"},
+        ]
+    },
+    "the_ophidian": {
+        "name":"The Ophidian","primary_stat":"STR","line":"serpent","path":"A",
+        "weapon_types":["sword_1h","sword_2h"],
+        "armor_type":"warrior_armor",
+        "desc":"Neither mortal nor serpent. Something older. Something that was never meant to be fought.",
+        "stat_bonus":{"STR":6,"AGI":5},
+        "skills":[
+            {"tier":5,"unlock":100,"name":"Serpentine Mastery",
+             "passive":"Immune to all poison. Venom stacks you apply deal double damage. On kill: restore 30% max HP.",
+             "active":"Venom Nova","type":"serpent_aoe","mult":5.0,"venom_stacks":6,
+             "desc":"STR×5 damage to target + Venom ×6. Venom ×2 spreads to all recent attackers. Cannot be dodged.",
+             "passive_key":"serpentine_mastery"},
+        ]
+    },
+    # Path B — King Serpent (Tank/Control)
+    "serpent_guard": {
+        "name":"Serpent Guard","primary_stat":"STR","line":"serpent","path":"B",
+        "weapon_types":["sword_2h"],
+        "armor_type":"warrior_armor",
+        "desc":"Armored in scales harder than steel. Her presence alone unsettles enemies.",
+        "stat_bonus":{"STR":3,"DEF":3},
+        "skills":[
+            {"tier":2,"unlock":10,"name":"Armored Scales",
+             "passive":"Attackers have 10% chance to trigger scale retaliation: STR×0.5 reflexive damage. Passive +20 flat DEF.",
+             "active":"Scale Slam","type":"stun_def_dmg","mult":1.2,
+             "desc":"(STR + DEF) × 1.2 combined damage. 40% chance to stun target for 1 turn.",
+             "passive_key":"armored_scales"},
+            {"tier":2,"unlock":10,"name":"Coiling Stance",
+             "passive":"When below 50% HP, take 10% less damage. Entangle effects you apply last 1 turn longer.",
+             "active":"Python's Grip","type":"root","mult":2.0,
+             "desc":"STR×2 damage. Entangle ×2 turns. Target also suffers Distract ×2 (30% miss chance).",
+             "passive_key":"coiling_stance"},
+        ]
+    },
+    "serpent_knight": {
+        "name":"Serpent Knight","primary_stat":"STR","line":"serpent","path":"B",
+        "weapon_types":["sword_2h"],
+        "armor_type":"warrior_armor",
+        "desc":"A warrior forged in venom and tempered by conquest.",
+        "stat_bonus":{"STR":4,"DEF":4},
+        "skills":[
+            {"tier":3,"unlock":30,"name":"Serpent's Resolve",
+             "passive":"When below 40% HP: +20% ATK bonus. Immune to new debuffs for 3 hits while low HP.",
+             "active":"War Serpent","type":"mass_debuff","mult":3.0,
+             "desc":"STR×3 damage. Apply Distract ×3 + Weakened ×2 to target — shaken and off-guard.",
+             "passive_key":"serpents_resolve"},
+        ]
+    },
+    "serpent_warlord": {
+        "name":"Serpent Warlord","primary_stat":"STR","line":"serpent","path":"B",
+        "weapon_types":["sword_2h"],
+        "armor_type":"warrior_armor",
+        "desc":"Commands the battlefield through fear and venom. Her enemies fight only to fall.",
+        "stat_bonus":{"STR":5,"DEF":5},
+        "skills":[
+            {"tier":4,"unlock":60,"name":"Venom Aura",
+             "passive":"Attackers who hit you trigger Venom Aura: they gain Venom ×2. Immune to being poisoned yourself.",
+             "active":"Serpent's Dominion","type":"serpent_aoe","mult":3.5,"venom_stacks":2,
+             "desc":"STR×3.5 damage to target. Venom ×2 spreads to all recent attackers. Cannot be dodged or blocked.",
+             "passive_key":"venom_aura"},
+        ]
+    },
+    "ancient_serpent": {
+        "name":"Ancient Serpent","primary_stat":"STR","line":"serpent","path":"B",
+        "weapon_types":["sword_2h"],
+        "armor_type":"warrior_armor",
+        "desc":"As old as the world's first betrayal. It does not hunger. It does not tire. It simply coils and strikes.",
+        "stat_bonus":{"STR":6,"DEF":6},
+        "skills":[
+            {"tier":5,"unlock":100,"name":"Immortal Coils",
+             "passive":"Cannot be stunned. Once per hour: survive a fatal blow at 1 HP. Kills restore 25% max HP.",
+             "active":"Serpent God's Wrath","type":"serpent_nuke","mult":6.0,
+             "desc":"STR×6 damage — cannot be dodged or blocked. Heal 30% max HP. Target's defeat timer extended to 45 min.",
+             "passive_key":"immortal_coils"},
+        ]
+    },
 }
 
 # Class progression paths
@@ -1695,9 +1842,11 @@ CLASS_PATHS = {
                        "B": ["stormbringer","thunder_sister","storm_sovereign","divine_tempest"]},
     "phantom_dancer": {"A": ["battle_dancer","blade_spinner","crimson_whirl","danse_macabre"],
                        "B": ["veil_dancer","mistwalker","phantom_prima","ethereal_sovereign"]},
+    "serpent":        {"A": ["cobra","asp","serpent_queen","the_ophidian"],
+                       "B": ["serpent_guard","serpent_knight","serpent_warlord","ancient_serpent"]},
 }
 BASE_CLASSES = ["warrior","mage","thief","archer","priest",
-                "botanist","enchantress","valkyrie","phantom_dancer"]
+                "botanist","enchantress","valkyrie","phantom_dancer","serpent"]
 
 # Maps line key → display label showing class name + archetype for players
 LINE_ARCHETYPE = {
@@ -1710,6 +1859,7 @@ LINE_ARCHETYPE = {
     "enchantress":    "Enchantress",
     "valkyrie":       "Valkyrie",
     "phantom_dancer": "Phantom Dancer",
+    "serpent":        "Serpent",
 }
 
 # Weapon type → path identifier (A = first/light path, B = second/heavy path)
@@ -1726,6 +1876,7 @@ _LINE_EMOJI = {
     "archer":  "🏹", "priest": "📿",
     "botanist": "🌸", "enchantress": "💜",
     "valkyrie": "⚡", "phantom_dancer": "🌀",
+    "serpent": "🐍",
 }
 
 # Priest classes that can revive for free
@@ -5787,7 +5938,29 @@ def calc_proc_effect(attacker, defender, dmg):
         if random.random() < chance:
             add_charges(defender, "branded_hits", 2)
             return True, "🔥 *Holy Brand!* Branded ×2 — attacker's next 2 strikes -30%!", 0
- 
+
+    # ── SERPENT PATH A  -  Venom Coil ───────────────────────────
+    elif line == "serpent" and path == "A":
+        chance = get_proc_chance(0.13, attacker)
+        if random.random() < chance and safe_int(defender.get("poison_stacks", 0)) < 8:
+            add_charges(defender, "poison_stacks", 2)
+            _a_pks_proc = get_all_passive_keys(attacker)
+            _vpct = (40 if "serpentine_mastery" in _a_pks_proc else
+                     30 if "death_venom"        in _a_pks_proc else
+                     27 if "toxic_fangs"         in _a_pks_proc else 20)
+            defender["poison_pct"] = max(safe_int(defender.get("poison_pct", 0)), _vpct)
+            return True, f"🐍 *Venom Coil!* Venom ×2 seeps in — {_vpct}% max HP/action!", 0
+
+    # ── SERPENT PATH B  -  Crushing Coils ───────────────────────
+    elif line == "serpent" and path == "B":
+        chance = get_proc_chance(0.13, attacker)
+        if random.random() < chance:
+            _cc_dist = safe_int(defender.get("distract_turns", 0))
+            _cc_weak = safe_int(defender.get("weakened_hits", 0))
+            if _cc_dist < 3: add_charges(defender, "distract_turns", min(2, 3 - _cc_dist))
+            if _cc_weak < 4: add_charges(defender, "weakened_hits", 1)
+            return True, f"🐍 *Crushing Coils!* {defender['username']} coiled — Distract ×2 + Weakened ×1!", 0
+
     return False, "", 0
 
 def calc_attack_damage(attacker, weather=None):
@@ -8878,6 +9051,22 @@ def _pvp_pokemon_card(viewer_uid, a, d, pair):
     lines.append("")
     lines.append(f"👤 *{bot['username']}*{'  ' + bot_s if bot_s else ''}")
     lines.append(f"`{bot_bar}`  {bot['hp']}/{bot.get('max_hp', bot['hp'])} HP")
+    lines.append(_be_status_line(viewer_uid))
+    # Kill condition hint: show what attacker (viewer) needs on their opponent (top)
+    _kc = _KILL_CONDITIONS.get(get_class_line(bot)) if viewer_uid == bot["user_id"] else None
+    if _kc:
+        _kc_met = _check_kill_condition(bot, top)
+        if _kc_met:
+            lines.append(f"⚡ *KILL CONDITION MET* — use FINISHER!")
+        else:
+            _kc_parts = []
+            for _f, _v in _kc["conds"]:
+                _cur = safe_int(top.get(_f, 0))
+                _emoji = {"bleed_stacks":"🩸","poison_stacks":"🐍","hex_turns":"💀",
+                          "weakened_hits":"💔","exposed_hits":"💥","distract_turns":"😵",
+                          "silence_turns":"🤐"}.get(_f, "•")
+                _kc_parts.append(f"{_emoji}{_cur}/{_v}")
+            lines.append(f"🎯 Kill: {' '.join(_kc_parts)}")
     if logs:
         lines.append("")
         lines.append("─────────────")
@@ -8901,14 +9090,20 @@ def _pvp_log_append(pair, entry):
     _pvp_cur_page[pair] = max(0, (total - 1) // ROUNDS_PER_PAGE)
 
 
-def _build_pvp_card_markup(player_uid, opp_uid, player_p):
+def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
     """Action buttons for a specific PvP player — all skills inline, like encounter mode."""
     inv = sjl(player_p.get("inventory"), [])
     has_potion = any(i in inv for i in
                      ["Health Potion", "Greater Health Potion", "Grand Restorative Flask"])
     all_skills = sjl(player_p.get("all_skills"), [])
     shield_available = safe_int(player_p.get("shield_used")) == 0
+    kill_ready = opp_p is not None and _check_kill_condition(player_p, opp_p)
     rows = []
+    if kill_ready:
+        rows.append([InlineKeyboardButton(
+            f"⚡ FINISHER — {_KILL_CONDITIONS.get(get_class_line(player_p),{}).get('name','Finisher')}",
+            callback_data=f"pvpcard_finish_{player_uid}_{opp_uid}"
+        )])
     # Row 1: Attack + Defend
     row1 = [InlineKeyboardButton("⚔️ Attack", callback_data=f"pvpcard_atk_{player_uid}_{opp_uid}")]
     if shield_available:
@@ -8938,9 +9133,9 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
     Fallback: attacker → group chat, defender → their DM (uid == DM chat_id).
     Both cards are updated in parallel via asyncio.gather.
     """
-    async def _update_one(viewer_uid, player_p, opp_uid, fallback_chat):
+    async def _update_one(viewer_uid, player_p, opp_uid, opp_p_data, fallback_chat):
         card_text = _pvp_pokemon_card(viewer_uid, a, d, pair)
-        markup    = _build_pvp_card_markup(viewer_uid, opp_uid, player_p)
+        markup    = _build_pvp_card_markup(viewer_uid, opp_uid, player_p, opp_p=opp_p_data)
         updated   = False
         if query and query.from_user.id == viewer_uid:
             try:
@@ -8975,8 +9170,8 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
                 pass
 
     await asyncio.gather(
-        _update_one(au_id, a, du_id, group_chat_id),
-        _update_one(du_id, d, au_id, du_id),
+        _update_one(au_id, a, du_id, d, group_chat_id),
+        _update_one(du_id, d, au_id, a, du_id),
     )
 
 
@@ -8990,6 +9185,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     # ── Charge-based DOT ticks fire when the ATTACKER acts ────────────────────
     # Damage = % of target's max HP if _pct set, else flat _damage value
+    _a_pks = get_all_passive_keys(a)
+    _a_poison_immune = "cold_blood" in _a_pks or "serpentine_mastery" in _a_pks or "venom_aura" in _a_pks
     _dot_notes = []
     for _sk, _pct_k, _dk, _em, _nm in [
         ("poison_stacks", "poison_pct", "poison_damage", "🐍", "Poison"),
@@ -8997,6 +9194,11 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         ("burn_stacks",   "burn_pct",   "burn_damage",   "🔥", "Burn"),
     ]:
         _n = safe_int(a.get(_sk))
+        # Serpent classes with poison immunity shed venom stacks instead of taking damage
+        if _n > 0 and _sk == "poison_stacks" and _a_poison_immune:
+            a[_sk] = 0
+            _dot_notes.append("🐍 *Poison Immunity!* Venom shrugged off by serpent nature.")
+            continue
         if _n > 0:
             _pct = safe_int(a.get(_pct_k))
             if _pct > 0:
@@ -9014,6 +9216,18 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             _rem = _n - 1
             _dot_notes.append(f"{_em} *{_nm} tick!* -{_d_amt} HP ({_pct_txt})" + (f" [{_rem} left]" if _rem else " *(cleared!)*"))
     _dot_prefix = "\n".join(_dot_notes) + "\n" if _dot_notes else ""
+
+    # ── Auto-cure: fire top-priority active affliction ────────────────────────
+    _cure_prio = sjl(a.get("cure_priority"), []) or _DEFAULT_CURE_PRIORITY
+    _cured_note = ""
+    for _cp_key in _cure_prio:
+        _cp_field = _CURE_ALIAS.get(_cp_key)
+        if _cp_field and safe_int(a.get(_cp_field, 0)) > 0:
+            a[_cp_field] -= 1
+            _cured_note = f"💊 *Auto-cure:* {_cp_key.title()} cured (1 stack removed)"
+            break
+    if _cured_note:
+        _dot_prefix = _dot_prefix + _cured_note + "\n"
 
     # ── Per-turn charge burn: decrement every time this player acts ──────────
     for _turn_field in ("heal_blocked_turns", "silence_turns", "hex_turns", "revive_blocked_turns"):
@@ -9401,6 +9615,94 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             a["melody_stacks"] = min(3, safe_int(a.get("melody_stacks", 0)) + 1)
         if "rhythm" in get_all_passive_keys(a):
             a["rhythm_stacks"] = min(4, safe_int(a.get("rhythm_stacks", 0)) + 1)
+        # ── Serpent attacker passives ─────────────────────────────────────────
+        # cold_blood: ignore 5 flat DEF on every hit
+        if "cold_blood" in _a_pks:
+            _cb_pierce = 5
+            dmg_after_def += _cb_pierce; d["hp"] = max(0, d["hp"] - _cb_pierce)
+        if pk_a == "vipers_edge" and random.random() < 0.20:
+            if safe_int(d.get("poison_stacks", 0)) < 8:
+                add_charges(d, "poison_stacks", 1)
+                _ve_pct = (40 if "serpentine_mastery" in _a_pks else
+                           30 if "death_venom"        in _a_pks else
+                           27 if "toxic_fangs"         in _a_pks else 20)
+                d["poison_pct"] = max(safe_int(d.get("poison_pct", 0)), _ve_pct)
+                extra_notes.append(f"🐍 *Viper's Edge!* Venom seeps in — {d['username']} poisoned! ({_ve_pct}% max HP/action)")
+        if pk_a == "venom_spit" and random.random() < 0.15:
+            if safe_int(d.get("distract_turns", 0)) < 3:
+                add_charges(d, "distract_turns", min(2, 3 - safe_int(d.get("distract_turns", 0))))
+                extra_notes.append(f"🐍 *Venom Spit!* {d['username']} blinded — Distract ×2!")
+        if pk_a == "toxic_fangs" and safe_int(d.get("poison_stacks", 0)) > 0:
+            _tf_bonus = round(dmg_after_def * 0.10)
+            dmg_after_def += _tf_bonus; d["hp"] = max(0, d["hp"] - _tf_bonus)
+            extra_notes.append(f"☠️ *Toxic Fangs!* +{_tf_bonus} bonus vs poisoned target!")
+        if pk_a == "death_venom" and safe_int(d.get("poison_stacks", 0)) > 0:
+            _dv_bonus = round(dmg_after_def * 0.15)
+            dmg_after_def += _dv_bonus; d["hp"] = max(0, d["hp"] - _dv_bonus)
+            extra_notes.append(f"☠️ *Death Venom!* +{_dv_bonus} bonus vs poisoned target!")
+        if pk_a == "serpents_resolve" and a.get("hp", 1) / max(1, calc_max_hp(a)) < 0.40:
+            _sr_bonus = round(dmg_after_def * 0.20)
+            dmg_after_def += _sr_bonus; d["hp"] = max(0, d["hp"] - _sr_bonus)
+            extra_notes.append(f"🐍 *Serpent's Resolve!* Low HP fuels the strike! +{_sr_bonus} dmg!")
+        if pk_a in ("serpentine_mastery","immortal_coils") and d["hp"] <= 0:
+            _kill_pct = 0.30 if pk_a == "serpentine_mastery" else 0.25
+            _sk_heal = round(calc_max_hp(a) * _kill_pct)
+            a["hp"] = min(calc_max_hp(a), a["hp"] + _sk_heal)
+            extra_notes.append(f"🐍 *{pk_a.replace('_',' ').title()}!* Kill heals {a['username']} for {_sk_heal} HP!")
+
+    # ── Serpent defender passives ─────────────────────────────────────────────
+    if cls_d and dmg_after_def > 0:
+        _pk_d_serp = cls_d.get("passive_key", "")
+        if _pk_d_serp == "viper_scales" and random.random() < 0.15:
+            if safe_int(a.get("poison_stacks", 0)) < 8:
+                add_charges(a, "poison_stacks", 1); a["poison_pct"] = 20
+                extra_notes.append(f"🐍 *Viper Scales!* {a['username']} struck serpent scales — Venom applied!")
+        if _pk_d_serp == "venom_aura" and random.random() < 0.25:
+            if safe_int(a.get("poison_stacks", 0)) < 8:
+                add_charges(a, "poison_stacks", 2); a["poison_pct"] = 20
+                extra_notes.append(f"🌿 *Venom Aura!* {a['username']} enveloped in venom — Venom ×2!")
+        if _pk_d_serp == "armored_scales" and random.random() < 0.10:
+            _as_dmg = max(1, round(get_stat(d, "STR") * 0.5))
+            a["hp"] = max(0, a["hp"] - _as_dmg)
+            extra_notes.append(f"🛡️ *Armored Scales!* {d['username']}'s scales retaliate — {a['username']} takes {_as_dmg} dmg!")
+        if _pk_d_serp == "immortal_coils" and d["hp"] <= 0 and not _ts_active(d, "serpent_revive_used"):
+            d["hp"] = 1
+            set_status(d, "serpent_revive_used", 3600)
+            extra_notes.append(f"🐍 *Immortal Coils!* {d['username']} refuses to fall — survives at 1 HP! (1h cooldown)")
+        # coiling_stance: -10% damage taken when below 50% HP
+        if "coiling_stance" in get_all_passive_keys(d) and safe_int(d.get("hp", 0)) / max(1, calc_max_hp(d)) < 0.50:
+            _cs_reduce = round(dmg_after_def * 0.10)
+            d["hp"] = min(calc_max_hp(d), d["hp"] + _cs_reduce)
+            extra_notes.append(f"🐍 *Coiling Stance!* {d['username']} resists — {_cs_reduce} damage absorbed!")
+
+    # ── Automatic class affliction proc (15% per hit) ────────────────────────
+    _line_a_auto = get_class_line(a) if cls_a else None
+    if dmg_after_def > 0 and _line_a_auto:
+        _affl_pool = _CLASS_AUTO_AFFLICTIONS.get(_line_a_auto, [])
+        if _affl_pool and random.random() < 0.15:
+            _affl = random.choice(_affl_pool)
+            _afk, _afa, _afpk, _afpv, _afem, _afmsg = _affl
+            _cur_af = safe_int(d.get(_afk, 0))
+            if _cur_af < _AUTO_AFFLICTION_CAP.get(_afk, 3):
+                add_charges(d, _afk, _afa)
+                if _afpk: d[_afpk] = _afpv
+                # Serpent tier boosts auto-affliction venom potency
+                if _afpk == "poison_pct" and _line_a_auto == "serpent":
+                    _tier_pct = (40 if "serpentine_mastery" in _a_pks else
+                                 30 if "death_venom"        in _a_pks else
+                                 27 if "toxic_fangs"         in _a_pks else 20)
+                    d["poison_pct"] = max(safe_int(d.get("poison_pct", 0)), _tier_pct)
+                _afl = _line_a_auto.replace("_"," ").title()
+                extra_notes.append(f"{_afem} *{_afl}!* {d['username']}: {_afmsg}")
+
+    # ── Limb damage proc (15% per hit) ───────────────────────────────────────
+    if dmg_after_def > 0 and random.random() < 0.15:
+        _lp = random.choices(_LIMB_PROCS, weights=_LIMB_WEIGHTS, k=1)[0]
+        _, _lname, _ldk, _lda, _lcap, _lem = _lp
+        _lcur = safe_int(d.get(_ldk, 0))
+        if _lcur < _lcap:
+            add_charges(d, _ldk, _lda)
+            extra_notes.append(f"{_lem} *{d['username']}'s {_lname} cracked!* {_ldk.replace('_',' ').title()} ×{_lda} applied!")
 
     update_recent_attackers(d, au_id)
     proc_fired, proc_msg, proc_extra = calc_proc_effect(a, d, dmg_after_def)
@@ -9576,7 +9878,163 @@ def get_player_by_username(name):
 
 
 # ── TARGET PICKER (shared by /attack and /skill) ──────────────────────────────
-_PICKER_COOLDOWN_SECS = 3    # minimum seconds between picker attacks
+_PICKER_COOLDOWN_SECS = 3    # legacy — replaced by Balance/Equilibrium below
+BAL_RECOVERY_SECS     = 8.0  # default balance recovery (seconds)
+EQ_RECOVERY_SECS      = 10.0 # default equilibrium recovery (seconds)
+
+# Per class-line B/E timers. Warriors = fast BAL slow EQ, Mages = slow BAL fast EQ.
+_CLASS_BAL_SECS = {
+    "warrior":        6.0,
+    "valkyrie":       6.0,
+    "mage":           13.0,
+    "enchantress":    12.0,
+    "thief":          7.0,
+    "phantom_dancer": 7.0,
+    "archer":         8.0,
+    "priest":         11.0,
+    "botanist":       10.0,
+    "serpent":        7.0,
+}
+_CLASS_EQ_SECS = {
+    "warrior":        14.0,
+    "valkyrie":       13.0,
+    "mage":           7.0,
+    "enchantress":    6.0,
+    "thief":          8.0,
+    "phantom_dancer": 8.0,
+    "archer":         9.0,
+    "priest":         6.0,
+    "botanist":       7.0,
+    "serpent":        11.0,
+}
+
+def _get_bal_secs(p=None):
+    if not p: return BAL_RECOVERY_SECS
+    line = get_class_line(p)
+    return _CLASS_BAL_SECS.get(line, BAL_RECOVERY_SECS) if line else BAL_RECOVERY_SECS
+
+def _get_eq_secs(p=None):
+    if not p: return EQ_RECOVERY_SECS
+    line = get_class_line(p)
+    return _CLASS_EQ_SECS.get(line, EQ_RECOVERY_SECS) if line else EQ_RECOVERY_SECS
+
+# Automatic class-based affliction pool. Each entry: (status_key, stacks, pct_key, pct_val, emoji, msg)
+_CLASS_AUTO_AFFLICTIONS = {
+    "warrior":        [("bleed_stacks",2,"bleed_damage",15,"🩸","Bleed ×2 (15 dmg/action)"),
+                       ("exposed_hits",1,None,0,"💥","Exposed! +15% dmg taken next hit"),
+                       ("distract_turns",1,None,0,"⚖️","Off-Balance! 30% miss chance")],
+    "valkyrie":       [("bleed_stacks",1,"bleed_damage",20,"🩸","Heavy Bleed (20 dmg/action)"),
+                       ("weakened_hits",1,None,0,"💀","Weakened! +25% dmg taken next hit")],
+    "mage":           [("distract_turns",1,None,0,"🌀","Dizziness! 30% miss chance"),
+                       ("hex_turns",2,None,0,"🔮","Mana Drain! Hexed ×2 (25% less dmg)")],
+    "enchantress":    [("hex_turns",2,None,0,"💜","Hexed ×2 (25% less dmg for 2 hits)"),
+                       ("distract_turns",1,None,0,"😵","Dizzied! 30% miss chance")],
+    "thief":          [("poison_stacks",1,"poison_pct",20,"🐍","Venom! (20% max HP/action)"),
+                       ("silence_turns",1,None,0,"🤐","Silenced! Can't use skills next hit"),
+                       ("distract_turns",1,None,0,"🙈","Blinded! 30% miss chance")],
+    "phantom_dancer": [("distract_turns",1,None,0,"👻","Phantasm! 30% miss chance"),
+                       ("exposed_hits",1,None,0,"🗡️","Exposed! +15% dmg taken next hit")],
+    "archer":         [("distract_turns",1,None,0,"🎯","Crippled! 30% miss chance"),
+                       ("exposed_hits",1,None,0,"📌","Pinned! +15% dmg taken next hit")],
+    "priest":         [("silence_turns",1,None,0,"📿","Rebuked! Can't use skills next hit"),
+                       ("weakened_hits",1,None,0,"✝️","Condemned! +25% dmg taken next hit")],
+    "botanist":       [("poison_stacks",2,"poison_pct",15,"🌿","Toxic! (15% max HP × 2 actions)"),
+                       ("weakened_hits",1,None,0,"🍃","Weakened by nature! +25% dmg taken")],
+    "serpent":        [("poison_stacks",1,"poison_pct",20,"🐍","Serpent Venom! (20% max HP/action)"),
+                       ("distract_turns",1,None,0,"🐍","Hypnotized! 30% miss chance")],
+}
+_AUTO_AFFLICTION_CAP = {"poison_stacks":8,"bleed_stacks":8,"distract_turns":3,
+                         "silence_turns":3,"hex_turns":4,"exposed_hits":5,"weakened_hits":4}
+
+# Kill condition per class line — ALL conds must be met on target simultaneously
+_KILL_CONDITIONS = {
+    "warrior":        {"conds":[("bleed_stacks",3),("exposed_hits",1)],
+                       "name":"Killing Blow","stat":"STR","mult":8.0,
+                       "desc":"STR×8 — bleed ×3 + exposed."},
+    "valkyrie":       {"conds":[("bleed_stacks",2),("weakened_hits",2)],
+                       "name":"Bifrost's Descent","stat":"STR","mult":7.0,
+                       "desc":"STR×7 — bleeding ×2 + weakened ×2."},
+    "mage":           {"conds":[("hex_turns",3),("distract_turns",1)],
+                       "name":"Void Collapse","stat":"INT","mult":6.0,"drain_pct":0.50,
+                       "desc":"INT×6 + drain 50% remaining HP — hexed ×3 + dizzy."},
+    "enchantress":    {"conds":[("hex_turns",4)],
+                       "name":"Dread Sentence","stat":"INT","mult":7.0,
+                       "desc":"INT×7 — hex overload ×4."},
+    "thief":          {"conds":[("poison_stacks",4),("silence_turns",1)],
+                       "name":"Throat Strike","stat":"AGI","mult":6.0,
+                       "desc":"AGI×6 — poisoned ×4 + silenced."},
+    "phantom_dancer": {"conds":[("distract_turns",3)],
+                       "name":"Phantom Finale","stat":"AGI","mult":8.0,
+                       "desc":"AGI×8 — fully blinded ×3."},
+    "archer":         {"conds":[("distract_turns",2),("exposed_hits",2)],
+                       "name":"Headshot","stat":"DEX","mult":10.0,
+                       "desc":"DEX×10 — pinned ×2 + distracted ×2."},
+    "priest":         {"conds":[("weakened_hits",3),("silence_turns",1)],
+                       "name":"Divine Judgment","stat":"WIS","mult":7.0,
+                       "desc":"WIS×7 — weakened ×3 + silenced."},
+    "botanist":       {"conds":[("poison_stacks",5)],
+                       "name":"Toxic Overload","stat":"WIS","mult":6.0,"dot_burst":True,
+                       "desc":"WIS×6 + all venom stacks burst — poison ×5."},
+    "serpent":        {"conds":[("poison_stacks",5)],
+                       "name":"Serpent's Fang","stat":"STR","mult":7.0,
+                       "desc":"STR×7 — venom ×5 flowing."},
+}
+
+def _check_kill_condition(attacker_p, target_p):
+    """True if attacker's class kill condition is fully met on target."""
+    line = get_class_line(attacker_p)
+    if not line: return False
+    kc = _KILL_CONDITIONS.get(line)
+    if not kc: return False
+    return all(safe_int(target_p.get(f, 0)) >= v for f, v in kc["conds"])
+
+# Limb crack procs: (weight, label, debuff_key, stacks, cap, emoji)
+_LIMB_PROCS = [
+    (3, "arm",   "weakened_hits",  1, 4, "💪"),
+    (2, "leg",   "distract_turns", 1, 3, "🦿"),
+    (2, "torso", "exposed_hits",   1, 5, "🫁"),
+]
+_LIMB_WEIGHTS = [lp[0] for lp in _LIMB_PROCS]
+
+# Curable afflictions for the auto-cure priority system
+_CURABLE_AFFLICTIONS = [
+    ("poison",   "poison_stacks",  "🐍"),
+    ("bleed",    "bleed_stacks",   "🩸"),
+    ("burn",     "burn_stacks",    "🔥"),
+    ("stun",     "stun_turns",     "⚡"),
+    ("hex",      "hex_turns",      "💀"),
+    ("weaken",   "weakened_hits",  "💔"),
+    ("expose",   "exposed_hits",   "💥"),
+    ("distract", "distract_turns", "😵"),
+    ("silence",  "silence_turns",  "🤐"),
+    ("freeze",   "freeze_turns",   "🧊"),
+]
+_CURE_ALIAS = {entry[0]: entry[1] for entry in _CURABLE_AFFLICTIONS}
+_CURE_EMOJI  = {entry[0]: entry[2] for entry in _CURABLE_AFFLICTIONS}
+_DEFAULT_CURE_PRIORITY = ["poison","bleed","stun","hex","weaken","expose","distract","silence","freeze"]
+
+def _check_balance(uid):
+    exp = _bal_expires.get(uid, 0.0)
+    now = time.time()
+    return (True, 0.0) if exp <= now else (False, round(exp - now, 1))
+
+def _set_balance(uid, p=None):
+    _bal_expires[uid] = time.time() + _get_bal_secs(p)
+
+def _check_equilibrium(uid):
+    exp = _eq_expires.get(uid, 0.0)
+    now = time.time()
+    return (True, 0.0) if exp <= now else (False, round(exp - now, 1))
+
+def _set_equilibrium(uid, p=None):
+    _eq_expires[uid] = time.time() + _get_eq_secs(p)
+
+def _be_status_line(uid):
+    bal_ready, _ = _check_balance(uid)
+    eq_ready,  _ = _check_equilibrium(uid)
+    bal_str = "✅ Ready" if bal_ready else "🔄 Recovering"
+    eq_str  = "✅ Ready" if eq_ready  else "🔄 Recovering"
+    return f"⚖️ BAL: {bal_str}  🌀 EQ: {eq_str}"
 
 def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=3):
     """Return (page_list, total) of players attackable right now."""
@@ -9662,14 +10120,11 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     # action == "pick" — fourth is target_uid
     target_uid = fourth
-    # Spam guard
-    last_pick = _target_pickers.get(uid, {}).get("last_pick")
-    if last_pick:
-        elapsed = (datetime.now() - datetime.fromisoformat(last_pick)).total_seconds()
-        if elapsed < _PICKER_COOLDOWN_SECS:
-            remaining = round(_PICKER_COOLDOWN_SECS - elapsed, 1)
-            await query.answer(f"⏳ {remaining}s until your next action!", show_alert=False)
-            return
+    # Balance check — replaces old 3s spam guard
+    bal_ready, bal_rem = _check_balance(uid)
+    if not bal_ready:
+        await query.answer(f"⚖️ Off balance! {bal_rem}s remaining.", show_alert=False)
+        return
 
     if is_defeated(a):
         await query.answer("You're defeated!", show_alert=True); return
@@ -9694,6 +10149,7 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
     w = get_weather()
     action_text, _, result_type = await _execute_pvp_hit(a, d, uid, target_uid, w, chat_id, context.bot)
 
+    _set_balance(uid, a)
     _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": chat_id}
 
     pair = _pvp_pair_key(uid, target_uid)
@@ -9838,7 +10294,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update, "⚔️ No players available to attack right now.", delay=9); return
         markup = _build_target_picker_markup(au.id, a.get("guild_id"), 0, "atk")
         await send_group(update,
-            f"⚔️ *Choose a target* ({total} available)\n_3s cooldown between hits. Close when done._",
+            f"⚔️ *Choose a target* ({total} available)\n_{_be_status_line(au.id)}_",
             permanent=True, reply_markup=markup)
         return
 
@@ -9879,6 +10335,10 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
         except Exception: pass
 
+    bal_ready, bal_rem = _check_balance(au.id)
+    if not bal_ready:
+        await send_group(update, f"⚖️ *Off Balance!* Recover in {bal_rem}s.", delay=5); return
+
     w    = get_weather()
     chat = update.effective_chat.id
     try: await update.message.delete()
@@ -9886,6 +10346,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     action, lvl_msgs, result_type = await _execute_pvp_hit(
         a, d, au.id, du_id, w, chat, update.get_bot())
+    _set_balance(au.id, a)
 
     bot  = update.get_bot()
     pair = _pvp_pair_key(au.id, du_id)
@@ -10003,6 +10464,65 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _reset_card_timer(pair, context.bot, group_cid, 0, 20)
             return
 
+        if action_type == "finish":
+            # Finisher — kill condition attack
+            line_a = get_class_line(a)
+            kc = _KILL_CONDITIONS.get(line_a)
+            if not kc or not _check_kill_condition(a, d):
+                await query.answer("⚡ Kill condition not met!", show_alert=True); return
+            bal_ready_f, bal_rem_f = _check_balance(uid)
+            if not bal_ready_f:
+                await query.answer(f"⚖️ Off balance! {bal_rem_f}s remaining.", show_alert=False); return
+            eq_ready_f, eq_rem_f = _check_equilibrium(uid)
+            if not eq_ready_f:
+                await query.answer(f"🌀 EQ recovering! {eq_rem_f}s.", show_alert=False); return
+            await query.answer()
+            stat_val = get_stat(a, kc["stat"])
+            dmg = round(stat_val * kc["mult"])
+            if kc.get("drain_pct"):
+                drain_amt = round(d["hp"] * kc["drain_pct"])
+                a["hp"] = min(calc_max_hp(a), a["hp"] + drain_amt)
+                dmg += drain_amt
+            if kc.get("dot_burst") and safe_int(d.get("poison_stacks", 0)) > 0:
+                n_p = safe_int(d["poison_stacks"])
+                burst = round(d.get("max_hp", 100) * safe_int(d.get("poison_pct", 20)) / 100 * n_p)
+                dmg += burst; d["poison_stacks"] = 0
+            hp_pct = d["hp"] / max(1, d.get("max_hp", d["hp"]))
+            is_instakill = hp_pct <= 0.50
+            if is_instakill:
+                d["hp"] = 0
+            else:
+                d["hp"] = max(0, d["hp"] - dmg)
+            _set_equilibrium(uid, a)
+            _set_balance(uid, a)
+            kill_msg = (f"⚡ *FINISHER!* *{a['username']}* → *{d['username']}*\n"
+                        f"*{kc['name']}* — {kc['stat']}×{kc['mult']} = *{dmg} damage!*")
+            if is_instakill and d["hp"] == 0:
+                kill_msg += f"\n💀 *INSTAKILL!* {d['username']} was at {round(hp_pct*100)}% HP — *OBLITERATED!*"
+            pair_f = _pvp_pair_key(uid, target_id)
+            _pvp_log_append(pair_f, kill_msg)
+            if d["hp"] <= 0:
+                apply_pvp_death(d, a["username"], kc["name"], killer_id=uid)
+                a["wins"] = a.get("wins", 0) + 1
+                lmsgs_f, _ = add_exp(a, 60 + a["level"] * 8, get_weather())
+                save_player(a); save_player(d)
+                _cancel_card_timer(pair_f); _pvp_cards.pop(pair_f, None)
+                for _puid in (uid, target_id):
+                    _pcard = _pvp_player_cards.pop(_puid, None)
+                    if _pcard:
+                        try: await context.bot.delete_message(chat_id=_pcard[0], message_id=_pcard[1])
+                        except: pass
+                try: await query.edit_message_text(kill_msg[:4096], parse_mode="Markdown")
+                except: pass
+                try: await context.bot.send_message(chat_id=chat_id, text=kill_msg[:4096], parse_mode="Markdown")
+                except: pass
+            else:
+                save_player(a); save_player(d)
+                group_cid = _pvp_player_cards.get(target_id, (chat_id,))[0]
+                await _pvp_update_both_cards(pair_f, a, d, uid, target_id, group_cid, context.bot, query=query)
+                _reset_card_timer(pair_f, context.bot, group_cid, 0, 20)
+            return
+
         if action_type != "atk": return
 
         if is_defeated(a):
@@ -10016,6 +10536,9 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(_cc, show_alert=True); return
         if not _rate_ok(uid):
             await query.answer("Slow down!", show_alert=True); return
+        _bal_ready_c, _bal_rem_c = _check_balance(uid)
+        if not _bal_ready_c:
+            await query.answer(f"⚖️ Off balance! {_bal_rem_c}s remaining.", show_alert=False); return
 
         if is_defeated(d):
             await query.answer(f"{d['username']} is already defeated!", show_alert=True)
@@ -10030,6 +10553,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         w = get_weather()
         result_text, lvl_msgs, result_type = await _execute_pvp_hit(
             a, d, uid, target_id, w, chat_id, context.bot)
+        _set_balance(uid, a)
 
         pair = _pvp_pair_key(uid, target_id)
 
@@ -10324,6 +10848,8 @@ def _build_stats_pages(p, viewing_name=None):
     exp_cur  = safe_int(p.get("exp"))
     exp_need = exp_for_level(p["level"])
     exp_pct  = int(exp_cur / max(1, exp_need) * 100)
+    _exp_filled = round(exp_pct / 10)
+    _exp_bar_str = "█" * _exp_filled + "░" * (10 - _exp_filled)
 
     weap_name = p.get("equipped_weapon") or "None"
     armr_name = p.get("equipped_armor") or "None"
@@ -10412,7 +10938,7 @@ def _build_stats_pages(p, viewing_name=None):
         "",
         f"❤️ HP: {p['hp']}/{real_max}",
         shield_line,
-        f"✨ EXP: {exp_cur:,}/{exp_need:,} ({exp_pct}%)",
+        f"✨ EXP [{_exp_bar_str}]",
         f"🏆 Total EXP: {safe_int(p.get('total_exp')):,}",
         "",
         f"💰 Gold: {p['gold']}",
@@ -10714,6 +11240,7 @@ async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _CLASS_EMOJIS = {
     "warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿",
     "botanist":"🌸","enchantress":"💜","valkyrie":"⚡","phantom_dancer":"🌀",
+    "serpent":"🐍",
 }
 _TIER_REQ     = {2:10, 3:30, 4:60, 5:100}
 
@@ -10800,7 +11327,7 @@ def _build_class_progression_pages(p):
     [base class, tier-2, tier-3, tier-4, tier-5].
     If no path chosen yet, only page 0 (base) + a "choose path" page.
     """
-    CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
+    CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿","serpent":"🐍"}
     TIER_UNLOCK  = {2:10, 3:30, 4:60, 5:100}
 
     line       = get_class_line(p) or p.get("class_id")
@@ -10913,7 +11440,7 @@ async def class_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if p.get("class_id"):
         await _send_class_progression(update.message, user.id, page=0, edit=False)
         return
-    CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
+    CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿","serpent":"🐍"}
     if not context.args:
         # Paginated class browser — send first page
         await _send_class_browser(update.message, user.id, page=0, edit=False)
@@ -15482,12 +16009,9 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # ── PVP context (target_uid provided) ────────────────────────────────────
     if target_uid:
-        _now_pvp = time.time()
-        _last_pvp = _pvp_action_times.get(uid, 0)
-        if _now_pvp - _last_pvp < _PVP_ACTION_CD:
-            _wait_pvp = round(_PVP_ACTION_CD - (_now_pvp - _last_pvp), 1)
-            await query.answer(f"⏳ {_wait_pvp}s until your next action!", show_alert=True); return
-        _pvp_action_times[uid] = _now_pvp
+        eq_ready, eq_rem = _check_equilibrium(uid)
+        if not eq_ready:
+            await query.answer(f"🌀 Equilibrium recovering! {eq_rem}s.", show_alert=True); return
         tp = get_player(target_uid)
         if not tp:
             await send_result("That player hasn't ascended yet!"); return
@@ -15526,6 +16050,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         _pvp_pair_k = _pvp_pair_key(uid, target_uid)
         _pvp_gcid_k = _pvp_player_cards.get(target_uid, (chat_id,))[0]
         async def send_result(text):  # noqa: F811
+            _set_equilibrium(uid, p)
             _pvp_log_append(_pvp_pair_k, text[:300])
             p_upd  = get_player(uid) or p
             tp_upd = get_player(target_uid) or tp
@@ -15709,6 +16234,8 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             _tp_cls = get_player_class(tp)
             if _tp_cls and _tp_cls.get("passive_key") == "pathfinder":
                 out.append(f"⚡ *{sk['name']}!* {tp['username']} is *Stun Immune* (Strider).")
+            elif "immortal_coils" in get_all_passive_keys(tp):
+                out.append(f"🐍 *{sk['name']}!* {tp['username']} is *Stun Immune* (Immortal Coils).")
             elif safe_int(tp.get("stun_turns", 0)) >= 3 or is_stunned(tp):
                 out.append(f"⚡ *{sk['name']}!* {tp['username']} is *Stun Immune* (max stacks).")
             elif random.random() < 0.25:
@@ -16034,6 +16561,64 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             dmg = round(base * 0.8)
             add_charges(tp, "marked_hits", 10)
             out.append(f"🔴 *{sk['name']}!* *Marked ×10!* {tp['username']} takes +20% damage next 10 hits!")
+        elif stype == "venom_strike":
+            str_v = get_stat(p, "STR")
+            mult = sk.get("mult", 1.5)
+            bonus = 1.0
+            if sk.get("bonus_if_poisoned") and safe_int(tp.get("poison_stacks", 0)) > 0:
+                bonus = 1.5; out.append(f"🐍 *{tp['username']}* already poisoned — *+50% bonus!*")
+            dmg = round(str_v * mult * bonus)
+            _vn = sk.get("venom_stacks", 3); _cv = safe_int(tp.get("poison_stacks", 0))
+            if _cv < 10:
+                _av = min(_vn, 10 - _cv); add_charges(tp, "poison_stacks", _av); tp["poison_pct"] = 20
+                out.append(f"🐍 *{sk['name']}!* {dmg} damage + Venom ×{_av} applied! (20% max HP/action)")
+            else:
+                out.append(f"🐍 *{sk['name']}!* {dmg} damage! {tp['username']} is *Venom Immune* (max stacks).")
+            _ds = sk.get("distract_stacks", 0)
+            if _ds and safe_int(tp.get("distract_turns", 0)) < 3:
+                add_charges(tp, "distract_turns", min(_ds, 3 - safe_int(tp.get("distract_turns", 0))))
+                out.append(f"😵 *{tp['username']}* blinded — Distract ×{_ds}!")
+        elif stype == "venom_max":
+            str_v = get_stat(p, "STR")
+            dmg = round(str_v * sk.get("mult", 2.5))
+            _vn = sk.get("venom_stacks", 6); _cv = safe_int(tp.get("poison_stacks", 0))
+            _av = min(_vn, 10 - _cv)
+            if _av > 0: add_charges(tp, "poison_stacks", _av); tp["poison_pct"] = 20
+            _exp = sk.get("exposed_stacks", 0)
+            if _exp and safe_int(tp.get("exposed_hits", 0)) < 5:
+                add_charges(tp, "exposed_hits", min(_exp, 5 - safe_int(tp.get("exposed_hits", 0))))
+            _hbl = sk.get("heal_block_turns", 0)
+            if _hbl and safe_int(tp.get("heal_blocked_turns", 0)) < 5:
+                add_charges(tp, "heal_blocked_turns", min(_hbl, 5 - safe_int(tp.get("heal_blocked_turns", 0))))
+            _parts = [f"{dmg} damage"]
+            if _av > 0: _parts.append(f"Venom ×{_av}")
+            if _exp: _parts.append(f"Exposed ×{_exp}")
+            if _hbl: _parts.append(f"Heal Blocked ×{_hbl}")
+            out.append(f"🐍 *{sk['name']}!* {' + '.join(_parts)}!")
+        elif stype == "serpent_aoe":
+            str_v = get_stat(p, "STR"); mult = sk.get("mult", 3.5)
+            dmg = round(str_v * mult)
+            _vn = sk.get("venom_stacks", 2); _cv = safe_int(tp.get("poison_stacks", 0))
+            _av = min(_vn + 4, 10 - _cv)
+            if _av > 0: add_charges(tp, "poison_stacks", _av); tp["poison_pct"] = 20
+            out.append(f"🐍 *{sk['name']}!* STR×{mult} = {dmg} damage! Venom ×{_av} applied to {tp['username']}!")
+            _ra_ids = get_recent_attackers(p)
+            _venomed = []
+            for _ruid in _ra_ids:
+                if _ruid == tp.get("user_id"): continue
+                _rp = get_player(_ruid)
+                if _rp and not is_defeated(_rp):
+                    _rv = safe_int(_rp.get("poison_stacks", 0))
+                    if _rv < 8: add_charges(_rp, "poison_stacks", min(_vn, 8 - _rv)); _rp["poison_pct"] = 20; save_player(_rp); _venomed.append(_rp["username"])
+            if _venomed: out.append(f"🐍 *Venom spreads!* {', '.join(_venomed)} also venomed ×{_vn}!")
+        elif stype == "serpent_nuke":
+            str_v = get_stat(p, "STR"); mult = sk.get("mult", 6.0)
+            dmg = round(str_v * mult)
+            heal_pct = sk.get("heal_pct", 0.30)
+            _sn_heal = round(calc_max_hp(p) * heal_pct)
+            p["hp"] = min(calc_max_hp(p), p["hp"] + _sn_heal)
+            out.append(f"🐍 *{sk['name']}!* STR×{mult} = *{dmg}* fatal strike — cannot be dodged or blocked!\n💚 *{p['username']}* heals *{_sn_heal} HP* ({p['hp']}/{p['max_hp']})!")
+            # Extend defeat timer on kill (handled after hp apply)
         if check_crit(p):
             dmg = apply_crit(p, dmg); out.append("💥 *CRITICAL HIT!*")
         # Pet defensive ability for skill damage
@@ -16054,10 +16639,18 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             dmg -= _sk_absorb
             out.append(f"🛡️ Shield absorbed *{_sk_absorb}*! ({tp['shield_hp']} left)")
         tp["hp"] = max(0, tp["hp"] - dmg)
+        # Serpent immortal_coils: survive fatal blow once per hour
+        if tp["hp"] <= 0 and "immortal_coils" in get_all_passive_keys(tp) and not _ts_active(tp, "serpent_revive_used"):
+            tp["hp"] = 1
+            set_status(tp, "serpent_revive_used", 3600)
+            out.append(f"🐍 *Immortal Coils!* {tp['username']} refuses to fall — survives at 1 HP! (1h cooldown)")
         out.append(f"💥 *{dmg} damage!* {tp['username']} HP: {tp['hp']}/{tp['max_hp']}")
         _sk_killed = tp["hp"] == 0
         if _sk_killed:
             apply_pvp_death(tp, p["username"], sk["name"], killer_id=uid)
+            if stype == "serpent_nuke":
+                tp["defeated_until"] = (datetime.now() + timedelta(minutes=45)).isoformat()
+                out.append(f"🐍 *Serpent God's Wrath!* {tp['username']}'s defeat extended to *45 minutes!*")
             p["wins"] = p.get("wins", 0) + 1
             p["kill_streak"] = safe_int(p.get("kill_streak")) + 1
             if p["kill_streak"] > safe_int(p.get("max_kill_streak")):
@@ -16429,6 +17022,8 @@ async def _execute_skill(update, context, p, sk):
         _d_cls = get_player_class(d)
         if _d_cls and _d_cls.get("passive_key") == "pathfinder":
             lines.append(f"⚡ *{sk['name']}!* {d['username']} is *Stun Immune* (Strider).")
+        elif "immortal_coils" in get_all_passive_keys(d):
+            lines.append(f"🐍 *{sk['name']}!* {d['username']} is *Stun Immune* (Immortal Coils).")
         elif safe_int(d.get("stun_turns", 0)) >= 3 or is_stunned(d):
             lines.append(f"⚡ *{sk['name']}!* {d['username']} is *Stun Immune* (max stacks).")
         elif random.random() < 0.25:
@@ -16784,6 +17379,83 @@ async def weather_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update,
         f"🌦️ *Table Conditions: {w['name']}*\n_{w['desc']}_\n\n"
         f"📈 EXP x{w['exp_mod']} | ⚔️ DMG x{w['dmg_mod']}{hint}", delay=15)
+
+async def killcondition_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    line_k = get_class_line(p)
+    kc_k = _KILL_CONDITIONS.get(line_k) if line_k else None
+    if not kc_k:
+        await send_group(update, "⚡ *Kill Condition*\n\nNo finisher yet — choose a class first with /class!", delay=9); return
+    em_k = _LINE_EMOJI.get(line_k, "⚡")
+    cond_strs_k = "\n".join(f"  • {f.replace('_',' ').title()} ≥ {v}" for f, v in kc_k["conds"])
+    extras_k = ""
+    if kc_k.get("drain_pct"):
+        extras_k += f"\n🩸 Drains {round(kc_k['drain_pct']*100)}% of target's remaining HP (added to damage)"
+    if kc_k.get("dot_burst"):
+        extras_k += "\n☠️ Bursts all poison stacks on target for bonus damage"
+    lines_k = [
+        f"{em_k} *{kc_k['name']}* — {line_k.replace('_',' ').title()} Finisher\n",
+        f"📋 *Conditions required (on your target):*",
+        cond_strs_k,
+        f"\n⚔️ *Damage:* {kc_k['stat']} × {kc_k['mult']}{extras_k}",
+        f"\n💡 _Stack conditions via attacks & auto-afflictions (15% per hit)._",
+        f"_When all conditions are met, ⚡ FINISHER appears on your PvP battle card._",
+        f"_Instakills targets at ≤50% HP._",
+    ]
+    await send_group(update, "\n".join(lines_k), delay=25)
+
+
+async def curepriority_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set or view your auto-cure priority list."""
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    _all_names = [e[0] for e in _CURABLE_AFFLICTIONS]
+
+    if not context.args:
+        # Show current priority
+        current = sjl(p.get("cure_priority"), []) or _DEFAULT_CURE_PRIORITY
+        lines = ["💊 *Auto-Cure Priority*\n"]
+        for i, k in enumerate(current, 1):
+            em = _CURE_EMOJI.get(k, "•")
+            lines.append(f"{i}. {em} {k.title()}")
+        lines.append(f"\n_Set with: /curepriority poison bleed stun hex ..._")
+        lines.append(f"_Available: {', '.join(_all_names)}_")
+        lines.append(f"_Reset with: /curepriority reset_")
+        await send_group(update, "\n".join(lines), delay=20); return
+
+    if context.args[0].lower() == "reset":
+        p["cure_priority"] = json.dumps(_DEFAULT_CURE_PRIORITY)
+        save_player(p)
+        await send_group(update, "💊 Cure priority reset to default.", delay=9); return
+
+    chosen = []
+    invalid = []
+    for arg in context.args[:5]:
+        a_lower = arg.lower()
+        if a_lower in _all_names:
+            if a_lower not in chosen:
+                chosen.append(a_lower)
+        else:
+            invalid.append(arg)
+
+    if invalid:
+        await send_group(update, f"Unknown affliction(s): {', '.join(invalid)}\nUse: {', '.join(_all_names)}", delay=9); return
+    if not chosen:
+        await send_group(update, "No valid afflictions specified.", delay=9); return
+
+    p["cure_priority"] = json.dumps(chosen)
+    save_player(p)
+    lines = ["💊 *Cure priority set:*"]
+    for i, k in enumerate(chosen, 1):
+        lines.append(f"{i}. {_CURE_EMOJI.get(k,'•')} {k.title()}")
+    await send_group(update, "\n".join(lines), delay=15)
+
 
 async def cooldowns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -17935,7 +18607,7 @@ def _build_skill_tree_pages(p):
     cls_name     = cls["name"] if cls else "Base"
     prestige_lvl = safe_int(p.get("prestige_count"))
 
-    CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿"}
+    CLASS_EMOJIS = {"warrior":"⚔️","mage":"🔮","thief":"🔪","archer":"🏹","priest":"📿","serpent":"🐍"}
     line_emoji   = CLASS_EMOJIS.get(line, "⚔️")
 
     # Tier/level labels
@@ -20906,8 +21578,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             e_level = enc.get("e_level", 1)
             gold_r = enc.get("e_gold_range", (5, 15))
             gold   = (random.randint(*gold_r) if isinstance(gold_r, tuple) else random.randint(5, 30)) * 4 + e_level * 20
-            exp_r  = enc.get("e_exp_range", (20, 60))
-            exp    = (random.randint(*exp_r) if isinstance(exp_r, tuple) else random.randint(20, 60)) * 3 + e_level * 200
+            exp_r  = enc.get("e_exp_range", (20, 50))
+            exp    = (random.randint(*exp_r) if isinstance(exp_r, tuple) else random.randint(20, 50)) + e_level * 30
 
             # Close-fight bonus
             hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
@@ -21172,7 +21844,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 _core_qty = 3 if _core_roll < 0.05 else (2 if _core_roll < 0.30 else 1)
                 for _ in range(_core_qty):
                     add_item(p, core_item)
-                exp_gain  = enc["e_level"] * 15
+                exp_gain  = enc["e_level"] * 8
                 gold_gain = enc["e_level"] * 8
                 add_exp(p, exp_gain)
                 p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
@@ -21252,7 +21924,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if enc["e_hp"] <= 0:
             _kh = get_enchant_bonus(p, "kill_heal")
             if _kh: enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _kh)
-            exp_gain  = enc["e_level"] * 200
+            exp_gain  = enc["e_level"] * 25
             gold_gain = enc["e_level"] * 28
             hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
             close_bonus = ""
@@ -26024,23 +26696,23 @@ async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── /combat Hub ────────────────────────────────────────────────────────────────
 _COMBAT_HUB_PAGES = [
-    # Page 1 — Direct Combat
+    # Page 1 — Direct Combat (Encounter first)
     [
-        [("⚔️ Attack (PvP)",  "combathub_attack"),  ("✨ Use Skill",    "combathub_skill")],
-        [("🏟️ Arena Duel",    "combathub_arena"),   ("🗡️ Duel (Wager)", "combathub_duel")],
-        [("🛡️ Defend",        "combathub_defend"),  ("💊 Heal",         "combathub_heal")],
+        [("🗡️ Encounter",     "combathub_encounter"), ("⚔️ Attack (PvP)", "combathub_attack")],
+        [("✨ Use Skill",      "combathub_skill"),     ("🏟️ Arena Duel",   "combathub_arena")],
+        [("🗡️ Duel (Wager)",  "combathub_duel"),      ("🛡️ Defend",       "combathub_defend")],
     ],
-    # Page 2 — War & Power
+    # Page 2 — War & Exploration
     [
-        [("⚔️ Guild War",    "combathub_war"),     ("📊 Combat Power", "combathub_cp")],
-        [("🌍 Explore",       "combathub_explore"), ("🗡️ Encounter",    "combathub_encounter")],
-        [("🏚️ Dungeon",       "combathub_dungeon"), ("🔥 Dungeon Hard", "combathub_dungeonhard")],
+        [("💊 Heal",           "combathub_heal"),      ("⚔️ Guild War",    "combathub_war")],
+        [("📊 Combat Power",   "combathub_cp"),        ("🌍 Explore",      "combathub_explore")],
+        [("🏚️ Dungeon",        "combathub_dungeon"),   ("🔥 Dungeon Hard", "combathub_dungeonhard")],
     ],
-    # Page 3 — Dungeons & Exploration
+    # Page 3 — Info & Tools
     [
-        [("💀 Dungeon Leg.",  "combathub_dungeonleg"),("🐾 Pet (battle)","combathub_petbattle")],
-        [("🏟️ Arena Duel",    "combathub_arena"),   ("🗡️ Duel (Wager)", "combathub_duel")],
-        [("💊 Heal",          "combathub_heal"),    ("🛡️ Defend",        "combathub_defend")],
+        [("🎯 Kill Condition", "combathub_killcondition"), ("💊 Cure Priority", "combathub_curepriority")],
+        [("⏳ Cooldowns",      "combathub_cooldowns"),    ("💀 Dungeon Leg.",  "combathub_dungeonleg")],
+        [("🐾 Pet (battle)",  "combathub_petbattle"),    ("📊 Combat Power",  "combathub_cp")],
     ],
 ]
 
@@ -26070,7 +26742,7 @@ async def combat_hub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚔️ *{p['username']}'s Combat Hub*\n\n"
         f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
         f"⚡ CP: {cp:,}  |  {status}\n\n"
-        f"Page 1: Direct Combat  |  Page 2: War & Exploration  |  Page 3: Dungeons"
+        f"Page 1: Encounter & Combat  |  Page 2: War & Explore  |  Page 3: Info & Tools"
     )
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
@@ -26102,7 +26774,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         header = (f"⚔️ *{p['username']}'s Combat Hub*\n\n"
                   f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
                   f"⚡ CP: {cp:,}  |  {status}\n\n"
-                  f"Page 1: Direct Combat  |  Page 2: War & Exploration  |  Page 3: Dungeons")
+                  f"Page 1: Encounter & Combat  |  Page 2: War & Explore  |  Page 3: Info & Tools")
         try: await query.edit_message_text(header, parse_mode="Markdown",
                                            reply_markup=_combat_hub_markup(uid, page=page))
         except Exception: pass
@@ -26120,8 +26792,8 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer("Register first.", show_alert=True); return
 
     _PAGE = {"attack":1,"skill":1,"arena":1,"duel":1,"defend":1,"heal":1,
-             "war":2,"cp":2,"explore":2,"encounter":2,"dungeon":2,"dungeonhard":2,
-             "dungeonleg":3,"petbattle":3,"arena":3,"duel":3,"heal":3,"defend":3}
+             "war":2,"cp":3,"explore":2,"encounter":1,"dungeon":2,"dungeonhard":2,
+             "killcondition":3,"curepriority":3,"cooldowns":3,"dungeonleg":3,"petbattle":3}
     page = _PAGE.get(action, 1)
     back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"combathub_back_{page}_{uid}")]])
 
@@ -26270,6 +26942,160 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "🌿 *Hunt* — fight wild monsters; weaken them to catch for *Monster Cores*",
                 parse_mode="Markdown", reply_markup=enc_markup)
             except Exception: pass
+
+    elif action == "killcondition":
+        line_k = get_class_line(p)
+        kc_k = _KILL_CONDITIONS.get(line_k) if line_k else None
+        if not kc_k:
+            txt_k = "⚡ *Kill Condition*\n\nNo kill condition yet — choose a class first with /class!"
+        else:
+            em_k = _LINE_EMOJI.get(line_k, "⚡")
+            cond_strs_k = "\n".join(f"  • {f.replace('_',' ').title()} ≥ {v}" for f, v in kc_k["conds"])
+            extras_k = ""
+            if kc_k.get("drain_pct"):
+                extras_k += f"\n🩸 Drains {round(kc_k['drain_pct']*100)}% of target's remaining HP"
+            if kc_k.get("dot_burst"):
+                extras_k += "\n☠️ Bursts all poison stacks for bonus damage"
+            txt_k = (f"{em_k} *{kc_k['name']}* — {line_k.replace('_',' ').title()} Finisher\n\n"
+                     f"📋 *Conditions (must be on target):*\n{cond_strs_k}\n\n"
+                     f"⚔️ *Damage:* {kc_k['stat']} × {kc_k['mult']}{extras_k}\n\n"
+                     f"_Stack conditions via attacks & auto-afflictions._\n"
+                     f"_When all met, ⚡ FINISHER appears on your PvP battle card._")
+        try: await query.edit_message_text(txt_k, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action == "curepriority":
+        cur_cp = sjl(p.get("cure_priority"), []) or _DEFAULT_CURE_PRIORITY
+        cp_lines = "\n".join(f"{i}. {_CURE_EMOJI.get(k,'•')} {k.title()}" for i, k in enumerate(cur_cp, 1))
+        txt_cp = (f"💊 *Auto-Cure Priority*\n\n{cp_lines}\n\n"
+                  f"_Set:_ `/curepriority poison bleed stun hex`\n"
+                  f"_Reset:_ `/curepriority reset`\n\n"
+                  f"_One affliction stack is removed automatically each time you attack._")
+        try: await query.edit_message_text(txt_cp, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action == "cooldowns":
+        s_cd_h = get_shadow(uid)
+        pool_ts_h = p.get("last_pool") or (s_cd_h.get("last_pool") if s_cd_h else None)
+        today_h = datetime.now().strftime("%Y-%m-%d")
+        exp_count_h = safe_int(p.get("explore_count_today")) if p.get("explore_date") == today_h else 0
+        cd_lines = [
+            f"🎁 Daily:    {time_remaining(p.get('last_daily'), 86400)}",
+            f"🗺️ Quest:    {time_remaining(p.get('last_quest'), 3600)}",
+            f"🏋️ Train:    {time_remaining(p.get('last_train'), 1800)}",
+            f"🎱 Pool:     {time_remaining(pool_ts_h, 8)}",
+            f"🗺️ Explore:  {exp_count_h}/2 today",
+            f"🏰 Dungeon:  {time_remaining(p.get('last_dungeon'), 86400)}",
+        ]
+        if is_defeated(p):
+            end_h = datetime.fromisoformat(p["defeated_until"])
+            diff_h = end_h - datetime.now()
+            mh, sh = divmod(int(diff_h.total_seconds()), 60); hh, mh = divmod(mh, 60)
+            cd_lines.append(f"💀 Defeat:   {hh}h {mh}m remaining")
+        txt_cd = f"⏳ *{p['username']}'s Cooldowns:*\n\n" + "\n".join(cd_lines)
+        try: await query.edit_message_text(txt_cd, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action == "arena":
+        players, total = _get_attackable_players(uid, p.get("guild_id"), 0)
+        if is_defeated(p):
+            txt = "🏟️ *Arena Duel*\n\n💀 You're defeated — can't duel right now."
+        elif total == 0:
+            txt = "🏟️ *Arena Duel*\n\n_No active players to challenge right now._\nPlayers must have been active in the last hour."
+        else:
+            lines = ["🏟️ *Arena Duel — Pick a Target*\n", "_Reply to a player in the chat and they'll receive your challenge._\n", "*Active players:*"]
+            for pp in players[:6]:
+                cls_n = CLASS_TREE.get(pp.get("class_id",""),{}).get("name","No Class")
+                lines.append(f"• *{pp['username']}* — Lv {pp['level']} {cls_n}")
+            txt = "\n".join(lines)
+        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action == "duel":
+        players, total = _get_attackable_players(uid, p.get("guild_id"), 0)
+        if is_defeated(p):
+            txt = "🗡️ *Duel*\n\n💀 You're defeated — can't duel right now."
+        elif total == 0:
+            txt = "🗡️ *Duel*\n\n_No active players to duel right now._"
+        else:
+            lines = ["🗡️ *Duel — Challenge Someone*\n", "*Active players:*"]
+            for pp in players[:6]:
+                cls_n = CLASS_TREE.get(pp.get("class_id",""),{}).get("name","No Class")
+                lines.append(f"• *{pp['username']}* — Lv {pp['level']} {cls_n}")
+            txt = "\n".join(lines)
+        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action == "war":
+        gid = p.get("guild_id")
+        if not gid:
+            txt = "⚔️ *Guild War*\n\n_Join a guild first to access guild wars._"
+        else:
+            g = get_guild(gid)
+            if not g:
+                txt = "⚔️ *Guild War*\n\n_Guild not found._"
+            else:
+                war_info = g.get("war_with")
+                if war_info:
+                    txt = (f"⚔️ *Guild War — ACTIVE*\n\n"
+                           f"*{g['name']}* vs *{war_info}*\n\n"
+                           f"_Attack enemy guild members to earn war points._\n"
+                           f"War ends in 24h from declaration.")
+                else:
+                    txt = (f"⚔️ *Guild War*\n\n"
+                           f"*{g['name']}* — No active war.\n\n"
+                           f"Guild leaders can declare war on rival guilds.\n"
+                           f"Both guilds battle for 24 hours over territory and glory.")
+        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action == "explore":
+        if is_defeated(p):
+            txt = "🌍 *Explore*\n\n💀 Too beaten up to explore right now."
+        else:
+            today = datetime.now().strftime("%Y-%m-%d")
+            exp_count = safe_int(p.get("explore_count_today")) if p.get("explore_date") == today else 0
+            exp_bar = "█" * exp_count + "░" * (2 - exp_count)
+            if exp_count >= 2:
+                txt = f"🌍 *Explore*\n\n[{exp_bar}] 2/2 expeditions used today.\n\n_Resets at midnight. Come back tomorrow!_"
+            else:
+                txt = (f"🌍 *Explore*\n\n[{exp_bar}] {exp_count}/2 expeditions used today.\n\n"
+                       f"✅ *Ready!* Head to the group chat and use the Explore action to go on a 1-hour expedition.\n"
+                       f"Best loot in the game — rare items, monster encounters, and pet finds.")
+        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action in ("dungeon", "dungeonhard", "dungeonleg"):
+        _dng_info = {"dungeon":("🏚️","Dungeon",1),"dungeonhard":("🔥","Dungeon Hard",15),"dungeonleg":("💀","Dungeon Legendary",40)}
+        _dem, _dname, _dmin = _dng_info[action]
+        if p["level"] < _dmin:
+            txt = f"{_dem} *{_dname}*\n\n🔒 Requires Level {_dmin}.\nYou are Level {p['level']} — keep growing!"
+        elif is_defeated(p):
+            txt = f"{_dem} *{_dname}*\n\n💀 You're defeated — recover first."
+        elif not check_cooldown(p.get("last_dungeon"), 86400):
+            txt = f"{_dem} *{_dname}*\n\n⏳ Ready in: *{time_remaining(p.get('last_dungeon'), 86400)}*\n\n_One run per day. Come back later!_"
+        else:
+            txt = (f"{_dem} *{_dname}*\n\n✅ *Ready to run!*\n\n"
+                   f"{'Rooms, traps, and treasure await.' if action=='dungeon' else 'Harder floors, greater rewards.' if action=='dungeonhard' else 'The hardest dungeon. Legendary loot.'}\n"
+                   f"_Head to the group chat to start your run._")
+        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action == "petbattle":
+        pet_rec = get_active_pet_record(uid)
+        if not pet_rec:
+            txt = "🐾 *Pet Battle*\n\n_You don't have an active pet._\nVisit the Pet Hub to adopt or hatch one!"
+        else:
+            sp = PET_SPECIES.get(pet_rec.get("species_id",""), {})
+            pname = pet_rec.get("nickname") or sp.get("name","Pet")
+            plvl = pet_rec.get("level",1)
+            patk = pet_rec.get("atk", sp.get("base_atk",5))
+            php  = pet_rec.get("max_hp", sp.get("base_hp",50))
+            txt = (f"🐾 *Pet: {pname}*\n\n"
+                   f"Level {plvl}  |  ⚔️ ATK {patk}  |  ❤️ HP {php}\n\n"
+                   f"Your pet automatically battles alongside you in every attack and skill use — no action needed!")
+        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
 
     else:
         tip = _TIPS.get(action)
@@ -26954,6 +27780,75 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await query.edit_message_text(result, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
+    elif action == "unequip":
+        # Show currently equipped items
+        weap = p.get("equipped_weapon") or "None"
+        armr = p.get("equipped_armor") or "None"
+        shld = p.get("equipped_shield") or "None"
+        acc1 = p.get("equipped_accessory") or "None"
+        acc2 = p.get("equipped_accessory_2") or "None"
+        lines_ue = [
+            "❌ *Unequip*\n",
+            f"⚔️ Weapon: {weap}",
+            f"🛡️ Armor: {armr}",
+            f"🔰 Shield: {shld}",
+            f"💍 Acc 1: {acc1}",
+            f"💍 Acc 2: {acc2}",
+            "",
+            "_To unequip an item, use the Equip menu and select it again, or use /unequip in the chat._"
+        ]
+        txt_ue = "\n".join(l for l in lines_ue if l != "None" or True)
+        try: await query.edit_message_text(txt_ue, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action in ("enhance", "reinforce", "forge", "enchant", "perma"):
+        _upg_info = {
+            "enhance":  ("✨", "Enhance",  "Boost a weapon or armor's power with Iron Shards. Each enhancement adds +ATK or +DEF."),
+            "reinforce": ("🔩","Reinforce", "Permanently boost your gear's base stats using Reinforcement Stones."),
+            "forge":    ("⚒️", "Forge",    "Combine materials to craft new gear. Requires specific reagents found through exploration."),
+            "enchant":  ("🔮", "Enchant",  "Apply magical properties to gear — EXP bonuses, kill heals, crit boosts and more."),
+            "perma":    ("💎", "Perm DMG", "Permanently increase your base damage using Essence Crystals."),
+        }
+        _uem, _uname, _udesc = _upg_info[action]
+        weap_cur = p.get("equipped_weapon") or "None"
+        armr_cur = p.get("equipped_armor") or "None"
+        txt_upg = (f"{_uem} *{_uname}*\n\n"
+                   f"{_udesc}\n\n"
+                   f"*Currently equipped:*\n"
+                   f"⚔️ {weap_cur}  |  🛡️ {armr_cur}\n\n"
+                   f"_Use the upgrade commands in the group chat to apply upgrades._")
+        try: await query.edit_message_text(txt_upg, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action in ("trade", "accept", "decline"):
+        txt_tr = ("🤝 *Trade*\n\n"
+                  "Send items or gold to another player.\n\n"
+                  "*How it works:*\n"
+                  "• Use /trade @player [item] [qty] to offer\n"
+                  "• Recipient uses /accept or /decline\n"
+                  "• Both players must be in the same group chat")
+        if action == "accept":
+            txt_tr = "✅ *Accept Trade*\n\nIf someone has offered you a trade, use /accept in the group chat to confirm it."
+        elif action == "decline":
+            txt_tr = "❌ *Decline Trade*\n\nUse /decline to reject a pending trade offer."
+        try: await query.edit_message_text(txt_tr, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action in ("deposit", "withdraw"):
+        gid = p.get("guild_id")
+        if not gid:
+            txt_bk = "🏦 *Guild Bank*\n\n_Join a guild first to access the guild bank._"
+        else:
+            g = get_guild(gid)
+            balance = safe_int(g.get("gold", 0)) if g else 0
+            yours = safe_int(p.get("gold", 0))
+            txt_bk = (f"🏦 *Guild Bank*\n\n"
+                      f"💰 Bank balance: *{balance:,}g*\n"
+                      f"👤 Your gold: *{yours:,}g*\n\n"
+                      f"{'Deposit into the guild bank or withdraw with the bank commands in the group chat.' if action=='deposit' else 'Withdraw from the guild bank using the bank commands in the group chat.'}")
+        try: await query.edit_message_text(txt_bk, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
     else:
         tip = _GEAR_HUB_TIPS.get(action)
         if tip:
@@ -27363,6 +28258,82 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
                 lines.append("_/skill [name or #] in a reply to fire a skill_")
                 await _show("\n".join(lines))
 
+    elif action == "quest":
+        aq = p.get("active_quest")
+        if aq:
+            import json as _json
+            try: _qdata = _json.loads(aq) if isinstance(aq, str) else aq
+            except: _qdata = {}
+            txt = (f"📜 *Active Quest*\n\n"
+                   f"*{_qdata.get('text','Quest in progress...')}*\n\n"
+                   f"_Check the group chat for quest objectives and progress._")
+        else:
+            txt = ("📜 *Quest*\n\n"
+                   "✅ No active quest — you're free to take one!\n\n"
+                   "_Quests give EXP, gold, and rare loot. Head to the group chat to start one._")
+        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action == "explore":
+        if is_defeated(p):
+            txt = "🌍 *Explore*\n\n💀 Too beaten up to explore right now."
+        else:
+            today = datetime.now().strftime("%Y-%m-%d")
+            exp_count = safe_int(p.get("explore_count_today")) if p.get("explore_date") == today else 0
+            exp_bar = "█" * exp_count + "░" * (2 - exp_count)
+            if exp_count >= 2:
+                txt = f"🌍 *Explore*\n\n[{exp_bar}] 2/2 used today. Resets at midnight!"
+            else:
+                txt = (f"🌍 *Explore*\n\n[{exp_bar}] {exp_count}/2 used today.\n\n"
+                       f"✅ *Ready!* Best loot in the game — head to the group chat to explore.")
+        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action in ("dungeon", "dungeonhard", "dungeonleg"):
+        _dng_info2 = {"dungeon":("🏚️","Dungeon",1),"dungeonhard":("🔥","Dungeon Hard",15),"dungeonleg":("💀","Dungeon Legendary",40)}
+        _dem2, _dname2, _dmin2 = _dng_info2[action]
+        if p["level"] < _dmin2:
+            txt = f"{_dem2} *{_dname2}*\n\n🔒 Requires Level {_dmin2}. You are Level {p['level']}."
+        elif is_defeated(p):
+            txt = f"{_dem2} *{_dname2}*\n\n💀 You're defeated — recover first."
+        elif not check_cooldown(p.get("last_dungeon"), 86400):
+            txt = f"{_dem2} *{_dname2}*\n\n⏳ Ready in: *{time_remaining(p.get('last_dungeon'), 86400)}*"
+        else:
+            txt = f"{_dem2} *{_dname2}*\n\n✅ *Ready!* Head to the group chat to start your run."
+        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action == "oracle":
+        # Execute pool shot inline (same logic as pool button)
+        s_cd_ora = get_shadow(uid)
+        pool_ts_ora = p.get("last_pool") or (s_cd_ora.get("last_pool") if s_cd_ora else None)
+        pool_ready_ora = True
+        if pool_ts_ora:
+            try:
+                if (datetime.now() - datetime.fromisoformat(pool_ts_ora)).total_seconds() < 8:
+                    pool_ready_ora = False
+            except Exception: pass
+        if not pool_ready_ora:
+            txt = "🔮 *Oracle*\n\n⏳ The oracle is cooling down — try again in a moment."
+        else:
+            shot = roll_pool_shot_with_luk(p)
+            exp_gain = int(shot["exp"] * max(1.0, 1.0 + (p["level"] - 1) * 0.15))
+            gold_gain = int(shot["gold"] * max(1.0, 1.0 + (p["level"] - 1) * 0.12))
+            p["gold"] = p.get("gold", 0) + gold_gain
+            p["last_pool"] = datetime.now().isoformat()
+            if s_cd_ora: s_cd_ora["last_pool"] = p["last_pool"]; save_shadow(s_cd_ora)
+            lmsgs_ora, _ = add_exp(p, exp_gain); save_player(p)
+            loot_note = ""
+            if shot.get("loot"):
+                loot_item = roll_loot_table(shot["loot"])
+                if loot_item: add_item(p, loot_item); save_player(p); loot_note = f"\n🎒 *{loot_item}*"
+            txt = (f"🔮 *Oracle — {shot['rarity'].title()}*\n\n"
+                   f"_{shot['text'][:120]}_\n\n"
+                   f"✨ +{exp_gain} EXP  |  💰 +{gold_gain}g{loot_note}")
+            if lmsgs_ora: txt += "\n\n" + "\n".join(lmsgs_ora[:2])
+        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
     # ── All other actions: show tip panel ────────────────────────────
     else:
         tip = _ACTIVITIES_HUB_TIPS.get(action)
@@ -27421,7 +28392,7 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if hub == "combat":
         try:
             await query.edit_message_text(
-                f"⚔️ *{p['username']}'s Combat Hub*\n\nPage 1: Direct Combat  |  Page 2: War & Exploration\nPage 3: Dungeons",
+                f"⚔️ *{p['username']}'s Combat Hub*\n\nPage 1: Encounter & Combat  |  Page 2: War & Explore\nPage 3: Dungeons",
                 parse_mode="Markdown", reply_markup=_combat_hub_markup(uid, page=1))
         except Exception: pass
 
@@ -29172,6 +30143,38 @@ async def fixgear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "\n\nItems returned to their inventory.", delay=15)
 
 
+async def adminresetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: reset a player's class so they can re-choose. For testing purposes."""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /adminresetclass <@username or user_id>\n"
+            "Clears class_id, class_path, and all_skills so the player can pick again.")
+        return
+    target = context.args[0].lstrip("@")
+    p = get_player_by_name(target)
+    if not p:
+        try:
+            p = get_player(int(target))
+        except ValueError:
+            p = None
+    if not p:
+        await update.message.reply_text(f"Player '{target}' not found."); return
+    old_class = p.get("class_id") or "none"
+    p["class_id"]   = None
+    p["class_path"] = None
+    p["all_skills"] = json.dumps([])
+    p.pop("serpent_revive_used", None)
+    p.pop("cure_priority", None)
+    save_player(p)
+    await update.message.reply_text(
+        f"✅ *{p['username']}*'s class reset.\n"
+        f"Old class: *{old_class}*\n"
+        f"They can now use /class to choose a new one.",
+        parse_mode="Markdown")
+
+
 async def fixbounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: inspect and fix stuck bounties.
     /fixbounties              — list ALL unclaimed bounties (including expired)
@@ -30845,8 +31848,10 @@ def main():
     app.add_handler(CallbackQueryHandler(attack_picker_callback,       pattern="^atk_"))
     app.add_handler(CallbackQueryHandler(skill_target_picker_callback, pattern="^skl2_"))
     app.add_handler(CallbackQueryHandler(pvp_card_callback,  pattern="^pvpcard_"))
-    app.add_handler(CommandHandler("heal",       heal_cmd))
-    app.add_handler(CommandHandler("defend",     defend_cmd))
+    app.add_handler(CommandHandler("heal",         heal_cmd))
+    app.add_handler(CommandHandler("defend",       defend_cmd))
+    app.add_handler(CommandHandler("curepriority",   curepriority_cmd))
+    app.add_handler(CommandHandler("killcondition",  killcondition_cmd))
     app.add_handler(CommandHandler("boss",       boss_cmd))
     app.add_handler(CommandHandler("dungeon",          dungeon_cmd))
     app.add_handler(CommandHandler("dungeonhard",      dungeonhard_cmd))
@@ -30890,8 +31895,9 @@ def main():
     app.add_handler(CommandHandler("banlist",   banlist_cmd))
     app.add_handler(CallbackQueryHandler(ban_picker_callback,   pattern="^banpick_"))
     app.add_handler(CallbackQueryHandler(unban_picker_callback, pattern="^unbanpick_"))
-    app.add_handler(CommandHandler("fixgear",      fixgear_cmd))
-    app.add_handler(CommandHandler("fixbounties",  fixbounties_cmd))
+    app.add_handler(CommandHandler("fixgear",         fixgear_cmd))
+    app.add_handler(CommandHandler("fixbounties",     fixbounties_cmd))
+    app.add_handler(CommandHandler("adminresetclass", adminresetclass_cmd))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(rank_callback,         pattern="^rank_p_"))
