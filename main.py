@@ -8458,6 +8458,68 @@ async def check_pet_notifications(p, bot):
 
 
 
+def _build_gear_text(p) -> str:
+    """Return the gear display text for player p (used by gear_cmd and inline hub)."""
+    lines = [f"🎽 *{p['username']}'s Equipped Gear*\n"]
+    weap_name = p.get("equipped_weapon")
+    if weap_name and weap_name in WEAPONS:
+        w = WEAPONS[weap_name]; enh = get_enhancement(p, weap_name); enc = get_enchant(p, weap_name)
+        enh_bonus = enh * 2; rarity = RARITY_EMOJI.get(w["rarity"], "")
+        lines += [f"⚔️ *Weapon*", f"{rarity} {weap_name}",
+                  f"ATK: {w['atk']} base + {enh_bonus} enh = *{w['atk']+enh_bonus} total*"]
+        if enh: lines.append(f"Enhancement: *+{enh}* {'⭐'*enh}")
+        for e in get_all_enchants(p, weap_name): lines.append(f"✨ *{e['id'].capitalize()}*  -  _{e['desc']}_")
+    else:
+        lines.append("⚔️ *Weapon*  -  None")
+    lines.append("")
+    armr_name = p.get("equipped_armor")
+    if armr_name and armr_name in ARMORS:
+        a = ARMORS[armr_name]; enh = get_enhancement(p, armr_name); enc = get_enchant(p, armr_name)
+        enh_bonus = enh * 2; rarity = RARITY_EMOJI.get(a["rarity"], "")
+        lines += [f"🛡️ *Armor*", f"{rarity} {armr_name}",
+                  f"DEF: {a['def']} base + {enh_bonus} enh = *{a['def']+enh_bonus} total*"]
+        if enh: lines.append(f"Enhancement: *+{enh}* {'⭐'*enh}")
+        for e in get_all_enchants(p, armr_name): lines.append(f"✨ *{e['id'].capitalize()}*  -  _{e['desc']}_")
+    else:
+        lines.append("🛡️ *Armor*  -  None")
+    lines.append("")
+    shld_name = p.get("equipped_shield")
+    if shld_name and shld_name in SHIELDS:
+        s_data = SHIELDS[shld_name]; enh = get_enhancement(p, shld_name); enh_bonus = enh * 2
+        rarity = RARITY_EMOJI.get(s_data.get("rarity",""), "")
+        is_claw = s_data.get("type") == "claw"
+        base_s = s_data.get("atk" if is_claw else "def", 0)
+        label_s = "🗡️ *Claw* (shield slot)" if is_claw else "🔰 *Shield*"
+        stat_s  = "ATK" if is_claw else "DEF"
+        lines += [label_s, f"{rarity} {shld_name}",
+                  f"{stat_s}: {base_s} base + {enh_bonus} enh = *{base_s+enh_bonus} total*"]
+    else:
+        lines.append("🔰 *Shield / Claw*  -  None")
+    lines.append("")
+    for _n, _sk in enumerate(("equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4"), 1):
+        acc_name = p.get(_sk)
+        if acc_name and acc_name in ACCESSORIES:
+            acc = ACCESSORIES[acc_name]; rarity = RARITY_EMOJI.get(acc.get("rarity",""), "")
+            lines += [f"💍 *Accessory {_n}*", f"{rarity} {acc_name}", f"_{acc.get('desc','')}_"]
+            for e in get_all_enchants(p, acc_name): lines.append(f"✨ *{e['id'].capitalize()}*  -  _{e['desc']}_")
+        else:
+            lines.append(f"💍 *Accessory {_n}*  -  None")
+    lines.append("")
+    for slot_key, emoji, label, pool in [
+            ("equipped_hat","🎩","Hat",HATS),("equipped_gloves","🧤","Gloves",GLOVES),
+            ("equipped_boots","👢","Boots",BOOTS),("equipped_mask","🎭","Mask",MASKS)]:
+        name = p.get(slot_key)
+        if name and name in pool:
+            d = pool[name]; enh = get_enhancement(p, name); enh_b = enh * 2
+            rarity = RARITY_EMOJI.get(d.get("rarity",""), "")
+            lines += [f"{emoji} *{label}*", f"{rarity} {name}",
+                      f"DEF: {d['def']} base + {enh_b} enh = *{d['def']+enh_b} total*"]
+        else:
+            lines.append(f"{emoji} *{label}*  -  None")
+    lines += ["", f"Total Weapon ATK: *{get_weapon_atk(p)}*", f"Total Armor DEF: *{get_armor_def(p)}*",
+              "\n`/enhance` to upgrade  |  `/enchant` to enchant"]
+    return "\n".join(lines)
+
 async def gear_cmd(update, context):
     user = update.effective_user
     p = get_player(user.id)
@@ -10389,7 +10451,7 @@ def _build_stats_pages(p, viewing_name=None):
 
 
 async def _send_stats_page(target, target_uid: int, page: int, edit: bool = False,
-                           caller_name: str = None):
+                           caller_name: str = None, back_rows=None):
     p = get_player(target_uid)
     if not p:
         text = "No RPG profile found."
@@ -10421,7 +10483,9 @@ async def _send_stats_page(target, target_uid: int, page: int, edit: bool = Fals
         label = PAGE_LABELS[page] if page < len(PAGE_LABELS) else str(page + 1)
         row.append(InlineKeyboardButton(f"{label} ▶", callback_data=f"stats_p_{target_uid}_{page+1}"))
     close_row = [InlineKeyboardButton("❌ Close", callback_data="close_msg")]
-    markup = InlineKeyboardMarkup([row, close_row] if row else [close_row])
+    _rows = [row, close_row] if row else [close_row]
+    if back_rows: _rows.extend(back_rows)
+    markup = InlineKeyboardMarkup(_rows)
     if edit:
         await target.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
     else:
@@ -12170,7 +12234,7 @@ def _render_bag_item(p, item, count):
     enc_str = f" ✨×{len(encs)}" if encs else ""
     return f"{rarity} *{item}*{enh_str}{enc_str} x{count}\n  {type_tag} - _{stat_str}_"
 
-async def _send_inventory_section(target, p, section="Equipped", edit=False, uid=0):
+async def _send_inventory_section(target, p, section="Equipped", edit=False, uid=0, back_rows=None):
     sections = _build_inv_sections(p)
     if section not in sections:
         section = sections[0]
@@ -12234,10 +12298,10 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False, uid
     markup = InlineKeyboardMarkup([btn_row]) if btn_row else None
 
     close_btn_row = [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{p['user_id']}")]
-    if markup:
-        markup = InlineKeyboardMarkup(list(markup.inline_keyboard) + [close_btn_row])
-    else:
-        markup = InlineKeyboardMarkup([close_btn_row])
+    _inv_rows = list(markup.inline_keyboard) if markup else []
+    _inv_rows.append(close_btn_row)
+    if back_rows: _inv_rows.extend(back_rows)
+    markup = InlineKeyboardMarkup(_inv_rows)
     lines.append("\n_💰 Use /sell to sell items by rarity_")
     text = "\n".join(lines)[:4096]
     if edit:
@@ -26793,14 +26857,23 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     page = _PAGE.get(action, 1)
     back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"gearhub_back_{page}_{uid}")]])
 
-    tip = _GEAR_HUB_TIPS.get(action)
-    if tip:
-        title, desc = tip
-        try: await query.edit_message_text(f"{title}\n\n{desc}", parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
+    if action == "inv":
+        back_rows = [[InlineKeyboardButton("← Back", callback_data=f"gearhub_back_1_{uid}")]]
+        await _send_inventory_section(query, p, section="Equipped", edit=True, uid=uid, back_rows=back_rows)
+    elif action == "gear":
+        try: await query.edit_message_text(_build_gear_text(p)[:4096], parse_mode="Markdown", reply_markup=back)
+        except Exception:
+            try: await query.edit_message_text(_build_gear_text(p)[:4096], reply_markup=back)
+            except Exception: pass
     else:
-        try: await query.edit_message_text(f"_{action}_ — use the command in chat.", parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
+        tip = _GEAR_HUB_TIPS.get(action)
+        if tip:
+            title, desc = tip
+            try: await query.edit_message_text(f"{title}\n\n{desc}", parse_mode="Markdown", reply_markup=back)
+            except Exception: pass
+        else:
+            try: await query.edit_message_text(f"_{action}_ — use the command in chat.", parse_mode="Markdown", reply_markup=back)
+            except Exception: pass
 
 # ── ACTIVITIES HUB ────────────────────────────────────────────────────────────
 _ACTIVITIES_HUB_PAGES = [
@@ -27013,6 +27086,103 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         await _show(f"⬆️ *Allocate Stats*\n\nStat Points Available: *{sp}*\n\n"
                     f"Type in chat:\n`/allocate STR 5` — +5 Strength\n"
                     f"Stats: STR · DEX · INT · WIS · AGI · LUK")
+
+    # ── Stats: real stats page ───────────────────────────────────────
+    elif action == "stats":
+        back_row = [[InlineKeyboardButton("← Back", callback_data=f"acthub_back_3_{uid}")]]
+        await _send_stats_page(query, uid, page=1, edit=True, back_rows=back_row)
+
+    # ── Class: real class info ───────────────────────────────────────
+    elif action == "class":
+        cls = get_player_class(p)
+        if not cls:
+            if p["level"] < 5:
+                await _show(f"🎓 *Class*\n\nClasses unlock at Level *5*. You're Level {p['level']}.\n\n_Keep leveling!_")
+            else:
+                await _show(f"🎓 *Choose Your Class*\n\nUse `/class` to pick!\n\n"
+                            f"Available: {', '.join(BASE_CLASSES)}\n\nExample: `/class warrior`")
+        else:
+            all_skills = get_combat_skills(p)
+            lines = [f"🎓 *{p['username']}* — *{cls['name']}*\n", f"_{cls.get('desc','')}_\n"]
+            if all_skills:
+                lines.append(f"*Skills ({len(all_skills)}):*")
+                for s in all_skills[:6]:
+                    stype = s.get("type", "damage")
+                    icon = ("⚔️" if stype in ("damage","combo_dmg","freeze_nuke","execute_nuke",
+                                              "holy_nuke","fear_kill","nature_nuke","drain")
+                            else "💚" if stype in ("self_heal","group_heal","revive_heal","full_revive","regen")
+                            else "✨" if stype in ("dmg_reduction_buff","self_heal_buff","heal_shield",
+                                                   "self_atk_buff","party_atk_buff","party_full_buff")
+                            else "⚡")
+                    lines.append(f"{icon} *{s['name']}*  -  _{s['desc']}_")
+            path = p.get("class_path")
+            if path:
+                line_k = cls.get("line")
+                fp = CLASS_PATHS.get(line_k, {}).get(path, [])
+                path_str = " → ".join(CLASS_TREE.get(k,{}).get("name","?") for k in fp)
+                lines.append(f"\n*Path {path}:* {path_str}")
+            await _show("\n".join(lines))
+
+    # ── Prestige: real prestige options ─────────────────────────────
+    elif action == "prestige":
+        cid = p.get("class_id")
+        if not cid:
+            await _show("⭐ *Prestige*\n\nChoose a class first with `/class` at Level 5.")
+        else:
+            path = p.get("class_path")
+            if path:
+                cur_cls = get_player_class(p)
+                cur_name = cur_cls["name"] if cur_cls else "Unknown"
+                line_k = CLASS_TREE.get(cid, {}).get("line")
+                fp = CLASS_PATHS.get(line_k, {}).get(path, [])
+                path_str = " → ".join(CLASS_TREE.get(k,{}).get("name","?") for k in fp)
+                next_t = next((lvl for lvl in [30, 60, 100] if p["level"] < lvl), None)
+                if next_t:
+                    await _show(f"⭐ *Path {path}* — {cur_name}\n\n📜 {path_str}\n\nAdvances at Level *{next_t}*. Keep leveling!")
+                else:
+                    await _show(f"👑 *Path {path}* — {cur_name}\n\n📜 {path_str}\n\nLevel 100 pinnacle! Use `/prestige reset` to restart.")
+            elif p["level"] < 10:
+                await _show(f"⭐ *Prestige*\n\nPath selection unlocks at Level *10*. You're Level {p['level']}.")
+            else:
+                cls_d = CLASS_TREE.get(cid, {})
+                line_k = cls_d.get("line")
+                paths = CLASS_PATHS.get(line_k, {})
+                lines = [f"⭐ *Choose Your Path!*\n\n_This choice is permanent._\n"]
+                for label in ["A", "B"]:
+                    key = (paths.get(label) or [None])[0]
+                    if not key: continue
+                    nc = CLASS_TREE.get(key, {})
+                    sk = (nc.get("skills") or [{}])[0]
+                    fp = paths.get(label, [])
+                    path_str = " → ".join(CLASS_TREE.get(k,{}).get("name","?") for k in fp)
+                    lines.append(f"*Path {label}: {nc.get('name','?')}*\n_{nc.get('desc','')}_\n"
+                                 f"🔸 {sk.get('name','?')}: {sk.get('desc','')}\n📜 {path_str}\n")
+                lines.append("_Use `/prestige A` or `/prestige B` to choose._")
+                await _show("\n".join(lines))
+
+    # ── Skills: real skills list ─────────────────────────────────────
+    elif action == "skills":
+        cls = get_player_class(p)
+        if not cls:
+            await _show("✨ *Skills*\n\nChoose a class at Level 5 with `/class`.")
+        else:
+            all_skills = get_combat_skills(p)
+            if not all_skills:
+                await _show("✨ *Skills*\n\nNo skills yet. Level up or pick a class!")
+            else:
+                lines = [f"✨ *{p['username']}'s Skills* — {cls['name']}\n"]
+                for i, s in enumerate(all_skills, 1):
+                    stype = s.get("type", "damage")
+                    icon = ("⚔️" if stype in ("damage","combo_dmg","freeze_nuke","execute_nuke",
+                                              "holy_nuke","fear_kill","nature_nuke","drain")
+                            else "💚" if stype in ("self_heal","group_heal","revive_heal","full_revive","regen")
+                            else "✨" if stype in ("dmg_reduction_buff","self_heal_buff","heal_shield",
+                                                   "self_atk_buff","party_atk_buff","party_full_buff")
+                            else "⚡")
+                    unlock_note = f" _(Lv.{s.get('unlock',5)})_" if p["level"] < s.get("unlock", 5) else ""
+                    lines.append(f"*{i}.* {icon} *{s['name']}*{unlock_note}\n   _{s['desc']}_\n")
+                lines.append("_/skill [name or #] in a reply to fire a skill_")
+                await _show("\n".join(lines))
 
     # ── All other actions: show tip panel ────────────────────────────
     else:
