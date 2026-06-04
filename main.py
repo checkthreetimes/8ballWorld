@@ -412,14 +412,14 @@ CLASS_TREE = {
         "stat_bonus":{"STR":1,"DEF":2},
         "skills":[
             {"tier":2,"unlock":10,"name":"Holy Stance",
-             "passive":"Gain +15% defense when below 50% HP.",
-             "active":"Consecrate","type":"dmg_field",
-             "desc":"Deal damage + create a holy field for 10 turns: enemies who attack you take WIS x2 holy damage back.",
-             "passive_key":"holy_stance"},
+             "passive":"Below 50% HP: 20% block chance + 15% damage reduction. Above 50% HP: 10% damage reduction.",
+             "active":"Consecrate","type":"holy_dmg",
+             "desc":"WIS×4 holy damage. Weakens target for 3 hits (-25% damage output).",
+             "passive_key":"holy_stance","mult":4},
             {"tier":2,"unlock":10,"name":"Shield Wall",
-             "passive":"Reduce physical damage by 5 when shield is equipped.",
+             "passive":"25% chance to completely block any incoming attack.",
              "active":"Shield Wall","type":"def_buff",
-             "desc":"Negate the next 1 incoming hit completely (1 shield charge).",
+             "desc":"Create an iron shield: negate the next 2 incoming attacks completely.",
              "passive_key":"shield_wall"},
         ]
     },
@@ -478,7 +478,7 @@ CLASS_TREE = {
              "desc":"Hit three times at 150%, 120%, and 100% power. Each hit has independent crit. If all three crit, Bloodlust heal triples.",
              "passive_key":"bloodlust","hits":3,"mults":[1.5, 1.2, 1.0]},
             {"tier":2,"unlock":10,"name":"Battle Cry",
-             "passive":"Gain +80 STR for 15m on every attack. No kill required.",
+             "passive":"Gain +80 STR for 5 attacks on every attack. No kill required.",
              "active":"Battle Cry","type":"self_heal_buff",
              "desc":"Restore 40% of your max HP. In dungeon: free heal action (no turn consumed).",
              "passive_key":"battle_cry","heal_pct":0.40},
@@ -559,10 +559,10 @@ CLASS_TREE = {
              "desc":"Hits target + bounces to 2 nearby active players dealing 50% damage each.",
              "passive_key":"spell_surge"},
             {"tier":2,"unlock":10,"name":"Arcane Pulse",
-             "passive":"INT x0.1 bonus damage on every spell.",
-             "active":"Arcane Pulse","type":"spell",
-             "desc":"INT x2 arcane damage. Cannot be resisted.",
-             "passive_key":"arcane_pulse"},
+             "passive":"INT×0.5 bonus arcane damage on every attack.",
+             "active":"Arcane Blast","type":"spell",
+             "desc":"INT×3 arcane damage. Cannot be resisted. Expose target for 2 hits (+15% damage taken).",
+             "passive_key":"arcane_pulse","mult":3},
         ]
     },
     "sorcerer": {
@@ -603,7 +603,7 @@ CLASS_TREE = {
             {"tier":5,"unlock":100,"name":"Eternal Wisdom",
              "passive":"All spells ignore 50% of target defense.",
              "active":"Absolute Zero","type":"freeze_nuke",
-             "desc":"INT x6 damage. Target cannot attack for 2 turns.",
+             "desc":"INT x5 damage. Target frozen — cannot attack for 2 turns.",
              "passive_key":"eternal_wisdom"},
         ]
     },
@@ -615,15 +615,15 @@ CLASS_TREE = {
         "stat_bonus":{"INT":2,"STR":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Cursed Blade",
-             "passive":"Physical attacks carry a hex  -  target deals 10% less damage for 2m.",
+             "passive":"Physical attacks carry a hex  -  target deals 10% less damage for 2 hits.",
              "active":"Hex","type":"debuff",
              "desc":"Curse target  -  they deal 25% less damage for 3 hits.",
              "passive_key":"cursed_blade"},
             {"tier":2,"unlock":10,"name":"Shadow Hex",
-             "passive":"Hexed targets take 5% extra damage from all sources.",
-             "active":"Shadow Hex","type":"debuff",
-             "desc":"Reduce target ATK and DEF by 5 for 4 hits.",
-             "passive_key":"shadow_hex"},
+             "passive":"Hexed targets take +15% bonus damage from your attacks.",
+             "active":"Dark Hex","type":"debuff",
+             "desc":"Hex target ×4 (deals 25% less damage for 4 hits). 80% base damage.",
+             "passive_key":"shadow_hex","debuff_stacks":4},
         ]
     },
     "warlock": {
@@ -636,8 +636,8 @@ CLASS_TREE = {
             {"tier":3,"unlock":30,"name":"Soul Pact",
              "passive":"Heal 20% of all spell damage dealt.",
              "active":"Death Curse","type":"drain",
-             "desc":"Drain 30% of target current HP, add it to your own.",
-             "passive_key":"soul_pact","drain_pct":0.30},
+             "desc":"Drain 25% of target current HP, add it to your own.",
+             "passive_key":"soul_pact","drain_pct":0.25},
         ]
     },
     "lich": {
@@ -650,8 +650,8 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Undying",
              "passive":"Once per day survive a killing blow at 1 HP.",
              "active":"Drain Soul","type":"drain_kill",
-             "desc":"Steal 40% of target current HP. On kill: gain +50 temp HP for 15 actions.",
-             "passive_key":"undying","drain_pct":0.40},
+             "desc":"Steal 25% of target current HP. On kill: restore 20% of your max HP.",
+             "passive_key":"undying","drain_pct":0.25},
         ]
     },
     "void_mage": {
@@ -697,14 +697,14 @@ CLASS_TREE = {
         "skills":[
             {"tier":2,"unlock":10,"name":"Evasion",
              "passive":"15% chance to dodge any incoming attack.",
-             "active":"Smoke Screen","type":"dodge_buff",
-             "desc":"Next attack against you automatically misses (1 incoming hit negated).",
-             "passive_key":"evasion"},
+             "active":"Crippling Strike","type":"miss_debuff",
+             "desc":"80% base damage. Target Distracted ×3 (30% miss chance for 3 hits).",
+             "passive_key":"evasion","mult":0.8,"debuff_stacks":3},
             {"tier":2,"unlock":10,"name":"Nimble",
-             "passive":"AGI x0.5 bonus dodge chance.",
-             "active":"Dash","type":"dodge_buff",
-             "desc":"Gain +20% dodge for 2 hits.",
-             "passive_key":"nimble"},
+             "passive":"AGI×0.5 bonus damage on every attack. Natural agility sharpens each strike.",
+             "active":"Shadowstrike","type":"pierce_dmg",
+             "desc":"Guaranteed piercing hit — ignores all dodge. AGI×2.5 damage.",
+             "passive_key":"nimble","mult":2.5,"stat":"AGI"},
         ]
     },
     "shadow": {
@@ -762,10 +762,10 @@ CLASS_TREE = {
              "desc":"150% damage. Target silenced for 1 skill use.",
              "passive_key":"marked","mult":1.5},
             {"tier":2,"unlock":10,"name":"Throat Cut",
-             "passive":"5% chance each hit silences target for 1 skill use.",
-             "active":"Throat Cut","type":"silence",
-             "desc":"100% damage. Target cannot use /skill for 1 hit.",
-             "passive_key":"throat_cut","mult":1.0},
+             "passive":"5% chance each hit silences target for 1 skill use (Throat Cut proc).",
+             "active":"Hemorrhage","type":"bleed_crit",
+             "desc":"120% damage + Hemorrhage: target bleeds for 8 hits (15 dmg/action). Cannot be blocked.",
+             "passive_key":"throat_cut","mult":1.2},
         ]
     },
     "assassin": {
@@ -806,7 +806,7 @@ CLASS_TREE = {
             {"tier":5,"unlock":100,"name":"The Professional",
              "passive":"All debuffs you apply last 50% longer. All attacks ignore 30% of defense.",
              "active":"Contract","type":"bounty_mark",
-             "desc":"Mark target for 10 actions. Every attack against them by anyone deals +20% damage. You get 50% of all EXP earned from that target.",
+             "desc":"Mark target: Marked ×5 (+20% damage taken next 5 hits). 80% damage on application.",
              "passive_key":"the_professional"},
         ]
     },
@@ -824,7 +824,7 @@ CLASS_TREE = {
              "desc":"180% damage. Ignores dodge completely.",
              "passive_key":"eagle_eye","mult":1.8},
             {"tier":1,"unlock":5,"name":"Warning Shot",
-             "passive":"First attack each fight reduces target AGI by 2 for 1 minute.",
+             "passive":"First attack each fight reduces target AGI by 2 for their next attack.",
              "active":"Warning Shot","type":"dmg_acc_debuff",
              "desc":"110% damage. Target has 25% increased miss chance for 3 hits.",
              "passive_key":"warning_shot","mult":1.1},
@@ -838,10 +838,10 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":2,"INT":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Trailblazer",
-             "passive":"First attack each day deals double damage.",
-             "active":"Distract","type":"miss_debuff",
-             "desc":"Target has 30% increased miss chance for 4 hits.",
-             "passive_key":"trailblazer"},
+             "passive":"15% chance each hit Distracts the target (30% miss chance for 1 hit).",
+             "active":"Disrupting Shot","type":"miss_debuff",
+             "desc":"80% damage. Target Distracted ×4 (30% miss chance for 4 hits).",
+             "passive_key":"trailblazer","mult":0.8,"debuff_stacks":4},
             {"tier":2,"unlock":10,"name":"Keen Sight",
              "passive":"DEX x0.5 bonus accuracy (doubled for Scouts). Near-zero miss chance at high DEX.",
              "active":"Mark Target","type":"dmg_acc_debuff",
@@ -899,15 +899,15 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":2,"STR":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Marked for Death",
-             "passive":"Targets you defeat drop +25% more gold. You earn their unclaimed daily EXP on kill.",
-             "active":"Execution Order","type":"bounty",
-             "desc":"Place a 2,000g bounty on any player. Marks them (+20% dmg taken for 10 hits). Placer gets 25% back if someone else claims. You get +25% if you collect it yourself.",
-             "passive_key":"marked_for_death"},
+             "passive":"Your attacks deal +20% bonus damage to marked or debuffed targets.",
+             "active":"Contract Kill","type":"bounty_mark",
+             "desc":"Mark target: Marked ×5 (+20% damage taken next 5 hits). Deal 80% base damage.",
+             "passive_key":"marked_for_death","mult":0.8},
             {"tier":2,"unlock":10,"name":"Tracker",
-             "passive":"Can see target cooldowns via /stats mention.",
-             "active":"Cripple","type":"miss_debuff",
-             "desc":"Reduce target AGI by 5 and apply 25% miss chance for 3 hits.",
-             "passive_key":"tracker"},
+             "passive":"Your attacks deal +15% bonus damage (precision target tracking).",
+             "active":"Cripple Shot","type":"miss_debuff",
+             "desc":"100% damage. Target Distracted ×4 (30% miss chance for 4 hits).",
+             "passive_key":"tracker","mult":1.0,"debuff_stacks":4},
         ]
     },
     "sharpshooter": {
@@ -980,15 +980,15 @@ CLASS_TREE = {
         "stat_bonus":{"WIS":3},
         "skills":[
             {"tier":2,"unlock":10,"name":"Divine Grace",
-             "passive":"Every time you heal someone you restore 10% of your own HP.",
+             "passive":"15% chance to block any incoming attack (divine protection).",
              "active":"Blessing","type":"dmg_reduction_buff",
-             "desc":"Grant target 15% damage reduction for 8 actions.",
+             "desc":"Grant target Blessed Turns ×8 (+10% all stats, take 20% less damage for 8 attacks).",
              "passive_key":"divine_grace"},
             {"tier":2,"unlock":10,"name":"Renew",
-             "passive":"Heals you cast leave a regen buff  -  20 HP per 30s for 5m.",
+             "passive":"20% chance each incoming hit triggers divine regen: restore WIS×3 HP.",
              "active":"Renew","type":"regen",
-             "desc":"Apply regen to target: restore WIS×2 HP ×10 triggers.",
-             "passive_key":"renew"},
+             "desc":"Restore WIS×8 HP to target. Cleanse one active bleed or poison.",
+             "passive_key":"renew","mult":8},
         ]
     },
     "bishop": {
@@ -999,7 +999,7 @@ CLASS_TREE = {
         "stat_bonus":{"WIS":4},
         "skills":[
             {"tier":3,"unlock":30,"name":"Sacred Ground",
-             "passive":"Players you have healed take 10% less damage for 1 hour after being healed.",
+             "passive":"Players you have healed take 10% less damage for 3 hits after being healed.",
              "active":"Mass Heal","type":"group_heal","mult":60,
              "desc":"Heal all guild members currently in chat for WIS x60 HP each. No potion required.",
              "passive_key":"sacred_ground"},
@@ -1041,15 +1041,15 @@ CLASS_TREE = {
         "stat_bonus":{"WIS":2,"INT":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Dark Sense",
-             "passive":"Can see all active debuffs on any player via /stats.",
+             "passive":"+15% bonus damage against targets with any active debuff (curse sight).",
              "active":"Smite","type":"holy_dmg",
-             "desc":"WIS x3 holy damage. Deals double against players who have recently defeated others.",
-             "passive_key":"dark_sense"},
+             "desc":"WIS×5 holy damage. Deals double against targets with active curses or debuffs.",
+             "passive_key":"dark_sense","mult":5},
             {"tier":2,"unlock":10,"name":"Holy Fervor",
-             "passive":"WIS x0.1 bonus damage on holy attacks.",
-             "active":"Holy Fervor","type":"self_heal_buff",
-             "desc":"Gain +5 WIS and restore 15 HP for 3 hits.",
-             "passive_key":"holy_fervor"},
+             "passive":"WIS×0.5 bonus holy damage on every attack.",
+             "active":"Radiant Strike","type":"holy_dmg",
+             "desc":"WIS×4 holy damage. Restore WIS×2 HP to yourself.",
+             "passive_key":"holy_fervor","mult":4},
         ]
     },
     "exorcist": {
@@ -1076,7 +1076,7 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Judgement",
              "passive":"Players who attack you take WIS-scaled holy damage back (10% of WIS as reflect).",
              "active":"Trial","type":"bind_attacker",
-             "desc":"Put target on trial. They cannot attack anyone except you for 8 actions. Their attacks against you deal 50% less damage.",
+             "desc":"Deal 80% damage. Target: Weakened ×4 (-25% dmg output). Your next 4 incoming hits take -30% damage (Branded).",
              "passive_key":"judgement"},
         ]
     },
@@ -1088,9 +1088,9 @@ CLASS_TREE = {
         "stat_bonus":{"WIS":6,"INT":2},
         "skills":[
             {"tier":5,"unlock":100,"name":"Wrath of the Righteous",
-             "passive":"Every debuff you apply deals WIS x0.5 damage per minute until it expires.",
+             "passive":"Every debuff you apply to a target grants you WIS-scaled bonus damage on your next hit against them.",
              "active":"Holy Wrath","type":"condemn",
-             "desc":"WIS x8 damage. Strip all buffs. Apply all known debuffs simultaneously. On kill: target CANNOT be revived for 15 actions. Only Saint's Absolution can counter this.",
+             "desc":"WIS x5 damage. Strip all buffs. Hex ×5 + Weakened ×5 applied. On kill: target CANNOT be revived. Only Saint's Absolution can counter this.",
              "passive_key":"wrath_of_the_righteous"},
         ]
     },
@@ -1123,14 +1123,14 @@ CLASS_TREE = {
         "stat_bonus":{"WIS":3},
         "skills":[
             {"tier":2,"unlock":10,"name":"Garden Aura",
-             "passive":"Guild members in chat regen 5 HP every 30m while you are active.",
+             "passive":"After being hit, restore WIS HP (nature's regeneration).",
              "active":"Petal Veil","type":"dodge_buff",
-             "desc":"Surround self or target with swirling petals: +25% dodge for 2 hits.",
+             "desc":"Surround self with swirling petals: auto-dodge the next 2 incoming attacks.",
              "passive_key":"garden_aura"},
             {"tier":2,"unlock":10,"name":"Blossoming",
              "passive":"All healing you perform is 20% more effective.",
-             "active":"Bloom Mend","type":"self_heal","mult":50,
-             "desc":"Restore WIS x50 HP instantly. Remove one active bleed or poison from target.",
+             "active":"Bloom Mend","type":"self_heal","mult":8,
+             "desc":"Restore WIS×8 HP instantly. Remove one active bleed or poison.",
              "passive_key":"blossoming"},
         ]
     },
@@ -1156,7 +1156,7 @@ CLASS_TREE = {
         "stat_bonus":{"WIS":5,"INT":1},
         "skills":[
             {"tier":4,"unlock":60,"name":"Verdant Renewal",
-             "passive":"Each heal you cast has 20% chance to heal double. Guild members healed by you take 10% less damage for 1 hour.",
+             "passive":"Each heal you cast has 20% chance to heal double. Guild members healed by you take 10% less damage for 3 hits.",
              "active":"Garden of Eden","type":"group_heal","mult":60,
              "desc":"Restore WIS x60 HP to all guild members in chat. Grant regen 10 HP ×10 triggers.",
              "passive_key":"verdant_renewal"},
@@ -1190,10 +1190,10 @@ CLASS_TREE = {
              "desc":"WIS x2.5 nature strike + apply bleed (15 dmg ×10 actions). Cannot be blocked.",
              "passive_key":"thorn_aura"},
             {"tier":2,"unlock":10,"name":"Nettleskin",
-             "passive":"10% chance each incoming hit poisons the attacker (15 dmg/30s for 2 min).",
+             "passive":"10% chance each incoming hit poisons the attacker (15 dmg/action).",
              "active":"Nettle Storm","type":"debuff",
-             "desc":"Fling stinging nettles: reduce target ATK and DEF by 8 for 3 hits.",
-             "passive_key":"nettleskin"},
+             "desc":"Hex target ×3 (deals 25% less damage for 3 hits). 80% nature damage.",
+             "passive_key":"nettleskin","debuff_stacks":3},
         ]
     },
     "briar_knight": {
@@ -1247,7 +1247,7 @@ CLASS_TREE = {
         "stat_bonus":{"INT":2},
         "skills":[
             {"tier":1,"unlock":5,"name":"Allure",
-             "passive":"15% chance to fascinate any attacker — they deal 40% less damage for 60 seconds.",
+             "passive":"15% chance to fascinate any attacker — they deal 40% less damage for 2 hits.",
              "active":"Bewitch","type":"debuff",
              "desc":"Reduce target ATK by 30% for 4 hits. They cannot be buffed during this time.",
              "passive_key":"allure"},
@@ -1329,14 +1329,14 @@ CLASS_TREE = {
         "stat_bonus":{"INT":2,"WIS":1},
         "skills":[
             {"tier":2,"unlock":10,"name":"Harmonize",
-             "passive":"Guild members in chat gain +4% ATK while you are active.",
+             "passive":"Each attack builds battle harmony: +4% damage per stack (up to 3 stacks, 12% max).",
              "active":"Siren's Song","type":"stun",
              "desc":"30% chance to stun target for 1 turn (loses their next attack). If already stunned, adds 1 more turn.",
              "passive_key":"harmonize"},
             {"tier":2,"unlock":10,"name":"Melody",
-             "passive":"Your heals and buffs grant target +2 INT for 5m (stacks up to 3×).",
+             "passive":"Each attack builds resonance: +5% damage per stack (up to 3 stacks, 15% max). Using a skill restores WIS HP.",
              "active":"Hymn of Battle","type":"self_heal_buff",
-             "desc":"Grant self or target: +10 ATK and +8 DEF for 4 hits.",
+             "desc":"Restore 20% max HP. Gain Blessed Turns ×4 (take 20% less damage for 4 hits).",
              "passive_key":"melody"},
         ]
     },
@@ -1348,7 +1348,7 @@ CLASS_TREE = {
         "stat_bonus":{"INT":3,"WIS":2},
         "skills":[
             {"tier":3,"unlock":30,"name":"Battle Hymn",
-             "passive":"Once per fight, the first guild member to drop below 30% HP gains +20% ATK for 3m.",
+             "passive":"Once per fight, the first guild member to drop below 30% HP gains +20% ATK for 5 attacks.",
              "active":"War Song","type":"party_atk_buff",
              "desc":"Grant all guild members in chat +25% ATK for 5 hits. Stacks with other buffs.",
              "passive_key":"battle_hymn"},
@@ -1416,9 +1416,9 @@ CLASS_TREE = {
              "desc":"(STR + DEF) combined damage. 40% chance to stun for 1 hit.",
              "passive_key":"stalwart"},
             {"tier":2,"unlock":10,"name":"Defender's Oath",
-             "passive":"When a guild member in chat is defeated, gain +10% ATK for 10m (up to 3 stacks).",
+             "passive":"When below 50% HP, take 10% less damage. When a guild member falls, gain stacking ATK bonus (up to +30% for 5 attacks).",
              "active":"Oath Surge","type":"self_heal_buff",
-             "desc":"Honor the fallen: gain +15 DEF and restore 20% max HP for 3 hits.",
+             "desc":"Honor fallen allies: restore 20% max HP + gain Blessed Turns ×3 (take 20% less damage for 3 hits).",
              "passive_key":"defenders_oath"},
         ]
     },
@@ -1520,7 +1520,7 @@ CLASS_TREE = {
         "stat_bonus":{"STR":6,"AGI":4},
         "skills":[
             {"tier":5,"unlock":100,"name":"Celestial Wrath",
-             "passive":"+25% crit damage. Crits apply lingering lightning (+10 dmg/min for 3 min). On kill: lightning arcs to all recent attackers.",
+             "passive":"+25% crit damage. Crits apply lingering lightning (+10 dmg for 3 hits). On kill: lightning arcs to all recent attackers.",
              "active":"Valhalla's Thunder","type":"godlike_lightning",
              "desc":"STR x5 lightning strike. On kill: gain +50 temp HP, and deal STR x2 AOE lightning to all recent attackers.",
              "passive_key":"celestial_wrath"},
@@ -1590,7 +1590,7 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Death Whirl",
              "passive":"While below 40% HP, all attacks have +30% crit chance. Low-HP crit kills restore 20% HP.",
              "active":"Thousand Cuts","type":"execute_multihit",
-             "desc":"8 hits at AGI x0.5 each. Final hit: if target below 30% HP, deal 3x damage.",
+             "desc":"8 hits at AGI x0.5 each. If target below 50% HP, all hits become AGI x0.75.",
              "passive_key":"death_whirl","hits":8,"mult":0.5},
         ]
     },
@@ -1602,7 +1602,7 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":6,"STR":3},
         "skills":[
             {"tier":5,"unlock":100,"name":"Final Performance",
-             "passive":"On kill: reset 1 cooldown and gain +50% crit chance for 60 seconds. Stacks to 3 kills.",
+             "passive":"On kill: reset 1 cooldown and gain +50% crit chance for 3 attacks. Stacks to 3 kills.",
              "active":"Macabre Finale","type":"execute_nuke","mult":5,
              "desc":"AGI x5 damage. On kill: AOE AGI x2 to all recent attackers. Cannot be blocked or dodged.",
              "passive_key":"final_performance"},
@@ -1622,10 +1622,10 @@ CLASS_TREE = {
              "desc":"Become untargetable for 2 incoming hits, then reappear dealing AGI×4 burst damage.",
              "passive_key":"ethereal_step"},
             {"tier":2,"unlock":10,"name":"Mirror Image",
-             "passive":"8% chance an attack hits a phantom duplicate instead, dealing zero damage.",
-             "active":"Mirage","type":"dodge_buff",
-             "desc":"Create decoys: +30% dodge and 12% phantom-block chance for 2 hits.",
-             "passive_key":"mirror_image"},
+             "passive":"8% chance an attack hits a phantom duplicate instead (zero damage).",
+             "active":"Phantom Strike","type":"pierce_dmg",
+             "desc":"AGI×2.5 shadow damage. Ignores all dodge and armor.",
+             "passive_key":"mirror_image","mult":2.5,"stat":"AGI"},
         ]
     },
     "mistwalker": {
@@ -1636,7 +1636,7 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":4,"INT":1},
         "skills":[
             {"tier":3,"unlock":30,"name":"Fog of War",
-             "passive":"Enemies who miss you have their ATK reduced by 12% for 1 minute.",
+             "passive":"Enemies who miss you have their ATK reduced by 12% for their next 2 hits.",
              "active":"Mist Form","type":"vanish",
              "desc":"Become untargetable for 3 incoming hits. No one can /attack or /skill you while hidden.",
              "passive_key":"fog_of_war"},
@@ -1650,7 +1650,7 @@ CLASS_TREE = {
         "stat_bonus":{"AGI":5,"INT":2},
         "skills":[
             {"tier":4,"unlock":60,"name":"Phantom's Grace",
-             "passive":"Dodge chance cannot be reduced below 20% by any effect. Every dodge now also reduces attacker ATK by 5 for 30 seconds.",
+             "passive":"Dodge chance cannot be reduced below 20% by any effect. Every dodge also reduces attacker ATK by 5 for their next 2 hits.",
              "active":"Spirit Step","type":"pierce_dodge",
              "desc":"Instantly negate any hit (even if stunned) and counter for AGI x4 damage.",
              "passive_key":"phantoms_grace"},
@@ -3877,8 +3877,8 @@ def _enc_process_skill(enc, p, sk):
             enc["enc_shield_charges"] = enc.get("enc_shield_charges", 0) + 3
             return "🛡️ *Aegis Wall*! 3 shield charges — next 3 hits completely negated!", 0, False
         elif sk_active == "Shield Wall":
-            enc["enc_shield_charges"] = enc.get("enc_shield_charges", 0) + 1
-            return "🛡️ *Shield Wall*! Shield active — next hit completely negated!", 0, False
+            enc["enc_shield_charges"] = enc.get("enc_shield_charges", 0) + 2
+            return "🛡️ *Shield Wall*! 2 shield charges — next 2 hits completely negated!", 0, False
         else:
             enc["p_guard_hits"] = enc.get("p_guard_hits", 0) + 3
             return f"🛡️ *{sk_name}*! +30 flat damage reduction for 3 hits!", 0, False
@@ -3980,9 +3980,9 @@ def _enc_process_skill(enc, p, sk):
         txt = f"⚡ *{sk_name}*! STR×8 = *{dmg}* divine lightning! Enemy weakened!{pet_extra}"
     elif stype == "freeze_nuke":
         int_v = get_stat(p, "INT")
-        dmg   = max(1, round(int_v * 6))
+        dmg   = max(1, round(int_v * 5))
         enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 2
-        txt = f"🧊 *{sk_name}*! INT×6 = *{dmg}* damage! Enemy stunned 2 turns!{pet_extra}"
+        txt = f"🧊 *{sk_name}*! INT×5 = *{dmg}* damage! Enemy stunned 2 turns!{pet_extra}"
     elif stype == "void_nuke":
         dmg = max(1, enc["e_hp"] // 2)
         txt = f"🌑 *{sk_name}*! Enemy loses 50% HP! *{dmg}* damage!{pet_extra}"
@@ -4009,8 +4009,11 @@ def _enc_process_skill(enc, p, sk):
         txt = f"⚡ *{sk_name}*! STR×{sk.get('mult',2)} = *{dmg}* chain lightning!{pet_extra}"
     elif stype == "holy_dmg":
         wis = get_stat(p, "WIS")
-        dmg = max(1, wis * 3)
-        txt = f"✨ *{sk_name}*! WIS×3 = *{dmg}* holy damage!{pet_extra}"
+        _hmult = sk.get("mult", 3)
+        dmg = max(1, wis * _hmult)
+        if sk_active == "Radiant Strike":
+            p["hp"] = min(p.get("max_hp", p["hp"]), p["hp"] + wis * 2)
+        txt = f"✨ *{sk_name}*! WIS×{_hmult} = *{dmg}* holy damage!{pet_extra}"
     elif stype == "condemn":
         wis = get_stat(p, "WIS")
         dmg = max(1, wis * 8)
@@ -4278,7 +4281,7 @@ def _enc_npc_attack(enc, p):
         if enc["p_hp"] > enc["p_max_hp"] * 0.50:
             dmg = max(1, dmg - 30)
     if _enc_pk == "battle_cry":
-        set_status(p, "battle_cry_str_until", 900)
+        add_charges(p, "battle_cry_str_hits", 5)
     if enc.get("p_exposed"):
         dmg = int(dmg * 1.2); enc["p_exposed"] = False
     if enc.pop("e_weakened", False):
@@ -5150,9 +5153,22 @@ def get_active_statuses(p):
     # Regen
     _rg = safe_int(p.get("regen_charges"))
     if _rg > 0:    statuses.append(f"💚 Regen ×{_rg} (+{p.get('regen_amt',0)} HP/trigger)")
-    # Misc
-    if is_healing_blocked(p): statuses.append("🚫 Healing Blocked")
-    if is_revival_blocked(p): statuses.append("☠️ Condemned (Verdict's Call)")
+    _dr = safe_int(p.get("def_reflect_hits"))
+    if _dr > 0:    statuses.append(f"🌿 Thorn Reflect ×{_dr} (40% dmg reduction + reflect next {_dr} hit{'s' if _dr>1 else ''})")
+    # Attacker output buffs
+    _bc = safe_int(p.get("battle_cry_str_hits"))
+    if _bc > 0:    statuses.append(f"💪 Battle Cry (+80 STR next {_bc} attack{'s' if _bc>1 else ''})")
+    # Attacker output debuffs
+    _ch = safe_int(p.get("cursed_hits"))
+    if _ch > 0:    statuses.append(f"💜 Cursed ×{_ch} (-10% dmg next {_ch} attack{'s' if _ch>1 else ''})")
+    elif _ts_active(p, "cursed_until"): statuses.append("💜 Cursed (-10% damage)")
+    # Misc (with counts)
+    _hbt = safe_int(p.get("heal_blocked_turns"))
+    if _hbt > 0:   statuses.append(f"🚫 Healing Blocked ×{_hbt} ({_hbt} hit{'s' if _hbt>1 else ''} remaining)")
+    elif is_healing_blocked(p): statuses.append("🚫 Healing Blocked")
+    _rbt = safe_int(p.get("revive_blocked_turns"))
+    if _rbt > 0:   statuses.append(f"☠️ Condemned ×{_rbt} (revival blocked {_rbt} hit{'s' if _rbt>1 else ''})")
+    elif is_revival_blocked(p): statuses.append("☠️ Condemned (Verdict's Call)")
     if is_invincible(p):      statuses.append("🛡️ Still Recovering (Invincible)")
     return statuses
 
@@ -5174,7 +5190,9 @@ def _compact_status_emojis(p):
     if safe_int(p.get("shield_charges")) > 0:                     out.append("🛡️")
     if safe_int(p.get("ward_charges")) > 0 or has_ward(p):       out.append("✨")
     if safe_int(p.get("blessed_turns")) > 0 or is_blessed(p):    out.append("🌟")
+    if safe_int(p.get("battle_cry_str_hits")) > 0:                out.append("💪")
     if safe_int(p.get("regen_charges")) > 0:                      out.append("💚")
+    if safe_int(p.get("cursed_hits")) > 0 or _ts_active(p, "cursed_until"): out.append("💜")
     if is_healing_blocked(p):                                      out.append("🚫")
     if is_invincible(p):                                           out.append("🔰")
     if is_revival_blocked(p):                                      out.append("☠️")
@@ -5599,7 +5617,7 @@ def get_stat(p, stat):
     set_bonuses, _ = get_active_set_bonuses(p)
     set_stat  = set_bonuses.get(stat, 0)
     set_all   = set_bonuses.get("all_stats", 0)
-    battle_cry_bonus = 80 if stat == "STR" and _ts_active(p, "battle_cry_str_until") else 0
+    battle_cry_bonus = 80 if stat == "STR" and safe_int(p.get("battle_cry_str_hits")) > 0 else 0
     guild_bonus = safe_int(p.get("guild_stat_bonus", 0)) if stat in ("STR","AGI","INT","WIS","DEX","LUK") else 0
     if stat in ("STR","AGI","INT","WIS","DEX","LUK"):
         return base + acc + all_s + blessed_bonus + title_bonus + all_title + set_stat + set_all + battle_cry_bonus + guild_bonus
@@ -5759,13 +5777,8 @@ def calc_attack_damage(attacker, weather=None):
 
     # Buffs
     buff_mod = 1.0
-    if is_blessed(attacker):        buff_mod += 0.10
-    # Hex: attacker deals 25% less damage (charge-based or timestamp)
-    if safe_int(attacker.get("hex_turns")) > 0:
-        buff_mod -= 0.25
-    elif _ts_active(attacker, "hexed_until"):
-        buff_mod -= 0.25
-    # weakened_hits is now defender-side (+25% dmg taken when hit) — no attacker penalty
+    if is_blessed(attacker):  buff_mod += 0.10
+    if is_hexed(attacker):    buff_mod -= 0.25
     # Legacy: old weakened_until still reduces attacker damage for backward compat
     if _ts_active(attacker, "weakened_until") and not safe_int(attacker.get("weakened_hits")):
         buff_mod -= 0.25
@@ -5842,7 +5855,7 @@ def calc_attack_damage(attacker, weather=None):
             _hp_pct = attacker["hp"] / max(1, attacker.get("max_hp", attacker["hp"]))
             if _hp_pct < 0.25: buff_mod += 0.50
         # Mage offensive passives
-        if "arcane_pulse" in active_pks:  raw += get_stat(attacker, "INT") * 0.10
+        if "arcane_pulse" in active_pks:  raw += get_stat(attacker, "INT") * 0.50  # up from 0.10
         if "arcane_mastery" in active_pks:
             attacker["arcane_mastery_count"] = safe_int(attacker.get("arcane_mastery_count")) + 1
             if attacker["arcane_mastery_count"] >= 3:
@@ -5851,15 +5864,17 @@ def calc_attack_damage(attacker, weather=None):
         if "spell_surge" in active_pks:
             if random.random() < 0.20: buff_mod += 1.0
         # Priest offensive passives
-        if "holy_fervor" in active_pks:   raw += get_stat(attacker, "WIS") * 0.10
+        if "holy_fervor" in active_pks:   raw += get_stat(attacker, "WIS") * 0.50  # up from 0.10
         if "wrath_of_the_righteous" in active_pks: buff_mod += 0.15
-        if "dark_sense" in active_pks:    buff_mod += 0.05
+        # dark_sense: +15% vs debuffed targets handled post-hit (needs defender reference)
         # Archer offensive passives
         if "keen_sight" in active_pks:    raw += get_stat(attacker, "DEX") * 0.50
-        # Warrior passives
-        if "shield_wall" in active_pks:
-            if attacker.get("equipped_shield"): buff_mod += 0.05
+        if "tracker" in active_pks:       buff_mod += 0.15  # precision tracking
+        if "marked_for_death" in active_pks: pass  # handled post-hit (needs defender reference)
+        # Warrior passives — shield_wall is now a block passive (handled in calc_defense)
         if "divine_judgment" in active_pks: buff_mod += 0.25
+        # Thief — nimble: AGI bonus damage
+        if "nimble" in active_pks:        raw += get_stat(attacker, "AGI") * 0.50
         # Valkyrie
         if "thunderstrike" in active_pks:
             attacker["thunderstrike_count"] = safe_int(attacker.get("thunderstrike_count")) + 1
@@ -5871,8 +5886,11 @@ def calc_attack_damage(attacker, weather=None):
         # Thief — shadowstep: after dodging, next attack +50%
         if "shadowstep" in active_pks and attacker.get("shadowstep_ready"):
             buff_mod += 0.50; attacker["shadowstep_ready"] = 0
+        # Charmsong — melody resonance stacks (+5% per stack, up to 15%)
+        if "melody" in active_pks:
+            buff_mod += min(0.15, safe_int(attacker.get("melody_stacks", 0)) * 0.05)
         # Cursed debuff on attacker: attacker has been cursed, deals 10% less
-        if _ts_active(attacker, "cursed_until"):
+        if safe_int(attacker.get("cursed_hits")) > 0:
             buff_mod -= 0.10
 
     # Accessory low HP bonus
@@ -5913,7 +5931,11 @@ def calc_defense(defender, dmg):
         if "iron_will" in def_pks:      def_reduction += 0.50
         if "holy_stance" in def_pks:
             hp_pct = defender["hp"] / max(1, defender["max_hp"])
-            if hp_pct < 0.50:           def_reduction += 0.15
+            if hp_pct < 0.50:
+                if random.random() < 0.20: return 0  # 20% block when low HP
+                def_reduction += 0.15
+            else:
+                def_reduction += 0.10  # 10% DR when above 50% HP
         if "natures_bond" in def_pks:   def_reduction += 0.10
         if "guardian_stance" in def_pks: def_reduction += 0.05
         if "thorn_skin" in def_pks:     def_reduction += 0.10
@@ -5961,11 +5983,16 @@ def calc_defense(defender, dmg):
         if "sacred_ground" in def_pks:  def_reduction += 0.10
         if "divine_presence" in def_pks: def_reduction += 0.05
         if "shield_wall" in def_pks:
-            if defender.get("equipped_shield"): def_reduction += 0.15
+            if random.random() < 0.25: return 0  # 25% block chance (up from equipment-gated 15% DR)
+        if "divine_grace" in def_pks:
+            if random.random() < 0.15: return 0  # 15% block chance (divine protection)
         if "runic_ward" in def_pks:     dmg = max(0, dmg - 20)
         if "beguile" in def_pks and random.random() < 0.08: return 0
-    # def_reflect active status — extra damage reduction
-    if _ts_active(defender, "def_reflect_until"):
+    # def_reflect — charge-based (new) or legacy timestamp
+    if safe_int(defender.get("def_reflect_hits")) > 0:
+        def_reduction += 0.40
+        defender["def_reflect_hits"] -= 1
+    elif _ts_active(defender, "def_reflect_until"):
         def_reduction += 0.40
 
     # Accessory block chance (handled separately, this is just flat reduction)
@@ -5978,35 +6005,26 @@ def calc_defense(defender, dmg):
 
     total = min(0.80, def_reduction + armor_reduction)
     final = max(1, round(dmg * (1 - total)) - excess_def_absorb)
- 
-    # Exposed debuff — target takes +15% more damage (consume one charge)
+
+    # Exposed debuff (+15% dmg taken, consume one charge)
     if safe_int(defender.get("exposed_hits")) > 0:
         final = round(final * 1.15)
         defender["exposed_hits"] -= 1
-    elif _ts_active(defender, "exposed_until"):
-        final = round(final * 1.15)
 
     # Marked (+20% dmg taken, consume one charge)
     if safe_int(defender.get("marked_hits")) > 0:
         final = round(final * 1.20)
         defender["marked_hits"] -= 1
-    elif _ts_active(defender, "marked_until"):
-        final = round(final * 1.20)
 
-    # Weakened (+25% dmg taken when hit, consume one charge)
+    # Weakened (+25% dmg taken, consume one charge)
     if safe_int(defender.get("weakened_hits")) > 0:
         final = round(final * 1.25)
         defender["weakened_hits"] -= 1
-    elif _ts_active(defender, "weakened_until"):
-        final = round(final * 1.25)
 
-    # Branded — attacker's NEXT strike deals 30% less (defender-side charge)
+    # Branded — attacker deals 30% less (consume one charge)
     if safe_int(defender.get("branded_hits")) > 0:
         final = round(final * 0.70)
         defender["branded_hits"] -= 1
-    elif _ts_active(defender, "branded_until"):
-        final = round(final * 0.70)
-        defender["branded_until"] = None  # consumed on hit
 
     # Runic Ward — absorbs first 20 damage of every hit
     cls_def = get_player_class(defender)
@@ -6259,12 +6277,12 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         raid_state["enemy_statuses"]["bleed_last_tick"] = datetime.now().isoformat()
         lines.append(f"🩸 *{enemy['name']}* is *Bleeding!* Takes 10 dmg every 30s!")
     elif stype == "drain":
-        steal = round(raid_state["enemy_hp"] * sk.get("drain_pct", 0.30))
+        steal = round(raid_state["enemy_hp"] * min(sk.get("drain_pct", 0.25), 0.25))
         dmg   = round(base * sk.get("mult", 1.0))
         p["hp"] = min(calc_max_hp(p), p["hp"] + steal)
         lines.append(f"🩸 Drained *{steal} HP* from {enemy['name']}! You healed {steal}.")
     elif stype == "drain_kill":
-        steal = round(raid_state["enemy_hp"] * sk.get("drain_pct", 0.40))
+        steal = round(raid_state["enemy_hp"] * min(sk.get("drain_pct", 0.25), 0.25))
         dmg   = round(base * sk.get("mult", 1.5))
         p["hp"] = min(calc_max_hp(p), p["hp"] + steal)
         lines.append(f"🩸 *Drain Soul!* Stole {steal} HP!")
@@ -6278,8 +6296,8 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
             set_status(p, "vanish_until", 60)
             lines.append("👻 *Vanished!* (No effect in raids  -  treated as stealth stance)")
         elif stype == "blessing":
-            set_status(p, "blessed_until", 300)
-            lines.append("✨ *Blessed!* +10% damage and healing for 5m.")
+            add_charges(p, "blessed_turns", 5)
+            lines.append("✨ *Blessed!* +10% all stats for next 5 attacks.")
         return lines, 0
     elif stype == "silence":
         set_enemy_status(raid_state, "silenced_until", 60)
@@ -6288,7 +6306,10 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         set_enemy_status(raid_state, "weakened_until", 60)
     elif stype in ("holy_dmg", "strip_debuff", "condemn"):
         wis = get_stat(p, "WIS")
-        if stype == "holy_dmg":    dmg = wis * 3
+        if stype == "holy_dmg":
+            dmg = wis * sk.get("mult", 3)
+            if sk.get("active") == "Radiant Strike" or sk.get("name") == "Radiant Strike":
+                p["hp"] = min(calc_max_hp(p), p["hp"] + wis * 2)
         elif stype == "strip_debuff": dmg = wis * 4
         elif stype == "condemn":
             dmg = wis * 8
@@ -6300,7 +6321,7 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         lines.append(f"🌑 *Void Nuke!* Half HP obliterated!")
     elif stype == "freeze_nuke":
         int_v = get_stat(p, "INT")
-        dmg   = int_v * 6
+        dmg   = int_v * 5
         set_enemy_status(raid_state, "frozen_until", 60)
         lines.append(f"❄️ *Frozen!* {enemy['name']} is frozen  -  skips next counter-attack!")
     # ── New class skill types ──────────────────────────────────────────────────
@@ -6324,8 +6345,8 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         raid_state["enemy_statuses"]["poison_last_tick"] = datetime.now().isoformat()
         lines.append(f"☠️ *Toxic Bloom!* WIS-scaling poison applied for 10m!")
     elif stype == "def_reflect":
-        set_status(p, "def_reflect_until", 120)
-        lines.append("🌿 *Thorn Fortress!* 40% damage reduction + reflect active for 2m!")
+        add_charges(p, "def_reflect_hits", 3)
+        lines.append("🌿 *Thorn Fortress!* 40% dmg reduction + reflect active next *3 hits*!")
         return lines, 0
     elif stype == "nature_nuke":
         wis = get_stat(p, "WIS")
@@ -6358,41 +6379,41 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
         set_enemy_status(raid_state, "stunned_until", 60)
         lines.append(f"💜 *Dread Proclamation!* Max curses! Stunned + hexed + weakened for 1 hour!")
     elif stype == "party_atk_buff":
-        set_status(p, "blessed_until", 300)
-        lines.append("🎵 *War Song!* ATK +25% for 5m!")
+        add_charges(p, "blessed_turns", 5)
+        lines.append("🎵 *War Song!* +10% all stats for next 5 attacks!")
         return lines, 0
     elif stype == "party_full_buff":
-        set_status(p, "blessed_until", 600)
-        for field in ["hexed_until", "weakened_until"]:
-            p[field] = None
-        lines.append("🎶 *Ancient Aria!* Full stats buffed 10m! Debuffs cleared.")
+        add_charges(p, "blessed_turns", 8)
+        for field in ["hex_turns", "weakened_hits"]:
+            p[field] = 0
+        lines.append("🎶 *Ancient Aria!* Blessed ×8 — +10% all stats next 8 attacks! Debuffs cleared.")
         return lines, 0
     elif stype == "ultimate_buff":
         p["hp"] = calc_max_hp(p)
-        set_status(p, "blessed_until", 1800)
-        lines.append("✨ *Magnum Opus!* Full HP restored! +20% all stats for 30m!")
+        add_charges(p, "blessed_turns", 10)
+        lines.append("✨ *Magnum Opus!* Full HP restored! Blessed ×10 — +10% all stats next 10 attacks!")
         return lines, 0
     elif stype == "self_atk_buff":
-        set_status(p, "blessed_until", 120)
-        lines.append("⚔️ *War Cry!* +30% ATK and +15% DEF for 2m!")
+        add_charges(p, "blessed_turns", 3)
+        lines.append("⚔️ *War Cry!* +10% all stats for next 3 attacks!")
         return lines, 0
     elif stype == "stun_def_dmg":
         str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
         dmg = round((str_v + def_v) * sk.get("mult", 1.0))
         if random.random() < 0.40:
             set_enemy_status(raid_state, "stunned_until", 30)
-            lines.append(f"🛡️ *Shield Slam!* {dmg} damage! {enemy['name']} *Stunned* 30s!")
+            lines.append(f"🛡️ *Shield Slam!* {dmg} damage! {enemy['name']} stunned!")
         else:
             lines.append(f"🛡️ *Shield Slam!* (STR+DEF) = {dmg} damage!")
     elif stype == "party_def_buff":
-        set_status(p, "blessed_until", 300)
-        lines.append("🛡️ *Rune Barrier!* DEF +20% for 5m!")
+        add_charges(p, "blessed_turns", 5)
+        lines.append("🛡️ *Rune Barrier!* +10% all stats for next 5 attacks!")
         return lines, 0
     elif stype == "intercept_aoe":
         def_v = get_stat(p, "DEF")
         dmg = round(def_v * 2)
-        set_status(p, "def_reflect_until", 120)
-        lines.append(f"🛡️ *Vanguard's Presence!* DEF×2 = {dmg} damage! Intercept mode active 2 min!")
+        add_charges(p, "def_reflect_hits", 3)
+        lines.append(f"🛡️ *Vanguard's Presence!* DEF×2 = {dmg} damage! Reflect active next 3 hits!")
     elif stype == "holy_warrior_nuke":
         str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
         dmg = round(str_v * 4 + def_v * 4)
@@ -6416,7 +6437,7 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
     elif stype == "execute_multihit":
         hits = sk.get("hits", 8)
         hp_pct = raid_state["enemy_hp"] / max(1, raid_state["enemy_max_hp"])
-        mult = 1.0 if hp_pct <= 0.50 else sk.get("mult", 0.5)
+        mult = 0.75 if hp_pct <= 0.50 else sk.get("mult", 0.5)
         if hp_pct <= 0.50:
             lines.append(f"💀 *Execute!* Enemy below 50% HP — full power!")
         dmg = sum(round(base * mult) for _ in range(hits))
@@ -6839,6 +6860,9 @@ def check_miss(attacker, defender):
         # shadowstep: mark attacker's next strike for +50% bonus
         if pk == "shadowstep":
             defender["shadowstep_ready"] = 1
+        # thunder_step: mark next attack for +40% lightning bonus
+        if pk == "thunder_step":
+            defender["thunder_dodge_ready"] = 1
     return did_dodge
 
 def check_crit(attacker):
@@ -6939,8 +6963,8 @@ def apply_reflect(defender, attacker, dmg):
     if pk == "ancient_bark": reflect += round(dmg * 0.10)
     if pk == "beguile":
         if random.random() < 0.08: reflect += round(dmg * 0.50)
-    # def_reflect status — reflect half of incoming damage
-    if _ts_active(defender, "def_reflect_until"):
+    # def_reflect — charge-based (new) or legacy timestamp
+    if safe_int(defender.get("def_reflect_hits")) > 0 or _ts_active(defender, "def_reflect_until"):
         reflect += round(dmg * 0.50)
     if get_accessory_bonus(defender, "reflect_pct"):
         reflect += round(dmg * get_accessory_bonus(defender, "reflect_pct"))
@@ -8960,6 +8984,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             d["flourish_stacks"] = min(3, safe_int(d.get("flourish_stacks", 0)) + 1)
         if "harmonize" in get_all_passive_keys(a):
             a["harmony_stacks"] = 0
+        if "melody" in get_all_passive_keys(a):
+            a["melody_stacks"] = 0
         save_player(d); save_player(a)
         return f"🌀 *{a['username']}* swings at *{d['username']}*  -  *MISS!*", [], "miss"
 
@@ -8998,7 +9024,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             if charge > 0:
                 dmg += 5; a["devotion_charge"] = 0
                 extra_notes.append("✨ *Devotion charge!* +5 bonus damage!")
-        if pk_a == "battle_cry": set_status(a, "battle_cry_str_until", 900)
+        if pk_a == "battle_cry":
+            a["battle_cry_str_hits"] = 5  # refresh to 5 on every attack
         if pk_a == "warcry":
             if len(get_recent_attackers(a)) > 1:
                 dmg = round(dmg * 1.20); extra_notes.append("😣 *Warcry!* +20% damage!")
@@ -9009,13 +9036,10 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         if pk_a == "mark_first_hit" and safe_int(a.get("mark_first_hit")):
             dmg = round(dmg * 1.25); a["mark_first_hit"] = 0
             extra_notes.append("🎯 *First strike bonus!* +25%!")
-        if pk_a == "trailblazer":
-            today = datetime.now().strftime("%Y-%m-%d")
-            cds_tb = safe_cds(a)
-            if cds_tb.get("trailblazer_date") != today:
-                dmg *= 2; cds_tb["trailblazer_date"] = today
-                a["passive_cooldowns"] = json.dumps(cds_tb)
-                extra_notes.append("🌅 *Trailblazer!* First strike of the day  -  double damage!")
+        if pk_a == "trailblazer" and random.random() < 0.15:
+            if safe_int(d.get("distract_turns", 0)) < 3:
+                add_charges(d, "distract_turns", 1)
+                extra_notes.append(f"🎯 *Trailblazer!* {d['username']} distracted (30% miss chance for 1 hit)!")
         if pk_a == "steady_aim":
             if a.get("steady_aim_target") == d["user_id"]:
                 a["steady_aim_stacks"] = min(5, safe_int(a.get("steady_aim_stacks")) + 1)
@@ -9119,6 +9143,29 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     if "flourish" in get_all_passive_keys(d):
         d["flourish_stacks"] = 0
     healed = apply_lifesteal(a, dmg_after_def)
+    # Consume attacker charge-based buffs/debuffs (one charge per attack)
+    if safe_int(a.get("battle_cry_str_hits")) > 0:
+        a["battle_cry_str_hits"] -= 1
+    if safe_int(a.get("blessed_turns")) > 0:
+        a["blessed_turns"] -= 1
+    if safe_int(a.get("cursed_hits")) > 0:
+        a["cursed_hits"] -= 1
+
+    # Defender post-hit passive regen/procs (fires after damage is applied)
+    if cls_d and dmg_after_def > 0:
+        _pk_d_post = cls_d.get("passive_key", "")
+        if _pk_d_post == "garden_aura":
+            _ga_hp = max(1, round(safe_stats(d).get("WIS", 5)))
+            d["hp"] = min(calc_max_hp(d), d["hp"] + _ga_hp)
+            extra_notes.append(f"🌸 *Garden Aura!* +{_ga_hp} HP nature regen!")
+        if _pk_d_post == "renew" and random.random() < 0.20:
+            _rn_hp = max(1, round(safe_stats(d).get("WIS", 5) * 3))
+            d["hp"] = min(calc_max_hp(d), d["hp"] + _rn_hp)
+            extra_notes.append(f"✨ *Renew!* +{_rn_hp} HP divine regen!")
+        if _pk_d_post == "divine_grace" and random.random() < 0.15:
+            _dg_hp = round(calc_max_hp(d) * 0.05)
+            d["hp"] = min(calc_max_hp(d), d["hp"] + _dg_hp)
+            extra_notes.append(f"🙏 *Divine Grace!* +{_dg_hp} HP (5% max HP restored by faith)!")
 
     # Burn proc from weapon enchant
     if get_enchant_bonus(a, "burn_proc") and random.random() < 0.10:
@@ -9135,13 +9182,13 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     if cls_a and dmg_after_def > 0:
         pk_a = cls_a.get("passive_key", "")
         if pk_a == "feint" and random.random() < 0.05 and safe_int(d.get("distract_turns", 0)) < 3:
-            set_status(a, "feint_proc_until", 60); add_charges(d, "distract_turns", 1)
+            add_charges(d, "distract_turns", 1)
             extra_notes.append(f"🗡️ *Feint!* {d['username']} distracted for 1 attack!")
         if pk_a == "throat_cut" and random.random() < 0.05:
             if safe_int(d.get("silence_turns", 0)) < 4:
                 add_charges(d, "silence_turns", 1)
                 extra_notes.append(f"🤐 *Throat Cut!* {d['username']} silenced for 1 skill!")
-        if pk_a == "cursed_blade": set_status(d, "cursed_until", 120)
+        if pk_a == "cursed_blade": add_charges(d, "cursed_hits", 2)
         if pk_a == "warning_shot":
             ws_key = f"warning_shot_hit_{a.get('user_id', '')}"
             if not _ts_active(d, ws_key):
@@ -9149,22 +9196,44 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
                 sd = safe_stats(d); sd["AGI"] = max(0, sd.get("AGI", 5) - 2)
                 d["stats"] = json.dumps(sd)
         if pk_a == "purge":
-            for buf in ["blessed_until", "def_reflect_until", "battle_cry_str_until",
-                        "invincible_until", "temp_hp_until"]:
-                if _ts_active(d, buf): d[buf] = None; break
+            _purged = False
+            for buf in ["blessed_until", "def_reflect_until", "invincible_until", "temp_hp_until"]:
+                if _ts_active(d, buf): d[buf] = None; _purged = True; break
+            if not _purged:
+                for buf in ["blessed_turns", "def_reflect_hits", "battle_cry_str_hits"]:
+                    if safe_int(d.get(buf)) > 0: d[buf] = 0; break
         if pk_a == "curse_touch" and random.random() < 0.08:
             add_charges(d, "weakened_hits", 3)
             extra_notes.append("💜 *Curse Touch!* Weakened ×3 — +25% dmg taken next 3 hits!")
-        if pk_a == "shadow_hex" and _ts_active(d, "hexed_until"):
-            bonus_hex = round(dmg_after_def * 0.05)
+        if pk_a == "shadow_hex" and (safe_int(d.get("hex_turns")) > 0 or _ts_active(d, "hexed_until")):
+            bonus_hex = round(dmg_after_def * 0.15)  # up from 0.05
             dmg_after_def += bonus_hex; d["hp"] = max(0, d["hp"] - bonus_hex)
             extra_notes.append(f"🕸️ *Shadow Hex!* +{bonus_hex} on hexed target!")
+        if pk_a == "dark_sense":
+            _debuffed = (safe_int(d.get("hex_turns")) > 0 or safe_int(d.get("weakened_hits")) > 0 or
+                         safe_int(d.get("cursed_hits")) > 0 or safe_int(d.get("marked_hits")) > 0 or
+                         safe_int(d.get("exposed_hits")) > 0 or safe_int(d.get("distract_turns")) > 0 or
+                         safe_int(d.get("poison_stacks")) > 0 or _ts_active(d, "hexed_until"))
+            if _debuffed:
+                _ds_bonus = round(dmg_after_def * 0.15)
+                dmg_after_def += _ds_bonus; d["hp"] = max(0, d["hp"] - _ds_bonus)
+                extra_notes.append(f"👁️ *Dark Sense!* +{_ds_bonus} bonus dmg vs debuffed target!")
+        if pk_a == "marked_for_death":
+            _mfd_target = (safe_int(d.get("marked_hits")) > 0 or safe_int(d.get("hex_turns")) > 0 or
+                           safe_int(d.get("weakened_hits")) > 0 or safe_int(d.get("exposed_hits")) > 0 or
+                           _ts_active(d, "hexed_until"))
+            if _mfd_target:
+                _mfd_bonus = round(dmg_after_def * 0.20)
+                dmg_after_def += _mfd_bonus; d["hp"] = max(0, d["hp"] - _mfd_bonus)
+                extra_notes.append(f"🎯 *Marked for Death!* +{_mfd_bonus} bonus dmg vs marked target!")
         if d.get("mana_overload_reflect"):
             reflect_dmg = d.pop("mana_overload_reflect")
             a["hp"] = max(1, a["hp"] - reflect_dmg)
             extra_notes.append(f"⚡ *Mana Overload!* {d['username']} reflects *{reflect_dmg} dmg*!")
         if "harmonize" in get_all_passive_keys(a):
             a["harmony_stacks"] = min(3, safe_int(a.get("harmony_stacks", 0)) + 1)
+        if pk_a == "melody":
+            a["melody_stacks"] = min(3, safe_int(a.get("melody_stacks", 0)) + 1)
 
     update_recent_attackers(d, au_id)
     proc_fired, proc_msg, proc_extra = calc_proc_effect(a, d, dmg_after_def)
@@ -15254,26 +15323,26 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif stype == "self_heal_buff":
                 heal = round(p["max_hp"] * sk.get("heal_pct", 0.25))
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
-                set_status(p, "battle_cry_str_until", 180)
-                lines.append(f"💪 *Battle Cry!* +{heal} HP restored. +80 STR for 3m!")
+                add_charges(p, "battle_cry_str_hits", 3)
+                lines.append(f"💪 *Battle Cry!* +{heal} HP restored. +80 STR for next *3 attacks*!")
             elif stype == "self_atk_buff":
-                set_status(p, "blessed_until", 120)
-                lines.append("⚔️ *War Cry!* +30% ATK for 2m!")
+                add_charges(p, "blessed_turns", 3)
+                lines.append("⚔️ *War Cry!* +10% all stats for next *3 attacks*!")
             elif stype == "def_reflect":
-                set_status(p, "def_reflect_until", 120)
-                lines.append("🌿 *Thorn Fortress!* 40% dmg reduction + reflect active 2 min!")
+                add_charges(p, "def_reflect_hits", 3)
+                lines.append("🌿 *Thorn Fortress!* 40% dmg reduction + reflect active next *3 hits*!")
             elif stype in ("party_atk_buff", "party_def_buff"):
-                set_status(p, "blessed_until", 300)
+                add_charges(p, "blessed_turns", 5)
                 label = "War Song" if stype == "party_atk_buff" else "Rune Barrier"
-                lines.append(f"🎵 *{label}!* Party buffed +25% stats for 5m!")
+                lines.append(f"🎵 *{label}!* +10% all stats for next *5 attacks*!")
             elif stype == "party_full_buff":
-                set_status(p, "blessed_until", 600)
-                for _f in ["hexed_until", "weakened_until"]: p[_f] = None
-                lines.append("🎶 *Ancient Aria!* Full buffs 10m! Debuffs cleared.")
+                add_charges(p, "blessed_turns", 8)
+                for _f in ["hex_turns", "weakened_hits"]: p[_f] = 0
+                lines.append("🎶 *Ancient Aria!* Blessed ×8 — +10% all stats next 8 attacks. Debuffs cleared.")
             elif stype == "ultimate_buff":
                 p["hp"] = calc_max_hp(p)
-                set_status(p, "blessed_until", 1800)
-                lines.append("✨ *Magnum Opus!* Full HP restored! +20% all stats 30 min!")
+                add_charges(p, "blessed_turns", 10)
+                lines.append("✨ *Magnum Opus!* Full HP restored! Blessed ×10 — +10% all stats next 10 attacks!")
             dmg = 0
         else:
             mult = sk.get("mult", 1.0) or 1.0
@@ -15307,8 +15376,8 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
                 dmg = round((str_v + def_v) * sk.get("mult", 1.0))
                 if stype == "intercept_aoe":
-                    set_status(p, "def_reflect_until", 120)
-                    lines.append(f"🛡️ *{sk['name']}!* DEF-based {dmg} damage + intercept active!")
+                    add_charges(p, "def_reflect_hits", 3)
+                    lines.append(f"🛡️ *{sk['name']}!* DEF-based {dmg} damage + intercept active next 3 hits!")
                 else:
                     lines.append(f"🛡️ *{sk['name']}!* {dmg} damage!")
             elif stype in ("curse_chain", "mass_debuff"):
@@ -15616,8 +15685,8 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             heal = round(p["max_hp"] * sk.get("heal_pct", 0.25)) if stype == "self_heal_buff" else round(get_stat(p, "WIS") * sk.get("mult", 3.0))
             p["hp"] = min(p["max_hp"], p["hp"] + heal)
             if stype == "self_heal_buff":
-                set_status(p, "battle_cry_str_until", 180)
-                out.append(f"💪 *Battle Cry!* +{heal} HP restored. +80 STR for 3m!")
+                add_charges(p, "battle_cry_str_hits", 3)
+                out.append(f"💪 *Battle Cry!* +{heal} HP restored. +80 STR for next *3 attacks*!")
             else:
                 out.append(f"💚 Healed self for *{heal} HP*!")
             dmg = 0
@@ -15638,7 +15707,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 dmg = round(get_stat(p, stat_key) * sk.get("mult", 3.0))
                 out.append(f"💥 *{sk['name']}!* {dmg} damage!")
             elif stype in ("drain", "drain_kill", "hp_drain"):
-                drain_pct = sk.get("drain_pct", 0.30)
+                drain_pct = min(sk.get("drain_pct", 0.25), 0.25)
                 dmg = round(boss_dict["hp"] * drain_pct)
                 heal = round(dmg * sk.get("heal_pct", 0.50))
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
@@ -15782,7 +15851,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 out.append("🚫 Healing is blocked!")
                 await send_result("\n".join(out)); return
             wis = get_stat(p, "WIS")
-            heal = round(wis * sk.get("mult", 50))
+            heal = round(wis * sk.get("mult", 8))
             p["hp"] = min(p["max_hp"], p["hp"] + heal)
             out.append(f"💚 Healed self for *{heal} HP*! ({p['hp']}/{p['max_hp']})")
             save_player(p)
@@ -15796,8 +15865,8 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await send_result("\n".join(out)); return
             heal = round(p["max_hp"] * sk.get("heal_pct", 0.25))
             p["hp"] = min(p["max_hp"], p["hp"] + heal)
-            set_status(p, "battle_cry_str_until", 180)
-            out.append(f"💪 *{sk['name']}!* +{heal} HP restored. *+80 STR for 3m!*")
+            add_charges(p, "battle_cry_str_hits", 3)
+            out.append(f"💪 *{sk['name']}!* +{heal} HP restored. *+80 STR for next 3 attacks!*")
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "group_heal":
@@ -15833,9 +15902,9 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                             for chg in ["hex_turns","distract_turns","stun_turns",
                                         "freeze_turns","silence_turns","weakened_hits"]:
                                 mp[chg] = 0
-                            set_status(mp, "blessed_until", 1800)
+                            add_charges(mp, "blessed_turns", 8)
                             save_player(mp); cleansed.append(mp["username"])
-            out.append(f"✨ *{sk['name']}!* Cleansed: {', '.join(cleansed) or 'self'} — Blessed 30 min!")
+            out.append(f"✨ *{sk['name']}!* Cleansed: {', '.join(cleansed) or 'self'} — Blessed ×8 (next 8 attacks)!")
             save_player(p)
             await send_result("\n".join(out)); return
         out = [f"⚡ *{p['username']}* uses *{sk['name']}* on *{tp['username']}*!"]
@@ -15862,9 +15931,14 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await send_result("\n".join(out)); return
         if stype == "regen":
             wis = get_stat(p, "WIS")
-            heal = wis * 35
+            heal = wis * sk.get("mult", 8)  # use skill mult (was 35 hardcoded)
             tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
-            out.append(f"💚 *Renew!* +{heal} HP to *{tp['username']}*! ({tp['hp']}/{tp['max_hp']})")
+            _cl = ""
+            if safe_int(tp.get("bleed_stacks")) > 0:
+                tp["bleed_stacks"] = max(0, safe_int(tp.get("bleed_stacks")) - 1); _cl = " One bleed cleansed."
+            elif safe_int(tp.get("poison_stacks")) > 0:
+                tp["poison_stacks"] = max(0, safe_int(tp.get("poison_stacks")) - 1); _cl = " One poison cleansed."
+            out.append(f"💚 *Renew!* +{heal} HP to *{tp['username']}*! ({tp['hp']}/{tp['max_hp']}){_cl}")
             save_player(p); save_player(tp)
             await send_result("\n".join(out)); return
         if stype == "full_revive":
@@ -15883,8 +15957,8 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_player(p); save_player(tp)
             await send_result("\n".join(out)); return
         if stype == "dmg_reduction_buff":
-            set_status(tp, "blessed_until", 3600)
-            out.append(f"✨ *Blessing!* {tp['username']} takes 15% less damage for 1 hour.")
+            add_charges(tp, "blessed_turns", 8)
+            out.append(f"✨ *Blessing!* {tp['username']} gains +10% all stats for next 8 attacks.")
             save_player(p); save_player(tp)
             await send_result("\n".join(out)); return
         # ── Caster self-buff skills (no damage to target) ────────────────────
@@ -15893,7 +15967,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             if sk_active == "Aegis Wall":
                 charges = 3
             elif sk_active == "Shield Wall":
-                charges = 1
+                charges = 2  # up from 1
             else:
                 charges = 3
             add_charges(p, "shield_charges", charges)
@@ -15903,8 +15977,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_player(p)
             await send_result("\n".join(out)); return
         if stype == "dodge_buff":
-            add_charges(p, "vanish_turns", 1)
-            out.append(f"💨 *{sk['name']}!* Next incoming attack automatically misses!")
+            _db_charges = sk.get("dodge_charges", 2)  # Petal Veil gives 2, others default 2
+            add_charges(p, "vanish_turns", _db_charges)
+            noun_s = "attacks" if _db_charges > 1 else "attack"
+            out.append(f"💨 *{sk['name']}!* Auto-dodge next *{_db_charges}* incoming {noun_s}!")
             save_player(p)
             await send_result("\n".join(out)); return
         if stype == "vanish":
@@ -16007,10 +16083,17 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 out.append(f"🤐 *{sk['name']}!* {tp['username']} is *Silence Immune* (max stacks).")
         elif stype == "holy_dmg":
             wis = get_stat(p, "WIS")
-            dmg = wis * 3
+            _hm = sk.get("mult", 3)
+            dmg = wis * _hm
+            if sk.get("active") == "Radiant Strike" or sk.get("name") == "Radiant Strike":
+                p["hp"] = min(calc_max_hp(p), p["hp"] + wis * 2)
+            _debuffed_b = (safe_int(tp.get("hex_turns")) > 0 or safe_int(tp.get("weakened_hits")) > 0 or
+                           safe_int(tp.get("cursed_hits")) > 0 or _ts_active(tp, "hexed_until"))
             recent_kills = tp.get("recent_kills", 0)
-            if recent_kills: dmg *= 2; out.append("✨ *Holy!* Double damage vs a recent killer!")
-            out.append(f"✨ *{sk['name']}!* WIS×3 = {dmg} holy damage!")
+            if _debuffed_b or recent_kills:
+                dmg *= 2; out.append(f"✨ *{sk['name']}!* Double holy damage vs cursed/killer! WIS×{_hm}×2 = {dmg}!")
+            else:
+                out.append(f"✨ *{sk['name']}!* WIS×{_hm} = {dmg} holy damage!")
         elif stype == "strip_debuff":
             buffs_stripped = 0
             for _bf in ["blessed_until", "holy_field_until"]:
@@ -16057,12 +16140,13 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             p["hp"] = min(calc_max_hp(p), p["hp"] + steal)
             out.append(f"🩸 *{sk['name']}!* Stole *{steal} HP* from {tp['username']}!")
         elif stype == "debuff":
-            add_charges(tp, "hex_turns", 3)
-            dmg = round(base * 0.8)
-            out.append(f"💀 *{sk['name']}!* *Hexed ×3!* {tp['username']} deals 25% less damage next 3 attacks!")
+            _bh_stacks = sk.get("debuff_stacks", 3)
+            add_charges(tp, "hex_turns", _bh_stacks)
+            dmg = round(base * sk.get("mult", 0.8))
+            out.append(f"💀 *{sk['name']}!* *Hexed ×{_bh_stacks}!* {tp['username']} deals 25% less damage next {_bh_stacks} attacks!")
         elif stype == "def_reflect":
-            set_status(p, "def_reflect_until", 120)
-            out.append(f"🌿 *{sk['name']}!* {p['username']}: 40% dmg reduction + reflect active 2m!")
+            add_charges(p, "def_reflect_hits", 3)
+            out.append(f"🌿 *{sk['name']}!* {p['username']}: 40% dmg reduction + reflect active next *3 hits*!")
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "charged_shot":
@@ -16071,8 +16155,8 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "self_atk_buff":
-            set_status(p, "blessed_until", 120)
-            out.append(f"⚔️ *{sk['name']}!* {p['username']} gains *+30% ATK and +15% DEF* for 2m!")
+            add_charges(p, "blessed_turns", 3)
+            out.append(f"⚔️ *{sk['name']}!* {p['username']} gains *+10% all stats* for next *3 attacks*!")
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "root":
@@ -16192,11 +16276,11 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     for _mid in sjl(_g.get("members"), []):
                         _mp = get_player(_mid)
                         if _mp:
-                            set_status(_mp, "blessed_until", 300)
+                            add_charges(_mp, "blessed_turns", 5)
                             save_player(_mp); _buffed.append(_mp["username"])
             if not _buffed:
-                set_status(p, "blessed_until", 300); _buffed = [p["username"]]; save_player(p)
-            out.append(f"🎵 *{sk['name']}!* +25% ATK for 5m!\n💪 Buffed: {', '.join(_buffed)}")
+                add_charges(p, "blessed_turns", 5); _buffed = [p["username"]]; save_player(p)
+            out.append(f"🎵 *{sk['name']}!* +10% all stats for next 5 attacks!\n💪 Buffed: {', '.join(_buffed)}")
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "party_def_buff":
@@ -16208,11 +16292,11 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     for _mid in sjl(_g.get("members"), []):
                         _mp = get_player(_mid)
                         if _mp:
-                            set_status(_mp, "blessed_until", 300)
+                            add_charges(_mp, "blessed_turns", 5)
                             save_player(_mp); _buffed.append(_mp["username"])
             if not _buffed:
-                set_status(p, "blessed_until", 300); _buffed = [p["username"]]; save_player(p)
-            out.append(f"🛡️ *{sk['name']}!* +20% DEF for 5m!\n🛡️ Protected: {', '.join(_buffed)}")
+                add_charges(p, "blessed_turns", 5); _buffed = [p["username"]]; save_player(p)
+            out.append(f"🛡️ *{sk['name']}!* +10% all stats for next 5 attacks!\n🛡️ Protected: {', '.join(_buffed)}")
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "party_full_buff":
@@ -16224,14 +16308,14 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     for _mid in sjl(_g.get("members"), []):
                         _mp = get_player(_mid)
                         if _mp:
-                            set_status(_mp, "blessed_until", 600)
-                            for _f in ["hexed_until", "weakened_until"]: _mp[_f] = None
+                            add_charges(_mp, "blessed_turns", 8)
+                            for _f in ["hex_turns", "weakened_hits"]: _mp[_f] = 0
                             save_player(_mp); _buffed.append(_mp["username"])
             if not _buffed:
-                set_status(p, "blessed_until", 600)
-                for _f in ["hexed_until", "weakened_until"]: p[_f] = None
+                add_charges(p, "blessed_turns", 8)
+                for _f in ["hex_turns", "weakened_hits"]: p[_f] = 0
                 _buffed = [p["username"]]; save_player(p)
-            out.append(f"🎶 *{sk['name']}!* +15% ATK/DEF/dodge for 10 min! Debuffs cleared.\n✨ Buffed: {', '.join(_buffed)}")
+            out.append(f"🎶 *{sk['name']}!* Blessed ×8 — +10% all stats next 8 attacks! Debuffs cleared.\n✨ Buffed: {', '.join(_buffed)}")
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "ultimate_buff":
@@ -16244,13 +16328,13 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                         _mp = get_player(_mid)
                         if _mp:
                             _mp["hp"] = calc_max_hp(_mp)
-                            set_status(_mp, "blessed_until", 1800)
+                            add_charges(_mp, "blessed_turns", 10)
                             save_player(_mp); _buffed.append(_mp["username"])
             if not _buffed:
                 p["hp"] = calc_max_hp(p)
-                set_status(p, "blessed_until", 1800)
+                add_charges(p, "blessed_turns", 10)
                 _buffed = [p["username"]]; save_player(p)
-            out.append(f"✨ *{sk['name']}!* Full HP restored! +20% all stats 30 min!\n🎵 Empowered: {', '.join(_buffed)}")
+            out.append(f"✨ *{sk['name']}!* Full HP restored! Blessed ×10 — +10% all stats next 10 attacks!\n🎵 Empowered: {', '.join(_buffed)}")
             save_player(p)
             await send_result("\n".join(out)); return
         elif stype == "bounty_mark":
@@ -16332,10 +16416,16 @@ async def _execute_skill(update, context, p, sk):
     stype = sk.get("type","damage")
     lines = [f"⚡ *{p['username']}* uses *{sk['name']}*!"]
 
+    # Melody passive: restore WIS HP on any skill use (battle resonance)
+    _mel_cls = get_player_class(p)
+    if _mel_cls and _mel_cls.get("passive_key") == "melody":
+        _mel_hp = max(1, get_stat(p, "WIS"))
+        p["hp"] = min(calc_max_hp(p), p["hp"] + _mel_hp)
+
     # ── Healing / support skills ──────────────────────────────────────────────
     if stype == "self_heal":
         wis = safe_stats(p).get("WIS",5)
-        heal = wis * sk.get("mult", sk.get("wis_mult", 50))
+        heal = wis * sk.get("mult", sk.get("wis_mult", 8))
         p["hp"] = min(p["max_hp"], p["hp"]+heal)
         lines.append(f"💚 Healed self for *{heal} HP*! ({p['hp']}/{p['max_hp']})")
         save_player(p)
@@ -16375,10 +16465,15 @@ async def _execute_skill(update, context, p, sk):
                                       "weakened_until","revival_blocked_until",
                                       "healing_blocked_until","silenced_until"]:
                             mp[field] = None
-                        set_status(mp, "blessed_until", 1800)
+                        for cfield in ["hex_turns","distract_turns","entangle_turns",
+                                       "freeze_turns","stun_turns","bleed_stacks",
+                                       "weakened_hits","revive_blocked_turns",
+                                       "heal_blocked_turns","silence_turns"]:
+                            mp[cfield] = 0
+                        add_charges(mp, "blessed_turns", 8)
                         save_player(mp); cleansed.append(mp["username"])
-        lines.append(f"✨ *Absolution!* Cleansed: {', '.join(cleansed) or 'self'}\n"
-                     f"Blessed status +10% all stats for 30m!\n"
+        lines.append(f"✨ *Absolution!* All debuffs cleared for party — Blessed ×8 next 8 attacks!\n"
+                     f"Cleansed: {', '.join(cleansed) or 'self'}\n"
                      f"_(Zealot's revival block lifted if active)_")
         save_player(p)
         await send_group(update, "\n".join(lines), delay=30); return
@@ -16390,10 +16485,10 @@ async def _execute_skill(update, context, p, sk):
         tp = get_player(tu.id)
         if not tp:
             await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
-        set_status(tp, "blessed_until", 3600)
+        add_charges(tp, "blessed_turns", 5)
         save_player(tp); save_player(p)
         lines.append(f"✨ *Blessing* granted to *{tp['username']}*!\n"
-                     f"15% damage reduction for 1 hour.")
+                     f"+10% all stats for next 5 attacks.")
         await send_group(update, "\n".join(lines), delay=15); return
 
     elif stype == "revive_heal":
@@ -16437,11 +16532,19 @@ async def _execute_skill(update, context, p, sk):
         if not tp:
             await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
         wis = get_stat(p, "WIS")
-        heal = wis * 35
+        heal = wis * sk.get("mult", 8)  # use skill mult (default 8 for Renew, was 35 hardcoded)
         tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
+        # Cleanse one bleed or poison if target has it
+        _cleansed = ""
+        if safe_int(tp.get("bleed_stacks")) > 0:
+            tp["bleed_stacks"] = max(0, safe_int(tp.get("bleed_stacks")) - 1)
+            _cleansed = " One bleed stack cleansed."
+        elif safe_int(tp.get("poison_stacks")) > 0:
+            tp["poison_stacks"] = max(0, safe_int(tp.get("poison_stacks")) - 1)
+            _cleansed = " One poison stack cleansed."
         save_player(tp); save_player(p)
-        lines.append(f"💚 *Renew!* Applied regeneration to *{tp['username']}*!\n"
-                     f"❤️ +{heal} HP restored ({tp['hp']}/{tp['max_hp']})")
+        lines.append(f"💚 *Renew!* Applied divine healing to *{tp['username']}*!\n"
+                     f"❤️ +{heal} HP restored ({tp['hp']}/{tp['max_hp']}){_cleansed}")
         await send_group(update, "\n".join(lines), delay=15); return
 
     elif stype == "full_revive":
@@ -16469,22 +16572,22 @@ async def _execute_skill(update, context, p, sk):
         await send_group(update, "\n".join(lines), delay=20); return
 
     elif stype == "self_heal_buff":
-        wis = get_stat(p, "WIS")
         p["hp"] = min(calc_max_hp(p), p["hp"] + 15)
+        add_charges(p, "blessed_turns", 2)
         lines.append(f"✨ *Holy Fervor!* Restored 15 HP! ({p['hp']}/{p['max_hp']})\n"
-                     f"⚡ WIS boosted — heals more effective for 2m.")
+                     f"✨ Blessed ×2 — +10% stats next 2 attacks.")
         save_player(p)
         await send_group(update, "\n".join(lines), delay=15); return
 
     elif stype == "self_atk_buff":
-        set_status(p, "blessed_until", 120)
-        lines.append(f"⚔️ *War Cry!* {p['username']} gains *+30% ATK and +15% DEF* for 2m!")
+        add_charges(p, "blessed_turns", 3)
+        lines.append(f"⚔️ *War Cry!* {p['username']} gains *+10% all stats* for next *3 attacks*!")
         save_player(p)
         await send_group(update, "\n".join(lines), delay=15); return
 
     elif stype == "def_reflect":
-        set_status(p, "def_reflect_until", 120)
-        lines.append(f"🌿 *Thorn Fortress!* {p['username']}: 40% dmg reduction + reflect active 2 min!")
+        add_charges(p, "def_reflect_hits", 3)
+        lines.append(f"🌿 *Thorn Fortress!* {p['username']}: *40% dmg reduction + reflect* active next *3 hits*!")
         save_player(p)
         await send_group(update, "\n".join(lines), delay=15); return
 
@@ -16497,11 +16600,11 @@ async def _execute_skill(update, context, p, sk):
                 for mid in sjl(g.get("members"), []):
                     mp = get_player(mid)
                     if mp:
-                        set_status(mp, "blessed_until", 300)
+                        add_charges(mp, "blessed_turns", 5)
                         save_player(mp); buffed.append(mp["username"])
         if not buffed:
-            set_status(p, "blessed_until", 300); buffed = [p["username"]]; save_player(p)
-        lines.append(f"🎵 *War Song!* +25% ATK for 5m!\n💪 Buffed: {', '.join(buffed)}")
+            add_charges(p, "blessed_turns", 5); buffed = [p["username"]]; save_player(p)
+        lines.append(f"🎵 *War Song!* +10% all stats for next *5 attacks*!\n💪 Buffed: {', '.join(buffed)}")
         await send_group(update, "\n".join(lines), delay=20); return
 
     elif stype == "party_def_buff":
@@ -16513,11 +16616,11 @@ async def _execute_skill(update, context, p, sk):
                 for mid in sjl(g.get("members"), []):
                     mp = get_player(mid)
                     if mp:
-                        set_status(mp, "blessed_until", 300)
+                        add_charges(mp, "blessed_turns", 5)
                         save_player(mp); buffed.append(mp["username"])
         if not buffed:
-            set_status(p, "blessed_until", 300); buffed = [p["username"]]; save_player(p)
-        lines.append(f"🛡️ *Rune Barrier!* +20% DEF for 5m!\n🛡️ Protected: {', '.join(buffed)}")
+            add_charges(p, "blessed_turns", 5); buffed = [p["username"]]; save_player(p)
+        lines.append(f"🛡️ *Rune Barrier!* +10% all stats for next *5 attacks*!\n🛡️ Protected: {', '.join(buffed)}")
         await send_group(update, "\n".join(lines), delay=20); return
 
     elif stype == "party_full_buff":
@@ -16529,14 +16632,14 @@ async def _execute_skill(update, context, p, sk):
                 for mid in sjl(g.get("members"), []):
                     mp = get_player(mid)
                     if mp:
-                        set_status(mp, "blessed_until", 600)
-                        for _f in ["hexed_until", "weakened_until"]: mp[_f] = None
+                        add_charges(mp, "blessed_turns", 8)
+                        mp["hex_turns"] = 0; mp["weakened_hits"] = 0
                         save_player(mp); buffed.append(mp["username"])
         if not buffed:
-            set_status(p, "blessed_until", 600)
-            for _f in ["hexed_until", "weakened_until"]: p[_f] = None
+            add_charges(p, "blessed_turns", 8)
+            p["hex_turns"] = 0; p["weakened_hits"] = 0
             buffed = [p["username"]]; save_player(p)
-        lines.append(f"🎶 *Ancient Aria!* +15% ATK/DEF/dodge for 10 min! Debuffs cleared.\n"
+        lines.append(f"🎶 *Ancient Aria!* Blessed ×8 — +10% all stats next 8 attacks. Hex + Weak cleared.\n"
                      f"✨ Buffed: {', '.join(buffed)}")
         await send_group(update, "\n".join(lines), delay=20); return
 
@@ -16550,13 +16653,13 @@ async def _execute_skill(update, context, p, sk):
                     mp = get_player(mid)
                     if mp:
                         mp["hp"] = calc_max_hp(mp)
-                        set_status(mp, "blessed_until", 1800)
+                        add_charges(mp, "blessed_turns", 10)
                         save_player(mp); buffed.append(mp["username"])
         if not buffed:
             p["hp"] = calc_max_hp(p)
-            set_status(p, "blessed_until", 1800)
+            add_charges(p, "blessed_turns", 10)
             buffed = [p["username"]]; save_player(p)
-        lines.append(f"✨ *Magnum Opus!* Full HP restored! +20% all stats 30 min!\n"
+        lines.append(f"✨ *Magnum Opus!* Full HP restored! Blessed ×10 — +10% all stats next 10 attacks!\n"
                      f"🎵 Empowered: {', '.join(buffed)}")
         await send_group(update, "\n".join(lines), delay=20); return
 
@@ -16641,13 +16744,17 @@ async def _execute_skill(update, context, p, sk):
         else:
             lines.append(f"⚡ *{sk['name']}!* (Stun missed)")
     elif stype == "miss_debuff":
+        _dd_stacks = sk.get("debuff_stacks", 2)
         if safe_int(d.get("distract_turns", 0)) < 3:
-            add_charges(d, "distract_turns", 2)
-            lines.append(f"😵 *Distracted ×2!* {d['username']} has 30% miss chance next 2 attacks.")
+            add_charges(d, "distract_turns", _dd_stacks)
+            lines.append(f"😵 *Distracted ×{_dd_stacks}!* {d['username']} has 30% miss chance next {_dd_stacks} attacks.")
         else:
             lines.append(f"😵 *{sk['name']}!* {d['username']} is *Distract Immune* (max stacks).")
-        save_player(d); save_player(p)
-        await send_group(update, "\n".join(lines), delay=15); return
+        if sk.get("mult"):  # deal damage if skill specifies a multiplier
+            dmg = round(base * sk["mult"])
+        else:
+            save_player(d); save_player(p)
+            await send_group(update, "\n".join(lines), delay=15); return
     elif stype == "root":
         dmg = calc_defense(d, round(base * sk.get("mult", 0.5)))
         d["hp"] = max(0, d["hp"] - dmg)
@@ -16660,27 +16767,28 @@ async def _execute_skill(update, context, p, sk):
         await send_group(update, "\n".join(lines), delay=15); return
     elif stype == "bleed_crit":
         dmg = round(base * sk.get("mult",2.0) * 2)
-        new_bleed = min(5, max(0, 5 - safe_int(d.get("bleed_stacks", 0))))
+        new_bleed = min(4, max(0, 4 - safe_int(d.get("bleed_stacks", 0))))
         if new_bleed > 0:
             add_charges(d, "bleed_stacks", new_bleed)
-            d["bleed_pct"] = 10
-            lines.append(f"🩸 *Bleed ×{new_bleed}!* {d['username']} loses 10% max HP each of their next {new_bleed} attacks!")
+            d["bleed_pct"] = 8
+            lines.append(f"🩸 *Bleed ×{new_bleed}!* {d['username']} loses 8% max HP for next {new_bleed} hits!")
         else:
             lines.append(f"🩸 *{sk['name']}!* {d['username']} is *Bleed Immune* (max stacks).")
     elif stype == "drain":
-        steal = round(d["hp"] * sk.get("drain_pct",0.30))
+        steal = round(d["hp"] * min(sk.get("drain_pct", 0.25), 0.25))
         dmg   = round(base * sk.get("mult",1.0))
         p["hp"] = min(p["max_hp"], p["hp"]+steal)
         lines.append(f"🩸 Drained *{steal} HP* from {d['username']}!")
     elif stype == "drain_kill":
-        steal = round(d["hp"] * sk.get("drain_pct",0.40))
+        steal = round(d["hp"] * min(sk.get("drain_pct", 0.25), 0.25))
         dmg   = round(base * sk.get("mult",1.5))
         p["hp"] = min(p["max_hp"], p["hp"]+steal)
-        lines.append(f"🩸 *Drain Soul!* Stole {steal} HP!")
+        lines.append(f"🩸 *Drain Soul!* Stole *{steal} HP*!")
     elif stype == "debuff":
-        add_charges(d, "hex_turns", 3)
-        lines.append(f"💀 *Hexed ×3!* {d['username']} deals 25% less damage next 3 attacks!")
-        dmg = round(base * 0.8)
+        _hex_stacks = sk.get("debuff_stacks", 3)
+        add_charges(d, "hex_turns", _hex_stacks)
+        lines.append(f"💀 *Hexed ×{_hex_stacks}!* {d['username']} deals 25% less damage next {_hex_stacks} attacks!")
+        dmg = round(base * sk.get("mult", 0.8))
     elif stype == "vanish":
         add_charges(p, "vanish_turns", 3)
         lines.append(f"👻 *Vanished ×3!* {p['username']} is untargetable for 3 incoming hits!")
@@ -16695,10 +16803,27 @@ async def _execute_skill(update, context, p, sk):
             lines.append(f"🤐 *{sk['name']}!* {d['username']} is *Silence Immune* (max stacks).")
     elif stype == "holy_dmg":
         wis = get_stat(p,"WIS")
-        dmg = wis * 3
-        # Double against recent killers
-        recent_kills = d.get("recent_kills", 0)
-        if recent_kills: dmg *= 2; lines.append("✨ *Holy!* Double damage vs a recent killer!")
+        _holy_mult = sk.get("mult", 3)
+        dmg = wis * _holy_mult
+        sk_active = sk.get("active", sk.get("name", ""))
+        if sk_active == "Consecrate":
+            add_charges(d, "weakened_hits", 3)
+            lines.append(f"✨ *Consecrate!* WIS×{_holy_mult} = *{dmg}* holy damage! {d['username']} Weakened ×3 (-25% dmg for 3 hits)!")
+        elif sk_active == "Radiant Strike":
+            heal_self = wis * 2
+            p["hp"] = min(calc_max_hp(p), p["hp"] + heal_self)
+            lines.append(f"✨ *Radiant Strike!* WIS×{_holy_mult} = *{dmg}* holy damage! You restore *{heal_self} HP*!")
+        else:
+            # Smite / Dark Sense: double against debuffed targets
+            _debuffed = (safe_int(d.get("hex_turns")) > 0 or safe_int(d.get("weakened_hits")) > 0 or
+                         safe_int(d.get("cursed_hits")) > 0 or safe_int(d.get("poison_stacks")) > 0 or
+                         safe_int(d.get("distract_turns")) > 0 or _ts_active(d, "hexed_until"))
+            recent_kills = d.get("recent_kills", 0)
+            if _debuffed or recent_kills:
+                dmg *= 2
+                lines.append(f"✨ *{sk['name']}!* Double holy damage vs cursed/debuffed target! WIS×{_holy_mult}×2 = *{dmg}*!")
+            else:
+                lines.append(f"✨ *{sk['name']}!* WIS×{_holy_mult} = *{dmg}* holy damage!")
     elif stype == "strip_debuff":
         # Banish  -  strip buffs
         buffs_stripped = 0
@@ -16728,7 +16853,7 @@ async def _execute_skill(update, context, p, sk):
         lines.append(f"🌑 *Void Collapse!* {d['username']} loses 35% HP — Healing blocked!")
     elif stype == "freeze_nuke":
         int_v = get_stat(p,"INT")
-        dmg   = int_v * 6
+        dmg   = int_v * 5
         if safe_int(d.get("freeze_turns", 0)) < 3:
             add_charges(d, "freeze_turns", 2)
             lines.append(f"🧊 *Absolute Zero!* {d['username']} frozen for 2 turns!")
@@ -16766,7 +16891,8 @@ async def _execute_skill(update, context, p, sk):
             lines.append(f"🎯 *Execution Order!* You already have 2 active contracts  -  collect or wait.")
     elif stype == "bounty_mark":
         dmg = round(base * 0.8)
-        lines.append(f"🔴 *Contract!* Marking *{d['username']}*  -  increased threat level.")
+        add_charges(d, "marked_hits", 5)
+        lines.append(f"🔴 *Contract!* *{d['username']}* Marked ×5 — takes +20% damage next 5 hits!")
     elif stype == "aoe_heal_dmg":
         wis = get_stat(p, "WIS")
         heal = round(wis * sk.get("mult", 50))
@@ -16780,41 +16906,41 @@ async def _execute_skill(update, context, p, sk):
     elif stype == "aoe_poison_strong":
         wis = get_stat(p, "WIS")
         dmg = round(wis * 1.5)
-        add_charges(d, "poison_stacks", 8)
-        d["poison_pct"] = 30
-        lines.append(f"☠️ *Toxic Bloom!* Poison ×8 on {d['username']} — 30% max HP/action!")
+        add_charges(d, "poison_stacks", 5)
+        d["poison_pct"] = 15
+        lines.append(f"☠️ *Toxic Bloom!* Poison ×5 on {d['username']} — 15% max HP per incoming hit!")
     elif stype == "nature_nuke":
         wis = get_stat(p, "WIS")
         dmg = round(wis * 7)
-        add_charges(d, "poison_stacks", 6)
-        d["poison_pct"] = 30
-        add_charges(d, "heal_blocked_turns", 5)
-        lines.append(f"🌿 *Wrath of the Wild!* WIS×7 = {dmg}! Poison ×6 (30%/action) + Healing blocked ×5!")
+        add_charges(d, "poison_stacks", 4)
+        d["poison_pct"] = 15
+        add_charges(d, "heal_blocked_turns", 3)
+        lines.append(f"🌿 *Wrath of the Wild!* WIS×7 = *{dmg}*! Poison ×4 (15%/hit) + Healing blocked ×3!")
     elif stype == "drain_debuff":
-        steal = round(d["hp"] * 0.25)
+        steal = round(d["hp"] * 0.20)
         p["hp"] = min(calc_max_hp(p), p["hp"] + steal)
         dmg = steal
-        add_charges(d, "hex_turns", 4)
-        add_charges(d, "weakened_hits", 4)
-        lines.append(f"💀 *Doom Curse!* Drained *{steal} HP* from {d['username']}! Hexed ×4 + Weakened ×4!")
+        add_charges(d, "hex_turns", 3)
+        add_charges(d, "weakened_hits", 3)
+        lines.append(f"💀 *Doom Curse!* Drained *{steal} HP* from {d['username']}! Hexed ×3 + Weakened ×3!")
     elif stype == "curse_chain":
         int_v = get_stat(p, "INT")
         dmg = round(int_v * 1.5)
-        add_charges(d, "hex_turns", 5)
-        add_charges(d, "weakened_hits", 5)
-        add_charges(d, "exposed_hits", 5)
-        lines.append(f"💜 *Vex Chain!* {d['username']}: Hexed ×5 + Weakened ×5 + Exposed ×5!")
+        add_charges(d, "hex_turns", 3)
+        add_charges(d, "weakened_hits", 3)
+        add_charges(d, "exposed_hits", 3)
+        lines.append(f"💜 *Vex Chain!* {d['username']}: Hexed ×3 + Weakened ×3 + Exposed ×3!")
     elif stype == "mass_debuff":
         int_v = get_stat(p, "INT")
         dmg = round(int_v * 2.5)
-        add_charges(d, "hex_turns", 8)
-        add_charges(d, "weakened_hits", 8)
+        add_charges(d, "hex_turns", 4)
+        add_charges(d, "weakened_hits", 4)
         _stun_msg = ""
         if safe_int(d.get("stun_turns", 0)) < 3:
             add_charges(d, "stun_turns", 1); _stun_msg = ", Stunned ×1"
         else:
             _stun_msg = " (Stun Immune)"
-        lines.append(f"💜 *Dread Proclamation!* {d['username']}: Hexed ×8, Weakened ×8{_stun_msg}!")
+        lines.append(f"💜 *Dread Proclamation!* {d['username']}: Hexed ×4, Weakened ×4{_stun_msg}!")
     elif stype == "stun_def_dmg":
         str_v = get_stat(p, "STR"); def_v = get_stat(p, "DEF")
         dmg = round((str_v + def_v) * sk.get("mult", 1.0))
@@ -16855,7 +16981,7 @@ async def _execute_skill(update, context, p, sk):
     elif stype == "execute_multihit":
         hits = sk.get("hits", 8)
         hp_pct = d["hp"] / max(1, d["max_hp"])
-        mult = 1.0 if hp_pct <= 0.50 else sk.get("mult", 0.5)
+        mult = 0.75 if hp_pct <= 0.50 else sk.get("mult", 0.5)
         dmg = sum(round(base * mult) for _ in range(hits))
         if hp_pct <= 0.50:
             lines.append(f"💀 *Execute!* {d['username']} below 50% — full power!")
@@ -16873,8 +16999,14 @@ async def _execute_skill(update, context, p, sk):
         str_v = get_stat(p, "STR")
         dmg = round(str_v * 2)
         lines.append(f"⚡ *Chain Lightning!* STR×2 = {dmg} lightning — bounces to nearby targets!")
+    elif stype == "bind_attacker":
+        dmg = round(base * sk.get("mult", 0.8))
+        add_charges(d, "weakened_hits", 4)
+        add_charges(p, "branded_hits", 4)
+        lines.append(f"⚖️ *{sk['name']}!* {dmg} damage — {d['username']}: Weakened ×4 (-25% dmg output). "
+                     f"{p['username']}: Branded ×4 (attackers take -30% against you)!")
     elif stype in ("aoe_recent_attackers", "holy_nuke", "execute_nuke", "fear_kill",
-                   "random_aoe", "raid_aoe", "bind_attacker", "dmg_field",
+                   "random_aoe", "raid_aoe", "dmg_field",
                    "combo_dmg", "revive_heal", "execution_shot",
                    "multihit_crit", "pierce_dodge", "guaranteed_hit"):
         stat_key = sk.get("stat", get_primary_stat(p))
@@ -16907,6 +17039,14 @@ async def _execute_skill(update, context, p, sk):
             add_charges(d, "revive_blocked_turns", 20)
             lines.append(f"☠️ *{d['username']}* is condemned! Cannot be revived for 20 battles.\n"
                          f"Only a *Saint's Absolution* can counter this.")
+        elif stype == "drain_kill":
+            # On kill: restore 20% max HP to caster
+            restore = round(calc_max_hp(p) * 0.20)
+            p["hp"] = min(calc_max_hp(p), p["hp"] + restore)
+            lines.append(f"💀 *Drain Soul!* On kill: restored *{restore} HP*!")
+            d["defeated_until"] = (datetime.now()+timedelta(minutes=30)).isoformat()
+            d["last_defeated_by"] = f"{p['username']} using {sk['name']} (Skill)"
+            asyncio.create_task(_notify_defeat(context.bot, d, f"{p['username']} using {sk['name']}"))
         else:
             d["defeated_until"] = (datetime.now()+timedelta(minutes=30)).isoformat()
             d["last_defeated_by"] = f"{p['username']} using {sk['name']} (Skill)"
@@ -19833,8 +19973,11 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             skill_note = f"✨ *{sk_name}!* _(STR+DEF+WIS combined)_"
 
         elif stype == "holy_dmg":
-            dmg = max(1, wis_v * 3)
-            skill_note = f"✨ *{sk_name}!* _(WIS×3 holy damage)_"
+            _hm = sk.get("mult", 3)
+            dmg = max(1, wis_v * _hm)
+            if sk_name == "Radiant Strike":
+                p["hp"] = min(calc_max_hp(p), p["hp"] + wis_v * 2)
+            skill_note = f"✨ *{sk_name}!* _(WIS×{_hm} holy damage)_"
 
         elif stype in ("condemn", "curse_chain", "mass_debuff"):
             dmg = max(1, round(wis_v * sk_mult * random.uniform(0.9, 1.1)))
@@ -22578,10 +22721,10 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 def_state["miss_next_enemy"] = False
                 arena["log"].append(f"🌫️ {def_name}'s evasion causes {atk_name} to miss!")
                 dmg = 0
-            # Battle Cry passive: refresh +50 STR for 15m on attack
+            # Battle Cry passive: refresh +80 STR (5 hit charges) on each attack
             _arena_cls = get_player_class(attacker_data)
             if _arena_cls and _arena_cls.get("passive_key") == "battle_cry":
-                set_status(attacker_data, "battle_cry_str_until", 900)
+                attacker_data["battle_cry_str_hits"] = 5
                 save_player(attacker_data)
             if dmg > 0 and check_crit(attacker_data):
                 dmg = apply_crit(attacker_data, dmg)
@@ -22638,9 +22781,9 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     heal = round(arena[atk_max_key] * 0.20)
                     arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
-                    set_status(attacker_data, "battle_cry_str_until", 120)
+                    add_charges(attacker_data, "battle_cry_str_hits", 2)
                     save_player(attacker_data)
-                    log_entry = f"💪 {atk_name} uses *{sk['name']}*! +{heal} HP + 50 STR for 2 turns!"
+                    log_entry = f"💪 {atk_name} uses *{sk['name']}*! +{heal} HP + +80 STR for 2 attacks!"
             elif stype in ("self_heal","revive_heal"):
                 if atk_state.get("heal_block_turns", 0) > 0:
                     arena["log"].append(f"🚫 {atk_name} cannot be healed!")
@@ -23354,10 +23497,10 @@ async def arena_act_callback(update, context):
             def_state["miss_next_enemy"] = False
             arena["log"].append(f"🌫️ {def_name}'s evasion causes {atk_name} to miss!")
             dmg = 0
-        # Battle Cry passive: refresh +50 STR for 15m on attack
+        # Battle Cry passive: refresh +80 STR (5 hit charges) on each attack
         _arena_cls = get_player_class(attacker_data)
         if _arena_cls and _arena_cls.get("passive_key") == "battle_cry":
-            set_status(attacker_data, "battle_cry_str_until", 900)
+            attacker_data["battle_cry_str_hits"] = 5
             save_player(attacker_data)
         if dmg > 0 and check_crit(attacker_data):
             dmg = apply_crit(attacker_data, dmg)
@@ -23413,9 +23556,9 @@ async def arena_act_callback(update, context):
             else:
                 heal = round(arena[atk_max_key] * 0.20)
                 arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
-                set_status(attacker_data, "battle_cry_str_until", 120)
+                add_charges(attacker_data, "battle_cry_str_hits", 2)
                 save_player(attacker_data)
-                log_entry = f"💪 {atk_name} uses *{sk['name']}*! +{heal} HP + 50 STR for 2 turns!"
+                log_entry = f"💪 {atk_name} uses *{sk['name']}*! +{heal} HP + +80 STR for 2 attacks!"
         elif stype in ("self_heal","revive_heal"):
             if atk_state.get("heal_block_turns", 0) > 0:
                 log_entry = f"🚫 {atk_name}'s healing is blocked!"
@@ -29479,7 +29622,7 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 dmg = round(get_stat(p, stat_key) * sk.get("mult", 3.0))
                 lines.append(f"💥 *{sk['name']}!* {dmg} damage!")
             elif stype in ("drain", "drain_kill", "hp_drain"):
-                drain_pct = sk.get("drain_pct", 0.30)
+                drain_pct = min(sk.get("drain_pct", 0.25), 0.25)
                 dmg = round(boss_dict["hp"] * drain_pct)
                 heal = round(dmg * 0.50)
                 p["hp"] = min(p["max_hp"], p["hp"] + heal)
