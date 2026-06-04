@@ -26430,8 +26430,8 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     data   = query.data
     parts  = data.split("_")
 
-    # Page navigation
-    if data.startswith("combathub_pg_"):
+    # Page navigation OR back from action panel — restores full hub header + buttons
+    if data.startswith("combathub_pg_") or data.startswith("combathub_back_"):
         try:
             page    = int(parts[2])
             req_uid = int(parts[3])
@@ -26440,56 +26440,66 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if uid != req_uid:
             await query.answer("Not your hub.", show_alert=True); return
         await query.answer()
-        try: await query.edit_message_reply_markup(reply_markup=_combat_hub_markup(uid, page=page))
-        except: pass
+        p = get_player(uid)
+        if not p: return
+        hp_pct = p.get("hp", 1) / max(1, p.get("max_hp", 1))
+        hp_bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
+        cp = calc_combat_power(p)
+        status = "💀 Defeated (30 min)" if is_defeated(p) else ("⚔️ Ready" if hp_pct > 0.50 else "🩸 Wounded")
+        header = (f"⚔️ *{p['username']}'s Combat Hub*\n\n"
+                  f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
+                  f"⚡ CP: {cp:,}  |  {status}\n\n"
+                  f"Page 1: Direct  |  Page 2: Raids & War  |  Page 3: Exploration")
+        try: await query.edit_message_text(header, parse_mode="Markdown",
+                                           reply_markup=_combat_hub_markup(uid, page=page))
+        except Exception: pass
         return
 
-    try:
-        req_uid = int(parts[-1])
-    except (IndexError, ValueError):
-        req_uid = 0
+    try: req_uid = int(parts[-1])
+    except (IndexError, ValueError): req_uid = 0
     if uid != req_uid:
         await query.answer("Not your hub.", show_alert=True); return
+    await query.answer()
 
     action = parts[1] if len(parts) > 1 else ""
-    p      = get_player(uid)
+    p = get_player(uid)
     if not p:
         await query.answer("Register first.", show_alert=True); return
 
-    DISPATCH = {
-        "attack":      attack_cmd,
-        "skill":       skill_cmd,
-        "defend":      defend_cmd,
-        "heal":        heal_cmd,
-        "raid":        raid_cmd,
-        "soloraid":    soloraid_cmd,
-        "raidparty":   raidparty_cmd,
-        "explore":     explore_cmd,
-        "dungeon":     dungeon_cmd,
-        "dungeonhard": dungeonhard_cmd,
-        "dungeonleg":  dungeonlegendary_cmd,
+    _PAGE = {"attack":1,"skill":1,"arena":1,"duel":1,"defend":1,"heal":1,
+             "boss":2,"war":2,"raid":2,"soloraid":2,"raidparty":2,"cp":2,
+             "explore":3,"encounter":3,"dungeon":3,"dungeonhard":3,"dungeonleg":3,"petbattle":3}
+    page = _PAGE.get(action, 1)
+    back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"combathub_back_{page}_{uid}")]])
+
+    _TIPS = {
+        "attack":      ("⚔️ *Attack*",          "Reply to a player and type */attack* — or */attack @username* to strike them."),
+        "skill":       ("✨ *Use Skill*",        "Type */skill* to pick a target and fire your class skill."),
+        "arena":       ("🏟️ *Arena Duel*",       "Type */arena @player [wager]* for a turn-based wager duel."),
+        "duel":        ("🗡️ *Duel*",             "Type */duel @player* for a quick challenge fight."),
+        "defend":      ("🛡️ *Defend*",           "Type */defend* to reduce damage until your next action."),
+        "heal":        ("💊 *Heal*",             "Type */heal @player* (or alone for self). Priests heal free; others need a potion."),
+        "boss":        ("🐉 *Boss Raid*",        "Bosses spawn automatically. Type */attack* when one appears."),
+        "war":         ("⚔️ *Guild War*",        "Type */guildwar @guild* to declare war. Both guilds fight over 24h."),
+        "raid":        ("🛡️ *Guild Raid*",       "Type */raid* to start. Guild members join with */raidstrike*."),
+        "soloraid":    ("🗡️ *Solo Raid*",        "Type */soloraid* to enter a solo raid dungeon."),
+        "raidparty":   ("👥 *Raid Party*",       "Type */raidparty* to see your raid party status."),
+        "cp":          ("📊 *Combat Power*",     f"Your Combat Power: *{calc_combat_power(p):,}*\n\nHigher CP = bigger damage multiplier. Comes from gear quality."),
+        "explore":     ("🌍 *Explore*",          "Type */explore* for a 1-hour expedition — best loot. 2× per day."),
+        "encounter":   ("🗡️ *Encounter*",        "Random monsters appear during */explore*. Fight using the buttons when they appear."),
+        "dungeon":     ("🏚️ *Dungeon*",          "Type */dungeon* for a daily solo dungeon — rooms, traps, treasure."),
+        "dungeonhard": ("🔥 *Dungeon Hard*",     "Type */dungeonhard* (Lv 15+) — harder floors, better rewards."),
+        "dungeonleg":  ("💀 *Dungeon Legendary*","Type */dungeonlegendary* (Lv 40+) — hardest dungeon, best loot."),
+        "petbattle":   ("🐾 *Pet Battle*",       "Your pet auto-attacks alongside you in every */attack* and */skill*."),
     }
-    POPUPS = {
-        "arena":      "Use /arena @player [wager] for a turn-based wager duel.",
-        "duel":       "Use /duel @player for a quick challenge fight.",
-        "boss":       "Bosses spawn in chat automatically. Use /attack to hit them.",
-        "war":        "Use /guildwar @guild to declare war on another guild.",
-        "cp":         f"Your Combat Power: {calc_combat_power(p):,}  ·  Higher CP = harder hits.",
-        "encounter":  "Random monsters appear during /explore. Use the fight buttons to engage.",
-        "petbattle":  "Your active pet auto-attacks alongside you every /attack and /skill.",
-    }
-    popup_msg = POPUPS.get(action)
-    if popup_msg:
-        await query.answer(popup_msg[:200], show_alert=True)
-        return
-    await query.answer()
-    fn = DISPATCH.get(action)
-    if fn:
-        try:
-            await fn(update, context)
-        except Exception as e:
-            await send_group(update, "❌ Command failed — try typing it directly.", delay=9)
-        return
+    tip = _TIPS.get(action)
+    if tip:
+        title, desc = tip
+        try: await query.edit_message_text(f"{title}\n\n{desc}", parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+    else:
+        try: await query.edit_message_text(f"_{action}_ — use the command in chat.", parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
 
 # ── /social Hub ───────────────────────────────────────────────────────────────
 _SOCIAL_HUB_PAGES = [
@@ -26747,7 +26757,8 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data  = query.data
     parts = data.split("_")
 
-    if data.startswith("gearhub_pg_"):
+    # Page navigation OR back from action panel — restores full hub header + buttons
+    if data.startswith("gearhub_pg_") or data.startswith("gearhub_back_"):
         try:
             page    = int(parts[2])
             req_uid = int(parts[3])
@@ -26756,52 +26767,40 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if uid != req_uid:
             await query.answer("Not your hub.", show_alert=True); return
         await query.answer()
-        try: await query.edit_message_reply_markup(reply_markup=_gearhub_markup(uid, page=page))
-        except: pass
+        p = get_player(uid)
+        if not p: return
+        header = (f"⚙️ *{p['username']}'s Gear Hub*\n\n"
+                  f"Page 1: Equipment  |  Page 2: Upgrades\nPage 3: Economy")
+        try: await query.edit_message_text(header, parse_mode="Markdown",
+                                           reply_markup=_gearhub_markup(uid, page=page))
+        except Exception: pass
         return
 
-    try:
-        req_uid = int(parts[-1])
-    except (IndexError, ValueError):
-        req_uid = 0
+    try: req_uid = int(parts[-1])
+    except (IndexError, ValueError): req_uid = 0
     if uid != req_uid:
         await query.answer("Not your hub.", show_alert=True); return
+    await query.answer()
 
     action = parts[1] if len(parts) > 1 else ""
-    DISPATCH = {
-        "inventory": inventory_cmd,
-        "gear":      gear_cmd,
-        "equip":     equip_cmd,
-        "unequip":   unequip_cmd,
-        "shop":      shop_cmd,
-        "sell":      sell_cmd,
-        "enhance":   enhance_cmd,
-        "reinforce": reinforce_cmd,
-        "forge":     forge_cmd,
-        "perma":     perma_cmd,
-        "enchant":   enchant_cmd,
-        "pool":      pool_cmd,
-        "accept":    accept_trade_cmd,
-        "decline":   decline_trade_cmd,
-        "deposit":   deposit_cmd,
-        "withdraw":  withdraw_cmd,
-    }
-    POPUPS = {
-        "trade": "Use /trade @player [item] to send a trade offer to another player.",
-        "cp":    "Use /cp to check your Combat Power rating.",
-    }
-    popup_msg = POPUPS.get(action)
-    if popup_msg:
-        await query.answer(popup_msg[:200], show_alert=True)
-        return
-    await query.answer()
-    fn = DISPATCH.get(action)
-    if fn:
-        try:
-            await fn(update, context)
-        except Exception:
-            await send_group(update, "❌ Command failed — try typing it directly.", delay=9)
-        return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Register first.", show_alert=True); return
+
+    _PAGE = {"inv":1,"gear":1,"equip":1,"unequip":1,"shop":1,"sell":1,
+             "enhance":2,"reinforce":2,"forge":2,"perma":2,"enchant":2,"pool":2,
+             "trade":3,"accept":3,"decline":3,"deposit":3,"withdraw":3,"cp":3,"permpool":3}
+    page = _PAGE.get(action, 1)
+    back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"gearhub_back_{page}_{uid}")]])
+
+    tip = _GEAR_HUB_TIPS.get(action)
+    if tip:
+        title, desc = tip
+        try: await query.edit_message_text(f"{title}\n\n{desc}", parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+    else:
+        try: await query.edit_message_text(f"_{action}_ — use the command in chat.", parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
 
 # ── ACTIVITIES HUB ────────────────────────────────────────────────────────────
 _ACTIVITIES_HUB_PAGES = [
@@ -26880,7 +26879,8 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
     data  = query.data
     parts = data.split("_")
 
-    if data.startswith("acthub_pg_"):
+    # Page navigation OR back from action panel — restores full hub header + buttons
+    if data.startswith("acthub_pg_") or data.startswith("acthub_back_"):
         try:
             page    = int(parts[2])
             req_uid = int(parts[3])
@@ -26889,52 +26889,139 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         if uid != req_uid:
             await query.answer("Not your hub.", show_alert=True); return
         await query.answer()
-        try: await query.edit_message_reply_markup(reply_markup=_activities_hub_markup(uid, page=page))
-        except: pass
+        p = get_player(uid)
+        if not p: return
+        header = (f"🌍 *{p['username']}'s Activities Hub*\n\n"
+                  f"Page 1: Daily  |  Page 2: Challenges\nPage 3: Character")
+        try: await query.edit_message_text(header, parse_mode="Markdown",
+                                           reply_markup=_activities_hub_markup(uid, page=page))
+        except Exception: pass
         return
 
-    try:
-        req_uid = int(parts[-1])
-    except (IndexError, ValueError):
-        req_uid = 0
+    try: req_uid = int(parts[-1])
+    except (IndexError, ValueError): req_uid = 0
     if uid != req_uid:
         await query.answer("Not your hub.", show_alert=True); return
+    await query.answer()
 
     action = parts[1] if len(parts) > 1 else ""
-    DISPATCH = {
-        "hustle":      hustle_cmd,
-        "daily":       daily_cmd,
-        "claim":       claim_cmd,
-        "train":       train_cmd,
-        "quest":       quest_cmd,
-        "explore":     explore_cmd,
-        "dungeon":     dungeon_cmd,
-        "dungeonhard": dungeonhard_cmd,
-        "dungeonleg":  dungeonlegendary_cmd,
-        "oracle":      oracle_cmd,
-        "objectives":  objectives_cmd,
-        "cooldowns":   cooldowns_cmd,
-        "stats":       stats_cmd,
-        "class":       class_cmd,
-        "prestige":    prestige_cmd,
-        "skills":      skill_cmd,
-        "changelog":   changelog_cmd,
-    }
-    POPUPS = {
-        "allocate": "Use /allocate [stat] [amount] to spend stat points — e.g. /allocate STR 5",
-    }
-    popup_msg = POPUPS.get(action)
-    if popup_msg:
-        await query.answer(popup_msg[:200], show_alert=True)
-        return
-    await query.answer()
-    fn = DISPATCH.get(action)
-    if fn:
-        try:
-            await fn(update, context)
-        except Exception:
-            await send_group(update, "❌ Command failed — try typing it directly.", delay=9)
-        return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Register first.", show_alert=True); return
+
+    _PAGE = {"hustle":1,"daily":1,"claim":1,"train":1,"quest":1,"explore":1,
+             "dungeon":2,"dungeonhard":2,"dungeonleg":2,"oracle":2,"objectives":2,"cooldowns":2,
+             "stats":3,"allocate":3,"class":3,"prestige":3,"skills":3,"changelog":3}
+    page = _PAGE.get(action, 1)
+    back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"acthub_back_{page}_{uid}")]])
+
+    async def _show(text):
+        try: await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    # ── Daily: execute inline ────────────────────────────────────────
+    if action == "daily":
+        if not check_cooldown(p.get("last_daily"), 86400):
+            await _show(f"📅 *Daily*\n\n⏳ Already claimed. Ready in {time_remaining(p.get('last_daily'), 86400)}.")
+        else:
+            p["last_daily"] = datetime.now().isoformat()
+            gold = 50 + p["level"] * 5; p["gold"] = p.get("gold", 0) + gold
+            item = None
+            if random.random() < 0.10:
+                item = random.choice(["Health Potion","Greater Health Potion","Grand Restorative Flask"])
+                add_item(p, item)
+            daily_exp = 200 + p["level"] * 10
+            lmsgs, _ = add_exp(p, daily_exp); save_player(p)
+            text = f"🎁 *Daily Reward!*\n\n✨ +{daily_exp} EXP | 💰 +{gold} Gold"
+            if item: text += f" | 🎒 *{item}*"
+            if lmsgs: text += "\n\n" + "\n".join(lmsgs[:3])
+            await _show(text)
+
+    # ── Train: execute inline ────────────────────────────────────────
+    elif action == "train":
+        if is_defeated(p):
+            await _show("🏋️ *Train*\n\n💀 Too beaten up to train right now.")
+        elif not check_cooldown(p.get("last_train"), 1800):
+            await _show(f"🏋️ *Train*\n\n⏳ Ready in {time_remaining(p.get('last_train'), 1800)}.")
+        else:
+            p["last_train"] = datetime.now().isoformat()
+            base = 150 + p["level"] * 5
+            cls = get_player_class(p); note = ""
+            if cls:
+                pk = cls.get("passive_key", "")
+                if pk in ("arcane_mind","spell_surge","arcane_mastery","mana_overload","eternal_wisdom"):
+                    base = round(base*1.30); note = f"\n🔮 *{cls['name']}* focus bonus! +30%"
+                elif pk in ("iron_will","holy_stance","devotion","bulwark","divine_judgment"):
+                    base = round(base*1.20); note = f"\n🛡️ *{cls['name']}* endurance bonus! +20%"
+                elif pk in ("quick_hands","evasion","shadowstep","ghost_form","deaths_shadow",
+                            "eagle_eye","trailblazer","natures_bond","guardian_stance","pathfinder"):
+                    base = round(base*1.35); note = f"\n⚡ *{cls['name']}* speed bonus! +35%"
+                elif pk in ("mending_aura","divine_grace","sacred_ground","resurrection","divine_presence",
+                            "dark_sense","purge","judgement","wrath_of_the_righteous"):
+                    base = round(base*1.15); note = f"\n✨ *{cls['name']}* wisdom bonus! +15%"
+            lmsgs, _ = add_exp(p, base); save_player(p)
+            text = f"🏋️ *Training Session*\n\n_{random.choice(TRAIN_MESSAGES)}_\n\n✨ +{base} EXP{note}"
+            if lmsgs: text += "\n\n" + "\n".join(lmsgs[:3])
+            await _show(text)
+
+    # ── Cooldowns: display inline ────────────────────────────────────
+    elif action == "cooldowns":
+        s_cd = get_shadow(uid)
+        pool_ts = p.get("last_pool") or (s_cd.get("last_pool") if s_cd else None)
+        today = datetime.now().strftime("%Y-%m-%d")
+        exp_count = safe_int(p.get("explore_count_today")) if p.get("explore_date") == today else 0
+        lines = [f"⏳ *{p['username']}'s Cooldowns:*\n",
+                 f"🎁 Daily:    {time_remaining(p.get('last_daily'), 86400)}",
+                 f"🗺️ Quest:    {time_remaining(p.get('last_quest'), 3600)}",
+                 f"🏋️ Train:    {time_remaining(p.get('last_train'), 1800)}",
+                 f"🎱 Pool:     {time_remaining(pool_ts, 8)}",
+                 f"🗺️ Explore:  {exp_count}/2 today",
+                 f"🏰 Dungeon:  {time_remaining(p.get('last_dungeon'), 86400)}"]
+        if is_defeated(p):
+            diff = datetime.fromisoformat(p["defeated_until"]) - datetime.now()
+            h2, r2 = divmod(int(max(0, diff.total_seconds())), 3600); m2 = r2 // 60
+            lines.append(f"💀 Defeat:   {h2}h {m2}m remaining")
+        await _show("\n".join(lines))
+
+    # ── Objectives: display inline ───────────────────────────────────
+    elif action == "objectives":
+        refresh_daily_objectives(p); save_player(p)
+        objs = sjl(p.get("daily_objectives"), [])
+        lines = ["🎯 *Daily Objectives*\n_Reset each day at midnight_\n"]
+        for obj in objs:
+            prog = safe_int(obj.get("progress")); tgt = max(1, safe_int(obj.get("target")))
+            done = prog >= tgt; chk = "✅" if done else "⬜"
+            fill = round(min(prog, tgt) / tgt * 8)
+            bar = "█" * fill + "░" * (8 - fill)
+            lines.append(f"{chk} *{obj['desc']}*\n`{bar}` {prog}/{tgt}  ·  +{obj.get('reward_exp',0)} EXP, {obj.get('reward_gold',0)}g")
+        lines.append(f"\n📊 Completed today: {safe_int(p.get('objectives_completed'))}")
+        await _show("\n\n".join(lines))
+
+    # ── Changelog: display inline ────────────────────────────────────
+    elif action == "changelog":
+        entries = CHANGELOG[-3:]
+        lines = ["📋 *8Ball World — Recent Updates*\n"]
+        for entry in reversed(entries):
+            lines.append(f"*{entry['version']}* _{entry['date']}_")
+            for c in entry["changes"][:5]: lines.append(f"• {c}")
+            lines.append("")
+        await _show("\n".join(lines))
+
+    # ── Allocate: show info inline ───────────────────────────────────
+    elif action == "allocate":
+        sp = safe_int(p.get("stat_points"))
+        await _show(f"⬆️ *Allocate Stats*\n\nStat Points Available: *{sp}*\n\n"
+                    f"Type in chat:\n`/allocate STR 5` — +5 Strength\n"
+                    f"Stats: STR · DEX · INT · WIS · AGI · LUK")
+
+    # ── All other actions: show tip panel ────────────────────────────
+    else:
+        tip = _ACTIVITIES_HUB_TIPS.get(action)
+        if tip:
+            title, desc = tip
+            await _show(f"{title}\n\n{desc}")
+        else:
+            await _show(f"_{action}_ — use the command in chat.")
 
 # ── EMPIRE (Master Hub) ───────────────────────────────────────────────────────
 def _empire_markup(uid: int) -> InlineKeyboardMarkup:
