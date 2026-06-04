@@ -347,7 +347,7 @@ def exp_for_level(level):
     elif level <= 90: return level * 1500000000
     else:             return level * 5000000000
 
-def max_hp_for_level(level): return 1000 + (level - 1) * 580
+def max_hp_for_level(level): return 300 + (level - 1) * 250
 
 # HP multiplier per class line — warrior = tank, mage = glass cannon
 _CLASS_LINE_HP_MULT = {
@@ -2957,9 +2957,9 @@ def _pet_main_markup():
 # Items that can be found in game
 CONSUMABLES = {
     # Healing
-    "Health Potion":          {"desc":"Restores 800 HP.","sell":75},
-    "Greater Health Potion":  {"desc":"Restores 1500 HP.","sell":200},
-    "Grand Restorative Flask":{"desc":"Restores 4000 HP.","sell":450},
+    "Health Potion":          {"desc":"Restores 250 HP.","sell":75},
+    "Greater Health Potion":  {"desc":"Restores 500 HP.","sell":200},
+    "Grand Restorative Flask":{"desc":"Restores 1500 HP.","sell":450},
     # Revive
     "Scroll of Revival":      {"desc":"Revive a defeated player.","sell":750},
     # Skill items
@@ -3049,9 +3049,9 @@ RECIPES = {
 }
 
 SHOP_POOL = [  # kept for legacy compat
-    {"item":"Health Potion","price":150,"desc":"Restores 800 HP."},
-    {"item":"Greater Health Potion","price":400,"desc":"Restores 1500 HP."},
-    {"item":"Grand Restorative Flask","price":900,"desc":"Restores 4000 HP."},
+    {"item":"Health Potion","price":150,"desc":"Restores 250 HP."},
+    {"item":"Greater Health Potion","price":400,"desc":"Restores 500 HP."},
+    {"item":"Grand Restorative Flask","price":900,"desc":"Restores 1500 HP."},
     {"item":"Scroll of Revival","price":1500,"desc":"Revive a defeated player."},
     {"item":"Iron Shard","price":300,"desc":"Crafting material."},
     {"item":"Enchanting Scroll","price":500,"desc":"Enchant gear."},
@@ -3061,9 +3061,9 @@ _RARITY_PRICES = {"common":350,"uncommon":950,"rare":2800,"epic":7000}
 
 _SHOP_STATIC_TABS = {
     "pot": [
-        {"item":"Health Potion",          "price":150,  "desc":"Restores 800 HP."},
-        {"item":"Greater Health Potion",  "price":400,  "desc":"Restores 1500 HP."},
-        {"item":"Grand Restorative Flask","price":900,  "desc":"Restores 4000 HP."},
+        {"item":"Health Potion",          "price":150,  "desc":"Restores 250 HP."},
+        {"item":"Greater Health Potion",  "price":400,  "desc":"Restores 500 HP."},
+        {"item":"Grand Restorative Flask","price":900,  "desc":"Restores 1500 HP."},
         {"item":"Scroll of Revival",      "price":1500, "desc":"Revive a defeated player."},
     ],
     "mat": [
@@ -4182,16 +4182,12 @@ def _apply_move_effect(enc, move_key, target="player"):
         enc["p_skip"] = True
         flavour = " Target is terrified and skips their turn!"
     elif effect == "heal_self":
-        heal = enc["e_max_hp"] // 5
-        enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + heal)
-        flavour = f" {enc['e_name']} recovered {heal} HP!"
+        flavour = f" {enc['e_name']} tries to recover but fails!"
     elif effect == "hex":
         enc["p_hexed"] = True
         flavour = " Target is hexed!"
     elif effect == "lifesteal":
-        ls = int(enc.get("last_dmg", 0) * 0.3)
-        enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + ls)
-        flavour = f" {enc['e_name']} drained {ls} HP!"
+        flavour = f" {enc['e_name']} attempts to drain but nothing happens!"
     elif effect == "paralyze":
         enc["p_skip"] = True
         flavour = " Target is paralyzed and loses their turn!"
@@ -4268,10 +4264,8 @@ def _enc_npc_attack(enc, p):
     )[0]
 
     if strategy == "rest":
-        # Healer-class NPCs only: recover HP this turn
-        heal = enc["e_max_hp"] // 10
-        enc["e_hp"] = min(enc["e_max_hp"], enc["e_hp"] + heal)
-        return f"⛔ *{enc['e_name']}* channels healing energy and recovers *{heal} HP*!"
+        # Healer-class NPCs fall back to a light attack instead of healing
+        strategy = "light"
 
     if strategy == "light":
         dmg_mult  = base_mult * random.uniform(0.28, 0.52)
@@ -9928,9 +9922,9 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("🚫 Healing blocked!", show_alert=True); return
             inv = sjl(a.get("inventory"), [])
             potion = None; heal_amount = 0
-            for pname, pamt in [("Grand Restorative Flask", 4000),
-                                ("Greater Health Potion", 1500),
-                                ("Health Potion", 800)]:
+            for pname, pamt in [("Grand Restorative Flask", 1500),
+                                ("Greater Health Potion", 500),
+                                ("Health Potion", 250)]:
                 if pname in inv:
                     potion = pname; heal_amount = pamt; break
             if not potion:
@@ -10143,11 +10137,11 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         # Non-priest  -  requires potion
         if "Grand Restorative Flask" in inv:
-            potion = "Grand Restorative Flask"; heal_amount = 4000
+            potion = "Grand Restorative Flask"; heal_amount = 1500
         elif "Greater Health Potion" in inv:
-            potion = "Greater Health Potion"; heal_amount = 1500
+            potion = "Greater Health Potion"; heal_amount = 500
         elif "Health Potion" in inv:
-            potion = "Health Potion"; heal_amount = 800
+            potion = "Health Potion"; heal_amount = 250
         else:
             await send_group(update,
                 "❌ You need a Health Potion to heal someone!\n"
@@ -12659,7 +12653,7 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_defeated(p):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
             await query.answer("You're defeated — potions won't help!", show_alert=True); return
-        hp_gain = {"Health Potion": 800, "Greater Health Potion": 1500, "Grand Restorative Flask": 4000}.get(item_name, 3000)
+        hp_gain = {"Health Potion": 250, "Greater Health Potion": 500, "Grand Restorative Flask": 1500}.get(item_name, 1000)
         p["hp"] = min(calc_max_hp(p), p["hp"] + hp_gain)
         msg += f"❤️ +{hp_gain} HP ({p['hp']}/{calc_max_hp(p)})"
     elif item_name == "Scroll of Revival":
@@ -12903,7 +12897,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+800);  msg += f"❤️ +800 HP ({p['hp']:,}/{calc_max_hp(p):,})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+250);  msg += f"❤️ +250 HP ({p['hp']:,}/{calc_max_hp(p):,})"
     elif item == "Greater Health Potion":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -12912,7 +12906,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+1500);  msg += f"❤️ +1500 HP ({p['hp']:,}/{calc_max_hp(p):,})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+500);  msg += f"❤️ +500 HP ({p['hp']:,}/{calc_max_hp(p):,})"
     elif item == "Grand Restorative Flask":
         if is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -12921,7 +12915,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+4000);  msg += f"❤️ +4000 HP ({p['hp']:,}/{calc_max_hp(p):,})"
+        p["hp"] = min(calc_max_hp(p), p["hp"]+1500);  msg += f"❤️ +1500 HP ({p['hp']:,}/{calc_max_hp(p):,})"
     elif item == "Scroll of Revival":
         if not is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -20340,11 +20334,11 @@ async def dungeon_wiz_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         if cls_line == "priest":
             heal_amt = round(get_stat(p, "WIS") * 40)
         elif "Grand Restorative Flask" in inv:
-            potion = "Grand Restorative Flask"; heal_amt = 4000
+            potion = "Grand Restorative Flask"; heal_amt = 1500
         elif "Greater Health Potion" in inv:
-            potion = "Greater Health Potion"; heal_amt = 1500
+            potion = "Greater Health Potion"; heal_amt = 500
         elif "Health Potion" in inv:
-            potion = "Health Potion"; heal_amt = 800
+            potion = "Health Potion"; heal_amt = 250
         else:
             await query.answer("No potions! (Priests can heal for free)", show_alert=True)
             return
@@ -21271,9 +21265,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         elif data == f"enc_heal_{uid}":
             _inv = sjl(p.get("inventory"), [])
             _potion, _heal = None, 0
-            if "Grand Restorative Flask" in _inv:   _potion, _heal = "Grand Restorative Flask", 4000
-            elif "Greater Health Potion" in _inv:   _potion, _heal = "Greater Health Potion", 1500
-            elif "Health Potion" in _inv:           _potion, _heal = "Health Potion", 800
+            if "Grand Restorative Flask" in _inv:   _potion, _heal = "Grand Restorative Flask", 1500
+            elif "Greater Health Potion" in _inv:   _potion, _heal = "Greater Health Potion", 500
+            elif "Health Potion" in _inv:           _potion, _heal = "Health Potion", 250
             if not _potion:
                 enc.setdefault("action_log", []).append("🧪 No potions in your bag!")
                 if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
@@ -21564,9 +21558,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         elif data == f"enc_heal_{uid}":
             _inv = sjl(p.get("inventory"), [])
             _potion, _heal = None, 0
-            if "Grand Restorative Flask" in _inv:   _potion, _heal = "Grand Restorative Flask", 4000
-            elif "Greater Health Potion" in _inv:   _potion, _heal = "Greater Health Potion", 1500
-            elif "Health Potion" in _inv:           _potion, _heal = "Health Potion", 800
+            if "Grand Restorative Flask" in _inv:   _potion, _heal = "Grand Restorative Flask", 1500
+            elif "Greater Health Potion" in _inv:   _potion, _heal = "Greater Health Potion", 500
+            elif "Health Potion" in _inv:           _potion, _heal = "Health Potion", 250
             if not _potion:
                 enc.setdefault("action_log", []).append("🧪 No potions in your bag!")
                 if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
@@ -23289,7 +23283,7 @@ async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             items[item_name] -= 1
             if items[item_name] <= 0: del items[item_name]
             if "Health Potion" in item_name or "Restorative Flask" in item_name or "Greater Health" in item_name:
-                heal_val = {"Health Potion":800,"Greater Health Potion":1500,"Grand Restorative Flask":4000}.get(item_name,800)
+                heal_val = {"Health Potion":250,"Greater Health Potion":500,"Grand Restorative Flask":1500}.get(item_name,250)
                 arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal_val)
                 log_entry = f"🧪 {atk_name} drinks *{item_name}*! +{heal_val} HP."
             else:
@@ -26656,6 +26650,30 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         lines.append("\nType `/heal` in chat to heal yourself, or reply to a teammate.")
         try: await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back)
         except Exception: pass
+
+    elif action == "encounter":
+        if uid in active_encounters:
+            try: await query.edit_message_text(
+                "⚠️ *Encounter in Progress*\n\nYou're already in an encounter — use the buttons to continue.",
+                parse_mode="Markdown", reply_markup=back)
+            except Exception: pass
+        elif is_defeated(p):
+            try: await query.edit_message_text(
+                "🗡️ *Encounter*\n\n💀 You're defeated — recover before fighting.",
+                parse_mode="Markdown", reply_markup=back)
+            except Exception: pass
+        else:
+            enc_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚔️ Battle — fight an NPC",        callback_data=f"enc_mode_{uid}_battle")],
+                [InlineKeyboardButton("🌿 Hunt — fight wild monsters",   callback_data=f"enc_mode_{uid}_hunt")],
+                [InlineKeyboardButton("← Back", callback_data=f"combathub_back_2_{uid}")],
+            ])
+            try: await query.edit_message_text(
+                "🗡️ *Encounter*\n\n"
+                "⚔️ *Battle* — fight NPCs for EXP and gear\n"
+                "🌿 *Hunt* — fight wild monsters; weaken them to catch for *Monster Cores*",
+                parse_mode="Markdown", reply_markup=enc_markup)
+            except Exception: pass
 
     else:
         tip = _TIPS.get(action)
