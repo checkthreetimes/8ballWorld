@@ -7,7 +7,6 @@ import os, json, random, logging, sqlite3, re, asyncio, time, threading
 from datetime import datetime, timedelta
 from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import RetryAfter
 from telegram.ext import (
     Application, CommandHandler, ContextTypes,
     MessageHandler, filters, CallbackQueryHandler,
@@ -154,8 +153,6 @@ _pvp_cur_page      = {}   # pair -> int, current page index (0 = oldest)
 _pvp_player_cards  = {}   # uid -> (chat_id, message_id) — each player's own battle card
 _pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
-_bal_expires       = {}   # uid -> float: time.time() when balance recovers
-_eq_expires        = {}   # uid -> float: time.time() when equilibrium recovers
 _PVP_ACTION_CD     = 1.5  # seconds between PvP card button presses (prevents API rate-limit drops)
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
 _megaphone_state   = {"group": None}  # last known group chat ID for /megaphone DMs
@@ -4925,7 +4922,7 @@ def guild_exp_for_level(level): return level * 500
 
 _DNG_FLOORS       = 6
 _DNG_ROOMS        = 10
-_DNG_TICK_SECS    = [4, 3, 4, 3, 2, 3, 4, 3]   # enemy attack intervals (min 2s for Telegram rate limits)
+_DNG_TICK_SECS    = [3, 2, 3, 2, 1, 2, 3, 2]   # enemy attack intervals
 
 _DNG_ROOM_WEIGHTS = {
     1: [("monster",48),("trap",20),("treasure",14),("rest",12),("shrine",6)],
@@ -5313,18 +5310,8 @@ def _dng_roll_narration(key, **kwargs):
 
 def _dng_gen_floor(floor):
     weights_raw = _DNG_ROOM_WEIGHTS.get(min(floor, _DNG_FLOORS), _DNG_ROOM_WEIGHTS[6])
-    types_list, ws_list = zip(*weights_raw)
-    rooms = []
-    for _ in range(_DNG_ROOMS - 1):
-        last = rooms[-1] if rooms else None
-        # Only monster/npc may appear consecutively; all other types must not repeat
-        if last and last not in ("monster", "npc"):
-            filtered = [(t, w) for t, w in zip(types_list, ws_list) if t != last]
-            if filtered:
-                ft, fw = zip(*filtered)
-                rooms.append(random.choices(ft, weights=fw, k=1)[0])
-                continue
-        rooms.append(random.choices(types_list, weights=ws_list, k=1)[0])
+    types, ws = zip(*weights_raw)
+    rooms = list(random.choices(types, weights=ws, k=_DNG_ROOMS - 1))
     # Guarantee at least one non-combat room in first half for survivability
     if not any(r in ("rest","treasure","shrine") for r in rooms[:5]):
         rooms[random.randint(0, 4)] = random.choice(["rest","treasure","shrine"])
@@ -5598,16 +5585,13 @@ async def _dng_ticker(uid: int, bot):
                 state.setdefault("combat_log", []).append(log_entry)
                 if len(state["combat_log"]) > 5:
                     state["combat_log"] = state["combat_log"][-5:]
-                if uid not in _processing_users:
-                    try:
-                        await bot.edit_message_text(
-                            chat_id=state["chat_id"], message_id=state["msg_id"],
-                            text=_dng_combat_card(state)[:4096], parse_mode="Markdown",
-                            reply_markup=_dng_combat_markup(uid, state))
-                    except RetryAfter as _ra:
-                        await asyncio.sleep(_ra.retry_after + 0.5)
-                    except Exception:
-                        pass
+                try:
+                    await bot.edit_message_text(
+                        chat_id=state["chat_id"], message_id=state["msg_id"],
+                        text=_dng_combat_card(state)[:4096], parse_mode="Markdown",
+                        reply_markup=_dng_combat_markup(uid, state))
+                except Exception:
+                    pass
                 tick += 1
                 continue
             # Tick player DoTs
@@ -5746,17 +5730,14 @@ async def _dng_ticker(uid: int, bot):
                 except Exception:
                     pass
                 return
-            # Update the card — skip if player is mid-action to avoid edit conflicts
-            if uid not in _processing_users:
-                try:
-                    await bot.edit_message_text(
-                        chat_id=state["chat_id"], message_id=state["msg_id"],
-                        text=_dng_combat_card(state)[:4096], parse_mode="Markdown",
-                        reply_markup=_dng_combat_markup(uid, state))
-                except RetryAfter as _ra:
-                    await asyncio.sleep(_ra.retry_after + 0.5)
-                except Exception:
-                    pass
+            # Update the card
+            try:
+                await bot.edit_message_text(
+                    chat_id=state["chat_id"], message_id=state["msg_id"],
+                    text=_dng_combat_card(state)[:4096], parse_mode="Markdown",
+                    reply_markup=_dng_combat_markup(uid, state))
+            except Exception:
+                pass
             tick += 1
     except asyncio.CancelledError:
         pass
@@ -5972,17 +5953,6 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid != cb_uid:
         await query.answer("Not your dungeon!", show_alert=True); return
 
-    # Prevent concurrent button processing for the same user
-    if not _cb_lock(uid):
-        await query.answer("⏳ Please wait…", show_alert=False); return
-
-    try:
-        await _dungeon_callback_inner(update, context, query, data, uid)
-    finally:
-        _cb_unlock(uid)
-
-
-async def _dungeon_callback_inner(update, context, query, data, uid):
     state = active_dungeons.get(uid)
 
     # ── ENTER ──────────────────────────────────────────────────────────────────
@@ -6149,17 +6119,9 @@ async def _dungeon_callback_inner(update, context, query, data, uid):
             sk  = get_combat_skills(p)[idx]
         except (IndexError, ValueError):
             return
-        # Reuse encounter skill processor — state mirrors enc dict structure.
-        # Prime e_* keys from the actual enemy so additions in _enc_process_skill
-        # are based on current state, not stale values from a previous skill call.
-        state["e_hp"]           = e["hp"]
-        state["e_max_hp"]       = e["max_hp"]
-        state["e_stunned_turns"] = e.get("stunned_turns", 0)
-        state["e_burning"]      = e.get("burning", False)
-        state["e_burn_turns"]   = e.get("burn_turns", 0)
-        state["e_poisoned"]     = e.get("poisoned", False)
-        state["e_poison_pct"]   = e.get("poison_pct", 0)
-        state["e_weakened"]     = e.get("weakened", False)
+        # Reuse encounter skill processor — state mirrors enc dict structure
+        state["e_hp"]     = e["hp"]
+        state["e_max_hp"] = e["max_hp"]
         action_txt, sk_dmg, is_support = _enc_process_skill(state, p, sk)
         # Arcane surge: +60% skill damage
         if state.get("floor_buff") == "arcane_surge" and sk_dmg and sk_dmg > 0:
@@ -6171,10 +6133,8 @@ async def _dungeon_callback_inner(update, context, query, data, uid):
         for _sf, _ef in [("e_burning","burning"),("e_poisoned","poisoned"),
                          ("e_stunned_turns","stunned_turns"),("e_weakened","weakened"),
                          ("e_burn_turns","burn_turns"),("e_poison_pct","poison_pct")]:
-            e[_ef] = state.get(_sf) or e.get(_ef)  # prefer updated value, keep existing if skill didn't touch it
-        # Clear the bridge keys so stale values can't re-apply on the next skill call
-        for _sf in ("e_burning","e_poisoned","e_stunned_turns","e_weakened","e_burn_turns","e_poison_pct"):
-            state.pop(_sf, None)
+            if state.get(_sf):
+                e[_ef] = state[_sf]
         state.setdefault("combat_log",[]).append(action_txt)
         if len(state["combat_log"]) > 5: state["combat_log"] = state["combat_log"][-5:]
         if e["hp"] <= 0:
@@ -6337,7 +6297,7 @@ async def _dng_on_enemy_killed(uid, bot, p, state):
             return
         markup = _dng_floor_done_markup(uid, floor)
     else:
-        # Do NOT advance the room here — dng_next_ callback owns that
+        state["room"] += 1
         markup = InlineKeyboardMarkup([[
             InlineKeyboardButton("➡️ Next Room", callback_data=f"dng_next_{uid}"),
             InlineKeyboardButton("🚪 Extract",   callback_data=f"dng_extract_{uid}"),
@@ -10256,7 +10216,6 @@ def _pvp_pokemon_card(viewer_uid, a, d, pair):
     lines.append("")
     lines.append(f"👤 *{bot['username']}*{'  ' + bot_s if bot_s else ''}")
     lines.append(f"`{bot_bar}`  {bot['hp']}/{bot.get('max_hp', bot['hp'])} HP")
-    lines.append(_be_status_line(viewer_uid))
     # Kill condition hint: show what attacker (viewer) needs on their opponent (top)
     _kc = _KILL_CONDITIONS.get(get_class_line(bot)) if viewer_uid == bot["user_id"] else None
     if _kc:
@@ -11084,45 +11043,6 @@ def get_player_by_username(name):
 
 
 # ── TARGET PICKER (shared by /attack and /skill) ──────────────────────────────
-_PICKER_COOLDOWN_SECS = 3    # legacy — replaced by Balance/Equilibrium below
-BAL_RECOVERY_SECS     = 8.0  # default balance recovery (seconds)
-EQ_RECOVERY_SECS      = 10.0 # default equilibrium recovery (seconds)
-
-# Per class-line B/E timers. Warriors = fast BAL slow EQ, Mages = slow BAL fast EQ.
-_CLASS_BAL_SECS = {
-    "warrior":        6.0,
-    "valkyrie":       6.0,
-    "mage":           13.0,
-    "enchantress":    12.0,
-    "thief":          7.0,
-    "phantom_dancer": 7.0,
-    "archer":         8.0,
-    "priest":         11.0,
-    "botanist":       10.0,
-    "serpent":        7.0,
-}
-_CLASS_EQ_SECS = {
-    "warrior":        14.0,
-    "valkyrie":       13.0,
-    "mage":           7.0,
-    "enchantress":    6.0,
-    "thief":          8.0,
-    "phantom_dancer": 8.0,
-    "archer":         9.0,
-    "priest":         6.0,
-    "botanist":       7.0,
-    "serpent":        11.0,
-}
-
-def _get_bal_secs(p=None):
-    if not p: return BAL_RECOVERY_SECS
-    line = get_class_line(p)
-    return _CLASS_BAL_SECS.get(line, BAL_RECOVERY_SECS) if line else BAL_RECOVERY_SECS
-
-def _get_eq_secs(p=None):
-    if not p: return EQ_RECOVERY_SECS
-    line = get_class_line(p)
-    return _CLASS_EQ_SECS.get(line, EQ_RECOVERY_SECS) if line else EQ_RECOVERY_SECS
 
 # Automatic class-based affliction pool. Each entry: (status_key, stacks, pct_key, pct_val, emoji, msg)
 _CLASS_AUTO_AFFLICTIONS = {
@@ -11219,28 +11139,6 @@ _CURE_ALIAS = {entry[0]: entry[1] for entry in _CURABLE_AFFLICTIONS}
 _CURE_EMOJI  = {entry[0]: entry[2] for entry in _CURABLE_AFFLICTIONS}
 _DEFAULT_CURE_PRIORITY = ["poison","bleed","stun","hex","weaken","expose","distract","silence","freeze"]
 
-def _check_balance(uid):
-    exp = _bal_expires.get(uid, 0.0)
-    now = time.time()
-    return (True, 0.0) if exp <= now else (False, round(exp - now, 1))
-
-def _set_balance(uid, p=None):
-    _bal_expires[uid] = time.time() + _get_bal_secs(p)
-
-def _check_equilibrium(uid):
-    exp = _eq_expires.get(uid, 0.0)
-    now = time.time()
-    return (True, 0.0) if exp <= now else (False, round(exp - now, 1))
-
-def _set_equilibrium(uid, p=None):
-    _eq_expires[uid] = time.time() + _get_eq_secs(p)
-
-def _be_status_line(uid):
-    bal_ready, _ = _check_balance(uid)
-    eq_ready,  _ = _check_equilibrium(uid)
-    bal_str = "✅ Ready" if bal_ready else "🔄 Recovering"
-    eq_str  = "✅ Ready" if eq_ready  else "🔄 Recovering"
-    return f"⚖️ BAL: {bal_str}  🌀 EQ: {eq_str}"
 
 def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=3):
     """Return (page_list, total) of players attackable right now."""
@@ -11380,13 +11278,10 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
                     except Exception: pass
             _pvp_battle_logs.pop(pair, None)
             _pvp_cur_page.pop(pair, None)
-            try:
-                _dm = await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
-                asyncio.create_task(_auto_delete(context.bot, chat_id, _dm.message_id, 6))
+            try: await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
             except Exception: pass
-            for _dm_uid in (uid, target_uid):
-                try: await context.bot.send_message(chat_id=_dm_uid, text=action_text[:4096], parse_mode="Markdown")
-                except Exception: pass
+            try: await context.bot.send_message(chat_id=uid, text=action_text[:4096], parse_mode="Markdown")
+            except Exception: pass
         else:
             # Hit or miss — the picker message becomes the attacker's battle card
             await _pvp_update_both_cards(pair, a, d, uid, target_uid, chat_id, context.bot, query=query)
@@ -11512,7 +11407,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update, "⚔️ No players available to attack right now.", delay=9); return
         markup = _build_target_picker_markup(au.id, a.get("guild_id"), 0, "atk")
         await send_group(update,
-            f"⚔️ *Choose a target* ({total} available)\n_{_be_status_line(au.id)}_",
+            f"⚔️ *Choose a target* ({total} available)",
             permanent=True, reply_markup=markup)
         return
 
@@ -11553,10 +11448,6 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
         except Exception: pass
 
-    bal_ready, bal_rem = _check_balance(au.id)
-    if not bal_ready:
-        await send_group(update, f"⚖️ *Off Balance!* Recover in {bal_rem}s.", delay=5); return
-
     w    = get_weather()
     chat = update.effective_chat.id
     try: await update.message.delete()
@@ -11582,13 +11473,10 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception: pass
         _pvp_battle_logs.pop(pair, None)
         _pvp_cur_page.pop(pair, None)
-        try:
-            _dm = await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
-            asyncio.create_task(_auto_delete(bot, chat, _dm.message_id, 6))
+        try: await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
         except Exception: pass
-        for _dm_uid in (au.id, du_id):
-            try: await bot.send_message(chat_id=_dm_uid, text=action[:4096], parse_mode="Markdown")
-            except Exception: pass
+        try: await bot.send_message(chat_id=au.id, text=action[:4096], parse_mode="Markdown")
+        except Exception: pass
         return
 
     # hit or miss — update/create both players' battle cards
@@ -11778,13 +11666,10 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception: pass
             _pvp_battle_logs.pop(pair, None)
             _pvp_cur_page.pop(pair, None)
-            try:
-                _dm = await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
-                asyncio.create_task(_auto_delete(context.bot, chat_id, _dm.message_id, 6))
+            try: await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
             except Exception: pass
-            for _dm_uid in (uid, target_id):
-                try: await context.bot.send_message(chat_id=_dm_uid, text=result_text[:4096], parse_mode="Markdown")
-                except Exception: pass
+            try: await context.bot.send_message(chat_id=uid, text=result_text[:4096], parse_mode="Markdown")
+            except Exception: pass
             return
 
         # miss or hit — update both players' battle cards
@@ -28185,16 +28070,9 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p: return
 
     if hub == "combat":
-        hp_pct = p.get("hp", 1) / max(1, p.get("max_hp", 1))
-        hp_bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
-        cp     = calc_combat_power(p)
-        status = "💀 Defeated (30 min)" if is_defeated(p) else ("⚔️ Ready" if hp_pct > 0.50 else "🩸 Wounded")
         try:
             await query.edit_message_text(
-                f"⚔️ *{p['username']}'s Combat Hub*\n\n"
-                f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
-                f"⚡ CP: {cp:,}  |  {status}\n\n"
-                f"Page 1: Encounter & Combat  |  Page 2: War & Explore  |  Page 3: Info & Tools",
+                f"⚔️ *{p['username']}'s Combat Hub*\n\nPage 1: Encounter & Combat  |  Page 2: War & Explore\nPage 3: Dungeons",
                 parse_mode="Markdown", reply_markup=_combat_hub_markup(uid, page=1))
         except Exception: pass
 
@@ -30259,61 +30137,18 @@ async def fixbounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── IDLE REWARD SYSTEM ────────────────────────────────────────────────────────
-def _calc_idle_rewards(idle_secs: float, player_level: int = 1) -> dict:
-    """Idle rewards: EXP, gold, and items. No time cap — longer away = more everything."""
+def _calc_idle_exp(idle_secs: float, player_level: int = 1) -> int:
+    """Compound EXP for being offline. 0 if < 30 min. Scales with level, no hard time cap."""
     if idle_secs < 1800:
-        return {"exp": 0, "gold": 0, "items": []}
-
+        return 0
     idle_hours = idle_secs / 3600
-
-    # EXP: level-scaled via exp_for_level, grows linearly + accelerating bonus per hour
-    # ~1/40th of a level per hour base, no cap
-    base_rate = exp_for_level(max(1, player_level)) // 40
-    time_mult = 1.0 + idle_hours * 0.025   # +2.5% per additional hour, uncapped
-    exp = max(500, int(base_rate * idle_hours * time_mult))
-
-    # Gold: grows near-linearly with small acceleration, uncapped
-    gold = max(100, int((80 + player_level * 10) * (idle_hours ** 0.95)))
-    if idle_hours >= 24:  gold = int(gold * 1.5)
-    if idle_hours >= 48:  gold = int(gold * 1.5)
-
-    # Items: cumulative tiers — each threshold ADDS to the haul
-    items = []
-    _all = {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES,
-            **HATS, **GLOVES, **BOOTS, **MASKS}
-
-    def _pick(rarity, n=1):
-        pool = [k for k, v in _all.items() if v.get("rarity") == rarity]
-        return [random.choice(pool) for _ in range(n)] if pool else []
-
-    if idle_hours >= 2:
-        items.append("Health Potion")
-    if idle_hours >= 4:
-        items.append("Greater Health Potion")
-    if idle_hours >= 8:
-        # Gear tier scales with level
-        items += _pick("rare" if player_level >= 15 else "uncommon")
-    if idle_hours >= 16:
-        items += _pick("rare")
-    if idle_hours >= 24:
-        items += _pick("rare", 2)
-    if idle_hours >= 48:
-        items += _pick("epic")
-    if idle_hours >= 72:
-        items += _pick("epic", 2)
-    if idle_hours >= 168:    # 1 week
-        items += _pick("legendary" if player_level >= 15 else "epic")
-        items += _pick("epic")
-    # Uncapped: every additional 48h past 1 week adds another epic/legendary
-    if idle_hours > 168:
-        extra = min(10, int((idle_hours - 168) / 48))
-        for _ in range(extra):
-            items += _pick("legendary" if player_level >= 20 else "epic")
-
-    return {"exp": exp, "gold": gold, "items": items}
+    # Hourly rate scales with level; power < 1 gives diminishing returns over time
+    rate = 300 + player_level * 40
+    exp = int(rate * (idle_hours ** 0.65))
+    return max(50, exp)
 
 async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
-    """Award idle rewards to shadow + RPG player, send DM. Call before updating last_seen."""
+    """Award idle EXP to shadow + RPG player, send DM. Call before updating last_seen."""
     global _idle_last_awarded
     now_ts = time.time()
     if _idle_last_awarded.get(uid, 0) > now_ts - 60:
@@ -30322,42 +30157,27 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
         idle_secs = (datetime.now() - datetime.fromisoformat(prev_seen_iso)).total_seconds()
         p = get_player(uid)
         plvl = p["level"] if p else 1
-        rewards = _calc_idle_rewards(idle_secs, plvl)
-        if rewards["exp"] <= 0:
+        idle_exp = _calc_idle_exp(idle_secs, plvl)
+        if idle_exp <= 0:
             return
         _idle_last_awarded[uid] = now_ts
         ih = idle_secs / 3600
         away_str = (f"{int(ih)}h {int((idle_secs % 3600) / 60)}m"
                     if ih >= 1 else f"{int(idle_secs / 60)}m")
-        # Award to shadow
         s = get_shadow(uid)
         if s:
-            add_shadow_exp(s, rewards["exp"])
+            add_shadow_exp(s, idle_exp)
             save_shadow(s)
-        # Award to RPG player
         if p and not is_defeated(p):
-            add_exp(p, rewards["exp"])
-            p["gold"] = safe_int(p.get("gold", 0)) + rewards["gold"]
-            for item in rewards["items"]:
-                add_item(p, item)
+            add_exp(p, idle_exp)
             save_player(p)
-        # Build notification
-        items_txt = ""
-        _all_g = {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES,
-                  **HATS, **GLOVES, **BOOTS, **MASKS}
-        for it in rewards["items"][:12]:
-            r_em = RARITY_EMOJI.get(_all_g.get(it, {}).get("rarity", ""), "⚪")
-            items_txt += f"\n  {r_em} {it}"
-        loot_line = f"\n🎁 *Loot:*{items_txt}" if items_txt else ""
-        gold_line  = f"\n💰 *+{rewards['gold']:,} gold*" if rewards["gold"] > 0 else ""
         try:
             await bot.send_message(
                 uid,
                 f"🎱 *Welcome back!*\n\n"
                 f"You were away for *{away_str}*.\n"
-                f"💫 *+{rewards['exp']:,} EXP*"
-                f"{gold_line}"
-                f"{loot_line}",
+                f"💫 Idle reward: *+{idle_exp:,} EXP*\n"
+                f"_(Scales with your level — the higher your level, the more you earn)_",
                 parse_mode="Markdown")
         except Exception:
             pass
