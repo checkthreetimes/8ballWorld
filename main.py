@@ -3226,10 +3226,10 @@ RECIPES = {
 }
 
 SHOP_POOL = [  # kept for legacy compat
-    {"item":"Health Potion","price":150,"desc":"Restores 250 HP."},
-    {"item":"Greater Health Potion","price":400,"desc":"Restores 500 HP."},
-    {"item":"Grand Restorative Flask","price":900,"desc":"Restores 1500 HP."},
-    {"item":"Scroll of Revival","price":1500,"desc":"Revive a defeated player."},
+    {"item":"Health Potion","price":300,"desc":"Restores 250 HP."},
+    {"item":"Greater Health Potion","price":750,"desc":"Restores 500 HP."},
+    {"item":"Grand Restorative Flask","price":1800,"desc":"Restores 1500 HP."},
+    {"item":"Scroll of Revival","price":2500,"desc":"Revive a defeated player."},
     {"item":"Iron Shard","price":300,"desc":"Crafting material."},
     {"item":"Enchanting Scroll","price":500,"desc":"Enchant gear."},
 ]
@@ -3238,10 +3238,10 @@ _RARITY_PRICES = {"common":350,"uncommon":950,"rare":2800,"epic":7000}
 
 _SHOP_STATIC_TABS = {
     "pot": [
-        {"item":"Health Potion",          "price":150,  "desc":"Restores 250 HP."},
-        {"item":"Greater Health Potion",  "price":400,  "desc":"Restores 500 HP."},
-        {"item":"Grand Restorative Flask","price":900,  "desc":"Restores 1500 HP."},
-        {"item":"Scroll of Revival",      "price":1500, "desc":"Revive a defeated player."},
+        {"item":"Health Potion",          "price":300,  "desc":"Restores 250 HP."},
+        {"item":"Greater Health Potion",  "price":750,  "desc":"Restores 500 HP."},
+        {"item":"Grand Restorative Flask","price":1800, "desc":"Restores 1500 HP."},
+        {"item":"Scroll of Revival",      "price":2500, "desc":"Revive a defeated player."},
     ],
     "mat": [
         {"item":"Iron Shard",        "price":300,  "desc":"Crafting material."},
@@ -3501,6 +3501,30 @@ NPC_CLASS_SKILLS = {
     "grand_muse":    ["fire_breath","thunder_claw","dark_pulse"],
     "iron_valkyrie": ["earth_slam","shell_crush","holy_beam"],
     "divine_tempest":["thunder_claw","holy_beam","gust"],
+}
+
+# Dungeon NPC skill effects on the player: skill_name -> (effect, label)
+# effect: "burn" | "poison" | "stun" | "weaken" | "heal_enemy" | None
+_DNG_SKILL_PLAYER_EFFECTS = {
+    "fire_breath":   ("burn",       "🔥 *{name}* breathes fire! You're *Burning*!"),
+    "poison_spit":   ("poison",     "☠️ *{name}* spits venom! You're *Poisoned*!"),
+    "thunder_claw":  ("stun",       "⚡ *{name}* shocks you! You're *Stunned*!"),
+    "earth_slam":    ("stun",       "💥 *{name}* slams the ground! You're *Stunned*!"),
+    "shell_crush":   ("weaken",     "⬇️ *{name}* crushes your guard! You're *Weakened*!"),
+    "roar":          ("weaken",     "⬇️ *{name}* roars! Your attacks are *Weakened*!"),
+    "void_rift":     ("weaken",     "🌀 *{name}* opens a void rift! You're *Weakened*!"),
+    "dark_pulse":    ("weaken",     "🌑 *{name}* pulses dark energy! You're *Weakened*!"),
+    "soul_drain":    ("weaken",     "💀 *{name}* drains your soul! You're *Weakened*!"),
+    "petal_storm":   ("poison",     "🌸 *{name}* unleashes toxic petals! You're *Poisoned*!"),
+    "water_jet":     ("weaken",     "💧 *{name}* blasts you back! You're *Weakened*!"),
+    "holy_beam":     ("weaken",     "✨ *{name}* blinds you with holy light! You're *Weakened*!"),
+    "recover":       ("heal_enemy", "💚 *{name}* recovers! +{heal} HP"),
+    "tackle":        (None, None),
+    "bite":          (None, None),
+    "headbutt":      (None, None),
+    "scratch":       (None, None),
+    "gust":          (None, None),
+    "wing_slash":    (None, None),
 }
 
 # RPG-style NPC attacks for battle mode: (name, dmg_mult, effect)
@@ -3971,7 +3995,7 @@ def _enc_level_stats(enc_level, p_level):
     tier_bonus = (enc_level // 20) * 0.3
     reward_mult = max(0.5, round(1.0 + tier_bonus + max(0, diff) * 0.10, 2))
     num_gear = max(1, min(4, 1 + enc_level // 20))
-    num_pots = max(1, min(3, 1 + enc_level // 30))
+    num_pots = max(0, min(2, enc_level // 35))
     if enc_level <= 10:
         rarities = ["common", "uncommon", "uncommon"]
     elif enc_level <= 20:
@@ -5314,22 +5338,31 @@ def _dng_combat_card(state):
     ebar = _dng_hp_bar(e["hp"], e["max_hp"])
     pbar = _dng_hp_bar(state["p_hp"], state["p_max_hp"])
     elem_e = ELEMENT_EMOJI.get(e.get("element",""), "")
+    # Status icons on enemy
+    e_status = ""
+    if e.get("burning"):       e_status += " 🔥"
+    if e.get("poisoned"):      e_status += " ☠️"
+    if e.get("stunned_turns"): e_status += " ⚡"
+    if e.get("weakened"):      e_status += " ⬇️"
+    # Player status icons
+    p_status = ""
+    if state.get("p_burning"):  p_status += " 🔥"
+    if state.get("p_poisoned"): p_status += " ☠️"
+    if state.get("p_stunned"):  p_status += " ⚡"
+    if state.get("p_weakened"): p_status += " ⬇️"
     lines = [
         f"🏚️ *Floor {state['floor']} — Room {state['room']}/{_DNG_ROOMS}*  ⚔️ *Combat*",
         "",
-        f"{elem_e} *{e['name']}*",
+        f"{elem_e} *{e['name']}*{e_status}",
         f"❤️ `[{ebar}]` {e['hp']}/{e['max_hp']}",
         "",
+        f"*You:*{p_status} ❤️ `[{pbar}]` {state['p_hp']}/{state['p_max_hp']}",
+        f"💰 Session: +{state.get('s_gold',0):,}g | ⭐ +{state.get('s_exp',0):,} EXP",
         "─────────────────",
     ]
     for entry in state.get("combat_log", [])[-4:]:
         lines.append(entry)
-    lines += [
-        "─────────────────",
-        "",
-        f"*You:* ❤️ `[{pbar}]` {state['p_hp']}/{state['p_max_hp']}",
-        f"💰 Session: +{state.get('s_gold',0):,}g | ⭐ +{state.get('s_exp',0):,} EXP",
-    ]
+    lines.append("─────────────────")
     return "\n".join(lines)
 
 def _dng_room_card(state):
@@ -5452,24 +5485,129 @@ async def _dng_ticker(uid: int, bot):
             if not p:
                 return
             e = state["enemy"]
+            # Tick DOTs on enemy each tick
+            dot_lines = []
+            if e.get("burning"):
+                burn_dmg = max(1, int(e["max_hp"] * 0.04))
+                e["hp"] = max(0, e["hp"] - burn_dmg)
+                dot_lines.append(f"🔥 Burn *-{burn_dmg}*")
+                e["burn_turns"] = e.get("burn_turns", 4) - 1
+                if e["burn_turns"] <= 0:
+                    e.pop("burning", None); e.pop("burn_turns", None)
+            if e.get("poisoned"):
+                psn_dmg = max(1, int(e["max_hp"] * 0.05))
+                e["hp"] = max(0, e["hp"] - psn_dmg)
+                dot_lines.append(f"☠️ Poison *-{psn_dmg}*")
+                e["poison_turns"] = e.get("poison_turns", 5) - 1
+                if e["poison_turns"] <= 0:
+                    e.pop("poisoned", None); e.pop("poison_turns", None)
+            if e["hp"] <= 0:
+                if dot_lines:
+                    state.setdefault("combat_log", []).append(" | ".join(dot_lines))
+                await _dng_on_enemy_killed(uid, bot, p, state)
+                return
+            # Stun: skip enemy attack this tick, decrement
+            if e.get("stunned_turns", 0) > 0:
+                e["stunned_turns"] -= 1
+                log_entry = f"⚡ *{e['name']}* is stunned and can't attack!"
+                if dot_lines:
+                    log_entry = " | ".join(dot_lines) + "\n" + log_entry
+                state.setdefault("combat_log", []).append(log_entry)
+                if len(state["combat_log"]) > 5:
+                    state["combat_log"] = state["combat_log"][-5:]
+                try:
+                    await bot.edit_message_text(
+                        chat_id=state["chat_id"], message_id=state["msg_id"],
+                        text=_dng_combat_card(state)[:4096], parse_mode="Markdown",
+                        reply_markup=_dng_combat_markup(uid, state))
+                except Exception:
+                    pass
+                tick += 1
+                continue
+            # Tick player DoTs
+            p_dot_lines = []
+            if state.get("p_burning"):
+                pb_dmg = max(1, int(state["p_max_hp"] * 0.03))
+                state["p_hp"] = max(0, state["p_hp"] - pb_dmg)
+                p_dot_lines.append(f"🔥 You burn *-{pb_dmg}*")
+                state["p_burn_turns"] = state.get("p_burn_turns", 4) - 1
+                if state["p_burn_turns"] <= 0:
+                    state.pop("p_burning", None); state.pop("p_burn_turns", None)
+            if state.get("p_poisoned"):
+                pp_dmg = max(1, int(state["p_max_hp"] * 0.04))
+                state["p_hp"] = max(0, state["p_hp"] - pp_dmg)
+                p_dot_lines.append(f"☠️ You're poisoned *-{pp_dmg}*")
+                state["p_poison_turns"] = state.get("p_poison_turns", 5) - 1
+                if state["p_poison_turns"] <= 0:
+                    state.pop("p_poisoned", None); state.pop("p_poison_turns", None)
+            if state.get("p_weakened"):
+                state["p_weaken_turns"] = state.get("p_weaken_turns", 3) - 1
+                if state["p_weaken_turns"] <= 0:
+                    state.pop("p_weakened", None); state.pop("p_weaken_turns", None)
+            # Check player death from DoTs
+            if state["p_hp"] <= 0:
+                state["phase"] = "dead"
+                active_dungeons.pop(uid, None)
+                narr = _dng_roll_narration("death")
+                death_text = (
+                    f"🏚️ *Floor {state['floor']} — Room {state['room']}*\n\n"
+                    f"💀 *You succumbed to status effects!*\n\n_{narr}_\n\n"
+                    f"_All session rewards lost._"
+                )
+                try:
+                    await bot.edit_message_text(
+                        chat_id=state["chat_id"], message_id=state["msg_id"],
+                        text=death_text[:4096], parse_mode="Markdown")
+                except Exception:
+                    pass
+                return
             # Guard reduces incoming damage
             guard_mult = 0.60 if state.pop("p_guarding", False) else 1.0
+            # Weakened enemy hits less hard
+            if e.get("weakened"):
+                guard_mult *= 0.75
             # Occasional skill use instead of basic attack
             skill_txt = ""
+            status_applied = ""
             e["skill_tick"] = e.get("skill_tick", 0) + 1
             if e.get("skills") and e["skill_tick"] >= 3 and random.random() < 0.35:
                 sk_name = random.choice(e["skills"])
-                skill_txt = f"\n💢 *{e['name']}* uses *{sk_name.replace('_',' ').title()}*!"
                 e["skill_tick"] = 0
-                # Skills hit harder
                 raw_dmg = int(e["atk"] * random.uniform(1.6, 2.2))
+                # Apply skill effect on player
+                eff_data = _DNG_SKILL_PLAYER_EFFECTS.get(sk_name)
+                if eff_data:
+                    eff_type, eff_label = eff_data
+                    if eff_type == "burn" and not state.get("p_burning"):
+                        state["p_burning"] = True; state["p_burn_turns"] = 4
+                        status_applied = "\n" + (eff_label or "").format(name=e["name"])
+                    elif eff_type == "poison" and not state.get("p_poisoned"):
+                        state["p_poisoned"] = True; state["p_poison_turns"] = 5
+                        status_applied = "\n" + (eff_label or "").format(name=e["name"])
+                    elif eff_type == "stun":
+                        state["p_stunned"] = True
+                        status_applied = "\n" + (eff_label or "").format(name=e["name"])
+                    elif eff_type == "weaken":
+                        state["p_weakened"] = True; state["p_weaken_turns"] = 3
+                        status_applied = "\n" + (eff_label or "").format(name=e["name"])
+                    elif eff_type == "heal_enemy":
+                        heal_amt = max(10, int(e["max_hp"] * 0.08))
+                        e["hp"] = min(e["max_hp"], e["hp"] + heal_amt)
+                        status_applied = "\n" + (eff_label or "").format(name=e["name"], heal=heal_amt)
+                skill_txt = f"💢 *{e['name']}* uses *{sk_name.replace('_',' ').title()}*!{status_applied}"
             else:
                 raw_dmg = int(e["atk"] * random.uniform(1.0, 1.4))
-            # Apply player DEF
+            # Apply player DEF (weakened player takes extra damage)
             def_val = get_stat(p, "DEF") if p else 0
-            dmg = max(1, int(raw_dmg * guard_mult) - def_val // 4)
+            weaken_mult = 1.25 if state.get("p_weakened") else 1.0
+            dmg = max(1, int(raw_dmg * guard_mult * weaken_mult) - def_val // 4)
             state["p_hp"] = max(0, state["p_hp"] - dmg)
-            log_entry = f"💥 *{e['name']}* strikes for *{dmg}*!{skill_txt}"
+            log_entry = f"💥 *{e['name']}* strikes for *{dmg}*!"
+            if skill_txt:
+                log_entry = skill_txt + f"\n💥 *{dmg}* damage!"
+            all_dots = (dot_lines or []) + (p_dot_lines or [])
+            if all_dots:
+                log_entry = " | ".join(all_dots) + "\n" + log_entry
             state.setdefault("combat_log", []).append(log_entry)
             if len(state["combat_log"]) > 5:
                 state["combat_log"] = state["combat_log"][-5:]
@@ -5802,6 +5940,12 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # SKILL
     if data.startswith("dng_skl_"):
+        if state.get("p_stunned"):
+            state["p_stunned"] = False
+            state.setdefault("combat_log", []).append("⚡ You're *stunned* and couldn't act!")
+            if len(state["combat_log"]) > 5: state["combat_log"] = state["combat_log"][-5:]
+            await _dng_edit(uid, context.bot, _dng_combat_card(state), _dng_combat_markup(uid, state))
+            return
         try:
             idx = int(data.split("_")[3])
             sk  = get_combat_skills(p)[idx]
@@ -5810,9 +5954,14 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Reuse encounter skill processor — state mirrors enc dict structure
         state["e_hp"]     = e["hp"]
         state["e_max_hp"] = e["max_hp"]
-        state["p_max_hp"] = state["p_max_hp"]
         action_txt, sk_dmg, is_support = _enc_process_skill(state, p, sk)
-        e["hp"] = state["e_hp"]
+        e["hp"] = max(0, state["e_hp"])
+        # Sync status effects written by _enc_process_skill onto the enemy dict
+        for _sf, _ef in [("e_burning","burning"),("e_poisoned","poisoned"),
+                         ("e_stunned_turns","stunned_turns"),("e_weakened","weakened"),
+                         ("e_burn_turns","burn_turns"),("e_poison_pct","poison_pct")]:
+            if state.get(_sf):
+                e[_ef] = state[_sf]
         state.setdefault("combat_log",[]).append(action_txt)
         if len(state["combat_log"]) > 5: state["combat_log"] = state["combat_log"][-5:]
         if e["hp"] <= 0:
@@ -5823,6 +5972,12 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ATTACK
     if data.startswith("dng_atk_"):
+        if state.get("p_stunned"):
+            state["p_stunned"] = False
+            state.setdefault("combat_log", []).append("⚡ You're *stunned* and couldn't attack!")
+            if len(state["combat_log"]) > 5: state["combat_log"] = state["combat_log"][-5:]
+            await _dng_edit(uid, context.bot, _dng_combat_card(state), _dng_combat_markup(uid, state))
+            return
         w = get_weather()
         dmg = calc_attack_damage(p, w)
         _crit = ""
@@ -5833,14 +5988,11 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cls_line = get_class_line(p)
         cls_path = p.get("class_path", "A")
         if cls_line == "warrior" and cls_path == "A" and dmg > 0 and random.random() < 0.10:
-            e["burning"] = True; extras += "\n⚔️ *Blessed Strike!*"
+            e["burning"] = True; e.setdefault("burn_turns", 4); extras += "\n⚔️ *Blessed Strike!* 🔥"
         elif cls_line == "mage" and cls_path == "A" and dmg > 0 and random.random() < 0.12:
-            e["burning"] = True; extras += "\n🔥 *Arcane Burn!*"
+            e["burning"] = True; e.setdefault("burn_turns", 4); extras += "\n🔥 *Arcane Burn!*"
         elif cls_line == "thief" and cls_path == "A" and dmg > 0 and random.random() < 0.15:
-            e["poisoned"] = True; extras += "\n🐍 *Poison Strike!*"
-        # DOT ticks
-        if e.get("burning"):  burn = max(1, dmg // 8); e["hp"] = max(0, e["hp"] - burn); extras += f"\n🔥 Burn *-{burn}*"
-        if e.get("poisoned"): psn  = max(1, dmg // 6); e["hp"] = max(0, e["hp"] - psn);  extras += f"\n☠️ Poison *-{psn}*"
+            e["poisoned"] = True; e.setdefault("poison_turns", 5); extras += "\n🐍 *Poison Strike!* ☠️"
         e["hp"] = max(0, e["hp"] - dmg)
         action = f"⚔️ You hit *{e['name']}* for *{dmg}*!{extras}"
         state.setdefault("combat_log",[]).append(action)
@@ -20982,8 +21134,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             inv = sjl(p.get("inventory"), []); inv.append(gear_drop); p["inventory"] = json.dumps(inv)
             loot_lines.append(f"🎁 Found: *{gear_drop}*!")
         # Bonus potion
-        if random.random() < 0.40:
-            potion = random.choice(["Health Potion", "Health Potion", "Greater Health Potion"])
+        if random.random() < 0.15:
+            potion = random.choice(["Health Potion", "Greater Health Potion"])
             inv = sjl(p.get("inventory"), []); inv.append(potion); p["inventory"] = json.dumps(inv)
             loot_lines.append(f"🧪 *{potion}*!")
         save_player(p)
@@ -21021,7 +21173,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             result_text = "🚶 You move on, leaving the encounter behind."
         elif etype == "merchant" and choice == "buy":
             # Sell a random item from stock
-            _merch_items = [("Health Potion", 30), ("Greater Health Potion", 80),
+            _merch_items = [("Health Potion", 60), ("Greater Health Potion", 150),
                             ("Fortune Coin", 50), ("Pet Snack", 25)]
             item_name, cost = random.choice(_merch_items)
             if safe_int(p.get("gold", 0)) >= cost:
@@ -21421,10 +21573,12 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     gear_drops.append(_gd)
                     add_item(p, _gd)
 
-            # Potions
-            _num_pots = enc.get("num_pots", 1)
-            _potion_pool = ["Health Potion","Health Potion","Greater Health Potion","Greater Health Potion","Grand Restorative Flask"]
+            # Potions — scarce, chance-based
+            _num_pots = enc.get("num_pots", 0)
+            _potion_pool = ["Health Potion","Greater Health Potion","Greater Health Potion"]
             potion_drops = [random.choice(_potion_pool) for _ in range(_num_pots)]
+            if not potion_drops and random.random() < 0.20:
+                potion_drops = ["Health Potion"]
             for _pt in potion_drops: add_item(p, _pt)
 
             # Extra consumable drop
@@ -21762,10 +21916,12 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 if not _hgp: _hgp = [n for n, d in _gear_all_h.items() if d.get("rarity") in ("rare","epic")]
                 if _hgp:
                     _hgd = random.choice(_hgp); hunt_gear_drops.append(_hgd); add_item(p, _hgd)
-            # Potions
-            _hnum_pots = enc.get("num_pots", 1)
-            _hpots = [random.choice(["Greater Health Potion","Greater Health Potion","Grand Restorative Flask"])
+            # Potions — scarce
+            _hnum_pots = enc.get("num_pots", 0)
+            _hpots = [random.choice(["Health Potion","Greater Health Potion","Greater Health Potion"])
                       for _ in range(_hnum_pots)]
+            if not _hpots and random.random() < 0.25:
+                _hpots = [random.choice(["Health Potion","Greater Health Potion"])]
             for _hp2 in _hpots: add_item(p, _hp2)
             # Element mat (always)
             _elem_mats = {"fire":["Enchanting Scroll","Grand Restorative Flask"],"water":["Fortune Coin","Greater Health Potion"],
