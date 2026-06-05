@@ -11093,60 +11093,70 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     # action == "pick" — fourth is target_uid
     target_uid = fourth
-    # Balance check — replaces old 3s spam guard
-    bal_ready, bal_rem = _check_balance(uid)
-    if not bal_ready:
-        await query.answer(f"⚖️ Off balance! {bal_rem}s remaining.", show_alert=False)
-        return
 
-    if is_defeated(a):
-        await query.answer("You're defeated!", show_alert=True); return
-    if is_invincible(a):
-        await query.answer("You're invincible — can't attack!", show_alert=True); return
-    _cc = _consume_cc(a)
-    if _cc:
-        await query.answer(_cc, show_alert=True); return
+    # Rate-limit: same cooldown as card buttons, prevents double-tap attacks
+    _now_p = time.time()
+    _last_p = _pvp_action_times.get(uid, 0)
+    if _now_p - _last_p < _PVP_ACTION_CD:
+        _wait_p = round(_PVP_ACTION_CD - (_now_p - _last_p), 1)
+        await query.answer(f"⏳ {_wait_p}s until your next action!", show_alert=False); return
+    _pvp_action_times[uid] = _now_p
 
-    d = get_player(target_uid)
-    if not d:
-        await query.answer("Target not found!", show_alert=True); return
-    if is_defeated(d):
-        await query.answer(f"{d.get('username','?')} is already defeated!", show_alert=True); return
-    if is_invincible(d):
-        await query.answer(f"{d.get('username','?')} is invincible!", show_alert=True); return
+    # Lock prevents a double-tap on the picker from firing two attacks
+    if not _cb_lock(uid):
+        await query.answer("Still processing...", show_alert=True); return
 
-    # Answer immediately so Telegram stops the loading spinner
-    await query.answer()
+    try:
+        if is_defeated(a):
+            await query.answer("You're defeated!", show_alert=True); return
+        if is_invincible(a):
+            await query.answer("You're invincible — can't attack!", show_alert=True); return
+        _cc = _consume_cc(a)
+        if _cc:
+            await query.answer(_cc, show_alert=True); return
 
-    chat_id = query.message.chat_id
-    w = get_weather()
-    action_text, _, result_type = await _execute_pvp_hit(a, d, uid, target_uid, w, chat_id, context.bot)
+        d = get_player(target_uid)
+        if not d:
+            await query.answer("Target not found!", show_alert=True); return
+        if is_defeated(d):
+            await query.answer(f"{d.get('username','?')} is already defeated!", show_alert=True); return
+        if is_invincible(d):
+            await query.answer(f"{d.get('username','?')} is invincible!", show_alert=True); return
 
-    _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": chat_id}
+        # Answer immediately so Telegram stops the loading spinner
+        await query.answer()
 
-    pair = _pvp_pair_key(uid, target_uid)
+        chat_id = query.message.chat_id
+        w = get_weather()
+        action_text, _, result_type = await _execute_pvp_hit(a, d, uid, target_uid, w, chat_id, context.bot)
 
-    # Append to battle log and advance to latest page
-    _pvp_log_append(pair, action_text)
+        _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": chat_id}
 
-    if result_type == "defeat":
-        _cancel_card_timer(pair)
-        _pvp_cards.pop(pair, None)
-        for _puid in (uid, target_uid):
-            _pcard = _pvp_player_cards.pop(_puid, None)
-            if _pcard:
-                try: await context.bot.delete_message(chat_id=_pcard[0], message_id=_pcard[1])
-                except Exception: pass
-        _pvp_battle_logs.pop(pair, None)
-        _pvp_cur_page.pop(pair, None)
-        try: await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
-        except Exception: pass
-        try: await context.bot.send_message(chat_id=uid, text=action_text[:4096], parse_mode="Markdown")
-        except Exception: pass
-    else:
-        # Hit or miss — the picker message becomes the attacker's battle card
-        await _pvp_update_both_cards(pair, a, d, uid, target_uid, chat_id, context.bot, query=query)
-        _reset_card_timer(pair, context.bot, chat_id, 0, 20)
+        pair = _pvp_pair_key(uid, target_uid)
+
+        # Append to battle log and advance to latest page
+        _pvp_log_append(pair, action_text)
+
+        if result_type == "defeat":
+            _cancel_card_timer(pair)
+            _pvp_cards.pop(pair, None)
+            for _puid in (uid, target_uid):
+                _pcard = _pvp_player_cards.pop(_puid, None)
+                if _pcard:
+                    try: await context.bot.delete_message(chat_id=_pcard[0], message_id=_pcard[1])
+                    except Exception: pass
+            _pvp_battle_logs.pop(pair, None)
+            _pvp_cur_page.pop(pair, None)
+            try: await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
+            except Exception: pass
+            try: await context.bot.send_message(chat_id=uid, text=action_text[:4096], parse_mode="Markdown")
+            except Exception: pass
+        else:
+            # Hit or miss — the picker message becomes the attacker's battle card
+            await _pvp_update_both_cards(pair, a, d, uid, target_uid, chat_id, context.bot, query=query)
+            _reset_card_timer(pair, context.bot, chat_id, 0, 20)
+    finally:
+        _cb_unlock(uid)
 
 
 async def skill_target_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -14071,9 +14081,12 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _SELL_PAGE_SIZE = 8
 _SELL_RARITY_VALUES = {"common": 20, "uncommon": 60, "rare": 200, "epic": 600, "legendary": 2000, "mythic": 8000}
 _SELL_PROTECTED = {
-    "Iron Shard", "Enchanting Scroll", "Scroll of Revival",
-    "Holy Water Vial", "Common Egg", "Rare Egg", "Dragon Egg",
-    "Mythic Egg", "Pet Snack",
+    # Potions & consumables — never bulk-sold
+    "Health Potion", "Greater Health Potion", "Grand Restorative Flask",
+    "Fortune Coin", "Scroll of Revival", "Holy Water Vial",
+    # Crafting / eggs / misc
+    "Iron Shard", "Enchanting Scroll",
+    "Common Egg", "Rare Egg", "Dragon Egg", "Mythic Egg", "Pet Snack",
 }
 
 def _sellable_items(p):
@@ -14196,12 +14209,12 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not inv:
             await send_group(update, "Your inventory is empty.", delay=9); return
         buttons = [
-            [InlineKeyboardButton("Sell All Common",    callback_data=f"sellr_{uid}_common"),
-             InlineKeyboardButton("Sell All Uncommon",  callback_data=f"sellr_{uid}_uncommon")],
-            [InlineKeyboardButton("Sell All Rare",      callback_data=f"sellr_{uid}_rare"),
-             InlineKeyboardButton("Sell All Epic",      callback_data=f"sellr_{uid}_epic")],
-            [InlineKeyboardButton("💰 Sell Everything (non-key)", callback_data=f"sellr_{uid}_all")],
-            [InlineKeyboardButton("⚔️ Sell Off-Class Items",      callback_data=f"selloffc_{uid}")],
+            [InlineKeyboardButton("Sell Off-Class Common",    callback_data=f"sellr_{uid}_common"),
+             InlineKeyboardButton("Sell Off-Class Uncommon",  callback_data=f"sellr_{uid}_uncommon")],
+            [InlineKeyboardButton("Sell Off-Class Rare",      callback_data=f"sellr_{uid}_rare"),
+             InlineKeyboardButton("Sell Off-Class Epic",      callback_data=f"sellr_{uid}_epic")],
+            [InlineKeyboardButton("💰 Sell All Off-Class Weapons/Armor", callback_data=f"sellr_{uid}_all")],
+            [InlineKeyboardButton("⚔️ Sell Off-Class Items",             callback_data=f"selloffc_{uid}")],
             [InlineKeyboardButton("🔍 Browse & Sell Individual Items", callback_data=f"sellbrowse_{uid}_0")],
         ]
         await send_group(update,
@@ -14209,11 +14222,7 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(buttons), delay=45)
         return
 
-    BULK_SELL_PROTECTED = {
-        "Iron Shard", "Enchanting Scroll",
-        "Scroll of Revival", "Holy Water Vial",
-        "Common Egg", "Rare Egg", "Dragon Egg", "Mythic Egg", "Pet Snack",
-    }
+    BULK_SELL_PROTECTED = _SELL_PROTECTED
 
     if context.args[0].lower() == "all":
         inv = sjl(p.get("inventory"), [])
@@ -14225,35 +14234,32 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if rf in ("common","uncommon","rare","epic","legendary"):
                 rarity_filter = rf
         sold_items = []; total_gold = 0; remaining_inv = []
-        equipped = [p.get("equipped_weapon"), p.get("equipped_armor"),
+        equipped = {p.get("equipped_weapon"), p.get("equipped_armor"),
                     p.get("equipped_shield"),
                     p.get("equipped_accessory"), p.get("equipped_accessory_2"),
                     p.get("equipped_accessory_3"), p.get("equipped_accessory_4"),
                     p.get("equipped_hat"), p.get("equipped_gloves"),
-                    p.get("equipped_boots"), p.get("equipped_mask")]
+                    p.get("equipped_boots"), p.get("equipped_mask")}
+        player_line = get_class_line(p)
+        rarity_prices_s = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
         for item_s in inv:
-            if item_s in BULK_SELL_PROTECTED:
-                remaining_inv.append(item_s)
-                continue
-            item_rarity = None; item_price = 0
-            for pool_s in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS, HATS, GLOVES, BOOTS, MASKS]:
+            if item_s in BULK_SELL_PROTECTED or item_s in equipped:
+                remaining_inv.append(item_s); continue
+            # Only sell weapons and armors — shields/accessories/hats/gloves/boots/masks are kept
+            item_rarity = None; item_price = 0; item_line = None
+            for pool_s in [WEAPONS, ARMORS]:
                 if item_s in pool_s:
                     item_rarity = pool_s[item_s].get("rarity","common")
-                    rarity_prices = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
-                    item_price = rarity_prices.get(item_rarity, 20)
+                    item_price = rarity_prices_s.get(item_rarity, 20)
+                    item_line = pool_s[item_s].get("line") or pool_s[item_s].get("class")
                     break
             if item_price == 0:
-                for pool_c in [CONSUMABLES]:
-                    if item_s in pool_c:
-                        item_rarity = "consumable"
-                        item_price = pool_c[item_s].get("sell", 10)
-                        break
-            should_sell = False
-            if rarity_filter:
-                if rarity_filter == item_rarity: should_sell = True
-            else:
-                if item_s not in equipped: should_sell = True
-            if should_sell and item_price > 0:
+                remaining_inv.append(item_s); continue
+            # Only sell off-class items
+            if item_line and player_line and item_line == player_line:
+                remaining_inv.append(item_s); continue
+            should_sell = (not rarity_filter) or (rarity_filter == item_rarity)
+            if should_sell:
                 sold_items.append(item_s); total_gold += item_price
             else:
                 remaining_inv.append(item_s)
@@ -14370,11 +14376,6 @@ async def sell_rarity_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     p = get_player(uid)
     if not p: await query.answer("Player not found.", show_alert=True); return
 
-    BULK_SELL_PROTECTED = {
-        "Iron Shard","Enchanting Scroll",
-        "Scroll of Revival","Holy Water Vial",
-        "Common Egg","Rare Egg","Dragon Egg","Mythic Egg","Pet Snack",
-    }
     rarity_prices = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
     inv = sjl(p.get("inventory"), [])
     equipped = {
@@ -14385,21 +14386,26 @@ async def sell_rarity_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         p.get("equipped_hat"), p.get("equipped_gloves"),
         p.get("equipped_boots"), p.get("equipped_mask"),
     }
+    player_line = get_class_line(p)
     sold_items = []; total_gold = 0; remaining_inv = []
     for item_s in inv:
-        if item_s in BULK_SELL_PROTECTED or item_s in equipped:
+        if item_s in _SELL_PROTECTED or item_s in equipped:
             remaining_inv.append(item_s); continue
-        item_rarity = None; item_price = 0
-        for pool_s in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS, HATS, GLOVES, BOOTS, MASKS]:
+        # Only weapons and armors are bulk-sellable; shields/accessories/hats/gloves/boots/masks kept
+        item_rarity = None; item_price = 0; item_line = None
+        for pool_s in [WEAPONS, ARMORS]:
             if item_s in pool_s:
                 item_rarity = pool_s[item_s].get("rarity","common")
-                item_price = rarity_prices.get(item_rarity, 20); break
+                item_price = rarity_prices.get(item_rarity, 20)
+                item_line = pool_s[item_s].get("line") or pool_s[item_s].get("class")
+                break
         if item_price == 0:
-            if item_s in CONSUMABLES:
-                item_rarity = "consumable"
-                item_price = CONSUMABLES[item_s].get("sell", 10)
+            remaining_inv.append(item_s); continue
+        # Keep same-class items
+        if item_line and player_line and item_line == player_line:
+            remaining_inv.append(item_s); continue
         should_sell = (rarity_filter == "all") or (item_rarity == rarity_filter)
-        if should_sell and item_price > 0:
+        if should_sell:
             sold_items.append(item_s); total_gold += item_price
         else:
             remaining_inv.append(item_s)
@@ -27273,12 +27279,12 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception: pass
         else:
             sell_rows = [
-                [InlineKeyboardButton("Sell All Common",    callback_data=f"sellr_{uid}_common"),
-                 InlineKeyboardButton("Sell All Uncommon",  callback_data=f"sellr_{uid}_uncommon")],
-                [InlineKeyboardButton("Sell All Rare",      callback_data=f"sellr_{uid}_rare"),
-                 InlineKeyboardButton("Sell All Epic",      callback_data=f"sellr_{uid}_epic")],
-                [InlineKeyboardButton("💰 Sell Everything (non-key)", callback_data=f"sellr_{uid}_all")],
-                [InlineKeyboardButton("⚔️ Sell Off-Class Items",      callback_data=f"selloffc_{uid}")],
+                [InlineKeyboardButton("Sell Off-Class Common",    callback_data=f"sellr_{uid}_common"),
+                 InlineKeyboardButton("Sell Off-Class Uncommon",  callback_data=f"sellr_{uid}_uncommon")],
+                [InlineKeyboardButton("Sell Off-Class Rare",      callback_data=f"sellr_{uid}_rare"),
+                 InlineKeyboardButton("Sell Off-Class Epic",      callback_data=f"sellr_{uid}_epic")],
+                [InlineKeyboardButton("💰 Sell All Off-Class Weapons/Armor", callback_data=f"sellr_{uid}_all")],
+                [InlineKeyboardButton("⚔️ Sell Off-Class Items",             callback_data=f"selloffc_{uid}")],
                 [InlineKeyboardButton("← Back", callback_data=f"gearhub_back_1_{uid}")],
             ]
             try: await query.edit_message_text(
@@ -31185,7 +31191,7 @@ async def shop_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
     discount = _shop_discount(p)
-    items = get_shop_tab(tab)
+    items = get_shop_tab_for_player(tab, p)
     if idx < 0 or idx >= len(items):
         await query.answer("Item no longer available.", show_alert=True); return
     entry = items[idx]
