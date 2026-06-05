@@ -153,7 +153,7 @@ _pvp_cur_page      = {}   # pair -> int, current page index (0 = oldest)
 _pvp_player_cards  = {}   # uid -> (chat_id, message_id) — each player's own battle card
 _pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
-_PVP_ACTION_CD     = 1.5  # seconds between PvP card button presses (prevents API rate-limit drops)
+_PVP_ACTION_CD     = 0.8  # seconds between PvP card button presses (prevents API rate-limit drops)
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
 _megaphone_state   = {"group": None}  # last known group chat ID for /megaphone DMs
 _broadcast_quest   = None   # {"id": str, "phrase": str, "exp": int, "expires": float}
@@ -10450,7 +10450,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
             d["revenge_target"] = au_id
             d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
-            asyncio.create_task(_notify_defeat(bot, d, a["username"] + " (Killshot)"))
+            # defeat card DM (sent at call site) replaces _notify_defeat for PvP
             _fire(check_and_claim_bounty(bot, a, d, chat_id))
             exp_loss = round(d.get("exp", 0) * 0.10)
             d["exp"] = max(0, d.get("exp", 0) - exp_loss)
@@ -10950,7 +10950,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         d["pvp_history"] = json.dumps(hist[:5])
         for _desc, _exp, _gold in track_objective(a, "pvp_win"):
             a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
-        asyncio.create_task(_notify_defeat(bot, d, a["username"] + " (PvP)"))
+        # defeat card DM (sent at call site) replaces _notify_defeat for PvP
         if cls_a and cls_a.get("passive_key") == "dead_or_alive":
             d["defeated_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
             action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 1 hour!"
@@ -11270,16 +11270,21 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
                     except Exception: pass
             _pvp_battle_logs.pop(pair, None)
             _pvp_cur_page.pop(pair, None)
-            try: await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
+            _cb_unlock(uid)
+            try:
+                _gm = await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
+                asyncio.create_task(_auto_delete(context.bot, chat_id, _gm.message_id, 6))
             except Exception: pass
-            try: await context.bot.send_message(chat_id=uid, text=action_text[:4096], parse_mode="Markdown")
-            except Exception: pass
+            for _dm_uid in (uid, target_uid):
+                try: await context.bot.send_message(chat_id=_dm_uid, text=action_text[:4096], parse_mode="Markdown")
+                except Exception: pass
         else:
             # Hit or miss — the picker message becomes the attacker's battle card
+            _cb_unlock(uid)
             await _pvp_update_both_cards(pair, a, d, uid, target_uid, chat_id, context.bot, query=query)
             _reset_card_timer(pair, context.bot, chat_id, 0, 20)
     finally:
-        _cb_unlock(uid)
+        _cb_unlock(uid)  # safe: discard is idempotent
 
 
 async def skill_target_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -11466,10 +11471,13 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception: pass
         _pvp_battle_logs.pop(pair, None)
         _pvp_cur_page.pop(pair, None)
-        try: await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
+        try:
+            _gm = await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
+            asyncio.create_task(_auto_delete(bot, chat, _gm.message_id, 6))
         except Exception: pass
-        try: await bot.send_message(chat_id=au.id, text=action[:4096], parse_mode="Markdown")
-        except Exception: pass
+        for _dm_uid in (au.id, du_id):
+            try: await bot.send_message(chat_id=_dm_uid, text=action[:4096], parse_mode="Markdown")
+            except Exception: pass
         return
 
     # hit or miss — update/create both players' battle cards
@@ -11659,20 +11667,24 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception: pass
             _pvp_battle_logs.pop(pair, None)
             _pvp_cur_page.pop(pair, None)
-            try: await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
+            _cb_unlock(uid)
+            try:
+                _gm = await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
+                asyncio.create_task(_auto_delete(context.bot, chat_id, _gm.message_id, 6))
             except Exception: pass
-            try: await context.bot.send_message(chat_id=uid, text=result_text[:4096], parse_mode="Markdown")
-            except Exception: pass
+            for _dm_uid in (uid, target_id):
+                try: await context.bot.send_message(chat_id=_dm_uid, text=result_text[:4096], parse_mode="Markdown")
+                except Exception: pass
             return
 
         # miss or hit — update both players' battle cards
-        # group_cid: attacker's card lives in the group; derive it from stored cards
         group_cid = _pvp_player_cards.get(target_id, (chat_id,))[0]
+        _cb_unlock(uid)
         await _pvp_update_both_cards(pair, a, d, uid, target_id, group_cid, context.bot, query=query)
         _reset_card_timer(pair, context.bot, group_cid, 0, 20)
 
     finally:
-        _cb_unlock(uid)
+        _cb_unlock(uid)  # safe: discard is idempotent
 
 
 # ── DEFEND (damage-absorbing shield) ─────────────────────────────────────────
