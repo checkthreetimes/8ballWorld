@@ -6131,9 +6131,17 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sk  = get_combat_skills(p)[idx]
         except (IndexError, ValueError):
             return
-        # Reuse encounter skill processor — state mirrors enc dict structure
-        state["e_hp"]     = e["hp"]
-        state["e_max_hp"] = e["max_hp"]
+        # Reuse encounter skill processor — state mirrors enc dict structure.
+        # Prime e_* keys from the actual enemy so additions in _enc_process_skill
+        # are based on current state, not stale values from a previous skill call.
+        state["e_hp"]           = e["hp"]
+        state["e_max_hp"]       = e["max_hp"]
+        state["e_stunned_turns"] = e.get("stunned_turns", 0)
+        state["e_burning"]      = e.get("burning", False)
+        state["e_burn_turns"]   = e.get("burn_turns", 0)
+        state["e_poisoned"]     = e.get("poisoned", False)
+        state["e_poison_pct"]   = e.get("poison_pct", 0)
+        state["e_weakened"]     = e.get("weakened", False)
         action_txt, sk_dmg, is_support = _enc_process_skill(state, p, sk)
         # Arcane surge: +60% skill damage
         if state.get("floor_buff") == "arcane_surge" and sk_dmg and sk_dmg > 0:
@@ -6145,8 +6153,10 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for _sf, _ef in [("e_burning","burning"),("e_poisoned","poisoned"),
                          ("e_stunned_turns","stunned_turns"),("e_weakened","weakened"),
                          ("e_burn_turns","burn_turns"),("e_poison_pct","poison_pct")]:
-            if state.get(_sf):
-                e[_ef] = state[_sf]
+            e[_ef] = state.get(_sf) or e.get(_ef)  # prefer updated value, keep existing if skill didn't touch it
+        # Clear the bridge keys so stale values can't re-apply on the next skill call
+        for _sf in ("e_burning","e_poisoned","e_stunned_turns","e_weakened","e_burn_turns","e_poison_pct"):
+            state.pop(_sf, None)
         state.setdefault("combat_log",[]).append(action_txt)
         if len(state["combat_log"]) > 5: state["combat_log"] = state["combat_log"][-5:]
         if e["hp"] <= 0:
