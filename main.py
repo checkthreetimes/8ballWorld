@@ -20090,6 +20090,300 @@ def calc_combat_power(p):
             pet_val = safe_int(_pet.get("level", 1)) * 5 + safe_int(_pet.get("evolution_stage", 0)) * 50
     return level_val + stat_total + weapon_val + armor_val + skill_val + enchant_val + passive_val + pet_val
 
+def calc_dungeon_cp(p):
+    sd = safe_stats(p)
+    return (p["level"] * 8
+            + sum(sd.values())
+            + get_weapon_atk(p) * 3
+            + get_armor_def(p) * 2
+            + len(sjl(p.get("all_skills"),[])) * 30)
+
+# ── SOCIAL SYSTEM HELPERS ─────────────────────────────────────────────────────
+def _social_name(tg_user):
+    n = tg_user.first_name or "?"
+    return f"*{n}* (@{tg_user.username})" if tg_user.username else f"*{n}*"
+
+def _get_marriages(p):
+    m = sjl(p.get("marriages"), [])
+    if not m and p.get("married_to_id"):
+        m = [{"id": int(p["married_to_id"]), "name": p.get("married_to_name","?"), "date": p.get("married_at","")}]
+    return m
+
+def _get_holding_hands(p):
+    h = sjl(p.get("holding_hands_list"), [])
+    if not h and p.get("holding_hands_with_id"):
+        h = [{"id": int(p["holding_hands_with_id"]), "name": p.get("holding_hands_with_name","?"), "since": p.get("holding_hands_since","")}]
+    return h
+
+def _save_marriages(p, m_list):
+    p["marriages"] = json.dumps(m_list)
+    if m_list:
+        p["married_to_id"]   = m_list[0]["id"]
+        p["married_to_name"] = m_list[0]["name"]
+        p["married_at"]      = m_list[0].get("date","")
+    else:
+        p["married_to_id"] = None; p["married_to_name"] = None; p["married_at"] = None
+
+def _save_holding_hands(p, h_list):
+    p["holding_hands_list"] = json.dumps(h_list)
+    if h_list:
+        p["holding_hands_with_id"]   = h_list[0]["id"]
+        p["holding_hands_with_name"] = h_list[0]["name"]
+        p["holding_hands_since"]     = h_list[0].get("since","")
+    else:
+        p["holding_hands_with_id"] = None; p["holding_hands_with_name"] = None; p["holding_hands_since"] = None
+
+def _marriage_fee(current_count):
+    fees = [1000, 5000, 15000, 50000]
+    return fees[min(current_count, len(fees) - 1)]
+
+# ── MARRIAGE ──────────────────────────────────────────────────────────────────
+async def marry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    if not update.message.reply_to_message and not context.args:
+        marriages = _get_marriages(p)
+        if marriages:
+            lines = [f"💍 *{p['username']}'s Marriages*\n"]
+            for m in marriages:
+                date_str = (m.get("date","")[:10]) if m.get("date") else "?"
+                lines.append(f"💍 *{m['name']}*  _(since {date_str})_")
+            lines.append(f"\n_{len(marriages)} marriage{'s' if len(marriages)>1 else ''} total_")
+            lines.append("Use /divorce to end a marriage.")
+            await send_group(update, "\n".join(lines), delay=30)
+        else:
+            await send_group(update,
+                "💍 *Marriage*\n\n"
+                "Reply to someone's message and type /marry to propose!\n\n"
+                "*Benefits per spouse:*\n"
+                "• 💍 Shown on your /stats profile\n"
+                "• 🏅 *Beloved* title (first marriage)\n"
+                "• ✨ +3% EXP bonus (stacks per spouse, cap +15%)\n\n"
+                "*Costs:*  1st marriage: 1,000g each\n"
+                "2nd: 5,000g  ·  3rd: 15,000g  ·  4th+: 50,000g each\n\n"
+                "_Both partners must agree._", delay=30)
+        return
+
+    du = update.message.reply_to_message.from_user if update.message.reply_to_message else None
+    if not du:
+        await send_group(update, "Reply to the person you want to propose to!", delay=9); return
+    if du.id == user.id:
+        await send_group(update, "You can't marry yourself!", delay=9); return
+
+    tp = get_player(du.id)
+    if not tp:
+        await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+
+    proposer_marriages = _get_marriages(p)
+    target_marriages   = _get_marriages(tp)
+
+    if any(m["id"] == du.id for m in proposer_marriages):
+        await send_group(update, f"💍 You're already married to *{du.first_name}*!", delay=9); return
+
+    proposer_fee = _marriage_fee(len(proposer_marriages))
+    target_fee   = _marriage_fee(len(target_marriages))
+
+    if p.get("gold", 0) < proposer_fee:
+        await send_group(update, f"💰 You need *{proposer_fee:,} gold* to propose!", delay=9); return
+
+    pending_marriages[user.id] = {
+        "target_id":    du.id,
+        "chat_id":      update.effective_chat.id,
+        "expires":      (datetime.now() + timedelta(minutes=5)).isoformat(),
+        "proposer_fee": proposer_fee,
+        "target_fee":   target_fee,
+    }
+
+    a_name = _social_name(user)
+    d_name = _social_name(du)
+    if proposer_fee == target_fee:
+        cost_line = f"Cost: *{proposer_fee:,}g* each"
+    else:
+        cost_line = f"Cost: *{proposer_fee:,}g* for you · *{target_fee:,}g* for {du.first_name}"
+
+    p_count_note = f"_(your {len(proposer_marriages)+1}{'st' if len(proposer_marriages)==0 else 'nd' if len(proposer_marriages)==1 else 'rd' if len(proposer_marriages)==2 else 'th'} marriage)_" if proposer_marriages else ""
+
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("💍 Accept",  callback_data=f"marry_accept_{user.id}"),
+        InlineKeyboardButton("💔 Decline", callback_data=f"marry_decline_{user.id}"),
+    ]])
+    await send_group(update,
+        f"💍 {a_name} proposes to {d_name}!\n\n"
+        f"{cost_line}  {p_count_note}\n\n"
+        f"_{du.first_name}, will you accept?_\n"
+        f"_Expires in 5m._",
+        permanent=False, delay=300, reply_markup=markup)
+
+
+async def close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data  = query.data
+    if data.startswith("close_msg_"):
+        try:
+            owner_uid = int(data[len("close_msg_"):])
+            if query.from_user.id != owner_uid:
+                await query.answer("This isn't your menu!", show_alert=True)
+                return
+        except ValueError:
+            pass
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+
+
+async def marry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    action      = parts[1]
+    proposer_id = int(parts[2])
+
+    proposal = pending_marriages.get(proposer_id)
+    if not proposal:
+        await query.edit_message_text("💔 This proposal has already expired.", parse_mode="Markdown"); return
+    if datetime.now() > datetime.fromisoformat(proposal["expires"]):
+        pending_marriages.pop(proposer_id, None)
+        await query.edit_message_text("💔 This proposal has expired.", parse_mode="Markdown"); return
+    if query.from_user.id != proposal["target_id"]:
+        await query.answer("This proposal isn't for you!", show_alert=True); return
+
+    pending_marriages.pop(proposer_id, None)
+    proposer = get_player(proposer_id)
+    target   = get_player(proposal["target_id"])
+
+    if action == "decline":
+        await query.edit_message_text(
+            f"💔 *{query.from_user.first_name}* declined the proposal.",
+            parse_mode="Markdown"); return
+
+    if not proposer or not target:
+        await query.edit_message_text("❌ Player data not found.", parse_mode="Markdown"); return
+
+    proposer_fee = proposal.get("proposer_fee", 1000)
+    target_fee   = proposal.get("target_fee",   1000)
+
+    proposer_marriages = _get_marriages(proposer)
+    target_marriages   = _get_marriages(target)
+
+    if any(m["id"] == target["user_id"] for m in proposer_marriages):
+        await query.edit_message_text("💔 You're already married to each other.", parse_mode="Markdown"); return
+    if proposer.get("gold", 0) < proposer_fee:
+        await query.edit_message_text(f"💰 The proposer no longer has enough gold (need {proposer_fee:,}g)!", parse_mode="Markdown"); return
+    if target.get("gold", 0) < target_fee:
+        await query.edit_message_text(f"💰 You don't have enough gold (need {target_fee:,}g)!", parse_mode="Markdown"); return
+
+    now_str = datetime.now().isoformat()
+    proposer["gold"] -= proposer_fee
+    target["gold"]   -= target_fee
+
+    proposer_marriages.append({"id": target["user_id"],   "name": target["username"],   "date": now_str})
+    target_marriages.append(  {"id": proposer["user_id"], "name": proposer["username"], "date": now_str})
+    _save_marriages(proposer, proposer_marriages)
+    _save_marriages(target,   target_marriages)
+
+    if len(proposer_marriages) == 1: award_title(proposer, "Beloved")
+    if len(target_marriages)   == 1: award_title(target,   "Beloved")
+    save_player(proposer); save_player(target)
+
+    ordinal = lambda n: f"{n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'}"
+    p_ord = ordinal(len(proposer_marriages))
+    t_ord = ordinal(len(target_marriages))
+    ord_note = f"_{proposer['username']}'s {p_ord} marriage · {target['username']}'s {t_ord} marriage_\n\n" if (len(proposer_marriages)>1 or len(target_marriages)>1) else ""
+
+    await query.edit_message_text(
+        f"💍 *{proposer['username']}* and *{target['username']}* are now married!\n\n"
+        f"{ord_note}"
+        f"🏅 *Beloved* title awarded _(first-timers)_\n"
+        f"✨ +3% EXP bonus per spouse, stacks up to +15%\n\n"
+        f"_Congratulations!_ 🎉",
+        parse_mode="Markdown")
+
+
+async def divorce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+
+    marriages = _get_marriages(p)
+    if not marriages:
+        await send_group(update, "💔 You're not married.", delay=9); return
+
+    if len(marriages) == 1:
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Confirm Divorce", callback_data=f"divorce_confirm_{user.id}_{marriages[0]['id']}"),
+            InlineKeyboardButton("❌ Cancel",          callback_data=f"divorce_cancel_{user.id}"),
+        ]])
+        await send_group(update,
+            f"💔 Are you sure you want to divorce *{marriages[0]['name']}*?\n\n"
+            f"_This removes the EXP bonus for that marriage (Beloved title remains)._",
+            permanent=False, delay=60, reply_markup=markup)
+    else:
+        rows = []
+        for m in marriages:
+            rows.append([InlineKeyboardButton(f"💔 Divorce {m['name']}", callback_data=f"divorce_confirm_{user.id}_{m['id']}")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"divorce_cancel_{user.id}")])
+        await send_group(update,
+            f"💔 *Divorce*\n\nYou have {len(marriages)} marriages. Who do you want to divorce?",
+            permanent=False, delay=60, reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def divorce_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts  = query.data.split("_")
+    action = parts[1]
+    uid    = int(parts[2])
+    if query.from_user.id != uid:
+        await query.answer("This isn't your divorce!", show_alert=True); return
+
+    if action == "cancel":
+        await query.edit_message_text("_Divorce cancelled._", parse_mode="Markdown"); return
+
+    spouse_id = int(parts[3]) if len(parts) > 3 else None
+    p = get_player(uid)
+    marriages = _get_marriages(p) if p else []
+    marriage  = next((m for m in marriages if m["id"] == spouse_id), None) if spouse_id else (marriages[0] if marriages else None)
+
+    if not p or not marriage:
+        await query.edit_message_text("💔 That marriage record was not found.", parse_mode="Markdown"); return
+
+    spouse_name = marriage["name"]
+    new_marriages = [m for m in marriages if m["id"] != marriage["id"]]
+    _save_marriages(p, new_marriages)
+    save_player(p)
+
+    spouse = get_player(marriage["id"])
+    if spouse:
+        s_marriages = _get_marriages(spouse)
+        _save_marriages(spouse, [m for m in s_marriages if m["id"] != uid])
+        save_player(spouse)
+
+    remaining = len(new_marriages)
+    note = f"_You now have {remaining} remaining marriage{'s' if remaining!=1 else ''}._" if remaining else "_You are now single._"
+    await query.edit_message_text(
+        f"💔 *{p['username']}* and *{spouse_name}* are now divorced.\n\n"
+        f"_The +3% EXP bonus for this marriage has been removed._\n{note}",
+        parse_mode="Markdown")
+
+
+def _holdhands_duration(since_iso: str) -> str:
+    try:
+        delta = datetime.now() - datetime.fromisoformat(since_iso)
+        total = int(delta.total_seconds())
+        if total < 60:       return f"{total}s"
+        if total < 3600:     return f"{total // 60}m"
+        if total < 86400:    return f"{total // 3600}h {(total % 3600) // 60}m"
+        days = total // 86400; hours = (total % 86400) // 3600
+        return f"{days}d {hours}h"
+    except Exception:
+        return "a while"
+
 
 # ── PARTY COMMANDS ────────────────────────────────────────────────────────────
 
@@ -30833,7 +31127,7 @@ def main():
     app.add_handler(CallbackQueryHandler(rumor_callback,    pattern="^rumor"))
     app.add_handler(CallbackQueryHandler(secrets_callback,  pattern="^secrets"))
     app.add_handler(CallbackQueryHandler(prestige_callback,     pattern="^prestige_"))
-    app.add_handler(CallbackQueryHandler(dungeon_diff_callback, pattern="^dungeon_d_"))
+
     app.add_handler(CallbackQueryHandler(shop_tab_callback,     pattern="^shoptab_"))
     app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shopbuy_"))
     app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shop_b_"))  # legacy
