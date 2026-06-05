@@ -3788,57 +3788,74 @@ def _npc_level_stats(base_hp, base_dmg, level, player_max_hp=0):
         atk = max(int(player_max_hp * 0.06), min(atk, int(player_max_hp * 0.14)))
     return hp, atk
 
-def _get_monster_squad(uid):
+# ── PARTY SYSTEM ──────────────────────────────────────────────────────────────
+
+def _get_party_of(uid):
     c = _db().cursor()
-    c.execute("SELECT slot,monster_key,nickname,level,exp,hp,max_hp FROM monster_squad WHERE user_id=? ORDER BY slot", (uid,))
-    return [{"slot":r[0],"key":r[1],"nickname":r[2],"level":r[3],"exp":r[4],"hp":r[5],"max_hp":r[6]} for r in c.fetchall()]
+    c.execute("SELECT p.id, p.leader_id, p.name FROM parties p "
+              "JOIN party_members pm ON p.id=pm.party_id WHERE pm.user_id=?", (uid,))
+    row = c.fetchone()
+    return {"id": row[0], "leader_id": row[1], "name": row[2]} if row else None
 
-def _save_squad_monster(uid, m):
-    conn = _db(); c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO monster_squad (user_id,slot,monster_key,nickname,level,exp,hp,max_hp) VALUES(?,?,?,?,?,?,?,?)",
-              (uid, m["slot"], m["key"], m.get("nickname"), m["level"], m["exp"], m["hp"], m["max_hp"]))
-    conn.commit()
-
-def _remove_squad_monster(uid, slot):
-    conn = _db(); c = conn.cursor()
-    c.execute("DELETE FROM monster_squad WHERE user_id=? AND slot=?", (uid, slot))
-    conn.commit()
-
-def _add_monster_to_squad(uid, key, level=1):
-    squad = _get_monster_squad(uid)
-    if len(squad) >= 3:
-        return False, squad
-    slot = next(i for i in range(1, 4) if i not in {m["slot"] for m in squad})
-    mdata = MONSTER_BY_KEY[key]
-    base_hp, base_atk = _mon_level_stats(mdata[4], mdata[5], level)
-    _save_squad_monster(uid, {"slot":slot,"key":key,"nickname":None,"level":level,"exp":0,"hp":base_hp,"max_hp":base_hp})
-    return True, _get_monster_squad(uid)
-
-def _has_starter(uid):
+def _get_party_members(party_id):
     c = _db().cursor()
-    c.execute("SELECT COUNT(*) FROM monster_squad WHERE user_id=?", (uid,))
-    return c.fetchone()[0] > 0
+    c.execute("SELECT user_id FROM party_members WHERE party_id=? ORDER BY joined_at", (party_id,))
+    return [r[0] for r in c.fetchall()]
 
-def _get_monster_box(uid):
-    c = _db().cursor()
-    c.execute("SELECT id,monster_key,nickname,level,exp,hp,max_hp,caught_at FROM monster_box WHERE user_id=? ORDER BY id", (uid,))
-    return [{"id":r[0],"key":r[1],"nickname":r[2],"level":r[3],"exp":r[4],"hp":r[5],"max_hp":r[6],"caught_at":r[7]} for r in c.fetchall()]
-
-def _add_monster_to_box(uid, key, level=1, exp=0, hp=None, max_hp=None, nickname=None):
-    mdata = MONSTER_BY_KEY.get(key)
-    if not mdata: return
-    base_hp, _ = _mon_level_stats(mdata[4], mdata[5], level)
-    hp     = hp     if hp     is not None else base_hp
-    max_hp = max_hp if max_hp is not None else base_hp
+def _create_party(leader_uid):
     conn = _db(); c = conn.cursor()
-    c.execute("INSERT INTO monster_box (user_id,monster_key,nickname,level,exp,hp,max_hp,caught_at) VALUES(?,?,?,?,?,?,?,?)",
-              (uid, key, nickname, level, exp, hp, max_hp, datetime.now().isoformat()))
+    c.execute("INSERT INTO parties (leader_id, created_at) VALUES (?, ?)",
+              (leader_uid, datetime.now().isoformat()))
+    party_id = c.lastrowid
+    c.execute("INSERT OR IGNORE INTO party_members (party_id, user_id, joined_at) VALUES (?, ?, ?)",
+              (party_id, leader_uid, datetime.now().isoformat()))
+    conn.commit()
+    return party_id
+
+def _join_party(party_id, uid):
+    conn = _db(); c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO party_members (party_id, user_id, joined_at) VALUES (?, ?, ?)",
+              (party_id, uid, datetime.now().isoformat()))
     conn.commit()
 
-def _remove_box_monster(uid, box_id):
+def _leave_party(uid):
+    party = _get_party_of(uid)
+    if not party: return
     conn = _db(); c = conn.cursor()
-    c.execute("DELETE FROM monster_box WHERE id=? AND user_id=?", (box_id, uid))
+    c.execute("DELETE FROM party_members WHERE party_id=? AND user_id=?", (party["id"], uid))
+    remaining = _get_party_members(party["id"])
+    if not remaining:
+        c.execute("DELETE FROM parties WHERE id=?", (party["id"],))
+    elif party["leader_id"] == uid and remaining:
+        c.execute("UPDATE parties SET leader_id=? WHERE id=?", (remaining[0], party["id"]))
     conn.commit()
+
+async def _party_exp_bonus(bot, active_uid, exp_gained, source_name):
+    party = _get_party_of(active_uid)
+    if not party: return
+    members = _get_party_members(party["id"])
+    bonus = max(1, round(exp_gained * 0.25))
+    active_p = get_player(active_uid)
+    active_name = active_p.get("username", "A teammate") if active_p else "A teammate"
+    for mid in members:
+        if mid == active_uid: continue
+        mp = get_player(mid)
+        if not mp: continue
+        add_exp(mp, bonus)
+        save_player(mp)
+        try:
+            await bot.send_message(
+                mid,
+                f"⚔️ *{active_name}* fought {source_name} — "
+                f"you earned *+{bonus} EXP* as a party bonus!",
+                parse_mode="Markdown")
+        except Exception:
+            pass
+
+def _party_display_name(party):
+    return f"*{party['name']}*" if party.get("name") else "Unnamed Party"
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _encounter_battle_card(enc):
     """Pokémon-style battle card: enemy block at top, player block below, battle log at bottom."""
@@ -7801,31 +7818,6 @@ def init_db():
             conn_v23.commit(); conn_v23.close()
         except sqlite3.OperationalError:
             pass
-    try:
-        conn_v23b = sqlite3.connect(DB_PATH)
-        conn_v23b.execute("""CREATE TABLE IF NOT EXISTS monster_squad (
-            user_id INTEGER NOT NULL,
-            slot INTEGER NOT NULL,
-            monster_key TEXT NOT NULL,
-            nickname TEXT,
-            level INTEGER DEFAULT 1,
-            exp INTEGER DEFAULT 0,
-            hp INTEGER DEFAULT 0,
-            max_hp INTEGER DEFAULT 0,
-            PRIMARY KEY (user_id, slot))""")
-        conn_v23b.execute("""CREATE TABLE IF NOT EXISTS monster_box (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            monster_key TEXT NOT NULL,
-            nickname TEXT,
-            level INTEGER DEFAULT 1,
-            exp INTEGER DEFAULT 0,
-            hp INTEGER DEFAULT 0,
-            max_hp INTEGER DEFAULT 0,
-            caught_at TEXT)""")
-        conn_v23b.commit(); conn_v23b.close()
-    except Exception: pass
-
     # ── v24 shop reroll + dungeon floor + shield columns ─────────────────────
     for _v24col in [
         ("shop_reroll_date",      "TEXT DEFAULT NULL"),
@@ -7873,6 +7865,21 @@ def init_db():
         _mig_conn.close()
     except Exception as _me:
         logger.error(f"Migration error: {_me}")
+
+    try:
+        conn_v23b = sqlite3.connect(DB_PATH)
+        conn_v23b.execute("""CREATE TABLE IF NOT EXISTS parties (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            leader_id INTEGER NOT NULL UNIQUE,
+            name TEXT,
+            created_at TEXT)""")
+        conn_v23b.execute("""CREATE TABLE IF NOT EXISTS party_members (
+            party_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            joined_at TEXT,
+            PRIMARY KEY (party_id, user_id))""")
+        conn_v23b.commit(); conn_v23b.close()
+    except Exception: pass
 
     conn = sqlite3.connect(DB_PATH)  # reopen for remaining setup
 
@@ -10868,6 +10875,12 @@ def _build_stats_pages(p, viewing_name=None):
             perk = GUILD_PERKS.get(glvl, {})
             guild_str = g['name']
 
+    _p_party = _get_party_of(p["user_id"])
+    party_str = _party_display_name(_p_party).replace("*", "") if _p_party else "None"
+    if _p_party:
+        pmembers = _get_party_members(_p_party["id"])
+        party_str += f" ({len(pmembers)} members)"
+
     exp_cur  = safe_int(p.get("exp"))
     exp_need = exp_for_level(p["level"])
     exp_pct  = int(exp_cur / max(1, exp_need) * 100)
@@ -10946,6 +10959,7 @@ def _build_stats_pages(p, viewing_name=None):
         f"🌟 Level {p['level']} | {tier['name']}",
         f"🧙 {cls_name}",
         f"🏰 {guild_str}",
+        f"⚔️ Party: {party_str}",
         f"🏅 {p.get('active_title') or '—'}",
         "",
         f"🌍 {w['name']}",
@@ -20796,6 +20810,195 @@ async def dungeon_wiz_start(update_or_query, uid: int, p: dict, bot, chat_id: in
 # END WIZARDRY DUNGEON helpers
 # ════════════════════════════════════════════════════════════════════════════
 
+# ── PARTY COMMANDS ────────────────────────────────────────────────────────────
+
+def _party_guard(update, p):
+    """Returns player or None after sending error."""
+    return p  # caller already checked
+
+async def party_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    uid = user.id
+    party = _get_party_of(uid)
+    if not party:
+        await send_group(update,
+            "⚔️ You're not in a party.\n\n"
+            "Use `/partyinvite @username` to start one.\n"
+            "Members earn *+25% EXP* from each other's Battle and Hunt encounters.",
+            delay=12); return
+    members = _get_party_members(party["id"])
+    pname = _party_display_name(party)
+    lines = [f"⚔️ {pname}  •  {len(members)} members\n"]
+    for mid in members:
+        mp = get_player(mid)
+        if not mp: continue
+        tag = " 👑" if mid == party["leader_id"] else ""
+        lines.append(f"• *{mp['username']}* Lv.{mp['level']}{tag}")
+    lines += ["", "_+25% EXP from all Battle & Hunt encounter wins._",
+              "_/partyinvite @user | /partyname <name> | /partyleave | /partykick @user_"]
+    await send_group(update, "\n".join(lines), delay=15)
+
+
+async def partyinvite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    uid = user.id
+    args = context.args
+    if not args:
+        await send_group(update, "Usage: `/partyinvite @username`", delay=8); return
+    target_name = args[0].lstrip("@")
+    target = get_player_by_username(target_name)
+    if not target:
+        await send_group(update, f"❌ Player '{target_name}' not found.", delay=8); return
+    if target["user_id"] == uid:
+        await send_group(update, "❌ You can't invite yourself.", delay=8); return
+    if _get_party_of(target["user_id"]):
+        await send_group(update, f"❌ *{target['username']}* is already in a party.", delay=8); return
+    party = _get_party_of(uid)
+    party_id = party["id"] if party else _create_party(uid)
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Accept", callback_data=f"party_accept_{uid}_{target['user_id']}_{party_id}"),
+        InlineKeyboardButton("❌ Decline", callback_data=f"party_decline_{uid}_{target['user_id']}"),
+    ]])
+    try:
+        await context.bot.send_message(
+            target["user_id"],
+            f"⚔️ *{p['username']}* invites you to their party!\n"
+            f"Party members earn *+25% EXP* from each other's encounters.",
+            parse_mode="Markdown", reply_markup=markup)
+        await send_group(update, f"✉️ Party invite sent to *{target['username']}*!", delay=8)
+    except Exception:
+        await send_group(update, f"❌ Couldn't DM *{target['username']}*. They need to start the bot first.", delay=10)
+
+
+async def partyname_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    uid = user.id
+    args = context.args
+    party = _get_party_of(uid)
+    if not party:
+        await send_group(update, "❌ You're not in a party.", delay=8); return
+    if party["leader_id"] != uid:
+        await send_group(update, "❌ Only the party leader can set the name.", delay=8); return
+    if not args:
+        await send_group(update, "Usage: `/partyname <name>`", delay=8); return
+    new_name = " ".join(args)[:40]
+    conn = _db(); conn.execute("UPDATE parties SET name=? WHERE id=?", (new_name, party["id"])); conn.commit()
+    await send_group(update, f"✅ Party name set to *{new_name}*!", delay=8)
+
+
+async def partyleave_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    party = _get_party_of(user.id)
+    if not party:
+        await send_group(update, "❌ You're not in a party.", delay=8); return
+    _leave_party(user.id)
+    await send_group(update, "👋 You left the party.", delay=8)
+
+
+async def partykick_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    uid = user.id
+    args = context.args
+    if not args:
+        await send_group(update, "Usage: `/partykick @username`", delay=8); return
+    party = _get_party_of(uid)
+    if not party:
+        await send_group(update, "❌ You're not in a party.", delay=8); return
+    if party["leader_id"] != uid:
+        await send_group(update, "❌ Only the party leader can kick members.", delay=8); return
+    target_name = args[0].lstrip("@")
+    target = get_player_by_username(target_name)
+    if not target:
+        await send_group(update, f"❌ Player '{target_name}' not found.", delay=8); return
+    if target["user_id"] == uid:
+        await send_group(update, "❌ Use `/partydisband` to end the party.", delay=8); return
+    target_party = _get_party_of(target["user_id"])
+    if not target_party or target_party["id"] != party["id"]:
+        await send_group(update, f"❌ *{target['username']}* is not in your party.", delay=8); return
+    _leave_party(target["user_id"])
+    await send_group(update, f"🚫 *{target['username']}* was removed from the party.", delay=8)
+
+
+async def partydisband_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    uid = user.id
+    party = _get_party_of(uid)
+    if not party:
+        await send_group(update, "❌ You're not in a party.", delay=8); return
+    if party["leader_id"] != uid:
+        await send_group(update, "❌ Only the party leader can disband.", delay=8); return
+    conn = _db()
+    conn.execute("DELETE FROM party_members WHERE party_id=?", (party["id"],))
+    conn.execute("DELETE FROM parties WHERE id=?", (party["id"],))
+    conn.commit()
+    await send_group(update, "💔 Party disbanded.", delay=8)
+
+
+async def party_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data  = query.data
+    uid   = update.effective_user.id
+
+    if data.startswith("party_accept_"):
+        _, _, inviter_str, target_str, party_id_str = data.split("_", 4)
+        inviter_uid = int(inviter_str); target_uid = int(target_str); party_id = int(party_id_str)
+        if uid != target_uid:
+            await query.answer("This invite isn't for you!", show_alert=True); return
+        if _get_party_of(uid):
+            await query.answer("You're already in a party!", show_alert=True); return
+        c = _db().cursor()
+        c.execute("SELECT id FROM parties WHERE id=?", (party_id,))
+        if not c.fetchone():
+            await query.answer()
+            await query.edit_message_text("❌ That party no longer exists."); return
+        _join_party(party_id, uid)
+        inviter_p = get_player(inviter_uid)
+        inviter_name = inviter_p.get("username", "the party leader") if inviter_p else "the party leader"
+        await query.answer()
+        await query.edit_message_text(
+            f"✅ You joined *{inviter_name}*'s party!\n"
+            f"You'll earn +25% EXP from all party encounter wins.",
+            parse_mode="Markdown")
+        try:
+            jp = get_player(uid)
+            if jp:
+                await context.bot.send_message(inviter_uid, f"⚔️ *{jp['username']}* joined your party!", parse_mode="Markdown")
+        except Exception: pass
+        return
+
+    if data.startswith("party_decline_"):
+        _, _, inviter_str, target_str = data.split("_", 3)
+        inviter_uid = int(inviter_str); target_uid = int(target_str)
+        if uid != target_uid:
+            await query.answer("This invite isn't for you!", show_alert=True); return
+        await query.answer()
+        await query.edit_message_text("❌ You declined the party invite.")
+        try:
+            dp = get_player(uid)
+            if dp:
+                await context.bot.send_message(inviter_uid, f"*{dp['username']}* declined your party invite.", parse_mode="Markdown")
+        except Exception: pass
+        return
+
+
 # ── ENCOUNTER SYSTEM ──────────────────────────────────────────────────────────
 async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -20817,108 +21020,6 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "🌿 *Hunt* — fight wild monsters; weaken them to 🎯 catch for *Monster Cores*",
                     reply_markup=markup, permanent=True)
 
-async def squad_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    squad = _get_monster_squad(user.id)
-    if not squad:
-        await send_group(update, "🌿 Your monster squad is empty. Use /encounter and choose *Hunt* to catch monsters!", delay=12); return
-    lines = ["🐉 *Your Monster Squad*\n"]
-    for m in squad:
-        mdata = MONSTER_BY_KEY.get(m["key"])
-        if not mdata: continue
-        elem_e = ELEMENT_EMOJI.get(mdata[2], "")
-        name   = m.get("nickname") or mdata[1]
-        bar    = _enc_hp_bar(m["hp"], m["max_hp"])
-        lines.append(f"[{m['slot']}] {elem_e} *{name}* (Lv.{m['level']})")
-        lines.append(f"   HP: {m['hp']}/{m['max_hp']}  [{bar}]")
-        lines.append(f"   EXP: {m['exp']} | Species: {mdata[1]}")
-        lines.append("")
-    await send_group(update, "\n".join(lines), delay=20)
-
-async def box_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    uid = user.id
-    box = _get_monster_box(uid)
-    squad = _get_monster_squad(uid)
-    if not box and not squad:
-        await send_group(update, "📦 Your Box and squad are empty. Use /encounter → Hunt to catch monsters!", delay=12); return
-    lines = [f"📦 *Monster Box*  (Squad: {len(squad)}/3 | Box: {len(box)} stored)\n"]
-    if squad:
-        lines.append("*— Squad —*")
-        for m in squad:
-            mdata = MONSTER_BY_KEY.get(m["key"])
-            elem_e = ELEMENT_EMOJI.get(mdata[2], "") if mdata else ""
-            name = m.get("nickname") or (mdata[1] if mdata else m["key"])
-            bar = _enc_hp_bar(m["hp"], m["max_hp"])
-            lines.append(f"[S{m['slot']}] {elem_e} *{name}* Lv.{m['level']}  {m['hp']}/{m['max_hp']} [{bar}]")
-        lines.append("")
-    if box:
-        lines.append("*— Box —*")
-        for bm in box[:30]:
-            mdata = MONSTER_BY_KEY.get(bm["key"])
-            elem_e = ELEMENT_EMOJI.get(mdata[2], "") if mdata else ""
-            name = bm.get("nickname") or (mdata[1] if mdata else bm["key"])
-            lines.append(f"[#{bm['id']}] {elem_e} *{name}* Lv.{bm['level']}")
-        if len(box) > 30:
-            lines.append(f"_...and {len(box)-30} more_")
-    lines.append("")
-    lines.append("_Use /withdraw <#id> to move a Box monster to your squad._")
-    lines.append("_Use /deposit <slot> to move a squad member to the Box._")
-    await send_group(update, "\n".join(lines), delay=30)
-
-async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    uid = user.id
-    args = context.args
-    if not args or not args[0].isdigit():
-        await send_group(update, "Usage: `/withdraw <box_id>` — find the ID with /box", delay=10); return
-    box_id = int(args[0])
-    box = _get_monster_box(uid)
-    bm = next((b for b in box if b["id"] == box_id), None)
-    if not bm:
-        await send_group(update, f"❌ No Box monster with ID #{box_id}.", delay=8); return
-    squad = _get_monster_squad(uid)
-    if len(squad) >= 3:
-        await send_group(update, "❌ Your squad is full (3/3). Use `/deposit <slot>` to make room first.", delay=10); return
-    _remove_box_monster(uid, box_id)
-    slot = next(i for i in range(1, 4) if i not in {m["slot"] for m in squad})
-    _save_squad_monster(uid, {"slot":slot,"key":bm["key"],"nickname":bm.get("nickname"),
-                               "level":bm["level"],"exp":bm["exp"],"hp":bm["hp"],"max_hp":bm["max_hp"]})
-    mdata = MONSTER_BY_KEY.get(bm["key"])
-    elem_e = ELEMENT_EMOJI.get(mdata[2], "") if mdata else ""
-    name = bm.get("nickname") or (mdata[1] if mdata else bm["key"])
-    await send_group(update, f"✅ *{name}* {elem_e} (Lv.{bm['level']}) moved from Box to squad slot {slot}!", delay=12)
-
-async def deposit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    uid = user.id
-    args = context.args
-    if not args or not args[0].isdigit():
-        await send_group(update, "Usage: `/deposit <slot>` (slot 1, 2, or 3) — check /box", delay=10); return
-    slot = int(args[0])
-    squad = _get_monster_squad(uid)
-    sm = next((m for m in squad if m["slot"] == slot), None)
-    if not sm:
-        await send_group(update, f"❌ No monster in squad slot {slot}.", delay=8); return
-    _remove_squad_monster(uid, slot)
-    _add_monster_to_box(uid, sm["key"], level=sm["level"], exp=sm["exp"],
-                        hp=sm["hp"], max_hp=sm["max_hp"], nickname=sm.get("nickname"))
-    mdata = MONSTER_BY_KEY.get(sm["key"])
-    elem_e = ELEMENT_EMOJI.get(mdata[2], "") if mdata else ""
-    name = sm.get("nickname") or (mdata[1] if mdata else sm["key"])
-    await send_group(update, f"📦 *{name}* {elem_e} (Lv.{sm['level']}) moved to your Box.", delay=12)
 
 async def _start_encounter_battle(query, uid, p):
     # 5% chance: treasure chest. 7% chance: random event.
@@ -21107,24 +21208,6 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # don't conflict with subsequent query.answer(show_alert=True) calls.
     data  = query.data
     uid   = update.effective_user.id
-
-    # ── starter pick ────────────────────────────────────────────────────────
-    if data.startswith("enc_starter_"):
-        suffix = data[len("enc_starter_"):]
-        uid_str, mon_key = suffix.split("_", 1)
-        target_uid = int(uid_str)
-        if uid != target_uid:
-            await query.answer("Not your encounter!", show_alert=True); return
-        if _has_starter(uid):
-            await query.answer(); await query.edit_message_text("You already have a starter!"); return
-        ok, squad = _add_monster_to_squad(uid, mon_key, level=1)
-        mdata = MONSTER_BY_KEY[mon_key]
-        elem_e = ELEMENT_EMOJI.get(mdata[2], "")
-        await query.answer()
-        await query.edit_message_text(
-            f"🎉 *{mdata[1]}* {elem_e} joined your squad as your starter!\n"
-            f"Use /encounter again to begin your adventure.", parse_mode="Markdown")
-        return
 
     # ── mode select ─────────────────────────────────────────────────────────
     if data.startswith("enc_mode_"):
@@ -21628,6 +21711,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
             add_exp(p, exp)
             p["gold"] = safe_int(p.get("gold", 0)) + gold
+            asyncio.create_task(_party_exp_bonus(context.bot, uid, exp, f"*{enc['e_name']}*"))
 
             # Gear drops — full item pool including all rarities
             _num_gear = enc.get("num_gear", 2)
@@ -21878,6 +21962,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 gold_gain = enc["e_level"] * 8
                 add_exp(p, exp_gain)
                 p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
+                asyncio.create_task(_party_exp_bonus(context.bot, uid, exp_gain, f"a wild *{enc['e_name']}*"))
                 _core_str = f"*{core_item}* ×{_core_qty}" if _core_qty > 1 else f"*{core_item}*"
                 _bonus_str = " 🍀 *Lucky drop!*" if _core_qty > 1 else ""
                 await _end_encounter(
@@ -21969,6 +22054,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             gold_gain = round(gold_gain * reward_mult)
             add_exp(p, exp_gain)
             p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
+            asyncio.create_task(_party_exp_bonus(context.bot, uid, exp_gain, f"*{enc['e_name']}*"))
             elem = enc.get("element","")
             elem_e = ELEMENT_EMOJI.get(elem, "")
             # Gear drops — full item pool
@@ -31876,11 +31962,14 @@ def main():
     app.add_handler(CommandHandler("gear",       gear_cmd))
 
     # Encounter
+    app.add_handler(CommandHandler("party",         party_cmd))
+    app.add_handler(CommandHandler("partyinvite",   partyinvite_cmd))
+    app.add_handler(CommandHandler("partyname",     partyname_cmd))
+    app.add_handler(CommandHandler("partyleave",    partyleave_cmd))
+    app.add_handler(CommandHandler("partykick",     partykick_cmd))
+    app.add_handler(CommandHandler("partydisband",  partydisband_cmd))
+    app.add_handler(CallbackQueryHandler(party_callback, pattern="^party_"))
     app.add_handler(CommandHandler("encounter",    encounter_cmd))
-    app.add_handler(CommandHandler("box",          box_cmd))
-    app.add_handler(CommandHandler("squad",        squad_cmd))
-    app.add_handler(CommandHandler("withdraw",     withdraw_cmd))
-    app.add_handler(CommandHandler("deposit",      deposit_cmd))
     app.add_handler(CallbackQueryHandler(enc_next_callback, pattern=r"^enc_next_"))
     app.add_handler(CallbackQueryHandler(encounter_callback, pattern="^enc_"))
     app.add_handler(CallbackQueryHandler(dungeon_wiz_callback, pattern="^dng_"))
