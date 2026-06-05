@@ -10938,8 +10938,7 @@ def _build_stats_pages(p, viewing_name=None):
         "",
         f"❤️ HP: {p['hp']}/{real_max}",
         shield_line,
-        f"✨ EXP [{_exp_bar_str}]",
-        f"🏆 Total EXP: {safe_int(p.get('total_exp')):,}",
+        f"✨ EXP `[{_exp_bar_str}]`",
         "",
         f"💰 Gold: {p['gold']}",
         f"💬 Messages: {msg_count:,}",
@@ -11607,7 +11606,7 @@ async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cls      = get_player_class(p)
     cls_name = cls["name"] if cls else "Unknown"
     path_str = f" (Path {p['class_path']})" if p.get("class_path") else ""
-    cost     = 20000
+    cost     = 1_000_000
 
     if not context.args or context.args[0].lower() != "confirm":
         rscls_markup = InlineKeyboardMarkup([[
@@ -11641,6 +11640,8 @@ async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p["all_skills"] = json.dumps([])
     p["gold"]       = safe_int(p.get("gold")) - cost
     unequipped = _unequip_class_gear(p)
+    new_max_hp = calc_max_hp(p)
+    p["hp"] = min(safe_int(p.get("hp", new_max_hp)), new_max_hp)
     save_player(p)
 
     gear_note = f"\n⚠️ Class gear unequipped: {', '.join(unequipped)}" if unequipped else ""
@@ -11678,7 +11679,7 @@ async def resetclass_callback(update, context):
         p = get_player(uid)
         if not p or not p.get("class_id"):
             await query.answer("No class to reset!", show_alert=True); return
-        cost = 20000
+        cost = 1_000_000
         if safe_int(p.get("gold")) < cost:
             await query.answer(f"Not enough gold! Need {cost:,}g.", show_alert=True); return
         cls = get_player_class(p)
@@ -11693,6 +11694,8 @@ async def resetclass_callback(update, context):
         p["all_skills"] = json.dumps([])
         p["gold"]       = safe_int(p.get("gold")) - cost
         unequipped = _unequip_class_gear(p)
+        new_max_hp = calc_max_hp(p)
+        p["hp"] = min(safe_int(p.get("hp", new_max_hp)), new_max_hp)
         save_player(p)
         gear_note = f"\n⚠️ Class gear unequipped: {', '.join(unequipped)}" if unequipped else ""
         result = (f"🔄 *Class reset complete!*\n\n"
@@ -11819,6 +11822,10 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sk["name"] not in [s["name"] for s in existing]:
             existing.append(sk)
     p["all_skills"] = json.dumps(existing)
+    # Catch-up: apply any tier advancements the player already qualifies for
+    for _thresh in (30, 60, 100):
+        if p["level"] >= _thresh:
+            _auto_advance_class(p, _thresh)
     save_player(p)
 
     asyncio.create_task(announce(context.bot, update.effective_chat.id,
@@ -29308,7 +29315,7 @@ async def resetstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
 
-    _rss_cost = 20000
+    _rss_cost = 1_000_000
     if not context.args or context.args[0].lower() != "confirm":
         rsstat_markup = InlineKeyboardMarkup([[
             InlineKeyboardButton("✅ Confirm Reset", callback_data=f"rsstat_confirm_{user.id}"),
@@ -29371,7 +29378,7 @@ async def resetstats_callback(update, context):
         p = get_player(uid)
         if not p:
             await query.answer("Player not found!", show_alert=True); return
-        _rss_cost = 20000
+        _rss_cost = 1_000_000
         if safe_int(p.get("gold")) < _rss_cost:
             await query.answer(f"Not enough gold! Need {_rss_cost:,}g.", show_alert=True); return
         p["gold"] = safe_int(p.get("gold")) - _rss_cost
@@ -30162,15 +30169,43 @@ async def adminresetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not p:
         await update.message.reply_text(f"Player '{target}' not found."); return
     old_class = p.get("class_id") or "none"
+    old_cls   = CLASS_TREE.get(old_class, {})
+    old_name  = old_cls.get("name", old_class)
+
+    # Reverse all class stat bonuses (same logic as /resetclass)
+    bonuses = _calc_applied_class_bonuses(p)
+    sd = safe_stats(p)
+    for stat, val in bonuses.items():
+        sd[stat] = max(0, sd.get(stat, 0) - val)
+    p["stats"] = json.dumps(sd)
+
     p["class_id"]   = None
     p["class_path"] = None
     p["all_skills"] = json.dumps([])
-    p.pop("serpent_revive_used", None)
-    p.pop("cure_priority", None)
+
+    # Clear class-specific combat state
+    for _f in ("charging_killshot", "steady_aim_target", "steady_aim_stacks",
+               "mark_first_hit", "deadeye_kill_bonus", "spell_cast_count",
+               "holy_field_until", "devotion_charge",
+               "contract_target", "contract_until",
+               "serpent_revive_used", "cure_priority"):
+        p.pop(_f, None)
+    for _f in ("charging_killshot", "steady_aim_stacks", "mark_first_hit",
+               "deadeye_kill_bonus", "spell_cast_count", "devotion_charge"):
+        p[_f] = 0  # integer fields need a default, not absent
+
+    # Strip class-restricted gear
+    unequipped = _unequip_class_gear(p)
+    new_max_hp = calc_max_hp(p)
+    p["hp"] = min(safe_int(p.get("hp", new_max_hp)), new_max_hp)
+
     save_player(p)
+    gear_note = f"\n⚠️ Class gear unequipped: {', '.join(unequipped)}" if unequipped else ""
+    bonus_note = (f"\n📉 Stat bonuses reversed: " +
+                  ", ".join(f"{s} -{v}" for s, v in bonuses.items())) if bonuses else ""
     await update.message.reply_text(
         f"✅ *{p['username']}*'s class reset.\n"
-        f"Old class: *{old_class}*\n"
+        f"Old class: *{old_name}*{bonus_note}{gear_note}\n"
         f"They can now use /class to choose a new one.",
         parse_mode="Markdown")
 
@@ -31395,6 +31430,10 @@ async def prestige_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sk["name"] not in [s["name"] for s in existing_skills]:
             existing_skills.append(sk)
     p["all_skills"] = json.dumps(existing_skills)
+    # Catch-up: apply any tier advancements the player already qualifies for
+    for _thresh in (30, 60, 100):
+        if p["level"] >= _thresh:
+            _auto_advance_class(p, _thresh)
     save_player(p)
 
     asyncio.create_task(announce(context.bot, query.message.chat.id,
@@ -31761,12 +31800,14 @@ def main():
     app.add_handler(CommandHandler("perma",        perma_cmd))
 
     # Class & progression
-    app.add_handler(CommandHandler("class",     class_cmd))
-    app.add_handler(CommandHandler("prestige",  prestige_cmd))
-    app.add_handler(CommandHandler("allocate",  allocate_cmd))
-    app.add_handler(CommandHandler("skill",     skill_cmd))
-    app.add_handler(CommandHandler("skills",    skills_cmd))
-    app.add_handler(CommandHandler("title",     title_cmd))
+    app.add_handler(CommandHandler("class",      class_cmd))
+    app.add_handler(CommandHandler("prestige",   prestige_cmd))
+    app.add_handler(CommandHandler("resetclass", resetclass_cmd))
+    app.add_handler(CommandHandler("resetstats", resetstats_cmd))
+    app.add_handler(CommandHandler("allocate",   allocate_cmd))
+    app.add_handler(CommandHandler("skill",      skill_cmd))
+    app.add_handler(CommandHandler("skills",     skills_cmd))
+    app.add_handler(CommandHandler("title",      title_cmd))
 
     # Activities
     app.add_handler(CommandHandler("daily",     daily_cmd))
@@ -31798,6 +31839,7 @@ def main():
 
     # Encounter
     app.add_handler(CommandHandler("encounter",    encounter_cmd))
+    app.add_handler(CommandHandler("box",          box_cmd))
     app.add_handler(CommandHandler("squad",        squad_cmd))
     app.add_handler(CommandHandler("withdraw",     withdraw_cmd))
     app.add_handler(CommandHandler("deposit",      deposit_cmd))
