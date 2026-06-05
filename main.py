@@ -29461,6 +29461,148 @@ async def fixgear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "\n\nItems returned to their inventory.", delay=15)
 
 
+async def admingivexp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if update.effective_chat.type != "private":
+        try: await update.message.delete()
+        except: pass
+        return
+
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "Usage: /admingivexp <name/id/search> <amount>\n\n"
+            "If multiple players match the search, you'll get a picker.\n"
+            "Examples:\n"
+            "  /admingivexp john 900000\n"
+            "  /admingivexp 123456789 50000\n"
+            "  /admingivexp @john 200000"
+        )
+        return
+
+    # If last arg is a number it's the amount; otherwise no amount given yet
+    try:
+        exp_amount = int(args[-1])
+        query_parts = args[:-1]
+    except ValueError:
+        await update.message.reply_text("Last argument must be the EXP amount.\nExample: /admingivexp john 900000")
+        return
+
+    if not query_parts:
+        await update.message.reply_text("Provide a name, @username, or user ID before the amount.")
+        return
+
+    search = " ".join(query_parts).strip().lower().lstrip("@")
+    c = _db().cursor()
+
+    # Collect all matches: exact user_id, exact tg_username, partial username/display
+    matches = []
+    seen = set()
+
+    def _add(row):
+        if row and row["user_id"] not in seen:
+            seen.add(row["user_id"])
+            matches.append(dict(row))
+
+    # 1. Exact user_id
+    try:
+        uid_int = int(search)
+        row = c.execute("SELECT user_id, username, level, tg_username FROM players WHERE user_id=?", (uid_int,)).fetchone()
+        _add(row)
+    except ValueError:
+        pass
+
+    # 2. Exact @handle
+    c.execute("SELECT user_id, username, level, tg_username FROM players WHERE LOWER(tg_username)=?", (search,))
+    for row in c.fetchall(): _add(row)
+
+    # 3. Exact display name
+    c.execute("SELECT user_id, username, level, tg_username FROM players WHERE LOWER(username)=?", (search,))
+    for row in c.fetchall(): _add(row)
+
+    # 4. Partial match on either field (up to 20 results)
+    c.execute("""SELECT user_id, username, level, tg_username FROM players
+                 WHERE LOWER(username) LIKE ? OR LOWER(tg_username) LIKE ?
+                 ORDER BY level DESC LIMIT 20""", (f"%{search}%", f"%{search}%"))
+    for row in c.fetchall(): _add(row)
+
+    if not matches:
+        await update.message.reply_text(f"No players found matching '{search}'.")
+        return
+
+    if len(matches) == 1:
+        # Single match — apply directly
+        p = get_player(matches[0]["user_id"])
+        if not p:
+            await update.message.reply_text("Player found but data missing."); return
+        old_level = p["level"]
+        add_exp(p, exp_amount)
+        save_player(p)
+        new_level = p["level"]
+        level_note = f" _(levelled up: {old_level} → {new_level})_" if new_level != old_level else ""
+        handle = f" (@{matches[0]['tg_username']})" if matches[0].get("tg_username") else ""
+        await update.message.reply_text(
+            f"✅ Gave *{exp_amount:,} EXP* to *{p['username']}*{handle}{level_note}\n"
+            f"New level: *{new_level}*  |  EXP: *{p['exp']:,}*",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Multiple matches — show picker (store exp in callback data)
+    rows = []
+    for m in matches[:20]:
+        handle = f"@{m['tg_username']} · " if m.get("tg_username") else ""
+        label = f"{m['username']} ({handle}Lv {m['level']}  |  id:{m['user_id']})"
+        rows.append([InlineKeyboardButton(label,
+            callback_data=f"agivexp_{m['user_id']}_{exp_amount}")])
+    rows.append([InlineKeyboardButton("❌ Cancel", callback_data="agivexp_cancel")])
+    await update.message.reply_text(
+        f"Found *{len(matches)}* players matching *'{search}'*.\n"
+        f"Select who should receive *{exp_amount:,} EXP*:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(rows)
+    )
+
+
+async def admingivexp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if update.effective_user.id != ADMIN_ID:
+        await query.answer("Not authorised.", show_alert=True); return
+    await query.answer()
+    data = query.data
+
+    if data == "agivexp_cancel":
+        try: await query.edit_message_text("_Cancelled._", parse_mode="Markdown")
+        except: pass
+        return
+
+    parts = data.split("_")   # agivexp_<uid>_<exp>
+    try:
+        target_uid = int(parts[1])
+        exp_amount = int(parts[2])
+    except (IndexError, ValueError):
+        await query.edit_message_text("Invalid callback data."); return
+
+    p = get_player(target_uid)
+    if not p:
+        await query.edit_message_text("Player not found."); return
+
+    old_level = p["level"]
+    add_exp(p, exp_amount)
+    save_player(p)
+    new_level = p["level"]
+    level_note = f" _(levelled up: {old_level} → {new_level})_" if new_level != old_level else ""
+
+    try:
+        await query.edit_message_text(
+            f"✅ Gave *{exp_amount:,} EXP* to *{p['username']}*{level_note}\n"
+            f"New level: *{new_level}*  |  EXP: *{p['exp']:,}*",
+            parse_mode="Markdown"
+        )
+    except Exception: pass
+
+
 async def adminresetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin-only: reset a player's class so they can re-choose. For testing purposes."""
     if update.effective_user.id != ADMIN_ID:
@@ -31123,6 +31265,8 @@ def main():
     app.add_handler(CommandHandler("fixgear",         fixgear_cmd))
     app.add_handler(CommandHandler("fixbounties",     fixbounties_cmd))
     app.add_handler(CommandHandler("adminresetclass", adminresetclass_cmd))
+    app.add_handler(CommandHandler("admingivexp",    admingivexp_cmd))
+    app.add_handler(CallbackQueryHandler(admingivexp_callback, pattern="^agivexp_"))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(rank_callback,         pattern="^rank_p_"))
