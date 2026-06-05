@@ -30160,7 +30160,7 @@ async def adminresetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Clears class_id, class_path, and all_skills so the player can pick again.")
         return
     target = context.args[0].lstrip("@")
-    p = get_player_by_name(target)
+    p = get_player_by_username(target)
     if not p:
         try:
             p = get_player(int(target))
