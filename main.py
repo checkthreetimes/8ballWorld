@@ -11352,10 +11352,13 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
                     except Exception: pass
             _pvp_battle_logs.pop(pair, None)
             _pvp_cur_page.pop(pair, None)
-            try: await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
+            try:
+                _dm = await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
+                asyncio.create_task(_auto_delete(context.bot, chat_id, _dm.message_id, 6))
             except Exception: pass
-            try: await context.bot.send_message(chat_id=uid, text=action_text[:4096], parse_mode="Markdown")
-            except Exception: pass
+            for _dm_uid in (uid, target_uid):
+                try: await context.bot.send_message(chat_id=_dm_uid, text=action_text[:4096], parse_mode="Markdown")
+                except Exception: pass
         else:
             # Hit or miss — the picker message becomes the attacker's battle card
             await _pvp_update_both_cards(pair, a, d, uid, target_uid, chat_id, context.bot, query=query)
@@ -11551,10 +11554,13 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception: pass
         _pvp_battle_logs.pop(pair, None)
         _pvp_cur_page.pop(pair, None)
-        try: await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
+        try:
+            _dm = await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
+            asyncio.create_task(_auto_delete(bot, chat, _dm.message_id, 6))
         except Exception: pass
-        try: await bot.send_message(chat_id=au.id, text=action[:4096], parse_mode="Markdown")
-        except Exception: pass
+        for _dm_uid in (au.id, du_id):
+            try: await bot.send_message(chat_id=_dm_uid, text=action[:4096], parse_mode="Markdown")
+            except Exception: pass
         return
 
     # hit or miss — update/create both players' battle cards
@@ -11744,10 +11750,13 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception: pass
             _pvp_battle_logs.pop(pair, None)
             _pvp_cur_page.pop(pair, None)
-            try: await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
+            try:
+                _dm = await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
+                asyncio.create_task(_auto_delete(context.bot, chat_id, _dm.message_id, 6))
             except Exception: pass
-            try: await context.bot.send_message(chat_id=uid, text=result_text[:4096], parse_mode="Markdown")
-            except Exception: pass
+            for _dm_uid in (uid, target_id):
+                try: await context.bot.send_message(chat_id=_dm_uid, text=result_text[:4096], parse_mode="Markdown")
+                except Exception: pass
             return
 
         # miss or hit — update both players' battle cards
