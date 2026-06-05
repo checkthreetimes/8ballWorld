@@ -5312,8 +5312,18 @@ def _dng_roll_narration(key, **kwargs):
 
 def _dng_gen_floor(floor):
     weights_raw = _DNG_ROOM_WEIGHTS.get(min(floor, _DNG_FLOORS), _DNG_ROOM_WEIGHTS[6])
-    types, ws = zip(*weights_raw)
-    rooms = list(random.choices(types, weights=ws, k=_DNG_ROOMS - 1))
+    types_list, ws_list = zip(*weights_raw)
+    rooms = []
+    for _ in range(_DNG_ROOMS - 1):
+        last = rooms[-1] if rooms else None
+        # Only monster/npc may appear consecutively; all other types must not repeat
+        if last and last not in ("monster", "npc"):
+            filtered = [(t, w) for t, w in zip(types_list, ws_list) if t != last]
+            if filtered:
+                ft, fw = zip(*filtered)
+                rooms.append(random.choices(ft, weights=fw, k=1)[0])
+                continue
+        rooms.append(random.choices(types_list, weights=ws_list, k=1)[0])
     # Guarantee at least one non-combat room in first half for survivability
     if not any(r in ("rest","treasure","shrine") for r in rooms[:5]):
         rooms[random.randint(0, 4)] = random.choice(["rest","treasure","shrine"])
@@ -6299,7 +6309,7 @@ async def _dng_on_enemy_killed(uid, bot, p, state):
             return
         markup = _dng_floor_done_markup(uid, floor)
     else:
-        state["room"] += 1
+        # Do NOT advance the room here — dng_next_ callback owns that
         markup = InlineKeyboardMarkup([[
             InlineKeyboardButton("➡️ Next Room", callback_data=f"dng_next_{uid}"),
             InlineKeyboardButton("🚪 Extract",   callback_data=f"dng_extract_{uid}"),
@@ -28138,9 +28148,16 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p: return
 
     if hub == "combat":
+        hp_pct = p.get("hp", 1) / max(1, p.get("max_hp", 1))
+        hp_bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
+        cp     = calc_combat_power(p)
+        status = "💀 Defeated (30 min)" if is_defeated(p) else ("⚔️ Ready" if hp_pct > 0.50 else "🩸 Wounded")
         try:
             await query.edit_message_text(
-                f"⚔️ *{p['username']}'s Combat Hub*\n\nPage 1: Encounter & Combat  |  Page 2: War & Explore\nPage 3: Dungeons",
+                f"⚔️ *{p['username']}'s Combat Hub*\n\n"
+                f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
+                f"⚡ CP: {cp:,}  |  {status}\n\n"
+                f"Page 1: Encounter & Combat  |  Page 2: War & Explore  |  Page 3: Info & Tools",
                 parse_mode="Markdown", reply_markup=_combat_hub_markup(uid, page=1))
         except Exception: pass
 
@@ -30205,18 +30222,61 @@ async def fixbounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── IDLE REWARD SYSTEM ────────────────────────────────────────────────────────
-def _calc_idle_exp(idle_secs: float, player_level: int = 1) -> int:
-    """Compound EXP for being offline. 0 if < 30 min. Scales with level, no hard time cap."""
+def _calc_idle_rewards(idle_secs: float, player_level: int = 1) -> dict:
+    """Idle rewards: EXP, gold, and items. No time cap — longer away = more everything."""
     if idle_secs < 1800:
-        return 0
+        return {"exp": 0, "gold": 0, "items": []}
+
     idle_hours = idle_secs / 3600
-    # Hourly rate scales with level; power < 1 gives diminishing returns over time
-    rate = 300 + player_level * 40
-    exp = int(rate * (idle_hours ** 0.65))
-    return max(50, exp)
+
+    # EXP: level-scaled via exp_for_level, grows linearly + accelerating bonus per hour
+    # ~1/40th of a level per hour base, no cap
+    base_rate = exp_for_level(max(1, player_level)) // 40
+    time_mult = 1.0 + idle_hours * 0.025   # +2.5% per additional hour, uncapped
+    exp = max(500, int(base_rate * idle_hours * time_mult))
+
+    # Gold: grows near-linearly with small acceleration, uncapped
+    gold = max(100, int((80 + player_level * 10) * (idle_hours ** 0.95)))
+    if idle_hours >= 24:  gold = int(gold * 1.5)
+    if idle_hours >= 48:  gold = int(gold * 1.5)
+
+    # Items: cumulative tiers — each threshold ADDS to the haul
+    items = []
+    _all = {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES,
+            **HATS, **GLOVES, **BOOTS, **MASKS}
+
+    def _pick(rarity, n=1):
+        pool = [k for k, v in _all.items() if v.get("rarity") == rarity]
+        return [random.choice(pool) for _ in range(n)] if pool else []
+
+    if idle_hours >= 2:
+        items.append("Health Potion")
+    if idle_hours >= 4:
+        items.append("Greater Health Potion")
+    if idle_hours >= 8:
+        # Gear tier scales with level
+        items += _pick("rare" if player_level >= 15 else "uncommon")
+    if idle_hours >= 16:
+        items += _pick("rare")
+    if idle_hours >= 24:
+        items += _pick("rare", 2)
+    if idle_hours >= 48:
+        items += _pick("epic")
+    if idle_hours >= 72:
+        items += _pick("epic", 2)
+    if idle_hours >= 168:    # 1 week
+        items += _pick("legendary" if player_level >= 15 else "epic")
+        items += _pick("epic")
+    # Uncapped: every additional 48h past 1 week adds another epic/legendary
+    if idle_hours > 168:
+        extra = min(10, int((idle_hours - 168) / 48))
+        for _ in range(extra):
+            items += _pick("legendary" if player_level >= 20 else "epic")
+
+    return {"exp": exp, "gold": gold, "items": items}
 
 async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
-    """Award idle EXP to shadow + RPG player, send DM. Call before updating last_seen."""
+    """Award idle rewards to shadow + RPG player, send DM. Call before updating last_seen."""
     global _idle_last_awarded
     now_ts = time.time()
     if _idle_last_awarded.get(uid, 0) > now_ts - 60:
@@ -30225,27 +30285,42 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
         idle_secs = (datetime.now() - datetime.fromisoformat(prev_seen_iso)).total_seconds()
         p = get_player(uid)
         plvl = p["level"] if p else 1
-        idle_exp = _calc_idle_exp(idle_secs, plvl)
-        if idle_exp <= 0:
+        rewards = _calc_idle_rewards(idle_secs, plvl)
+        if rewards["exp"] <= 0:
             return
         _idle_last_awarded[uid] = now_ts
         ih = idle_secs / 3600
         away_str = (f"{int(ih)}h {int((idle_secs % 3600) / 60)}m"
                     if ih >= 1 else f"{int(idle_secs / 60)}m")
+        # Award to shadow
         s = get_shadow(uid)
         if s:
-            add_shadow_exp(s, idle_exp)
+            add_shadow_exp(s, rewards["exp"])
             save_shadow(s)
+        # Award to RPG player
         if p and not is_defeated(p):
-            add_exp(p, idle_exp)
+            add_exp(p, rewards["exp"])
+            p["gold"] = safe_int(p.get("gold", 0)) + rewards["gold"]
+            for item in rewards["items"]:
+                add_item(p, item)
             save_player(p)
+        # Build notification
+        items_txt = ""
+        _all_g = {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES,
+                  **HATS, **GLOVES, **BOOTS, **MASKS}
+        for it in rewards["items"][:12]:
+            r_em = RARITY_EMOJI.get(_all_g.get(it, {}).get("rarity", ""), "⚪")
+            items_txt += f"\n  {r_em} {it}"
+        loot_line = f"\n🎁 *Loot:*{items_txt}" if items_txt else ""
+        gold_line  = f"\n💰 *+{rewards['gold']:,} gold*" if rewards["gold"] > 0 else ""
         try:
             await bot.send_message(
                 uid,
                 f"🎱 *Welcome back!*\n\n"
                 f"You were away for *{away_str}*.\n"
-                f"💫 Idle reward: *+{idle_exp:,} EXP*\n"
-                f"_(Scales with your level — the higher your level, the more you earn)_",
+                f"💫 *+{rewards['exp']:,} EXP*"
+                f"{gold_line}"
+                f"{loot_line}",
                 parse_mode="Markdown")
         except Exception:
             pass
