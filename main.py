@@ -15169,11 +15169,12 @@ async def oracle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── GUILD ─────────────────────────────────────────────────────────────────────
 async def _social_hub(update_or_none, p, query=None):
-    """Combined Guild + Secret Order standing card."""
+    """Combined Guild + Party + Secret Order standing card."""
     gid = p.get("guild_id")
     g   = get_guild(gid) if gid and str(gid) not in ("None", "", "0") else None
     aid = p.get("alliance_id")
     a   = get_alliance(aid) if aid else None
+    uid = p["user_id"]
 
     lines = ["🏰 *Your Social Standing*\n"]
     kb    = []
@@ -15193,17 +15194,36 @@ async def _social_hub(update_or_none, p, query=None):
 
     lines.append("")
 
+    # ── Party ──
+    _sh_party = _get_party_of(uid)
+    if _sh_party:
+        _sh_members = _get_party_members(_sh_party["id"])
+        pname_str = _party_display_name(_sh_party).replace("*","")
+        lines.append(f"⚔️ *Party:* {pname_str}  •  {len(_sh_members)} members")
+        is_leader = _sh_party["leader_id"] == uid
+        if is_leader:
+            kb.append([InlineKeyboardButton("⚔️ View Party", callback_data="social_party_view"),
+                       InlineKeyboardButton("🚪 Disband",    callback_data="social_party_disband")])
+        else:
+            kb.append([InlineKeyboardButton("⚔️ View Party", callback_data="social_party_view"),
+                       InlineKeyboardButton("🚪 Leave Party", callback_data="social_party_leave")])
+    else:
+        lines.append("⚔️ *Party:* _None_\n_Reply to a player with /party to invite them_")
+        kb.append([InlineKeyboardButton("⚔️ Party Info", callback_data="social_party_view")])
+
+    lines.append("")
+
     # ── Secret Order ──
     if a:
         amcount  = len(sjl(a.get("members", "[]"), []))
         pool     = a.get("influence_pool", 0)
-        is_lead  = a.get("leader_id") == p["user_id"]
+        is_lead  = a.get("leader_id") == uid
         role_tag = "👑 Leader" if is_lead else "⚔️ Member"
-        lines.append(f"⚔️ *{a['name']}*  •  {amcount}/30 | Pool: {pool:,}\n_{role_tag}_")
-        kb.append([InlineKeyboardButton("⚔️ Manage Order", callback_data="social_alliance")])
+        lines.append(f"🕵️ *{a['name']}*  •  {amcount}/30 | Pool: {pool:,}\n_{role_tag}_")
+        kb.append([InlineKeyboardButton("🕵️ Manage Order", callback_data="social_alliance")])
     else:
-        lines.append("⚔️ *Secret Order:* _None_\n_Cross-guild alliances · up to 30 members_")
-        kb.append([InlineKeyboardButton("⚔️ Found an Order", callback_data="allianceFnd"),
+        lines.append("🕵️ *Secret Order:* _None_\n_Cross-guild alliances · up to 30 members_")
+        kb.append([InlineKeyboardButton("🕵️ Found an Order", callback_data="allianceFnd"),
                    InlineKeyboardButton("🔍 Browse Orders",  callback_data="allianceBrw")])
 
     kb.append([InlineKeyboardButton("❌ Close", callback_data="socialX")])
@@ -15233,6 +15253,50 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await _social_hub(None, get_player(p["user_id"]), query=query); return
 
     if not p: await query.answer("Use /ascend first!", show_alert=True); return
+
+    if data == "social_party_view":
+        party = _get_party_of(p["user_id"])
+        back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data="social_hub")]])
+        if not party:
+            try: await query.edit_message_text(
+                "⚔️ *Party*\n\nYou're not in a party.\n\n"
+                "_Reply to someone in chat with /party to invite them.\n"
+                "Members share +25% EXP from all Battle & Hunt encounters._",
+                parse_mode="Markdown", reply_markup=back)
+            except Exception: pass
+        else:
+            members = _get_party_members(party["id"])
+            pname = _party_display_name(party)
+            lines = [f"⚔️ {pname}  •  {len(members)} members\n"]
+            for mid in members:
+                mp = get_player(mid)
+                if not mp: continue
+                tag = " 👑" if mid == party["leader_id"] else ""
+                lines.append(f"• *{mp['username']}* Lv.{mp['level']}{tag}")
+            lines += ["", "_+25% EXP from all Battle & Hunt encounter wins._"]
+            try: await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back)
+            except Exception: pass
+        return
+
+    if data == "social_party_leave":
+        party = _get_party_of(p["user_id"])
+        if not party:
+            await query.answer("You're not in a party.", show_alert=True); return
+        _leave_party(p["user_id"])
+        await query.answer("You left the party.", show_alert=False)
+        await _social_hub(None, get_player(p["user_id"]), query=query)
+        return
+
+    if data == "social_party_disband":
+        party = _get_party_of(p["user_id"])
+        if not party or party["leader_id"] != p["user_id"]:
+            await query.answer("You're not the party leader.", show_alert=True); return
+        members = _get_party_members(party["id"])
+        for mid in members:
+            _leave_party(mid)
+        await query.answer("Party disbanded.", show_alert=False)
+        await _social_hub(None, get_player(p["user_id"]), query=query)
+        return
 
     if data == "social_gjoin":
         if p.get("guild_id") and str(p.get("guild_id")) not in ("None", ""):
@@ -20400,11 +20464,38 @@ async def party_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     uid = user.id
+
+    # Reply to someone → treat as /partyinvite
+    if update.message and update.message.reply_to_message:
+        du = update.message.reply_to_message.from_user
+        if du and du.id != uid:
+            target = get_player(du.id)
+            if not target:
+                await send_group(update, f"❌ {du.first_name} hasn't ascended yet.", delay=8); return
+            if _get_party_of(du.id):
+                await send_group(update, f"❌ *{target['username']}* is already in a party.", delay=8); return
+            party = _get_party_of(uid)
+            party_id = party["id"] if party else _create_party(uid)
+            markup = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Accept", callback_data=f"party_accept_{uid}_{du.id}_{party_id}"),
+                InlineKeyboardButton("❌ Decline", callback_data=f"party_decline_{uid}_{du.id}"),
+            ]])
+            try:
+                await context.bot.send_message(
+                    chat_id=du.id,
+                    text=f"⚔️ *{p['username']}* invited you to their party!\n\n"
+                         f"_+25% EXP from all Battle & Hunt encounter wins._",
+                    parse_mode="Markdown", reply_markup=markup)
+                await send_group(update, f"📨 Party invite sent to *{target['username']}*!", delay=10)
+            except Exception:
+                await send_group(update, f"❌ Couldn't DM *{target['username']}* — they need to message the bot first.", delay=10)
+            return
+
     party = _get_party_of(uid)
     if not party:
         await send_group(update,
             "⚔️ You're not in a party.\n\n"
-            "Use `/partyinvite @username` to start one.\n"
+            "Use `/partyinvite @username` or reply to someone with `/party` to invite them.\n"
             "Members earn *+25% EXP* from each other's Battle and Hunt encounters.",
             delay=12); return
     members = _get_party_members(party["id"])
@@ -23800,9 +23891,7 @@ GUIDE_PAGES = [
         "/quest  -  EXP + gold + possible loot  (1 hour)\n"
         "/explore  -  Best loot drops, big EXP  (1hr, 2x per day)\n"
         "/pool  -  Roll for EXP, gold, and items  (8 seconds)\n"
-        "/dungeon  -  Dungeon Run solo boss encounter  (once per day)\n"
-        "/dungeonhard  -  Harder dungeon run, better rewards (Lv 15+)\n"
-        "/dungeonlegendary  -  Hardest dungeon run, best loot (Lv 40+)\n"
+        "/dungeon  -  Real-time 6-floor dungeon. 10 rooms per floor, live enemy attacks, boss on every floor. Extract to keep loot — die and lose it all.\n"
         "\n"
         "💡 /pool is your main source of rare weapons and accessories. The rarer the roll (epic, legendary), the better the potential drop. Keep rolling.\n"
         "\n"
@@ -23951,9 +24040,8 @@ GUIDE_PAGES = [
         "/quest  -  EXP + gold + loot (1hr)\n"
         "/explore  -  Big drops, big EXP (1hr, 2x/day)\n"
         "/pool  -  Roll for EXP, gold, items (8s)\n"
-        "/dungeon  -  Solo boss run (daily)\n"
-        "/dungeonhard  -  Hard dungeon (Lv 15+)\n"
-        "/dungeonlegendary  -  Legendary dungeon (Lv 40+)\n"
+        "/dungeon  -  Real-time 6-floor dungeon (10 rooms/floor, boss every floor)\n"
+        "/encounter  -  Battle NPC / Hunt monster / Enter Dungeon\n"
         "\n"
         "*Combat*\n"
         "/attack  -  Reply to attack, or no target for player picker\n"
@@ -24028,8 +24116,18 @@ GUIDE_PAGES = [
         "/secrets  -  Hidden lore, unlocked by fame tier\n"
         "/oracle  -  Consult the 8-Ball _(item required, 20hr)_\n"
         "\n"
+        "*Party*\n"
+        "/party  -  View your party, or reply to a player to invite them\n"
+        "/partyinvite @user  -  Send a party invite via DM\n"
+        "/partyname [name]  -  Name your party\n"
+        "/partyleave  -  Leave your party\n"
+        "/partykick @user  -  Kick a member (leader only)\n"
+        "/partydisband  -  Disband the party (leader only)\n"
+        "_Party members earn +25% EXP from each other's Battle & Hunt encounters._\n"
+        "\n"
         "*Encounters & Pets*\n"
-        "/encounter  -  Fight an NPC or hunt a wild monster\n"
+        "/encounter  -  Battle NPC / Hunt monster / Enter Dungeon\n"
+        "/dungeon  -  Real-time 6-floor dungeon directly\n"
         "/pet  -  Manage your active pet\n"
         "/petshop  -  Buy eggs and snacks\n"
         "/hatch  -  Hatch an egg from your inventory\n"
@@ -24181,7 +24279,7 @@ GUIDE_PAGES = [
     (
         "🎱 *8Ball World  -  Encounters & Monsters* (11/14)\n"
         "\n"
-        "Use /encounter to begin. Choose *Battle* or *Hunt*.\n"
+        "Use /encounter to begin. Choose *Battle*, *Hunt*, or *Dungeon*.\n"
         "\n"
         "*Battle Mode* ⚔️\n"
         "Fight a random NPC from 100 different types, scaled near your level.\n"
@@ -24284,42 +24382,44 @@ GUIDE_PAGES = [
         "🎱 _The ball knows. The order watches. Act accordingly._"
     ),
     (
-        "🎱 *8Ball World  -  Wizardry Dungeon* (14/14)\n"
+        "🎱 *8Ball World  -  The Dungeon* (14/14)\n"
         "\n"
-        "Access via `/encounter` → 🏰 *Enter Dungeon*\n"
+        "Access via `/dungeon` or `/encounter` → 🏚️ *Dungeon*\n"
         "\n"
         "*How it works:*\n"
-        "Navigate a 6×6 dungeon floor using directional buttons (N/S/E/W). Each room holds an event. Reach the 🚪 Exit to descend deeper. Your loot (gold + items) is *banked when you surface* — dying or surfacing early still rewards what you found.\n"
+        "6 floors. 10 rooms each. Combat is *real-time* — the enemy attacks on a timer whether you act or not. Fight through every room, beat the boss, descend. *Extract* at any time to bank your rewards. *Die* and you lose everything from that run.\n"
         "\n"
         "*Room Types:*\n"
-        "👹 Monster — fight to earn gold & EXP\n"
-        "💀 Elite — stronger monster, bigger reward\n"
-        "🔴 Floor Boss — must defeat to advance (floors 5/10/15/20)\n"
-        "💰 Treasure — free gold + possible item\n"
-        "🛖 Rest Shrine — heals 20% HP (35% for Priests)\n"
-        "⛪ Altar — pay gold for +5% HP & +10% ATK (5 rooms)\n"
-        "🏪 Merchant — buy potions and materials\n"
-        "💥 Trap — AGI/DEX check; Thieves & Archers dodge more often\n"
+        "👹 Monster — fight for gold & EXP\n"
+        "💀 Miniboss — tougher monster, bigger reward\n"
+        "🔴 Boss — defeat to clear the floor (guaranteed on room 10)\n"
+        "💰 Treasure — free gold + possible item drop\n"
+        "🛖 Rest — recover HP\n"
+        "🧙 NPC — encounter a dungeon wanderer (varies per floor)\n"
+        "💥 Trap — stat check to avoid; AGI/WIS reduces damage\n"
         "\n"
-        "*Floor Curses (stack as you go deeper):*\n"
-        "Floor 6: Monster HP +20%\n"
-        "Floor 10: Bleed Aura — lose 3% HP per room\n"
-        "Floor 15: Trap damage +50%\n"
-        "Floor 20: Void Gaze — enemies hit twice\n"
+        "*Combat Buttons:*\n"
+        "⚔️ Attack | 🛡️ Guard (−40% dmg for 1 hit) | ✨ Skill | 🧪 Potion | 🏃 Flee\n"
+        "Enemy attacks every 1–3 seconds on a live timer. Guard before the next hit lands.\n"
         "\n"
-        "*Class Perks:*\n"
-        "🗡️ Thief/Archer — 55%/40% trap dodge (vs 15% base)\n"
-        "🙏 Priest — heals double at Rest Shrines, free heal in combat\n"
+        "*Loot scales with floor depth:*\n"
+        "Floor 1–2: Common/Uncommon gear  •  Floor 3–4: Rare/Epic\n"
+        "Floor 5–6: Epic/Legendary  •  Boss: 30% chance at a Mythic drop\n"
+        "\n"
+        "*Party Bonus:*\n"
+        "Party members earn +25% EXP when you beat a dungeon room. Run dungeons with your party for a shared grind.\n"
         "\n"
         "*Tips:*\n"
-        "• Use 🗺️ button to view your minimap anytime\n"
-        "• Surface before you die to keep your loot\n"
-        "• Altars are worth it on deep floors\n"
-        "• Deepest floor reached is tracked in /stats\n"
+        "• Guard the tick before a skill fires — skills hit 1.6–2.2× harder\n"
+        "• Extract early if you get good loot and your HP is low\n"
+        "• Floor 6 minibosses are the toughest non-boss enemies in the game\n"
+        "• Each boss has a unique intro — read it to know what you're facing\n"
+        "\n"
+        "🏚️ _Every floor is darker than the last. Extract wisely._"
     ),
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands: Core", "Commands: Social", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders", "Wizardry Dungeon"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands: Core", "Commands: Social", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders", "The Dungeon"]
 
 async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
     total = len(GUIDE_PAGES)
@@ -26230,14 +26330,16 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             except Exception: pass
         else:
             enc_markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("⚔️ Battle — fight an NPC",        callback_data=f"enc_mode_{uid}_battle")],
-                [InlineKeyboardButton("🌿 Hunt — fight wild monsters",   callback_data=f"enc_mode_{uid}_hunt")],
-                [InlineKeyboardButton("← Back", callback_data=f"combathub_back_2_{uid}")],
+                [InlineKeyboardButton("⚔️ Battle — fight an NPC",              callback_data=f"enc_mode_{uid}_battle")],
+                [InlineKeyboardButton("🌿 Hunt — fight wild monsters",         callback_data=f"enc_mode_{uid}_hunt")],
+                [InlineKeyboardButton("🏚️ Dungeon — 6 floors, real-time combat", callback_data=f"enc_mode_{uid}_dungeon")],
+                [InlineKeyboardButton("← Back", callback_data=f"combathub_back_1_{uid}")],
             ])
             try: await query.edit_message_text(
                 "🗡️ *Encounter*\n\n"
                 "⚔️ *Battle* — fight NPCs for EXP and gear\n"
-                "🌿 *Hunt* — fight wild monsters; weaken them to catch for *Monster Cores*",
+                "🌿 *Hunt* — fight wild monsters; weaken them to catch for *Monster Cores*\n"
+                "🏚️ *Dungeon* — 6 floors, 10 rooms, real-time enemy attacks",
                 parse_mode="Markdown", reply_markup=enc_markup)
             except Exception: pass
 
