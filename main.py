@@ -2069,6 +2069,28 @@ WEAPONS = {
     "Titan Greatsword":          {"class":"warrior","type":"sword_2h","atk":29,"rarity":"epic",     "line":"warrior"},
     "Ruinblade":                 {"class":"warrior","type":"sword_2h","atk":46,"rarity":"legendary","line":"warrior"},
     "The World Splitter":        {"class":"warrior","type":"sword_2h","atk":66,"rarity":"mythic",   "line":"warrior"},
+    # ── SERPENT FANG 1H (cobra path A — venom/precision) — innate STR+AGI ───────
+    "Cracked Venom Blade":       {"class":"serpent","type":"sword_1h","atk":4, "rarity":"common",    "line":"serpent","stat_bonus":{"STR":1,"AGI":1}},
+    "Fanged Short Blade":        {"class":"serpent","type":"sword_1h","atk":5, "rarity":"common",    "line":"serpent","stat_bonus":{"STR":1,"AGI":1}},
+    "Cobra Dagger":              {"class":"serpent","type":"sword_1h","atk":9, "rarity":"uncommon",  "line":"serpent","stat_bonus":{"STR":2,"AGI":1}},
+    "Venom Piercer":             {"class":"serpent","type":"sword_1h","atk":10,"rarity":"uncommon",  "line":"serpent","stat_bonus":{"STR":2,"AGI":1}},
+    "Asp's Edge":                {"class":"serpent","type":"sword_1h","atk":16,"rarity":"rare",      "line":"serpent","stat_bonus":{"STR":2,"AGI":2}},
+    "Fang of the Viper":         {"class":"serpent","type":"sword_1h","atk":17,"rarity":"rare",      "line":"serpent","stat_bonus":{"STR":2,"AGI":2}},
+    "Neurotoxin Blade":          {"class":"serpent","type":"sword_1h","atk":26,"rarity":"epic",      "line":"serpent","stat_bonus":{"STR":3,"AGI":2}},
+    "Ophidian's Kiss":           {"class":"serpent","type":"sword_1h","atk":28,"rarity":"epic",      "line":"serpent","stat_bonus":{"STR":3,"AGI":2}},
+    "Venom of the Ancients":     {"class":"serpent","type":"sword_1h","atk":42,"rarity":"legendary", "line":"serpent","stat_bonus":{"STR":4,"AGI":3}},
+    "The Last Fang":             {"class":"serpent","type":"sword_1h","atk":62,"rarity":"mythic",    "line":"serpent","stat_bonus":{"STR":5,"AGI":4}},
+    # ── SERPENT COIL 2H (king serpent path B — tank/control) — innate STR+DEF ─
+    "Crude Serpent Blade":       {"class":"serpent","type":"sword_2h","atk":5, "rarity":"common",    "line":"serpent","stat_bonus":{"STR":1,"DEF":1}},
+    "Coiled Greatsword":         {"class":"serpent","type":"sword_2h","atk":5, "rarity":"common",    "line":"serpent","stat_bonus":{"STR":1,"DEF":1}},
+    "Serpent Guard Blade":       {"class":"serpent","type":"sword_2h","atk":11,"rarity":"uncommon",  "line":"serpent","stat_bonus":{"STR":2,"DEF":1}},
+    "Venom Reaver":              {"class":"serpent","type":"sword_2h","atk":11,"rarity":"uncommon",  "line":"serpent","stat_bonus":{"STR":2,"DEF":1}},
+    "King Cobra Claymore":       {"class":"serpent","type":"sword_2h","atk":18,"rarity":"rare",      "line":"serpent","stat_bonus":{"STR":2,"DEF":2}},
+    "Warlord's Coil Blade":      {"class":"serpent","type":"sword_2h","atk":18,"rarity":"rare",      "line":"serpent","stat_bonus":{"STR":2,"DEF":2}},
+    "Serpent Warlord's Edge":    {"class":"serpent","type":"sword_2h","atk":29,"rarity":"epic",      "line":"serpent","stat_bonus":{"STR":3,"DEF":2}},
+    "Ancient Coil Sword":        {"class":"serpent","type":"sword_2h","atk":29,"rarity":"epic",      "line":"serpent","stat_bonus":{"STR":3,"DEF":2}},
+    "The World Serpent":         {"class":"serpent","type":"sword_2h","atk":46,"rarity":"legendary", "line":"serpent","stat_bonus":{"STR":4,"DEF":3}},
+    "Ouroboros":                 {"class":"serpent","type":"sword_2h","atk":66,"rarity":"mythic",    "line":"serpent","stat_bonus":{"STR":5,"DEF":4}},
     # ── WAND (mage base + arcane path A) ─────────────────────────────────────
     "Gnarled Twig Wand":         {"class":"mage","type":"wand","atk":3, "rarity":"common",   "line":"mage"},
     "Smooth Ash Wand":           {"class":"mage","type":"wand","atk":3, "rarity":"common",   "line":"mage"},
@@ -5812,8 +5834,9 @@ def get_stat(p, stat):
     set_all   = set_bonuses.get("all_stats", 0)
     battle_cry_bonus = 80 if stat == "STR" and safe_int(p.get("battle_cry_str_hits")) > 0 else 0
     guild_bonus = safe_int(p.get("guild_stat_bonus", 0)) if stat in ("STR","AGI","INT","WIS","DEX","LUK") else 0
+    weapon_bonus = WEAPONS.get(p.get("equipped_weapon") or "", {}).get("stat_bonus", {}).get(stat, 0)
     if stat in ("STR","AGI","INT","WIS","DEX","LUK"):
-        return base + acc + all_s + blessed_bonus + title_bonus + all_title + set_stat + set_all + battle_cry_bonus + guild_bonus
+        return base + acc + all_s + blessed_bonus + title_bonus + all_title + set_stat + set_all + battle_cry_bonus + guild_bonus + weapon_bonus
     return base + acc + all_s + blessed_bonus
 
 def calc_max_hp(p):
@@ -28525,32 +28548,38 @@ POOL_SHOTS = [
      "exp":150,"gold":40,"loot":[("Iron Shard",0.18),("Bloodstone Band",0.06)]},
     {"id":"maximum_break","weight":8,"rarity":"rare",
      "text":"Maximum break. Every ball. Every pocket. The felt bows to your command.",
-     "exp":250,"gold":80,"loot":[("Iron Shard",0.30),("Enchanting Scroll",0.12),("Fortune Coin",0.06)]},
+     "exp":250,"gold":80,"loot":[("Iron Shard",0.30),("Enchanting Scroll",0.12),("Fortune Coin",0.06),
+                                  ("Asp's Edge",0.015),("King Cobra Claymore",0.015)]},
     {"id":"trick_shot","weight":8,"rarity":"rare",
      "text":"Trick shot  -  a blind shot over the cluster, corner pocket. "
             "You don't even watch it drop. You already knew.",
-     "exp":275,"gold":90,"loot":[("Iron Shard",0.30),("Enchanting Scroll",0.15),("War Master's Clasp",0.04)]},
+     "exp":275,"gold":90,"loot":[("Iron Shard",0.30),("Enchanting Scroll",0.15),("War Master's Clasp",0.04),
+                                  ("Fang of the Viper",0.015),("Warlord's Coil Blade",0.015)]},
     {"id":"ghost_ball","weight":7,"rarity":"rare",
      "text":"Ghost ball method on an impossible cut. The path threads a gap "
             "that shouldn't exist. It drops. You breathe.",
-     "exp":300,"gold":100,"loot":[("Iron Shard",0.35),("Enchanting Scroll",0.18),("Hawk Eye Medallion",0.04)]},
+     "exp":300,"gold":100,"loot":[("Iron Shard",0.35),("Enchanting Scroll",0.18),("Hawk Eye Medallion",0.04),
+                                   ("Asp's Edge",0.020),("King Cobra Claymore",0.020)]},
     {"id":"full_rack_clear","weight":6,"rarity":"rare",
      "text":"Full rack clear on the break. All fifteen targets. One strike. "
             "The field is empty before the echo dies.",
      "exp":350,"gold":120,"loot":[("Iron Shard",0.40),("Enchanting Scroll",0.20),
-                                   ("Scroll of Revival",0.08),("Phantom Loop",0.04)]},
+                                   ("Scroll of Revival",0.08),("Phantom Loop",0.04),
+                                   ("Fang of the Viper",0.025),("Warlord's Coil Blade",0.025)]},
     {"id":"void_pocket","weight":3,"rarity":"epic",
      "text":"The path leads toward a void that wasn't there a moment ago. "
             "A pocket between worlds. Something disappears. Something falls out "
             "that was never inside it.",
      "exp":625,"gold":200,"loot":[("Iron Shard",0.60),("Enchanting Scroll",0.35),
                                    ("Scroll of Revival",0.15),("Runed Heart",0.05),
-                                   ("Eye of the Void",0.04)]},
+                                   ("Eye of the Void",0.04),
+                                   ("Neurotoxin Blade",0.025),("Serpent Warlord's Edge",0.025)]},
     {"id":"eight_ball_break","weight":3,"rarity":"epic",
      "text":"8 ball on the break. Dead center. Corner pocket. "
             "The felt goes silent. Something ancient stirs beneath.",
      "exp":750,"gold":250,"loot":[("Iron Shard",0.65),("Enchanting Scroll",0.40),
-                                   ("The Shadow Whisper",0.05),("Guardian's Talisman",0.04)]},
+                                   ("The Shadow Whisper",0.05),("Guardian's Talisman",0.04),
+                                   ("Ophidian's Kiss",0.025),("Ancient Coil Sword",0.025)]},
     {"id":"corner_pocket_singularity","weight":1,"rarity":"legendary",
      "text":"The void opens. Not just opens  -  becomes. "
             "Every target in the field rolls toward it simultaneously without being struck. "
@@ -28559,7 +28588,8 @@ POOL_SHOTS = [
             "Something was left behind.",
      "exp":1500,"gold":500,"loot":[("Iron Shard",0.80),("Enchanting Scroll",0.60),
                                     ("Shard of the Void",0.03),("Ring of the Endless",0.03),
-                                    ("The Last Stand Locket",0.03)]},
+                                    ("The Last Stand Locket",0.03),
+                                    ("Venom of the Ancients",0.015),("The World Serpent",0.015)]},
 
     # ── Additional Common ────────────────────────────────────────────────
     {"id":"chalk_up","weight":38,"rarity":"common",
@@ -28733,6 +28763,8 @@ POOL_ITEM_TABLE = [
     ("Enchanter's Wand",0.002),("Vexmark Staff",0.002),
     ("Valiant Blade",0.002),("Thunder Greatsword",0.002),
     ("Danse Blade",0.002),("Ethereal Star",0.002),
+    ("Asp's Edge",0.002),("Fang of the Viper",0.002),
+    ("King Cobra Claymore",0.002),("Warlord's Coil Blade",0.002),
     # ── Rare armors ──
     ("Steel Breastplate",0.003),("Knight's Plate Armor",0.003),("Nightstalker's Vest",0.002),
     # ── Rare armors — new classes ──
@@ -28760,6 +28792,9 @@ POOL_ITEM_TABLE = [
     ("Grand Muse Scepter",0.0004),("Dread Empress Staff",0.0004),
     ("Runeblade",0.0004),("Divine Tempest Blade",0.0004),
     ("Danse Macabre Blade",0.0004),("Ethereal Shuriken",0.0004),
+    # ── Epic weapons — serpent ──
+    ("Neurotoxin Blade",0.0004),("Ophidian's Kiss",0.0004),
+    ("Serpent Warlord's Edge",0.0004),("Ancient Coil Sword",0.0004),
     # ── Epic armors ──
     ("Void-Touched Robe",0.0005),("Indomitable Plate",0.0005),
     # ── Epic armors — new classes ──
@@ -28780,6 +28815,8 @@ POOL_ITEM_TABLE = [
     ("Song of the Ancients",0.00006),("The Hex Throne",0.00006),
     ("Bifrost's Edge",0.00006),("Valhalla's Thunder",0.00006),
     ("The Last Dance",0.00006),("The Phantom Step",0.00006),
+    # ── Legendary weapons — serpent ──
+    ("Venom of the Ancients",0.00006),("The World Serpent",0.00006),
     # ── Legendary armors ──
     ("Dragonscale Plate",0.00008),
     # ── Legendary armors — new classes ──
@@ -28829,6 +28866,7 @@ POOL_ITEM_TABLE = [
     ("Aria Eternal",0.000005),("Doom's Conduit",0.000005),
     ("Odin's Chosen Blade",0.000005),("Mjolnir's Rage",0.000005),
     ("Eternal Waltz",0.000005),("Ethereal Sovereign",0.000005),
+    ("The Last Fang",0.000005),("Ouroboros",0.000005),
     # ── Mythic armors ──
     ("The Titan's Aegis Armor",0.000005),("The Eternal Weave",0.000005),
     ("The Void Walker's Cloak",0.000005),("The Ghost Walker Vest",0.000005),
