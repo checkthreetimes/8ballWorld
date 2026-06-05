@@ -5288,7 +5288,7 @@ def _dng_spawn_enemy(p, floor, room_type):
     # Scale enemy to player's HP pool
     floor_scale = 1.0 + (floor - 1) * 0.18
     e_hp  = max(40, int(pmhp * hp_mult * floor_scale))
-    e_atk = max(5,  int(pmhp * 0.09 * atk_mult * floor_scale))
+    e_atk = max(5,  int(pmhp * 0.13 * atk_mult * floor_scale))
     cls   = random.choice(_DNG_NPC_CLASSES) if room_type in ("npc","miniboss") else None
     return {"name":name,"hp":e_hp,"max_hp":e_hp,"atk":e_atk,"element":element,
             "class":cls,"skills":NPC_CLASS_SKILLS.get(cls,[]) if cls else [],
@@ -5298,7 +5298,7 @@ def _dng_spawn_boss(p):
     b = random.choice(_DNG_BOSSES)
     pmhp = calc_max_hp(p)
     e_hp  = max(200, int(pmhp * b["hp_mult"] * 3.8))
-    e_atk = max(20,  int(pmhp * 0.09 * b["atk_mult"] * 2.2))
+    e_atk = max(20,  int(pmhp * 0.13 * b["atk_mult"] * 2.2))
     return {"name":b["name"],"hp":e_hp,"max_hp":e_hp,"atk":e_atk,
             "element":b["element"],"class":b["class"],"intro":b["intro"],
             "skills":NPC_CLASS_SKILLS.get(b["class"],[]),"skill_tick":0,
@@ -5462,9 +5462,9 @@ async def _dng_ticker(uid: int, bot):
                 skill_txt = f"\n💢 *{e['name']}* uses *{sk_name.replace('_',' ').title()}*!"
                 e["skill_tick"] = 0
                 # Skills hit harder
-                raw_dmg = int(e["atk"] * random.uniform(1.2, 1.6))
+                raw_dmg = int(e["atk"] * random.uniform(1.6, 2.2))
             else:
-                raw_dmg = int(e["atk"] * random.uniform(0.85, 1.15))
+                raw_dmg = int(e["atk"] * random.uniform(1.0, 1.4))
             # Apply player DEF
             def_val = get_stat(p, "DEF") if p else 0
             dmg = max(1, int(raw_dmg * guard_mult) - def_val // 4)
@@ -5636,6 +5636,8 @@ def _dng_floor_done_markup(uid, floor):
 async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     p = get_player(user.id)
+    try: await update.message.delete()
+    except: pass
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if is_defeated(p):
@@ -5665,10 +5667,11 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Die and you lose everything accumulated. Extract to keep your rewards.\n\n"
         f"❤️ HP: {state['p_hp']}/{state['p_max_hp']}"
     )
-    msg = await update.message.reply_text(intro, parse_mode="Markdown",
-          reply_markup=InlineKeyboardMarkup([[
-              InlineKeyboardButton("⚔️ Enter the Dungeon", callback_data=f"dng_enter_{uid}"),
-          ]]))
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=intro, parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("⚔️ Enter the Dungeon", callback_data=f"dng_enter_{uid}"),
+        ]]))
     state["msg_id"] = msg.message_id
 
 
@@ -20588,11 +20591,13 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⚔️ Battle — fight an NPC", callback_data=f"enc_mode_{uid}_battle")],
         [InlineKeyboardButton("🌿 Hunt — fight wild monsters", callback_data=f"enc_mode_{uid}_hunt")],
+        [InlineKeyboardButton("🏚️ Dungeon — 6 floors, real-time combat", callback_data=f"enc_mode_{uid}_dungeon")],
         [InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")],
     ])
     await send_group(update, "🎱 *Encounter*\nChoose your mode:\n\n"
                     "⚔️ *Battle* — fight NPCs for EXP and gear\n"
-                    "🌿 *Hunt* — fight wild monsters; weaken them to 🎯 catch for *Monster Cores*",
+                    "🌿 *Hunt* — fight wild monsters; weaken them to 🎯 catch for *Monster Cores*\n"
+                    "🏚️ *Dungeon* — 6 floors, 10 rooms, real-time enemy attacks",
                     reply_markup=markup, permanent=True)
 
 
@@ -20795,7 +20800,32 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if mode == "battle":
             await _start_encounter_battle(query, uid, p)
         elif mode == "dungeon":
-            await dungeon_wiz_start(query, uid, p, context.bot, query.message.chat_id)
+            if uid in active_dungeons:
+                await query.answer("Already in a dungeon! Use the dungeon buttons to continue.", show_alert=True); return
+            chat_id = query.message.chat_id
+            floors = [_dng_gen_floor(f + 1) for f in range(_DNG_FLOORS)]
+            state = {
+                "uid": uid, "floor": 1, "room": 1, "phase": "room",
+                "p_hp": min(safe_int(p.get("hp", 1)) or calc_max_hp(p), calc_max_hp(p)),
+                "p_max_hp": calc_max_hp(p),
+                "floors": floors,
+                "s_gold": 0, "s_exp": 0, "s_items": [],
+                "chat_id": chat_id, "msg_id": None,
+                "combat_log": [], "enemy": None,
+            }
+            active_dungeons[uid] = state
+            narr = _dng_roll_narration("floor_entry")
+            intro = (
+                f"🏚️ *The Dungeon — Floor 1*\n\n_{narr}_\n\n"
+                f"*6 floors. 10 rooms each. Real-time combat.*\n"
+                f"Die and you lose everything. Extract to keep your rewards.\n\n"
+                f"❤️ HP: {state['p_hp']}/{state['p_max_hp']}"
+            )
+            msg = await context.bot.send_message(chat_id=chat_id, text=intro, parse_mode="Markdown",
+                  reply_markup=InlineKeyboardMarkup([[
+                      InlineKeyboardButton("⚔️ Enter the Dungeon", callback_data=f"dng_enter_{uid}"),
+                  ]]))
+            state["msg_id"] = msg.message_id
         else:
             await _start_encounter_hunt(query, uid, p)
         return
@@ -25975,13 +26005,13 @@ _COMBAT_HUB_PAGES = [
     [
         [("💊 Heal",           "combathub_heal"),      ("⚔️ Guild War",    "combathub_war")],
         [("📊 Combat Power",   "combathub_cp"),        ("🌍 Explore",      "combathub_explore")],
-        [("🏚️ Dungeon",        "combathub_dungeon"),   ("🌍 Explore",      "combathub_explore2")],
+        [("🏚️ Dungeon",        "combathub_dungeon"),   ("⚔️ Solo Raid",    "combathub_soloraid")],
     ],
     # Page 3 — Info & Tools
     [
         [("🎯 Kill Condition", "combathub_killcondition"), ("💊 Cure Priority", "combathub_curepriority")],
-        [("⏳ Cooldowns",      "combathub_cooldowns"),    ("📊 Combat Power",  "combathub_cp2")],
-        [("🐾 Pet (battle)",  "combathub_petbattle"),    ("📊 Combat Power",  "combathub_cp")],
+        [("⏳ Cooldowns",      "combathub_cooldowns"),    ("🐾 Pet (battle)",  "combathub_petbattle")],
+        [("📊 Combat Power",   "combathub_cp")],
     ],
 ]
 
@@ -26061,8 +26091,8 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer("Register first.", show_alert=True); return
 
     _PAGE = {"attack":1,"skill":1,"arena":1,"duel":1,"defend":1,"heal":1,
-             "war":2,"cp":3,"explore":2,"encounter":1,"dungeon":2,"dungeonhard":2,
-             "killcondition":3,"curepriority":3,"cooldowns":3,"dungeonleg":3,"petbattle":3}
+             "war":2,"cp":3,"explore":2,"encounter":1,"dungeon":2,"soloraid":2,
+             "killcondition":3,"curepriority":3,"cooldowns":3,"petbattle":3}
     page = _PAGE.get(action, 1)
     back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"combathub_back_{page}_{uid}")]])
 
@@ -26075,9 +26105,8 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         "cp":          ("📊 *Combat Power*",     f"Your Combat Power: *{calc_combat_power(p):,}*\n\nHigher CP = bigger damage multiplier. Comes from gear quality."),
         "explore":     ("🌍 *Explore*",          "Type */explore* for a 1-hour expedition — best loot. 2× per day."),
         "encounter":   ("🗡️ *Encounter*",        "Random monsters appear during */explore*. Fight using the buttons when they appear."),
-        "dungeon":     ("🏚️ *Dungeon*",          "Type */dungeon* for a daily solo dungeon — rooms, traps, treasure."),
-        "dungeonhard": ("🔥 *Dungeon Hard*",     "Type */dungeonhard* (Lv 15+) — harder floors, better rewards."),
-        "dungeonleg":  ("💀 *Dungeon Legendary*","Type */dungeonlegendary* (Lv 40+) — hardest dungeon, best loot."),
+        "dungeon":     ("🏚️ *Dungeon*",          "Type */dungeon* for a real-time 6-floor dungeon — rooms, traps, bosses, treasure."),
+        "soloraid":    ("⚔️ *Solo Raid*",        "Type */soloraid* to take on a raid boss alone — high risk, high reward."),
         "petbattle":   ("🐾 *Pet Battle*",       "Your pet auto-attacks alongside you in every */attack* and */skill*."),
     }
 
@@ -26334,19 +26363,24 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
-    elif action in ("dungeon", "dungeonhard", "dungeonleg"):
-        _dng_info = {"dungeon":("🏚️","Dungeon",1),"dungeonhard":("🔥","Dungeon Hard",15),"dungeonleg":("💀","Dungeon Legendary",40)}
-        _dem, _dname, _dmin = _dng_info[action]
-        if p["level"] < _dmin:
-            txt = f"{_dem} *{_dname}*\n\n🔒 Requires Level {_dmin}.\nYou are Level {p['level']} — keep growing!"
-        elif is_defeated(p):
-            txt = f"{_dem} *{_dname}*\n\n💀 You're defeated — recover first."
-        elif not check_cooldown(p.get("last_dungeon"), 86400):
-            txt = f"{_dem} *{_dname}*\n\n⏳ Ready in: *{time_remaining(p.get('last_dungeon'), 86400)}*\n\n_One run per day. Come back later!_"
+    elif action == "dungeon":
+        if is_defeated(p):
+            txt = "🏚️ *Dungeon*\n\n💀 You're defeated — recover first."
         else:
-            txt = (f"{_dem} *{_dname}*\n\n✅ *Ready to run!*\n\n"
-                   f"{'Rooms, traps, and treasure await.' if action=='dungeon' else 'Harder floors, greater rewards.' if action=='dungeonhard' else 'The hardest dungeon. Legendary loot.'}\n"
-                   f"_Head to the group chat to start your run._")
+            txt = ("🏚️ *Dungeon*\n\n✅ *Ready to run!*\n\n"
+                   "6 floors · 10 rooms each · real-time combat\n"
+                   "Monsters, traps, NPCs, treasure, and a boss every floor.\n\n"
+                   "_Use */dungeon* in the group chat to enter, or start one from */encounter*._")
+        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action == "soloraid":
+        if is_defeated(p):
+            txt = "⚔️ *Solo Raid*\n\n💀 You're defeated — recover first."
+        else:
+            txt = ("⚔️ *Solo Raid*\n\n✅ *Available!*\n\n"
+                   "Take on a raid boss alone for massive rewards.\n"
+                   "_Use */soloraid* in the group chat to begin._")
         try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
