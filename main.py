@@ -155,7 +155,7 @@ _pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
 _bal_expires       = {}   # uid -> float: time.time() when balance recovers
 _eq_expires        = {}   # uid -> float: time.time() when equilibrium recovers
-_PVP_ACTION_CD     = 0.0  # no cooldown between PvP card button presses
+_PVP_ACTION_CD     = 1.5  # seconds between PvP card button presses (prevents API rate-limit drops)
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
 _megaphone_state   = {"group": None}  # last known group chat ID for /megaphone DMs
 _broadcast_quest   = None   # {"id": str, "phrase": str, "exp": int, "expires": float}
@@ -10130,12 +10130,13 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
                         updated = True
         if not updated:
             existing = _pvp_player_cards.get(viewer_uid)
-            if existing:
-                try: await bot.delete_message(chat_id=existing[0], message_id=existing[1])
-                except Exception: pass
             try:
                 msg = await bot.send_message(chat_id=fallback_chat, text=card_text,
                     parse_mode="Markdown", reply_markup=markup)
+                # Only delete old card after new one is confirmed sent
+                if existing:
+                    try: await bot.delete_message(chat_id=existing[0], message_id=existing[1])
+                    except Exception: pass
                 _pvp_player_cards[viewer_uid] = (fallback_chat, msg.message_id)
                 _pvp_cards.setdefault(pair, {})[viewer_uid] = msg.message_id
             except Exception:
@@ -11121,7 +11122,6 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
     w = get_weather()
     action_text, _, result_type = await _execute_pvp_hit(a, d, uid, target_uid, w, chat_id, context.bot)
 
-    _set_balance(uid, a)
     _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": chat_id}
 
     pair = _pvp_pair_key(uid, target_uid)
@@ -11318,7 +11318,6 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     action, lvl_msgs, result_type = await _execute_pvp_hit(
         a, d, au.id, du_id, w, chat, update.get_bot())
-    _set_balance(au.id, a)
 
     bot  = update.get_bot()
     pair = _pvp_pair_key(au.id, du_id)
@@ -11442,12 +11441,6 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kc = _KILL_CONDITIONS.get(line_a)
             if not kc or not _check_kill_condition(a, d):
                 await query.answer("⚡ Kill condition not met!", show_alert=True); return
-            bal_ready_f, bal_rem_f = _check_balance(uid)
-            if not bal_ready_f:
-                await query.answer(f"⚖️ Off balance! {bal_rem_f}s remaining.", show_alert=False); return
-            eq_ready_f, eq_rem_f = _check_equilibrium(uid)
-            if not eq_ready_f:
-                await query.answer(f"🌀 EQ recovering! {eq_rem_f}s.", show_alert=False); return
             await query.answer()
             stat_val = get_stat(a, kc["stat"])
             dmg = round(stat_val * kc["mult"])
@@ -11465,8 +11458,6 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 d["hp"] = 0
             else:
                 d["hp"] = max(0, d["hp"] - dmg)
-            _set_equilibrium(uid, a)
-            _set_balance(uid, a)
             kill_msg = (f"⚡ *FINISHER!* *{a['username']}* → *{d['username']}*\n"
                         f"*{kc['name']}* — {kc['stat']}×{kc['mult']} = *{dmg} damage!*")
             if is_instakill and d["hp"] == 0:
@@ -11508,9 +11499,6 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(_cc, show_alert=True); return
         if not _rate_ok(uid):
             await query.answer("Slow down!", show_alert=True); return
-        _bal_ready_c, _bal_rem_c = _check_balance(uid)
-        if not _bal_ready_c:
-            await query.answer(f"⚖️ Off balance! {_bal_rem_c}s remaining.", show_alert=False); return
 
         if is_defeated(d):
             await query.answer(f"{d['username']} is already defeated!", show_alert=True)
@@ -11525,7 +11513,6 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         w = get_weather()
         result_text, lvl_msgs, result_type = await _execute_pvp_hit(
             a, d, uid, target_id, w, chat_id, context.bot)
-        _set_balance(uid, a)
 
         pair = _pvp_pair_key(uid, target_id)
 
@@ -17059,9 +17046,6 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # ── PVP context (target_uid provided) ────────────────────────────────────
     if target_uid:
-        eq_ready, eq_rem = _check_equilibrium(uid)
-        if not eq_ready:
-            await query.answer(f"🌀 Equilibrium recovering! {eq_rem}s.", show_alert=True); return
         tp = get_player(target_uid)
         if not tp:
             await send_result("That player hasn't ascended yet!"); return
@@ -17100,7 +17084,6 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         _pvp_pair_k = _pvp_pair_key(uid, target_uid)
         _pvp_gcid_k = _pvp_player_cards.get(target_uid, (chat_id,))[0]
         async def send_result(text):  # noqa: F811
-            _set_equilibrium(uid, p)
             _pvp_log_append(_pvp_pair_k, text[:300])
             p_upd  = get_player(uid) or p
             tp_upd = get_player(target_uid) or tp
