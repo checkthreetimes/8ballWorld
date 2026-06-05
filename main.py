@@ -153,7 +153,9 @@ _pvp_cur_page      = {}   # pair -> int, current page index (0 = oldest)
 _pvp_player_cards  = {}   # uid -> (chat_id, message_id) — each player's own battle card
 _pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
-_PVP_ACTION_CD     = 0.8  # seconds between PvP card button presses (prevents API rate-limit drops)
+_bal_expires       = {}   # uid -> float: time.time() when balance recovers
+_eq_expires        = {}   # uid -> float: time.time() when equilibrium recovers
+_PVP_ACTION_CD     = 1.5  # seconds between PvP card button presses (prevents API rate-limit drops)
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
 _megaphone_state   = {"group": None}  # last known group chat ID for /megaphone DMs
 _broadcast_quest   = None   # {"id": str, "phrase": str, "exp": int, "expires": float}
@@ -7420,13 +7422,38 @@ def calc_defense(defender, dmg):
 
     return final
 
+_DEFEAT_MINUTES = 6  # PvP defeat duration
+
+def _auto_revive_on_timer(p):
+    """Called when a player's defeat timer has expired. Restore full HP and clear all negative statuses."""
+    p["hp"]              = calc_max_hp(p)
+    p["max_hp"]          = p["hp"]
+    p["defeated_until"]  = None
+    # Clear all timestamp-based debuffs
+    for _f in ("distracted_until","entangled_until","frozen_until","stunned_until",
+               "hexed_until","weakened_until","healing_blocked_until",
+               "revival_blocked_until","silenced_until","bleed_until"):
+        p[_f] = None
+    # Clear all stack/turn-based debuffs
+    for _f in ("stun_turns","freeze_turns","entangle_turns","silence_turns",
+               "distract_turns","hex_turns","weakened_hits","exposed_hits",
+               "marked_hits","branded_hits","heal_blocked_turns","revive_blocked_turns"):
+        p[_f] = 0
+    # Clear DoT stacks and their per-tick values
+    for _f in ("poison_stacks","burn_stacks","bleed_stacks",
+               "poison_pct","bleed_pct","burn_pct","bleed_damage"):
+        p[_f] = 0
+    # Reset shield (was destroyed on death)
+    p["shield_hp"]  = 0
+    p["shield_used"] = 0
+
 def apply_pvp_death(p, killer_name="the enemy", cause="PvP", killer_id=None):
-    """Apply full PvP-style death: 30min defeat, 10% EXP loss, losses++"""
+    """Apply full PvP-style death: 6min defeat, 10% EXP loss, losses++"""
     exp_loss = round(p.get("exp", 0) * 0.10)
     p["exp"]             = max(0, p.get("exp", 0) - exp_loss)
     p["hp"]              = 0
     p["losses"]          = p.get("losses", 0) + 1
-    p["defeated_until"]  = (datetime.now() + timedelta(minutes=30)).isoformat()
+    p["defeated_until"]  = (datetime.now() + timedelta(minutes=_DEFEAT_MINUTES)).isoformat()
     p["last_defeated_by"] = f"{killer_name} ({cause})"
     p["kill_streak"]     = 0  # reset streak on death
     p["shield_hp"]       = 0
@@ -7449,7 +7476,7 @@ def _defeated_msg(p):
 async def _notify_defeat(bot, p, cause_str):
     """DM the player letting them know what defeated them."""
     try:
-        countdown = time_until(p.get("defeated_until")) or "30m"
+        countdown = time_until(p.get("defeated_until")) or "6m"
         await bot.send_message(
             chat_id=p["user_id"],
             text=f"💀 You were defeated by *{cause_str}*!\n⏳ Back in: *{countdown}*\n_Use /heal or ask a Priest to get back sooner._",
@@ -9183,7 +9210,16 @@ def _get(table, user_id):
     return dict(row) if row else None
 
 def get_shadow(uid):   return _get("shadow_profiles", uid)
-def get_player(uid):   return _get("players", uid)
+def get_player(uid):
+    p = _get("players", uid)
+    if p and p.get("hp", 1) <= 0 and p.get("defeated_until"):
+        try:
+            if datetime.fromisoformat(p["defeated_until"]) <= datetime.now():
+                _auto_revive_on_timer(p)
+                save_player(p)
+        except Exception:
+            pass
+    return p
 
 def save_shadow(s):
     conn = _db(); c = conn.cursor()
@@ -10216,6 +10252,7 @@ def _pvp_pokemon_card(viewer_uid, a, d, pair):
     lines.append("")
     lines.append(f"👤 *{bot['username']}*{'  ' + bot_s if bot_s else ''}")
     lines.append(f"`{bot_bar}`  {bot['hp']}/{bot.get('max_hp', bot['hp'])} HP")
+    lines.append(_be_status_line(viewer_uid))
     # Kill condition hint: show what attacker (viewer) needs on their opponent (top)
     _kc = _KILL_CONDITIONS.get(get_class_line(bot)) if viewer_uid == bot["user_id"] else None
     if _kc:
@@ -10444,13 +10481,13 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         update_recent_attackers(d, au_id)
         if d["hp"] <= 0:
             d["hp"] = 0
-            d["defeated_until"] = (datetime.now() + timedelta(minutes=30)).isoformat()
+            d["defeated_until"] = (datetime.now() + timedelta(minutes=_DEFEAT_MINUTES)).isoformat()
             d["last_defeated_by"] = f"{a['username']} (Killshot)"
             _d_was_wanted = safe_int(d.get("is_wanted"))
             d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
             d["revenge_target"] = au_id
             d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
-            # defeat card DM (sent at call site) replaces _notify_defeat for PvP
+            asyncio.create_task(_notify_defeat(bot, d, a["username"] + " (Killshot)"))
             _fire(check_and_claim_bounty(bot, a, d, chat_id))
             exp_loss = round(d.get("exp", 0) * 0.10)
             d["exp"] = max(0, d.get("exp", 0) - exp_loss)
@@ -10479,7 +10516,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
                 asyncio.create_task(announce(bot, chat_id,
                     f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
             lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
-            _defeat_timer_ks = time_until(d.get("defeated_until")) or "30m"
+            _defeat_timer_ks = time_until(d.get("defeated_until")) or "6m"
             action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_ks}*."
             if leveled and a["level"] % 10 == 0:
                 asyncio.create_task(announce(bot, chat_id,
@@ -10920,7 +10957,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     if d["hp"] <= 0:
         d["hp"] = 0
-        d["defeated_until"] = (datetime.now() + timedelta(minutes=30)).isoformat()
+        d["defeated_until"] = (datetime.now() + timedelta(minutes=_DEFEAT_MINUTES)).isoformat()
         d["last_defeated_by"] = f"{a['username']} (PvP)"
         _d_was_wanted = safe_int(d.get("is_wanted"))
         d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
@@ -10950,7 +10987,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         d["pvp_history"] = json.dumps(hist[:5])
         for _desc, _exp, _gold in track_objective(a, "pvp_win"):
             a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
-        # defeat card DM (sent at call site) replaces _notify_defeat for PvP
+        asyncio.create_task(_notify_defeat(bot, d, a["username"] + " (PvP)"))
         if cls_a and cls_a.get("passive_key") == "dead_or_alive":
             d["defeated_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
             action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 1 hour!"
@@ -10990,7 +11027,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         if cls_a and cls_a.get("passive_key") == "marked_for_death":
             mfd_bonus = round((d.get("gold", 0) * 0.05 + 25) * 0.25)
             a["gold"] = a.get("gold", 0) + mfd_bonus
-        _defeat_timer_pvp = time_until(d.get("defeated_until")) or "30m"
+        _defeat_timer_pvp = time_until(d.get("defeated_until")) or "6m"
         action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_pvp}*."
         if leveled and a["level"] % 10 == 0:
             asyncio.create_task(announce(bot, chat_id,
@@ -11043,6 +11080,45 @@ def get_player_by_username(name):
 
 
 # ── TARGET PICKER (shared by /attack and /skill) ──────────────────────────────
+_PICKER_COOLDOWN_SECS = 3    # legacy — replaced by Balance/Equilibrium below
+BAL_RECOVERY_SECS     = 8.0  # default balance recovery (seconds)
+EQ_RECOVERY_SECS      = 10.0 # default equilibrium recovery (seconds)
+
+# Per class-line B/E timers. Warriors = fast BAL slow EQ, Mages = slow BAL fast EQ.
+_CLASS_BAL_SECS = {
+    "warrior":        6.0,
+    "valkyrie":       6.0,
+    "mage":           13.0,
+    "enchantress":    12.0,
+    "thief":          7.0,
+    "phantom_dancer": 7.0,
+    "archer":         8.0,
+    "priest":         11.0,
+    "botanist":       10.0,
+    "serpent":        7.0,
+}
+_CLASS_EQ_SECS = {
+    "warrior":        14.0,
+    "valkyrie":       13.0,
+    "mage":           7.0,
+    "enchantress":    6.0,
+    "thief":          8.0,
+    "phantom_dancer": 8.0,
+    "archer":         9.0,
+    "priest":         6.0,
+    "botanist":       7.0,
+    "serpent":        11.0,
+}
+
+def _get_bal_secs(p=None):
+    if not p: return BAL_RECOVERY_SECS
+    line = get_class_line(p)
+    return _CLASS_BAL_SECS.get(line, BAL_RECOVERY_SECS) if line else BAL_RECOVERY_SECS
+
+def _get_eq_secs(p=None):
+    if not p: return EQ_RECOVERY_SECS
+    line = get_class_line(p)
+    return _CLASS_EQ_SECS.get(line, EQ_RECOVERY_SECS) if line else EQ_RECOVERY_SECS
 
 # Automatic class-based affliction pool. Each entry: (status_key, stacks, pct_key, pct_val, emoji, msg)
 _CLASS_AUTO_AFFLICTIONS = {
@@ -11139,6 +11215,28 @@ _CURE_ALIAS = {entry[0]: entry[1] for entry in _CURABLE_AFFLICTIONS}
 _CURE_EMOJI  = {entry[0]: entry[2] for entry in _CURABLE_AFFLICTIONS}
 _DEFAULT_CURE_PRIORITY = ["poison","bleed","stun","hex","weaken","expose","distract","silence","freeze"]
 
+def _check_balance(uid):
+    exp = _bal_expires.get(uid, 0.0)
+    now = time.time()
+    return (True, 0.0) if exp <= now else (False, round(exp - now, 1))
+
+def _set_balance(uid, p=None):
+    _bal_expires[uid] = time.time() + _get_bal_secs(p)
+
+def _check_equilibrium(uid):
+    exp = _eq_expires.get(uid, 0.0)
+    now = time.time()
+    return (True, 0.0) if exp <= now else (False, round(exp - now, 1))
+
+def _set_equilibrium(uid, p=None):
+    _eq_expires[uid] = time.time() + _get_eq_secs(p)
+
+def _be_status_line(uid):
+    bal_ready, _ = _check_balance(uid)
+    eq_ready,  _ = _check_equilibrium(uid)
+    bal_str = "✅ Ready" if bal_ready else "🔄 Recovering"
+    eq_str  = "✅ Ready" if eq_ready  else "🔄 Recovering"
+    return f"⚖️ BAL: {bal_str}  🌀 EQ: {eq_str}"
 
 def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=3):
     """Return (page_list, total) of players attackable right now."""
@@ -11225,29 +11323,37 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
     # action == "pick" — fourth is target_uid
     target_uid = fourth
 
+    # Rate-limit: same cooldown as card buttons, prevents double-tap attacks
+    _now_p = time.time()
+    _last_p = _pvp_action_times.get(uid, 0)
+    if _now_p - _last_p < _PVP_ACTION_CD:
+        _wait_p = round(_PVP_ACTION_CD - (_now_p - _last_p), 1)
+        await query.answer(f"⏳ {_wait_p}s until your next action!", show_alert=False); return
+    _pvp_action_times[uid] = _now_p
+
     # Lock prevents a double-tap on the picker from firing two attacks
     if not _cb_lock(uid):
         await query.answer("Still processing...", show_alert=True); return
 
-    # Answer immediately so Telegram stops the loading spinner before any DB work
-    await query.answer()
-
     try:
         if is_defeated(a):
-            await query.edit_message_text("❌ You're defeated and can't attack."); return
+            await query.answer("You're defeated!", show_alert=True); return
         if is_invincible(a):
-            await query.edit_message_text("🛡️ You're invincible — can't attack!"); return
+            await query.answer("You're invincible — can't attack!", show_alert=True); return
         _cc = _consume_cc(a)
         if _cc:
-            await query.edit_message_text(f"❌ {_cc}"); return
+            await query.answer(_cc, show_alert=True); return
 
         d = get_player(target_uid)
         if not d:
-            await query.edit_message_text("❌ Target not found."); return
+            await query.answer("Target not found!", show_alert=True); return
         if is_defeated(d):
-            await query.edit_message_text(f"❌ {d.get('username','?')} is already defeated!"); return
+            await query.answer(f"{d.get('username','?')} is already defeated!", show_alert=True); return
         if is_invincible(d):
-            await query.edit_message_text(f"🛡️ {d.get('username','?')} is invincible!"); return
+            await query.answer(f"{d.get('username','?')} is invincible!", show_alert=True); return
+
+        # Answer immediately so Telegram stops the loading spinner
+        await query.answer()
 
         chat_id = query.message.chat_id
         w = get_weather()
@@ -11270,21 +11376,16 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
                     except Exception: pass
             _pvp_battle_logs.pop(pair, None)
             _pvp_cur_page.pop(pair, None)
-            _cb_unlock(uid)
-            try:
-                _gm = await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
-                asyncio.create_task(_auto_delete(context.bot, chat_id, _gm.message_id, 6))
+            try: await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
             except Exception: pass
-            for _dm_uid in (uid, target_uid):
-                try: await context.bot.send_message(chat_id=_dm_uid, text=action_text[:4096], parse_mode="Markdown")
-                except Exception: pass
+            try: await context.bot.send_message(chat_id=uid, text=action_text[:4096], parse_mode="Markdown")
+            except Exception: pass
         else:
             # Hit or miss — the picker message becomes the attacker's battle card
-            _cb_unlock(uid)
             await _pvp_update_both_cards(pair, a, d, uid, target_uid, chat_id, context.bot, query=query)
             _reset_card_timer(pair, context.bot, chat_id, 0, 20)
     finally:
-        _cb_unlock(uid)  # safe: discard is idempotent
+        _cb_unlock(uid)
 
 
 async def skill_target_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -11316,24 +11417,20 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
 
     # action == "pick" — show skill picker for this target
     target_uid = fourth
-
-    # Answer immediately to clear the spinner before any processing
-    await query.answer()
-
     if is_defeated(p):
-        await query.edit_message_text("❌ You're defeated and can't use skills."); return
+        await query.answer("You're defeated!", show_alert=True); return
     if is_invincible(p):
-        await query.edit_message_text("🛡️ You're invincible — can't use skills!"); return
+        await query.answer("You're invincible!", show_alert=True); return
 
     tp = get_player(target_uid)
     if not tp:
-        await query.edit_message_text("❌ Target not found."); return
+        await query.answer("Target not found!", show_alert=True); return
     if is_defeated(tp):
-        await query.edit_message_text(f"❌ {tp.get('username','?')} is already defeated!"); return
+        await query.answer(f"{tp.get('username','?')} is already defeated!", show_alert=True); return
 
     all_skills = sjl(p.get("all_skills"), [])
     if not all_skills:
-        await query.edit_message_text("❌ No skills unlocked!"); return
+        await query.answer("No skills unlocked!", show_alert=True); return
 
     # Exclude purely self/group utility types that can't target an enemy
     SELF_ONLY_TYPES = {"self_heal", "group_heal", "mass_cleanse", "party_def_buff",
@@ -11342,7 +11439,10 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
                   if sk.get("type", "damage") not in SELF_ONLY_TYPES
                   and p.get("level", 1) >= sk.get("unlock", 5)]
     if not pvp_skills:
-        await query.edit_message_text("❌ No skills available for this target!"); return
+        await query.answer("No skills available!", show_alert=True); return
+
+    # Answer before editing to stop spinner
+    await query.answer()
     markup = _build_skill_picker_keyboard(pvp_skills, uid, 0, target_uid)
     try:
         await query.edit_message_text(
@@ -11405,7 +11505,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update, "⚔️ No players available to attack right now.", delay=9); return
         markup = _build_target_picker_markup(au.id, a.get("guild_id"), 0, "atk")
         await send_group(update,
-            f"⚔️ *Choose a target* ({total} available)",
+            f"⚔️ *Choose a target* ({total} available)\n_{_be_status_line(au.id)}_",
             permanent=True, reply_markup=markup)
         return
 
@@ -11446,6 +11546,10 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
         except Exception: pass
 
+    bal_ready, bal_rem = _check_balance(au.id)
+    if not bal_ready:
+        await send_group(update, f"⚖️ *Off Balance!* Recover in {bal_rem}s.", delay=5); return
+
     w    = get_weather()
     chat = update.effective_chat.id
     try: await update.message.delete()
@@ -11471,13 +11575,10 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception: pass
         _pvp_battle_logs.pop(pair, None)
         _pvp_cur_page.pop(pair, None)
-        try:
-            _gm = await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
-            asyncio.create_task(_auto_delete(bot, chat, _gm.message_id, 6))
+        try: await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
         except Exception: pass
-        for _dm_uid in (au.id, du_id):
-            try: await bot.send_message(chat_id=_dm_uid, text=action[:4096], parse_mode="Markdown")
-            except Exception: pass
+        try: await bot.send_message(chat_id=au.id, text=action[:4096], parse_mode="Markdown")
+        except Exception: pass
         return
 
     # hit or miss — update/create both players' battle cards
@@ -11506,7 +11607,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _last = _pvp_action_times.get(uid, 0)
     if _now - _last < _PVP_ACTION_CD:
         _wait = round(_PVP_ACTION_CD - (_now - _last), 1)
-        await query.answer(f"⏳ {_wait}s until your next action!", show_alert=True); return
+        await query.answer(f"⏳ {_wait}s until your next action!", show_alert=False); return
     _pvp_action_times[uid] = _now
 
     if not _cb_lock(uid):
@@ -11667,24 +11768,20 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception: pass
             _pvp_battle_logs.pop(pair, None)
             _pvp_cur_page.pop(pair, None)
-            _cb_unlock(uid)
-            try:
-                _gm = await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
-                asyncio.create_task(_auto_delete(context.bot, chat_id, _gm.message_id, 6))
+            try: await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
             except Exception: pass
-            for _dm_uid in (uid, target_id):
-                try: await context.bot.send_message(chat_id=_dm_uid, text=result_text[:4096], parse_mode="Markdown")
-                except Exception: pass
+            try: await context.bot.send_message(chat_id=uid, text=result_text[:4096], parse_mode="Markdown")
+            except Exception: pass
             return
 
         # miss or hit — update both players' battle cards
+        # group_cid: attacker's card lives in the group; derive it from stored cards
         group_cid = _pvp_player_cards.get(target_id, (chat_id,))[0]
-        _cb_unlock(uid)
         await _pvp_update_both_cards(pair, a, d, uid, target_id, group_cid, context.bot, query=query)
         _reset_card_timer(pair, context.bot, group_cid, 0, 20)
 
     finally:
-        _cb_unlock(uid)  # safe: discard is idempotent
+        _cb_unlock(uid)
 
 
 # ── DEFEND (damage-absorbing shield) ─────────────────────────────────────────
@@ -16807,7 +16904,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     boss_dict["data"]["dmg_min"], boss_dict["data"]["dmg_max"]))
                 tp["hp"] = max(0, tp["hp"] - bdmg)
                 if tp["hp"] == 0:
-                    tp["defeated_until"] = (datetime.now() + timedelta(minutes=30)).isoformat()
+                    tp["defeated_until"] = (datetime.now() + timedelta(minutes=_DEFEAT_MINUTES)).isoformat()
                     tp["last_defeated_by"] = f"{boss_dict['data']['name']} (Boss)"
                     asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                     lines.append(f"💀 *{boss_dict['data']['name']}* kills *{target['name']}*!")
@@ -18492,7 +18589,7 @@ async def _execute_skill(update, context, p, sk):
         d["hp"] = 0
         # Check Zealot condemn  -  revival blocked
         if stype == "condemn":
-            d["defeated_until"] = (datetime.now()+timedelta(minutes=30)).isoformat()
+            d["defeated_until"] = (datetime.now()+timedelta(minutes=_DEFEAT_MINUTES)).isoformat()
             d["last_defeated_by"] = f"{p['username']} (Condemned)"
             asyncio.create_task(_notify_defeat(context.bot, d, p['username'] + " — Condemned (cannot be revived)"))
             add_charges(d, "revive_blocked_turns", 20)
@@ -18503,11 +18600,11 @@ async def _execute_skill(update, context, p, sk):
             restore = round(calc_max_hp(p) * 0.20)
             p["hp"] = min(calc_max_hp(p), p["hp"] + restore)
             lines.append(f"💀 *Drain Soul!* On kill: restored *{restore} HP*!")
-            d["defeated_until"] = (datetime.now()+timedelta(minutes=30)).isoformat()
+            d["defeated_until"] = (datetime.now()+timedelta(minutes=_DEFEAT_MINUTES)).isoformat()
             d["last_defeated_by"] = f"{p['username']} using {sk['name']} (Skill)"
             asyncio.create_task(_notify_defeat(context.bot, d, f"{p['username']} using {sk['name']}"))
         else:
-            d["defeated_until"] = (datetime.now()+timedelta(minutes=30)).isoformat()
+            d["defeated_until"] = (datetime.now()+timedelta(minutes=_DEFEAT_MINUTES)).isoformat()
             d["last_defeated_by"] = f"{p['username']} using {sk['name']} (Skill)"
             asyncio.create_task(_notify_defeat(context.bot, d, f"{p['username']} using {sk['name']}"))
         d["losses"] = d.get("losses",0)+1
@@ -24190,7 +24287,7 @@ GUIDE_PAGES = [
         "🎱 *8Ball World  -  Combat & Raids* (4/14)\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
-        "Reply to any player's message and use /attack to fight them. Or use /attack with no target to open a live player picker and choose who to hit. Winners steal gold and EXP. Losers are defeated for 30m and lose 10% EXP.\n"
+        "Reply to any player's message and use /attack to fight them. Or use /attack with no target to open a live player picker and choose who to hit. Winners steal gold and EXP. Losers are defeated for 6m and lose 10% EXP.\n"
         "\n"
         "*Battle Cards*\n"
         "When you land a hit, a battle card appears in chat with buttons for the defender:\n"
@@ -24216,7 +24313,7 @@ GUIDE_PAGES = [
         "\n"
         "*/who Icons*\n"
         "❤️ Healthy (above 50% HP)  |  🟡 Injured (25–50%)  |  🔴 Critical (below 25%)\n"
-        "💀 Defeated — out for 30m, cannot be attacked\n"
+        "💀 Defeated — out for 6m, cannot be attacked\n"
         "🛡️ Invincible — immune to all damage AND cannot initiate PvP (from revival items or Priest skills)\n"
         "🔥×N Kill streak  |  🔴 WANTED — 5+ kills today  |  💰 Active bounty on this player\n"
         "\n"
@@ -24233,7 +24330,7 @@ GUIDE_PAGES = [
         "/soloraid  -  Private raid scaled to your level. Great for solo farming.\n"
         "\n"
         "*Defeat & Revival*\n"
-        "When your HP hits 0 you are defeated for 30m and lose 10% EXP. Options to recover:\n"
+        "When your HP hits 0 you are defeated for 6m and lose 10% EXP. Options to recover:\n"
         "• Wait it out (30m)\n"
         "• Use *Scroll of Revival* from your inventory (/use) — grants 5 min invincibility after\n"
         "• Ask a Priest to /heal you  -  they revive for free\n"
@@ -30386,13 +30483,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tick_dmg:
             if p["hp"] <= 0:
                 p["hp"] = 0
-                p["defeated_until"] = (datetime.now()+timedelta(minutes=30)).isoformat()
+                p["defeated_until"] = (datetime.now()+timedelta(minutes=_DEFEAT_MINUTES)).isoformat()
                 p["last_defeated_by"] = "Bleed damage (DoT)"
                 p["losses"] = p.get("losses", 0) + 1
                 p["kill_streak"] = 0
                 asyncio.create_task(_notify_defeat(context.bot, p, "Bleed damage (you bled out)"))
                 asyncio.create_task(announce(context.bot, chat_id,
-                    f"🩸 *{p['username']}* bled out and is defeated for 30m!",
+                    f"🩸 *{p['username']}* bled out and is defeated for 6m!",
                     delay=30))
                 _bleed_atk_ids = get_recent_attackers(p)
                 if _bleed_atk_ids:
