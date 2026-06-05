@@ -7,6 +7,7 @@ import os, json, random, logging, sqlite3, re, asyncio, time, threading
 from datetime import datetime, timedelta
 from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import RetryAfter
 from telegram.ext import (
     Application, CommandHandler, ContextTypes,
     MessageHandler, filters, CallbackQueryHandler,
@@ -4924,7 +4925,7 @@ def guild_exp_for_level(level): return level * 500
 
 _DNG_FLOORS       = 6
 _DNG_ROOMS        = 10
-_DNG_TICK_SECS    = [3, 2, 3, 2, 1, 2, 3, 2]   # enemy attack intervals
+_DNG_TICK_SECS    = [4, 3, 4, 3, 2, 3, 4, 3]   # enemy attack intervals (min 2s for Telegram rate limits)
 
 _DNG_ROOM_WEIGHTS = {
     1: [("monster",48),("trap",20),("treasure",14),("rest",12),("shrine",6)],
@@ -5597,13 +5598,16 @@ async def _dng_ticker(uid: int, bot):
                 state.setdefault("combat_log", []).append(log_entry)
                 if len(state["combat_log"]) > 5:
                     state["combat_log"] = state["combat_log"][-5:]
-                try:
-                    await bot.edit_message_text(
-                        chat_id=state["chat_id"], message_id=state["msg_id"],
-                        text=_dng_combat_card(state)[:4096], parse_mode="Markdown",
-                        reply_markup=_dng_combat_markup(uid, state))
-                except Exception:
-                    pass
+                if uid not in _processing_users:
+                    try:
+                        await bot.edit_message_text(
+                            chat_id=state["chat_id"], message_id=state["msg_id"],
+                            text=_dng_combat_card(state)[:4096], parse_mode="Markdown",
+                            reply_markup=_dng_combat_markup(uid, state))
+                    except RetryAfter as _ra:
+                        await asyncio.sleep(_ra.retry_after + 0.5)
+                    except Exception:
+                        pass
                 tick += 1
                 continue
             # Tick player DoTs
@@ -5742,14 +5746,17 @@ async def _dng_ticker(uid: int, bot):
                 except Exception:
                     pass
                 return
-            # Update the card
-            try:
-                await bot.edit_message_text(
-                    chat_id=state["chat_id"], message_id=state["msg_id"],
-                    text=_dng_combat_card(state)[:4096], parse_mode="Markdown",
-                    reply_markup=_dng_combat_markup(uid, state))
-            except Exception:
-                pass
+            # Update the card — skip if player is mid-action to avoid edit conflicts
+            if uid not in _processing_users:
+                try:
+                    await bot.edit_message_text(
+                        chat_id=state["chat_id"], message_id=state["msg_id"],
+                        text=_dng_combat_card(state)[:4096], parse_mode="Markdown",
+                        reply_markup=_dng_combat_markup(uid, state))
+                except RetryAfter as _ra:
+                    await asyncio.sleep(_ra.retry_after + 0.5)
+                except Exception:
+                    pass
             tick += 1
     except asyncio.CancelledError:
         pass
@@ -5965,6 +5972,17 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid != cb_uid:
         await query.answer("Not your dungeon!", show_alert=True); return
 
+    # Prevent concurrent button processing for the same user
+    if not _cb_lock(uid):
+        await query.answer("⏳ Please wait…", show_alert=False); return
+
+    try:
+        await _dungeon_callback_inner(update, context, query, data, uid)
+    finally:
+        _cb_unlock(uid)
+
+
+async def _dungeon_callback_inner(update, context, query, data, uid):
     state = active_dungeons.get(uid)
 
     # ── ENTER ──────────────────────────────────────────────────────────────────
