@@ -11225,37 +11225,29 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
     # action == "pick" — fourth is target_uid
     target_uid = fourth
 
-    # Rate-limit: same cooldown as card buttons, prevents double-tap attacks
-    _now_p = time.time()
-    _last_p = _pvp_action_times.get(uid, 0)
-    if _now_p - _last_p < _PVP_ACTION_CD:
-        _wait_p = round(_PVP_ACTION_CD - (_now_p - _last_p), 1)
-        await query.answer(f"⏳ {_wait_p}s until your next action!", show_alert=False); return
-    _pvp_action_times[uid] = _now_p
-
     # Lock prevents a double-tap on the picker from firing two attacks
     if not _cb_lock(uid):
         await query.answer("Still processing...", show_alert=True); return
 
+    # Answer immediately so Telegram stops the loading spinner before any DB work
+    await query.answer()
+
     try:
         if is_defeated(a):
-            await query.answer("You're defeated!", show_alert=True); return
+            await query.edit_message_text("❌ You're defeated and can't attack."); return
         if is_invincible(a):
-            await query.answer("You're invincible — can't attack!", show_alert=True); return
+            await query.edit_message_text("🛡️ You're invincible — can't attack!"); return
         _cc = _consume_cc(a)
         if _cc:
-            await query.answer(_cc, show_alert=True); return
+            await query.edit_message_text(f"❌ {_cc}"); return
 
         d = get_player(target_uid)
         if not d:
-            await query.answer("Target not found!", show_alert=True); return
+            await query.edit_message_text("❌ Target not found."); return
         if is_defeated(d):
-            await query.answer(f"{d.get('username','?')} is already defeated!", show_alert=True); return
+            await query.edit_message_text(f"❌ {d.get('username','?')} is already defeated!"); return
         if is_invincible(d):
-            await query.answer(f"{d.get('username','?')} is invincible!", show_alert=True); return
-
-        # Answer immediately so Telegram stops the loading spinner
-        await query.answer()
+            await query.edit_message_text(f"🛡️ {d.get('username','?')} is invincible!"); return
 
         chat_id = query.message.chat_id
         w = get_weather()
@@ -11319,20 +11311,24 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
 
     # action == "pick" — show skill picker for this target
     target_uid = fourth
+
+    # Answer immediately to clear the spinner before any processing
+    await query.answer()
+
     if is_defeated(p):
-        await query.answer("You're defeated!", show_alert=True); return
+        await query.edit_message_text("❌ You're defeated and can't use skills."); return
     if is_invincible(p):
-        await query.answer("You're invincible!", show_alert=True); return
+        await query.edit_message_text("🛡️ You're invincible — can't use skills!"); return
 
     tp = get_player(target_uid)
     if not tp:
-        await query.answer("Target not found!", show_alert=True); return
+        await query.edit_message_text("❌ Target not found."); return
     if is_defeated(tp):
-        await query.answer(f"{tp.get('username','?')} is already defeated!", show_alert=True); return
+        await query.edit_message_text(f"❌ {tp.get('username','?')} is already defeated!"); return
 
     all_skills = sjl(p.get("all_skills"), [])
     if not all_skills:
-        await query.answer("No skills unlocked!", show_alert=True); return
+        await query.edit_message_text("❌ No skills unlocked!"); return
 
     # Exclude purely self/group utility types that can't target an enemy
     SELF_ONLY_TYPES = {"self_heal", "group_heal", "mass_cleanse", "party_def_buff",
@@ -11341,10 +11337,7 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
                   if sk.get("type", "damage") not in SELF_ONLY_TYPES
                   and p.get("level", 1) >= sk.get("unlock", 5)]
     if not pvp_skills:
-        await query.answer("No skills available!", show_alert=True); return
-
-    # Answer before editing to stop spinner
-    await query.answer()
+        await query.edit_message_text("❌ No skills available for this target!"); return
     markup = _build_skill_picker_keyboard(pvp_skills, uid, 0, target_uid)
     try:
         await query.edit_message_text(
@@ -11505,7 +11498,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _last = _pvp_action_times.get(uid, 0)
     if _now - _last < _PVP_ACTION_CD:
         _wait = round(_PVP_ACTION_CD - (_now - _last), 1)
-        await query.answer(f"⏳ {_wait}s until your next action!", show_alert=False); return
+        await query.answer(f"⏳ {_wait}s until your next action!", show_alert=True); return
     _pvp_action_times[uid] = _now
 
     if not _cb_lock(uid):
