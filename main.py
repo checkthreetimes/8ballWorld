@@ -11224,37 +11224,29 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
     # action == "pick" — fourth is target_uid
     target_uid = fourth
 
-    # Rate-limit: same cooldown as card buttons, prevents double-tap attacks
-    _now_p = time.time()
-    _last_p = _pvp_action_times.get(uid, 0)
-    if _now_p - _last_p < _PVP_ACTION_CD:
-        _wait_p = round(_PVP_ACTION_CD - (_now_p - _last_p), 1)
-        await query.answer(f"⏳ {_wait_p}s until your next action!", show_alert=False); return
-    _pvp_action_times[uid] = _now_p
+    # Stop the spinner immediately — no processing delay visible to user
+    await query.answer()
 
-    # Lock prevents a double-tap on the picker from firing two attacks
+    # Lock prevents concurrent double-tap attacks
     if not _cb_lock(uid):
-        await query.answer("Still processing...", show_alert=True); return
+        return  # silently drop — lock is sufficient guard
 
     try:
         if is_defeated(a):
-            await query.answer("You're defeated!", show_alert=True); return
+            return
         if is_invincible(a):
-            await query.answer("You're invincible — can't attack!", show_alert=True); return
+            return
         _cc = _consume_cc(a)
         if _cc:
-            await query.answer(_cc, show_alert=True); return
+            return
 
         d = get_player(target_uid)
         if not d:
-            await query.answer("Target not found!", show_alert=True); return
+            return
         if is_defeated(d):
-            await query.answer(f"{d.get('username','?')} is already defeated!", show_alert=True); return
+            return
         if is_invincible(d):
-            await query.answer(f"{d.get('username','?')} is invincible!", show_alert=True); return
-
-        # Answer immediately so Telegram stops the loading spinner
-        await query.answer()
+            return
 
         chat_id = query.message.chat_id
         w = get_weather()
@@ -11277,10 +11269,14 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
                     except Exception: pass
             _pvp_battle_logs.pop(pair, None)
             _pvp_cur_page.pop(pair, None)
-            try: await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
-            except Exception: pass
-            try: await context.bot.send_message(chat_id=uid, text=action_text[:4096], parse_mode="Markdown")
-            except Exception: pass
+            if chat_id not in (uid, target_uid):  # only send to group if it's a real group
+                try:
+                    _gm = await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
+                    asyncio.create_task(_auto_delete(context.bot, chat_id, _gm.message_id, 6))
+                except Exception: pass
+            for _dm_uid in (uid, target_uid):
+                try: await context.bot.send_message(chat_id=_dm_uid, text=action_text[:4096], parse_mode="Markdown")
+                except Exception: pass
         else:
             # Hit or miss — the picker message becomes the attacker's battle card
             await _pvp_update_both_cards(pair, a, d, uid, target_uid, chat_id, context.bot, query=query)
@@ -11472,10 +11468,14 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception: pass
         _pvp_battle_logs.pop(pair, None)
         _pvp_cur_page.pop(pair, None)
-        try: await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
-        except Exception: pass
-        try: await bot.send_message(chat_id=au.id, text=action[:4096], parse_mode="Markdown")
-        except Exception: pass
+        if chat not in (au.id, du_id):
+            try:
+                _gm_a = await bot.send_message(chat_id=chat, text=action[:4096], parse_mode="Markdown")
+                asyncio.create_task(_auto_delete(bot, chat, _gm_a.message_id, 6))
+            except Exception: pass
+        for _dm_uid in (au.id, du_id):
+            try: await bot.send_message(chat_id=_dm_uid, text=action[:4096], parse_mode="Markdown")
+            except Exception: pass
         return
 
     # hit or miss — update/create both players' battle cards
@@ -11500,15 +11500,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.from_user.id != uid:
         await query.answer("These aren't your buttons!", show_alert=True); return
 
-    _now = time.time()
-    _last = _pvp_action_times.get(uid, 0)
-    if _now - _last < _PVP_ACTION_CD:
-        _wait = round(_PVP_ACTION_CD - (_now - _last), 1)
-        await query.answer(f"⏳ {_wait}s until your next action!", show_alert=False); return
-    _pvp_action_times[uid] = _now
-
     if not _cb_lock(uid):
-        await query.answer("Still processing...", show_alert=True); return
+        return  # already processing, silently drop
 
     try:
         a = get_player(uid)
@@ -11611,10 +11604,14 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if _pcard:
                         try: await context.bot.delete_message(chat_id=_pcard[0], message_id=_pcard[1])
                         except: pass
-                try: await query.edit_message_text(kill_msg[:4096], parse_mode="Markdown")
-                except: pass
-                try: await context.bot.send_message(chat_id=chat_id, text=kill_msg[:4096], parse_mode="Markdown")
-                except: pass
+                if chat_id not in (uid, target_id):
+                    try:
+                        _gm_f = await context.bot.send_message(chat_id=chat_id, text=kill_msg[:4096], parse_mode="Markdown")
+                        asyncio.create_task(_auto_delete(context.bot, chat_id, _gm_f.message_id, 6))
+                    except: pass
+                for _dm_uid in (uid, target_id):
+                    try: await context.bot.send_message(chat_id=_dm_uid, text=kill_msg[:4096], parse_mode="Markdown")
+                    except: pass
             else:
                 save_player(a); save_player(d)
                 group_cid = _pvp_player_cards.get(target_id, (chat_id,))[0]
@@ -11665,10 +11662,14 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception: pass
             _pvp_battle_logs.pop(pair, None)
             _pvp_cur_page.pop(pair, None)
-            try: await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
-            except Exception: pass
-            try: await context.bot.send_message(chat_id=uid, text=result_text[:4096], parse_mode="Markdown")
-            except Exception: pass
+            if chat_id not in (uid, target_id):  # only announce in real group chats
+                try:
+                    _gm = await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
+                    asyncio.create_task(_auto_delete(context.bot, chat_id, _gm.message_id, 6))
+                except Exception: pass
+            for _dm_uid in (uid, target_id):
+                try: await context.bot.send_message(chat_id=_dm_uid, text=result_text[:4096], parse_mode="Markdown")
+                except Exception: pass
             return
 
         # miss or hit — update both players' battle cards
@@ -31783,4 +31784,3 @@ def main():
 
 if __name__ == "__main__":
     main()
- 
