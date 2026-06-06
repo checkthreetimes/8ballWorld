@@ -133,6 +133,7 @@ active_drakes      = {}   # chat_id -> drake dict
 message_counters   = {}   # chat_id -> int
 pending_trades     = {}   # user_id -> trade dict
 pending_duels      = {}   # challenger_id -> {target_id, wager, chat_id, expires}
+active_shadow_duels = {}  # uid -> shadow duel state dict
 active_arenas      = {}   # chat_id -> arena state
 pending_guild_reqs = {}   # guild_id -> [requests]
 explore_timers     = {}   # user_id -> asyncio task
@@ -155,6 +156,7 @@ _pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
 _pvp_turns         = {}   # kept for compat — turn system disabled
 _pvp_turn_tasks    = {}   # kept for compat — turn timers disabled
 _pvp_group_msg_ids = {}   # pair -> (chat_id, message_id) — static "battling" group message
+_pvp_dm_last_msg   = {}   # uid -> (chat_id, message_id) — last DM battle card per player
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
 _PVP_ACTION_CD     = 1.5  # seconds between PvP card button presses (not used for gate — kept for reference)
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
@@ -165,7 +167,6 @@ _wild_pet_offers   = {}     # uid -> {"species": str, "expires": float}
 _pet_trade_offers   = {}  # offeror_uid -> {"target_uid": int, "pet_id": int, "expires": float}
 _pet_breed_sessions = {}  # uid -> {"pet1_id": int, "pet2_id": int, "started": float}
 _active_pet_duels   = {}  # (uid1,uid2) tuple key -> duel state dict
-active_shadow_duels = {}  # uid -> shadow duel state dict
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
@@ -187,6 +188,18 @@ def _cancel_card_timer(pair):
     old = _pvp_card_tasks.pop(pair, None)
     if old and not old.done():
         old.cancel()
+
+def _start_pvp_turn(pair, uid, bot):
+    """No-op — turn system removed. Both players act freely."""
+    pass
+
+async def _pvp_turn_timeout(pair, uid, bot):
+    """Disabled — turn timer removed."""
+    pass
+
+def _cancel_pvp_turn(pair):
+    """No-op — turn system removed."""
+    pass
 
 # ── RATE LIMITER ──────────────────────────────────────────────────────────────
 _cmd_timestamps    = {}   # user_id -> [float timestamps]
@@ -8971,8 +8984,6 @@ def init_db():
         ("poke_count",            "INTEGER DEFAULT 0"),
         ("slap_count",            "INTEGER DEFAULT 0"),
         ("pat_count",             "INTEGER DEFAULT 0"),
-        ("duel_wins",             "INTEGER DEFAULT 0"),
-        ("duel_losses",           "INTEGER DEFAULT 0"),
     ]:
         try:
             _v24conn = sqlite3.connect(DB_PATH)
@@ -10204,34 +10215,28 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── PVP COMBAT HELPERS ────────────────────────────────────────────────────────
 
-def _pvp_pokemon_card(viewer_uid, a, d, pair, current_turn=None):
+def _pvp_pokemon_card(viewer_uid, a, d, pair):
     """Pokémon-style PvP card: opponent at top, self at bottom, last 2 log entries."""
     logs = _pvp_battle_logs.get(pair, [])
     # Perspective: viewer sees their opponent at top, themselves at bottom
     if viewer_uid == a["user_id"]:
-        top, bot_p = d, a
+        top, bot = d, a
     else:
-        top, bot_p = a, d
+        top, bot = a, d
     top_bar = _enc_hp_bar(top["hp"], max(1, top.get("max_hp", top["hp"])))
-    bot_bar = _enc_hp_bar(bot_p["hp"], max(1, bot_p.get("max_hp", bot_p["hp"])))
+    bot_bar = _enc_hp_bar(bot["hp"], max(1, bot.get("max_hp", bot["hp"])))
     top_s = _compact_status_emojis(top)
-    bot_s = _compact_status_emojis(bot_p)
+    bot_s = _compact_status_emojis(bot)
     lines = ["⚔️ PVP BATTLE", ""]
     lines.append(f"👾 *{top['username']}*{'  ' + top_s if top_s else ''}")
     lines.append(f"`{top_bar}`  {top['hp']}/{top.get('max_hp', top['hp'])} HP")
     lines.append("")
-    lines.append(f"👤 *{bot_p['username']}*{'  ' + bot_s if bot_s else ''}")
-    lines.append(f"`{bot_bar}`  {bot_p['hp']}/{bot_p.get('max_hp', bot_p['hp'])} HP")
-    # Turn indicator
-    if current_turn is not None:
-        if current_turn == viewer_uid:
-            lines.append("⚔️ *YOUR TURN* — act within 6s!")
-        else:
-            lines.append(f"⌛ *{top['username']}'s turn...*")
+    lines.append(f"👤 *{bot['username']}*{'  ' + bot_s if bot_s else ''}")
+    lines.append(f"`{bot_bar}`  {bot['hp']}/{bot.get('max_hp', bot['hp'])} HP")
     # Kill condition hint: show what attacker (viewer) needs on their opponent (top)
-    _kc = _KILL_CONDITIONS.get(get_class_line(bot_p)) if viewer_uid == bot_p["user_id"] else None
+    _kc = _KILL_CONDITIONS.get(get_class_line(bot)) if viewer_uid == bot["user_id"] else None
     if _kc:
-        _kc_met = _check_kill_condition(bot_p, top)
+        _kc_met = _check_kill_condition(bot, top)
         if _kc_met:
             lines.append(f"⚡ *KILL CONDITION MET* — use FINISHER!")
         else:
@@ -10259,39 +10264,51 @@ def _pvp_pokemon_card(viewer_uid, a, d, pair, current_turn=None):
     return "\n".join(lines)[:4096]
 
 
-def _pvp_dm_card(viewer_p, opp_p, action_text=""):
-    """Compact DM battle card: opponent HP bar, player HP bar, last action."""
-    o_bar = _enc_hp_bar(opp_p["hp"], max(1, opp_p.get("max_hp", opp_p["hp"])))
-    v_bar = _enc_hp_bar(viewer_p["hp"], max(1, viewer_p.get("max_hp", viewer_p["hp"])))
-    o_st  = _compact_status_emojis(opp_p)
-    v_st  = _compact_status_emojis(viewer_p)
-    lines = [
-        f"⚔️ *{viewer_p['username']} vs {opp_p['username']}*",
-        "",
-        f"👾 *{opp_p['username']}*{'  ' + o_st if o_st else ''}",
-        f"`{o_bar}`  {opp_p['hp']}/{opp_p.get('max_hp', opp_p['hp'])} HP",
-        "",
-        f"👤 *You*{'  ' + v_st if v_st else ''}",
-        f"`{v_bar}`  {viewer_p['hp']}/{viewer_p.get('max_hp', viewer_p['hp'])} HP",
-    ]
+def _pvp_fight_card(viewer_p, opp_p, action_text=""):
+    """Street Fighter / Tekken style — bars face each other, action text above."""
+    v_hp   = viewer_p["hp"]
+    v_max  = max(1, viewer_p.get("max_hp", v_hp))
+    o_hp   = opp_p["hp"]
+    o_max  = max(1, opp_p.get("max_hp", o_hp))
+    v_fill = round(v_hp / v_max * 10)
+    v_bar  = "▓" * v_fill + "░" * (10 - v_fill)
+    o_fill = round(o_hp / o_max * 10)
+    o_bar  = "░" * (10 - o_fill) + "▓" * o_fill
+    vn = viewer_p["username"][:9]
+    on = opp_p["username"][:9]
+    lines = []
     if action_text:
+        lines.append(action_text.split("\n")[0][:160])
         lines.append("")
-        lines.append("─────────────")
-        lines.append(action_text.split("\n")[0][:200])
+    lines.append(f"`{vn:<9} {v_bar} ⚔️ {o_bar} {on:>9}`")
+    lines.append(f"`{'':9} {v_hp}/{v_max} HP    {o_hp}/{o_max} HP`")
     return "\n".join(lines)[:4096]
 
 
-async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
-    """Send NEW DM messages to both PvP players — each gets a Telegram notification."""
-    _pvp_cards.setdefault(pair, {})  # keep pair key stable for _pvp_pair_key normalization
+async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot, cmd_text=None):
+    """Send new DM battle card to both players; flash a command text first if given."""
+    _pvp_cards.setdefault(pair, {})
+
     async def _send_one(viewer_uid, viewer_p, opp_uid, opp_p):
-        card   = _pvp_dm_card(viewer_p, opp_p, action_text)
+        if cmd_text:
+            try:
+                cm = await bot.send_message(chat_id=viewer_uid, text=cmd_text)
+                asyncio.create_task(_auto_delete(bot, viewer_uid, cm.message_id, 2))
+            except Exception:
+                pass
+        card   = _pvp_fight_card(viewer_p, opp_p, action_text)
         markup = _build_pvp_card_markup(viewer_uid, opp_uid, viewer_p, opp_p)
         try:
-            await bot.send_message(chat_id=viewer_uid, text=card,
-                                   parse_mode="Markdown", reply_markup=markup)
+            msg = await bot.send_message(chat_id=viewer_uid, text=card,
+                                         parse_mode="Markdown", reply_markup=markup)
+            old = _pvp_dm_last_msg.pop(viewer_uid, None)
+            _pvp_dm_last_msg[viewer_uid] = (viewer_uid, msg.message_id)
+            if old:
+                try: await bot.delete_message(chat_id=old[0], message_id=old[1])
+                except Exception: pass
         except Exception:
             pass
+
     await asyncio.gather(
         _send_one(au_id, a, du_id, d),
         _send_one(du_id, d, au_id, a),
@@ -10299,10 +10316,10 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
 
 
 async def _ensure_pvp_group_msg(pair, chat_id, a_name, d_name, bot):
-    """Send static 'battling' message to group once per pair. No-op if already exists or chat is a DM."""
+    """Send static 'battling' message to group once per pair."""
     if pair in _pvp_group_msg_ids:
         return
-    if chat_id in pair:  # chat_id is one of the player IDs → DM, not group
+    if chat_id in pair:
         return
     try:
         msg = await bot.send_message(
@@ -10315,7 +10332,12 @@ async def _ensure_pvp_group_msg(pair, chat_id, a_name, d_name, bot):
 
 
 async def _finalize_pvp_group_msg(pair, result_text, bot):
-    """Edit the static group message with the defeat result, then remove it from tracking."""
+    """Edit static group message with defeat result and clean up DM tracking."""
+    for _uid in pair:
+        old = _pvp_dm_last_msg.pop(_uid, None)
+        if old:
+            try: await bot.delete_message(chat_id=old[0], message_id=old[1])
+            except Exception: pass
     stored = _pvp_group_msg_ids.pop(pair, None)
     if not stored:
         return
@@ -10380,34 +10402,12 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
     await _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot)
 
 
-def _pvp_other_uid(pair, uid):
-    """Return the other player's uid from a pair tuple."""
-    return pair[1] if pair[0] == uid else pair[0]
-
-
-def _cancel_pvp_turn(pair):
-    """Cancel the auto-attack timer for this pair."""
-    old = _pvp_turn_tasks.pop(pair, None)
-    if old and not old.done():
-        old.cancel()
-    _pvp_turns.pop(pair, None)
-
-
-def _start_pvp_turn(pair, uid, bot):
-    """No-op — turn system removed. Both players act freely."""
-    pass
-
-
-async def _pvp_turn_timeout(pair, uid, bot):
-    """Disabled — turn timer removed."""
-    pass
-
-
 async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, duel_mode=False):
     """
     Full PvP combat resolution. Modifies a and d in-place and saves them.
     Returns (action_text, lvl_msgs, result_type) where result_type is
     'miss', 'hit', or 'defeat'.
+    When duel_mode=True, no DB writes, no defeat timers, no kill/exp updates.
     """
     lvl_msgs = []
 
@@ -10504,7 +10504,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, duel_mode=False)
             action = (f"🎯 *KILLSHOT FIRED!* *{a['username']}* → *{d['username']}*  -  "
                       f"AGI×4 = *{dmg_after_def} damage!* Cannot be dodged!")
         d["hp"] = max(0, d["hp"] - dmg_after_def)
-        update_recent_attackers(d, au_id)
+        if not duel_mode: update_recent_attackers(d, au_id)
         if d["hp"] <= 0:
             d["hp"] = 0
             if not duel_mode:
@@ -10549,8 +10549,9 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, duel_mode=False)
                         f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
             else:
                 action += f"\n💀 *{d['username']}* defeated in the duel!"
-        check_titles(a)
-        if not duel_mode: check_titles(d); save_player(a); save_player(d)
+        if not duel_mode:
+            check_titles(a); check_titles(d)
+            save_player(a); save_player(d)
         if lvl_msgs: action += "\n\n" + "\n".join(lvl_msgs)
         return action, lvl_msgs, "defeat" if d["hp"] <= 0 else "hit"
 
@@ -10583,7 +10584,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, duel_mode=False)
             a["melody_stacks"] = 0
         if "rhythm" in get_all_passive_keys(a):
             a["rhythm_stacks"] = 0
-        if not duel_mode: save_player(a); save_player(d)
+        if not duel_mode: save_player(d);
+        if not duel_mode: save_player(a)
         return f"🌀 *{a['username']}* swings at *{d['username']}*  -  *MISS!*", [], "miss"
 
     # Damage
@@ -10689,7 +10691,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, duel_mode=False)
     if safe_int(d.get("shield_charges")) > 0:
         d["shield_charges"] -= 1
         _sc_rem = d["shield_charges"]
-        if not duel_mode: save_player(a); save_player(d)
+        if not duel_mode: save_player(d)
+        if not duel_mode: save_player(a)
         return (f"🛡️ *{d['username']}*'s *Shield* negated the attack!" +
                 (f" ({_sc_rem} charges left)" if _sc_rem else " *(shield broken!)*"),
                 [], "miss")
@@ -10983,87 +10986,87 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, duel_mode=False)
         a["hp"] = min(calc_max_hp(a), a["hp"] + int(kh))
         extra_notes.append(f"🧛 *{a.get('username','?')}* drains {int(kh)} HP from the kill!")
 
-    if d["hp"] <= 0:
+    if d["hp"] <= 0 and not duel_mode:
         d["hp"] = 0
-        if not duel_mode:
-            d["defeated_until"] = (datetime.now() + timedelta(minutes=6)).isoformat()
-            d["last_defeated_by"] = f"{a['username']} (PvP)"
-            _d_was_wanted = safe_int(d.get("is_wanted"))
-            d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
-            d["revenge_target"] = au_id
-            d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
-            # Clear turn-based combat debuffs from both players when battle ends
-            for _cf in ("heal_blocked_turns", "revive_blocked_turns", "silence_turns", "hex_turns",
-                        "stun_turns", "freeze_turns", "entangle_turns", "distract_turns"):
-                d[_cf] = 0
-                if safe_int(a.get(_cf)) > 0:
-                    a[_cf] = 0
-            exp_loss = round(d.get("exp", 0) * 0.10)
-            d["exp"] = max(0, d.get("exp", 0) - exp_loss)
-            d["losses"] = d.get("losses", 0) + 1
-            a["wins"] = a.get("wins", 0) + 1
-            a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
-            if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
-                a["max_kill_streak"] = a["kill_streak"]
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            if a.get("kills_today_date") != today_str:
-                a["kills_today"] = 0; a["kills_today_date"] = today_str
-            a["kills_today"] = safe_int(a.get("kills_today")) + 1
-            if a["kills_today"] >= 5: a["is_wanted"] = 1
-            hist = sjl(d.get("pvp_history"), [])
-            hist.insert(0, {"attacker": a["username"], "dmg": "KO",
-                            "ts": datetime.now().strftime("%m/%d %H:%M")})
-            d["pvp_history"] = json.dumps(hist[:5])
-            for _desc, _exp, _gold in track_objective(a, "pvp_win"):
-                a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
-            if cls_a and cls_a.get("passive_key") == "dead_or_alive":
-                d["defeated_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
-                action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 1 hour!"
-                asyncio.create_task(announce(bot, chat_id,
-                    f"🏹 *{a['username']}* took down *{d['username']}* with *Last Shot*! "
-                    f"1-hour defeat.", delay=30))
-                a["gold"] = a.get("gold", 0) + 150
-            exp_gain = 60 + a["level"] * 8
-            if _d_was_wanted:
-                wanted_gold = 250; wanted_exp = round(exp_gain * 0.5)
-                a["gold"] = a.get("gold", 0) + wanted_gold
-                exp_gain += wanted_exp
-                action += f"\n🔴 *WANTED BOUNTY!* +{wanted_gold}g +{wanted_exp} bonus EXP for taking down a wanted player!"
-                asyncio.create_task(announce(bot, chat_id,
-                    f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
-            lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
-            if cls_a and cls_a.get("passive_key") == "conqueror":
-                restore = round(a["max_hp"] * 0.20)
-                a["hp"] = min(a["max_hp"], a["hp"] + restore)
-                _wk_add = min(5, max(0, 5 - safe_int(d.get("weakened_hits", 0))))
-                if _wk_add: add_charges(d, "weakened_hits", _wk_add)
-            _fire(check_and_claim_bounty(bot, a, d, chat_id))
-            a_guild = get_guild(a.get("guild_id")) if a.get("guild_id") else None
-            d_guild = get_guild(d.get("guild_id")) if d.get("guild_id") else None
-            if a_guild and d_guild and a_guild["guild_id"] != d_guild["guild_id"]:
-                war_gw = get_active_war(a_guild["guild_id"], d_guild["guild_id"])
-                if war_gw:
-                    _db_kw = _db(); c_kr = _db_kw.cursor()
-                    if str(war_gw["guild1_id"]) == str(a_guild["guild_id"]):
-                        c_kr.execute("UPDATE guild_wars SET kills1=kills1+1 WHERE war_id=?", (war_gw["war_id"],))
-                    else:
-                        c_kr.execute("UPDATE guild_wars SET kills2=kills2+1 WHERE war_id=?", (war_gw["war_id"],))
-                    _db_kw.commit()
-                    action += f"\n⚔️ *Guild War kill!* Score updated for {a_guild['name']}."
-            if cls_a and cls_a.get("passive_key") == "dead_or_alive":
-                a["deadeye_kill_bonus"] = min(50, safe_int(a.get("deadeye_kill_bonus")) + 2)
-            if cls_a and cls_a.get("passive_key") == "marked_for_death":
-                mfd_bonus = round((d.get("gold", 0) * 0.05 + 25) * 0.25)
-                a["gold"] = a.get("gold", 0) + mfd_bonus
-            _defeat_timer_pvp = time_until(d.get("defeated_until")) or "6m"
-            action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_pvp}*."
-            if leveled and a["level"] % 10 == 0:
-                asyncio.create_task(announce(bot, chat_id,
-                    f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
-        else:
-            action += f"\n💀 *Shadow {d['username']}* destroyed!"
+        d["defeated_until"] = (datetime.now() + timedelta(minutes=6)).isoformat()
+        d["last_defeated_by"] = f"{a['username']} (PvP)"
+        _d_was_wanted = safe_int(d.get("is_wanted"))
+        d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
+        d["revenge_target"] = au_id
+        d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
+        # Clear turn-based combat debuffs from both players when battle ends
+        for _cf in ("heal_blocked_turns", "revive_blocked_turns", "silence_turns", "hex_turns",
+                    "stun_turns", "freeze_turns", "entangle_turns", "distract_turns"):
+            d[_cf] = 0
+            if safe_int(a.get(_cf)) > 0:
+                a[_cf] = 0
+        exp_loss = round(d.get("exp", 0) * 0.10)
+        d["exp"] = max(0, d.get("exp", 0) - exp_loss)
+        d["losses"] = d.get("losses", 0) + 1
+        a["wins"] = a.get("wins", 0) + 1
+        a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
+        if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
+            a["max_kill_streak"] = a["kill_streak"]
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        if a.get("kills_today_date") != today_str:
+            a["kills_today"] = 0; a["kills_today_date"] = today_str
+        a["kills_today"] = safe_int(a.get("kills_today")) + 1
+        if a["kills_today"] >= 5: a["is_wanted"] = 1
+        hist = sjl(d.get("pvp_history"), [])
+        hist.insert(0, {"attacker": a["username"], "dmg": "KO",
+                        "ts": datetime.now().strftime("%m/%d %H:%M")})
+        d["pvp_history"] = json.dumps(hist[:5])
+        for _desc, _exp, _gold in track_objective(a, "pvp_win"):
+            a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
+        if cls_a and cls_a.get("passive_key") == "dead_or_alive":
+            d["defeated_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
+            action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 1 hour!"
+            asyncio.create_task(announce(bot, chat_id,
+                f"🏹 *{a['username']}* took down *{d['username']}* with *Last Shot*! "
+                f"1-hour defeat.", delay=30))
+            a["gold"] = a.get("gold", 0) + 150
+        exp_gain = 60 + a["level"] * 8
+        if _d_was_wanted:
+            wanted_gold = 250; wanted_exp = round(exp_gain * 0.5)
+            a["gold"] = a.get("gold", 0) + wanted_gold
+            exp_gain += wanted_exp
+            action += f"\n🔴 *WANTED BOUNTY!* +{wanted_gold}g +{wanted_exp} bonus EXP for taking down a wanted player!"
+            asyncio.create_task(announce(bot, chat_id,
+                f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
+        lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
+        if cls_a and cls_a.get("passive_key") == "conqueror":
+            restore = round(a["max_hp"] * 0.20)
+            a["hp"] = min(a["max_hp"], a["hp"] + restore)
+            _wk_add = min(5, max(0, 5 - safe_int(d.get("weakened_hits", 0))))
+            if _wk_add: add_charges(d, "weakened_hits", _wk_add)
+        _fire(check_and_claim_bounty(bot, a, d, chat_id))
+        a_guild = get_guild(a.get("guild_id")) if a.get("guild_id") else None
+        d_guild = get_guild(d.get("guild_id")) if d.get("guild_id") else None
+        if a_guild and d_guild and a_guild["guild_id"] != d_guild["guild_id"]:
+            war_gw = get_active_war(a_guild["guild_id"], d_guild["guild_id"])
+            if war_gw:
+                _db_kw = _db(); c_kr = _db_kw.cursor()
+                if str(war_gw["guild1_id"]) == str(a_guild["guild_id"]):
+                    c_kr.execute("UPDATE guild_wars SET kills1=kills1+1 WHERE war_id=?", (war_gw["war_id"],))
+                else:
+                    c_kr.execute("UPDATE guild_wars SET kills2=kills2+1 WHERE war_id=?", (war_gw["war_id"],))
+                _db_kw.commit()
+                action += f"\n⚔️ *Guild War kill!* Score updated for {a_guild['name']}."
+        if cls_a and cls_a.get("passive_key") == "dead_or_alive":
+            a["deadeye_kill_bonus"] = min(50, safe_int(a.get("deadeye_kill_bonus")) + 2)
+        if cls_a and cls_a.get("passive_key") == "marked_for_death":
+            mfd_bonus = round((d.get("gold", 0) * 0.05 + 25) * 0.25)
+            a["gold"] = a.get("gold", 0) + mfd_bonus
+        _defeat_timer_pvp = time_until(d.get("defeated_until")) or "6m"
+        action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_pvp}*."
+        if leveled and a["level"] % 10 == 0:
+            asyncio.create_task(announce(bot, chat_id,
+                f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
+    elif d["hp"] <= 0 and duel_mode:
+        d["hp"] = 0
+        action += f"\n💀 *{d['username']}* defeated in the duel!"
 
-    if d["hp"] > 0:
+    if d["hp"] > 0 and not duel_mode:
         hist_nl = sjl(d.get("pvp_history"), [])
         _hist_entry = {"attacker": a["username"], "dmg": _dmg_before_shield,
                        "ts": datetime.now().strftime("%m/%d %H:%M")}
@@ -11073,9 +11076,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, duel_mode=False)
         hist_nl.insert(0, _hist_entry)
         d["pvp_history"] = json.dumps(hist_nl[:5])
 
-    check_titles(a)
-    if not duel_mode: check_titles(d)
     if not duel_mode:
+        check_titles(a); check_titles(d)
         _a_snap, _d_snap = a.copy(), d.copy()
         await asyncio.get_running_loop().run_in_executor(
             None, lambda: (save_player(_a_snap), save_player(_d_snap)))
@@ -11337,10 +11339,9 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
                 try: await context.bot.send_message(chat_id=_dm_uid, text=action_text[:4096], parse_mode="Markdown")
                 except Exception: pass
         else:
-            # hit or miss — ensure static group message + notify both via DM
             _cb_unlock(uid)
             await _ensure_pvp_group_msg(pair, chat_id, a["username"], d["username"], context.bot)
-            await _pvp_notify_both(pair, a, d, uid, target_uid, action_text, context.bot)
+            await _pvp_notify_both(pair, a, d, uid, target_uid, action_text, context.bot, cmd_text="/attack")
     finally:
         _cb_unlock(uid)  # idempotent
 
@@ -11527,9 +11528,8 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception: pass
         return
 
-    # hit or miss — ensure static group msg + notify both players via DM
     await _ensure_pvp_group_msg(pair, chat, a["username"], d["username"], bot)
-    await _pvp_notify_both(pair, a, d, au.id, du_id, action, bot)
+    await _pvp_notify_both(pair, a, d, au.id, du_id, action, bot, cmd_text="/attack")
 
 
 # ── PVP CARD CALLBACK ─────────────────────────────────────────────────────────
@@ -11559,9 +11559,6 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not a or not d:
             await query.edit_message_text("Player data not found."); return
 
-        if action_type == "wait":
-            return  # stale button from old turn system — ignore silently
-
         if action_type == "heal":
             if is_healing_blocked(a):
                 if safe_int(a.get("heal_blocked_turns")) > 0:
@@ -11588,7 +11585,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pair = _pvp_pair_key(uid, target_id)
             _pvp_log_append(pair, heal_entry)
             _cb_unlock(uid)
-            await _pvp_notify_both(pair, a, d, uid, target_id, heal_entry, context.bot)
+            await _pvp_notify_both(pair, a, d, uid, target_id, heal_entry, context.bot, cmd_text="/potion")
             return
 
         if action_type == "def":
@@ -11611,7 +11608,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shield_entry = f"🛡️ *{a['username']}* raises their shield — *{max_sh} HP*"
             _pvp_log_append(pair, shield_entry)
             _cb_unlock(uid)
-            await _pvp_notify_both(pair, a, d, uid, target_id, shield_entry, context.bot)
+            await _pvp_notify_both(pair, a, d, uid, target_id, shield_entry, context.bot, cmd_text="/defend")
             return
 
         if action_type == "finish":
@@ -11701,9 +11698,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception: pass
             return
 
-        # miss or hit — notify both via DM
         _cb_unlock(uid)
-        await _pvp_notify_both(pair, a, d, uid, target_id, result_text, context.bot)
+        await _pvp_notify_both(pair, a, d, uid, target_id, result_text, context.bot, cmd_text="/attack")
 
     finally:
         _cb_unlock(uid)  # idempotent — safe to call again
@@ -12075,10 +12071,6 @@ def _build_stats_pages(p, viewing_name=None):
         f"⚔️ {p['wins']}W / {_losses}L",
         f"📣 Influence: {safe_int(p.get('influence')):,}",
     ]
-    _duel_w = safe_int(p.get("duel_wins"))
-    _duel_l = safe_int(p.get("duel_losses"))
-    if _duel_w or _duel_l:
-        page1_lines.append(f"⚔️ Duels: *{_duel_w}W / {_duel_l}L*")
     if _ks >= 1:
         page1_lines.append(f"🔥 Streak: {_ks}" + (f"  (best {safe_int(p.get('max_kill_streak'))})" if _ks >= 3 else ""))
     if p.get("is_wanted"):
@@ -17868,8 +17860,6 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             if _bc:
                 out.append(f"🎯 *Bounty claimed!* +{_bc}g")
             _sk_result_text = "\n".join(out)
-            _pvp_log_append(_sk_pair, _sk_result_text)
-            # Defeat: finalize group message + DM both players
             _pvp_cards.pop(_sk_pair, None)
             _pvp_battle_logs.pop(_sk_pair, None)
             _pvp_cur_page.pop(_sk_pair, None)
@@ -17878,9 +17868,9 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 try: await context.bot.send_message(chat_id=_dm_uid, text=_sk_result_text[:4096], parse_mode="Markdown")
                 except Exception: pass
         else:
-            # Log skill result and notify both players via DM
             _pvp_log_append(_sk_pair, _sk_result_text)
-            await _pvp_notify_both(_sk_pair, p, tp, uid, target_uid, _sk_result_text, context.bot)
+            sk_name = sk.get("name", "skill") if 'sk' in dir() else "skill"
+            await _pvp_notify_both(_sk_pair, p, tp, uid, target_uid, _sk_result_text, context.bot, cmd_text=f"/{sk_name.lower().replace(' ','')}")
 
 async def _execute_skill(update, context, p, sk):
     """Core skill execution logic."""
@@ -22611,484 +22601,142 @@ async def bonds_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         pass
 
 
-# ── SHADOW DUEL ENGINE ────────────────────────────────────────────────────────
-
-def _get_all_duelable_players(attacker_uid, page=0, per_page=4):
-    """All registered RPG players except self — no restrictions for duels."""
-    c = _db().cursor()
-    c.execute("SELECT * FROM players WHERE user_id != ? ORDER BY level DESC", (attacker_uid,))
-    rows = [dict(r) for r in c.fetchall()]
-    total = len(rows)
-    return rows[page * per_page:(page + 1) * per_page], total
-
-
-def _build_duel_picker_markup(uid, page=0):
-    players, total = _get_all_duelable_players(uid, page)
-    per_page = 4
-    rows = []
-    for tp in players:
-        cp   = calc_combat_power(tp)
-        hp_s = "💀" if is_defeated(tp) else ("❤️" if tp.get("hp", 0) >= tp.get("max_hp", 1) * 0.5 else "🩸")
-        rows.append([InlineKeyboardButton(
-            f"⚔️ {tp.get('username','?')} (Lv.{tp.get('level',1)}) {hp_s} CP:{cp:,}",
-            callback_data=f"duelpick_{uid}_{tp['user_id']}"
-        )])
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"duelpage_{uid}_{page-1}"))
-    if (page + 1) * per_page < total:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"duelpage_{uid}_{page+1}"))
-    if nav:
-        rows.append(nav)
-    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
-    return InlineKeyboardMarkup(rows)
-
-
-def _shadow_duel_card(uid, state):
-    e_bar = _enc_hp_bar(state["shadow_hp"], state["shadow_max_hp"])
-    p_bar = _enc_hp_bar(state["attacker_hp"], state["attacker_max_hp"])
-    # Shadow info
-    s_weap  = state.get("shadow_weapon", "")
-    s_class = state.get("shadow_class", "")
-    s_info  = f"  ⚔️ {s_weap}" if s_weap else ""
-    s_cls   = f"  [{s_class}]" if s_class else ""
-    # Attacker info
-    a_weap  = state.get("attacker_weapon", "")
-    a_class = state.get("attacker_class", "")
-    a_info  = f"  ⚔️ {a_weap}" if a_weap else ""
-    a_cls   = f"  [{a_class}]" if a_class else ""
-    lines = [
-        "⚔️ *DUEL*",
-        "",
-        f"👾 *{state['target_name']}*  _(Lv.{state['target_level']}){s_cls}_{s_info}",
-        f"`{e_bar}`  {state['shadow_hp']}/{state['shadow_max_hp']} HP",
-        "",
-        f"👤 *You*  _(Lv.{state.get('attacker_level', '?')}){a_cls}_{a_info}",
-        f"`{p_bar}`  {state['attacker_hp']}/{state['attacker_max_hp']} HP",
-        f"🏆 Duel Record: *{state['duel_wins']}W / {state['duel_losses']}L*",
-    ]
-    log = state.get("log", [])
-    if log:
-        lines.append("")
-        lines.append("─────────────")
-        for entry in log[-3:]:
-            lines.append(entry)
-    return "\n".join(lines)[:4096]
-
-
-def _shadow_duel_markup(uid, state, p):
-    rows = []
-    rows.append([
-        InlineKeyboardButton("⚔️ Attack", callback_data=f"shadowduel_atk_{uid}"),
-        InlineKeyboardButton("🛡️ Guard",  callback_data=f"shadowduel_guard_{uid}"),
-    ])
-    row2 = []
-    inv = sjl(p.get("inventory"), [])
-    if any(i in inv for i in ["Health Potion", "Greater Health Potion", "Grand Restorative Flask"]):
-        row2.append(InlineKeyboardButton("🧪 Potion", callback_data=f"shadowduel_pot_{uid}"))
-    pet_info = state.get("pet_info")
-    if pet_info and not state.get("pet_ability_used"):
-        row2.append(InlineKeyboardButton(f"🐾 {pet_info['name']}", callback_data=f"shadowduel_pet_{uid}"))
-    if row2:
-        rows.append(row2)
-    p_skills = get_combat_skills(p)
-    skill_btns = [
-        InlineKeyboardButton(sk.get("name", "Skill"), callback_data=f"shadowduel_skill_{uid}_{i}")
-        for i, sk in enumerate(p_skills)
-    ]
-    for i in range(0, len(skill_btns), 2):
-        rows.append(skill_btns[i:i+2])
-    rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"shadowduel_flee_{uid}")])
-    return InlineKeyboardMarkup(rows)
-
-
-
-async def _shadow_duel_resolve(uid, outcome, bot, state):
-    """Apply duel results and clean up."""
-    active_shadow_duels.pop(uid, None)
-    p = get_player(uid)
-    target_p = get_player(state["target_uid"])
-    if not p:
-        return
-
-    if outcome == "win":
-        p["duel_wins"] = safe_int(p.get("duel_wins")) + 1
-        exp_gain = 200 + p["level"] * 5
-        add_exp(p, exp_gain)
-        result_lines = [
-            f"🏆 *Duel won! {state['target_name']} defeated!*",
-            f"+{exp_gain} EXP",
-        ]
-        if target_p:
-            floor_hp = int(target_p.get("max_hp", 100) * 0.25)
-            drain = int(target_p.get("max_hp", 100) * 0.15)
-            new_hp = max(floor_hp, target_p.get("hp", 0) - drain)
-            gold_loss = min(target_p.get("gold", 0), max(50, min(150, target_p.get("level", 1) * 5)))
-            floored = new_hp <= floor_hp
-            if not floored or target_p.get("hp", 0) > floor_hp:
-                target_p["hp"] = new_hp
-                target_p["gold"] = max(0, target_p.get("gold", 0) - gold_loss)
-                save_player(target_p)
-                result_lines.append(f"💥 *{state['target_name']}* lost *{drain} HP* and *{gold_loss}g*!")
-                if floored:
-                    result_lines.append(f"_(HP floor reached — no more HP loss from duels)_")
-                try:
-                    await bot.send_message(
-                        chat_id=state["target_uid"],
-                        text=f"⚔️ *{p['username']}* dueled you and won!\n"
-                             f"💢 -{drain} HP  |  -{gold_loss}g\n"
-                             f"_Come online to get revenge!_",
-                        parse_mode="Markdown")
-                except Exception:
-                    pass
-            else:
-                result_lines.append(f"_({state['target_name']} is already at the HP floor — no further drain)_")
-        save_player(p)
-    elif outcome == "loss":
-        p["duel_losses"] = safe_int(p.get("duel_losses")) + 1
-        gold_pen = max(0, min(50, p.get("gold", 0)))
-        p["gold"] = max(0, p.get("gold", 0) - gold_pen)
-        save_player(p)
-        result_lines = [
-            f"💀 *{state['target_name']}* defeated you in the duel!",
-            f"Lost *{gold_pen}g*  _(no defeat timer)_",
-        ]
-    else:  # fled
-        result_lines = [f"🏃 *Duel fled.*  No record change."]
-
-    result_text = "\n".join(result_lines)
-    try:
-        await bot.edit_message_text(
-            chat_id=state["chat_id"], message_id=state["msg_id"],
-            text=result_text[:4096], parse_mode="Markdown")
-    except Exception:
-        try: await bot.send_message(chat_id=state["chat_id"], text=result_text[:4096], parse_mode="Markdown")
-        except Exception: pass
-
-
 async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    p    = get_player(user.id)
+    user = update.effective_user; p = get_player(user.id)
+    chat_id = update.effective_chat.id
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-    if user.id in active_shadow_duels:
-        await send_group(update, "⚔️ You already have an active duel!", delay=9); return
+    if is_defeated(p):
+        await send_group(update, "💀 You're defeated  -  can't duel!", delay=9); return
+    if is_invincible(p):
+        await send_group(update, "🛡️ You're *Still Recovering*  -  can't duel while invincible.", delay=9); return
 
-    chat_id = update.effective_chat.id
-    markup  = _build_duel_picker_markup(user.id, 0)
-    cp_self = calc_combat_power(p)
-    await send_group(update,
-        f"⚔️ *Duel* — pick a target!\n\n"
-        f"Your CP: *{cp_self:,}*\n\n"
-        f"_You'll fight a CPU copy of the chosen player using their real stats.\n"
-        f"Win to drain their HP and gold. No acceptance needed!_",
-        permanent=True, reply_markup=markup)
+    # Reply-to-message shortcut: replying to a challenge message counts as /duel accept
+    if update.message.reply_to_message and (not context.args or context.args[0].lower() != "accept"):
+        replied_uid = update.message.reply_to_message.from_user.id
+        if replied_uid != user.id:
+            duel_check = pending_duels.get(replied_uid)
+            if duel_check and duel_check["target_id"] == user.id and duel_check["chat_id"] == chat_id:
+                if datetime.now() < datetime.fromisoformat(duel_check["expires"]):
+                    context.args = ["accept"]
+                else:
+                    pending_duels.pop(replied_uid, None)
+                    await send_group(update, "⏰ That duel challenge has already expired.", delay=9)
+                    return
 
-
-async def duel_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle shadow duel target selection and page navigation."""
-    query = update.callback_query
-    await query.answer()
-    data  = query.data  # duelpick_{uid}_{target} or duelpage_{uid}_{page}
-    parts = data.split("_")
-    try:
-        action = parts[0]  # "duelpick" or "duelpage"
-        uid    = int(parts[1])
-        third  = int(parts[2])
-    except (IndexError, ValueError):
-        return
-    if query.from_user.id != uid:
-        await query.answer("Not your duel!", show_alert=True); return
-
-    if action == "duelpage":
-        try:
-            await query.edit_message_reply_markup(reply_markup=_build_duel_picker_markup(uid, third))
-        except Exception:
-            pass
-        return
-
-    # action == "duelpick" — third is target_uid
-    target_uid = third
-    if uid in active_shadow_duels:
-        await query.answer("Already in a duel!", show_alert=True); return
-
-    p  = get_player(uid)
-    tp = get_player(target_uid)
-    if not p or not tp:
-        await query.answer("Player not found!", show_alert=True); return
-
-    # Build shadow — complete mirror of target's real stats/equipment/pets
-    _tp_cls  = get_player_class(tp)
-    _p_cls   = get_player_class(p)
-    # Load player's active pet for duel
-    _duel_pet_rec = get_active_pet_record(uid)
-    _duel_pet_info = None
-    if _duel_pet_rec and not _pet_is_on_adventure(_duel_pet_rec):
-        _sp = PET_SPECIES.get(_duel_pet_rec.get("species"), {})
-        _, _bond_label = _get_bond_tier(_duel_pet_rec.get("bond_score", 0))
-        _duel_pet_info = {
-            "pet_id":     _duel_pet_rec["pet_id"],
-            "name":       _duel_pet_rec.get("nickname") or _sp.get("name", "Pet"),
-            "level":      _duel_pet_rec.get("level", 1),
-            "atk":        get_pet_atk_bonus(_duel_pet_rec),
-            "bond_label": _bond_label,
-            "species":    _duel_pet_rec.get("species"),
-            "def_ability": _sp.get("def_ability"),
-        }
-    state = {
-        "target_uid":       target_uid,
-        "target_name":      tp.get("username", "?"),
-        "target_level":     tp.get("level", 1),
-        "shadow_hp":        tp.get("max_hp", 100),
-        "shadow_max_hp":    tp.get("max_hp", 100),
-        "attacker_hp":      p.get("max_hp", 100),
-        "attacker_max_hp":  p.get("max_hp", 100),
-        "chat_id":          query.message.chat_id,
-        "msg_id":           None,
-        "phase":            "combat",
-        "log":              [],
-        "duel_wins":        safe_int(p.get("duel_wins")),
-        "duel_losses":      safe_int(p.get("duel_losses")),
-        # Card display info
-        "shadow_weapon":    tp.get("equipped_weapon", ""),
-        "shadow_class":     _tp_cls.get("name", "") if _tp_cls else "",
-        "attacker_weapon":  p.get("equipped_weapon", ""),
-        "attacker_class":   _p_cls.get("name", "") if _p_cls else "",
-        "attacker_level":   p.get("level", 1),
-        # Pet & status
-        "pet_info":         _duel_pet_info,
-        "pet_ability_used": False,
-        "p_guarding":       False,
-        "shadow_stunned":   False,
-    }
-    active_shadow_duels[uid] = state
-
-    try:
-        msg = await query.edit_message_text(
-            _shadow_duel_card(uid, state)[:4096],
-            parse_mode="Markdown",
-            reply_markup=_shadow_duel_markup(uid, state, p))
-        state["msg_id"] = msg.message_id
-    except Exception:
-        try:
-            msg = await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=_shadow_duel_card(uid, state)[:4096],
-                parse_mode="Markdown",
-                reply_markup=_shadow_duel_markup(uid, state, p))
-            state["msg_id"] = msg.message_id
-        except Exception:
-            active_shadow_duels.pop(uid, None)
-            return
-
-
-async def duel_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle duel actions — static turn-based like encounter."""
-    query  = update.callback_query
-    await query.answer()
-    data   = query.data  # shadowduel_{action}_{uid} or shadowduel_skill_{uid}_{idx}
-    parts  = data.split("_")
-    try:
-        action = parts[1]
-        uid    = int(parts[2])
-    except (IndexError, ValueError):
-        return
-    if query.from_user.id != uid:
-        await query.answer("Not your duel!", show_alert=True); return
-
-    state = active_shadow_duels.get(uid)
-    if not state or state.get("phase") != "combat":
-        await query.answer("No active duel.", show_alert=True); return
-
-    p = get_player(uid)
-    if not p:
-        return
-
-    # ── Flee ─────────────────────────────────────────────────────────────────
-    if action == "flee":
-        state["phase"] = "done"
-        await _shadow_duel_resolve(uid, "fled", context.bot, state)
-        return
-
-    action_txt  = ""
-    player_wins = False
-
-    # ── Player action ─────────────────────────────────────────────────────────
-    if action == "pot":
-        inv = sjl(p.get("inventory"), [])
-        potion = None; heal_amt = 0
-        for pname, pamt in [("Grand Restorative Flask", 1500), ("Greater Health Potion", 500), ("Health Potion", 250)]:
-            if pname in inv:
-                potion = pname; heal_amt = pamt; break
-        if not potion:
-            await query.answer("No potions!", show_alert=True); return
-        inv.remove(potion); p["inventory"] = json.dumps(inv)
-        actual = min(heal_amt, state["attacker_max_hp"] - state["attacker_hp"])
-        state["attacker_hp"] = min(state["attacker_max_hp"], state["attacker_hp"] + heal_amt)
-        action_txt = f"🧪 Used *{potion}*! +{actual} HP restored."
-        save_player(p)
-
-    elif action == "guard":
-        state["p_guarding"] = True
-        action_txt = "🛡️ You brace for impact! *(40% damage reduction)*"
-
-    elif action == "pet":
-        if state.get("pet_ability_used"):
-            await query.answer("Pet ability already used!", show_alert=True); return
-        pet_info = state.get("pet_info")
-        if not pet_info:
-            await query.answer("No active pet!", show_alert=True); return
-        state["pet_ability_used"] = True
-        da    = pet_info.get("def_ability", "shield")
-        patk  = pet_info.get("atk", 5)
-        pname = pet_info.get("name", "Pet")
-        if da in ("counter", "stun", "poison"):
-            pet_dmg = max(1, int(patk * 1.8 * random.uniform(0.9, 1.1)))
-            state["shadow_hp"] = max(0, state["shadow_hp"] - pet_dmg)
-            if da == "stun":
-                state["shadow_stunned"] = True
-                action_txt = f"🐾 *{pname}* stuns for *{pet_dmg}* dmg! ⚡ Shadow stunned!"
-            elif da == "poison":
-                action_txt = f"🐾 *{pname}* poisons for *{pet_dmg}* dmg! ☠️"
-            else:
-                action_txt = f"🐾 *{pname}* counter-strikes for *{pet_dmg}* dmg!"
-        elif da == "lifesteal":
-            pet_dmg = max(1, int(patk * 1.5 * random.uniform(0.9, 1.1)))
-            state["shadow_hp"] = max(0, state["shadow_hp"] - pet_dmg)
-            heal_p  = round(state["attacker_max_hp"] * 0.20)
-            state["attacker_hp"] = min(state["attacker_max_hp"], state["attacker_hp"] + heal_p)
-            action_txt = f"🐾 *{pname}* drains *{pet_dmg}* dmg and heals *{heal_p}* HP! 💜"
-        elif da == "shield":
-            shield_hp = max(5, patk * 2)
-            state["attacker_hp"] = min(state["attacker_max_hp"], state["attacker_hp"] + shield_hp)
-            action_txt = f"🐾 *{pname}* shields you, restoring *{shield_hp}* HP! ✨"
+    if context.args and context.args[0].lower() == "accept":
+        duel = None; challenger_id = None
+        for cid, d in list(pending_duels.items()):
+            if d["target_id"] == user.id and d["chat_id"] == chat_id:
+                if datetime.now() < datetime.fromisoformat(d["expires"]):
+                    duel = d; challenger_id = cid; break
+                else:
+                    pending_duels.pop(cid, None)
+        if not duel:
+            await send_group(update, "No pending duel challenge for you!", delay=9); return
+        challenger = get_player(challenger_id)
+        if not challenger:
+            pending_duels.pop(challenger_id, None)
+            await send_group(update, "Challenger not found.", delay=9); return
+        wager = duel["wager"]
+        if wager > 0 and p["gold"] < wager:
+            await send_group(update,
+                f"❌ You need {wager}g for the wager. Have {p['gold']}g.", delay=9); return
+        if wager > 0 and challenger["gold"] < wager:
+            pending_duels.pop(challenger_id, None)
+            await send_group(update, "Challenger can no longer afford the wager.", delay=9); return
+        pending_duels.pop(challenger_id, None)
+        # Deduct wager from both players upfront, then award wager*2 to winner
+        if wager > 0:
+            p["gold"]          = max(0, p.get("gold", 0) - wager)
+            challenger["gold"] = max(0, challenger.get("gold", 0) - wager)
+        cp_a = calc_combat_power(challenger)
+        cp_b = calc_combat_power(p)
+        total = cp_a + cp_b
+        winner = challenger if random.random() < (cp_a / total) else p
+        loser  = p if winner["user_id"] == challenger["user_id"] else challenger
+        if wager > 0:
+            winner["gold"] = winner.get("gold",0) + wager * 2
+        winner["wins"] = winner.get("wins",0) + 1
+        save_player(winner); save_player(loser)
+        lines = [
+            f"⚔️ *DUEL  -  {challenger['username']} vs {p['username']}*",
+            f"━━━━━━━━━━━━━━━━",
+            f"🔢 {challenger['username']} CP: *{cp_a:,}*",
+            f"🔢 {p['username']} CP: *{cp_b:,}*",
+            f"━━━━━━━━━━━━━━━━",
+        ]
+        advantage = abs(cp_a - cp_b)
+        if advantage < total * 0.05:
+            lines.append("⚡ *Perfectly matched!* It could have gone either way...")
+        elif winner["user_id"] == challenger["user_id"]:
+            lines.append(f"📈 {challenger['username']} had the edge  -  *{cp_a - cp_b:,} CP advantage!*")
         else:
-            pet_dmg = max(1, int(patk * 1.4 * random.uniform(0.9, 1.1)))
-            state["shadow_hp"] = max(0, state["shadow_hp"] - pet_dmg)
-            action_txt = f"🐾 *{pname}* attacks for *{pet_dmg}* dmg!"
-        if state["shadow_hp"] <= 0:
-            player_wins = True
-
-    elif action == "skill":
-        try:
-            skill_idx = int(parts[3])
-        except (IndexError, ValueError):
-            return
-        p_skills = get_combat_skills(p)
-        if skill_idx >= len(p_skills):
-            await query.answer("Invalid skill!", show_alert=True); return
-        sk = p_skills[skill_idx]
-        # Use state as enc proxy — _enc_process_skill reads e_hp/p_hp keys
-        state["e_hp"]     = state["shadow_hp"]
-        state["e_max_hp"] = state["shadow_max_hp"]
-        state["p_hp"]     = state["attacker_hp"]
-        state["p_max_hp"] = state["attacker_max_hp"]
-        action_txt, _, _ = _enc_process_skill(state, p, sk)
-        state["shadow_hp"]   = max(0, state.get("e_hp", 0))
-        state["attacker_hp"] = min(state["attacker_max_hp"], max(0, state.get("p_hp", 0)))
-        if state["shadow_hp"] <= 0:
-            player_wins = True
-
-    elif action == "atk":
-        real_target = get_player(state["target_uid"])
-        shadow_p = {
-            **(real_target if real_target else {}),
-            "user_id":   state["target_uid"],
-            "username":  state["target_name"],
-            "hp":        state["shadow_hp"],
-            "max_hp":    state["shadow_max_hp"],
-            "stun_turns": 0, "freeze_turns": 0, "entangle_turns": 0,
-            "distract_turns": 0, "silence_turns": 0, "hex_turns": 0,
-            "poison_stacks": 0, "bleed_stacks": 0, "burn_stacks": 0,
-            "charging_killshot": 0, "defeated_until": None, "invincible_until": None,
-            "shield_hp": 0, "shield_charges": 0, "ward_charges": 0,
-        }
-        p_duel = dict(p)
-        p_duel["hp"] = state["attacker_hp"]
-        w = get_weather()
-        result_text, _, result_type = await _execute_pvp_hit(
-            p_duel, shadow_p, uid, state["target_uid"], w, state["chat_id"], context.bot,
-            duel_mode=True)
-        state["shadow_hp"]   = max(0, shadow_p.get("hp", 0))
-        state["attacker_hp"] = max(0, p_duel.get("hp", state["attacker_hp"]))
-        action_txt = result_text.split("\n")[0][:150] if result_text else "⚔️ Strike!"
-        if result_type == "defeat" or state["shadow_hp"] <= 0:
-            state["shadow_hp"] = 0
-            player_wins = True
-
-    # Log player action
-    if action_txt:
-        state.setdefault("log", []).append(action_txt)
-
-    # ── Player wins ────────────────────────────────────────────────────────────
-    if player_wins:
-        state["phase"] = "done"
-        if len(state.get("log", [])) > 6:
-            state["log"] = state["log"][-6:]
-        await _shadow_duel_resolve(uid, "win", context.bot, state)
+            lines.append(f"📈 {p['username']} had the edge  -  *{cp_b - cp_a:,} CP advantage!*")
+        lines.append(f"\n🏆 *{winner['username']}* wins the duel!")
+        if wager > 0:
+            lines.append(f"💰 +{wager}g collected from {loser['username']}.")
+        await send_group(update, "\n".join(lines), permanent=False, delay=60)
         return
 
-    # ── Shadow counter-attack (fires after every player action) ───────────────
-    shadow_wins = False
-    real_target = get_player(state["target_uid"])
-    shadow_atk_p = {
-        **(real_target if real_target else {}),
-        "user_id":   state["target_uid"],
-        "username":  state["target_name"],
-        "hp":        state["shadow_hp"],
-        "max_hp":    state["shadow_max_hp"],
-        "stun_turns": 0, "freeze_turns": 0, "entangle_turns": 0,
-        "distract_turns": 0, "silence_turns": 0, "hex_turns": 0,
-        "heal_blocked_turns": 0, "revive_blocked_turns": 0,
-        "charging_killshot": 0, "defeated_until": None, "invincible_until": None,
-        "poison_stacks": 0, "bleed_stacks": 0, "burn_stacks": 0,
-        "poison_pct": 0, "bleed_pct": 0, "burn_pct": 0,
-        "poison_damage": 0, "bleed_damage": 0, "burn_damage": 0,
+    if not update.message.reply_to_message:
+        await send_group(update,
+            "Reply to a player's message to challenge them!\n"
+            "`/duel`  -  pick wager via buttons\n"
+            "`/duel 500`  -  duel with 500g wager", delay=9); return
+    du = update.message.reply_to_message.from_user
+    if du.id == user.id:
+        await send_group(update, "Can't duel yourself!", delay=9); return
+    tp = get_player(du.id)
+    if not tp:
+        await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+    if is_defeated(tp):
+        await send_group(update, f"{tp['username']} is currently defeated — can't duel them.", delay=9); return
+    # Show wager buttons when no amount typed
+    if not context.args:
+        cp_self = calc_combat_power(p)
+        cp_them = calc_combat_power(tp)
+        wagers = [0, 100, 500, 1000, 5000]
+        buttons = []
+        row = []
+        for w in wagers:
+            can_afford = p.get("gold", 0) >= w
+            label = "⚔️ Free Duel" if w == 0 else f"{'✅' if can_afford else '🔴'} {w:,}g wager"
+            row.append(InlineKeyboardButton(label,
+                callback_data=f"duelwager_{user.id}_{du.id}_{w}"))
+            if len(row) == 2 or w == 0:
+                buttons.append(row); row = []
+        if row: buttons.append(row)
+        markup = InlineKeyboardMarkup(buttons)
+        await send_group(update,
+            f"⚔️ *Duel Challenge — {p['username']} vs {tp['username']}*\n\n"
+            f"Your CP: *{cp_self:,}*  |  Their CP: *{cp_them:,}*\n\n"
+            f"Pick a wager amount:",
+            delay=60, reply_markup=markup)
+        return
+    wager = 0
+    if context.args:
+        try: wager = max(0, int(context.args[0]))
+        except: pass
+    if wager > 0 and p["gold"] < wager:
+        await send_group(update,
+            f"❌ Need {wager}g for this wager. Have {p['gold']}g.", delay=9); return
+    pending_duels[user.id] = {
+        "target_id": du.id, "wager": wager,
+        "chat_id": chat_id,
+        "expires": (datetime.now() + timedelta(minutes=5)).isoformat()
     }
-    if state.get("shadow_stunned"):
-        state["shadow_stunned"] = False
-        counter_txt = f"⚡ *{state['target_name']}* is stunned — can't counter!"
-    else:
-        p_duel = dict(p)
-        p_duel["hp"] = state["attacker_hp"]
-        hp_before = state["attacker_hp"]
-        w = get_weather()
-        counter_text, _, counter_type = await _execute_pvp_hit(
-            shadow_atk_p, p_duel, state["target_uid"], uid, w, state["chat_id"], context.bot,
-            duel_mode=True)
-        # Guard: 40% damage reduction
-        if state.get("p_guarding"):
-            state["p_guarding"] = False
-            dmg_taken = hp_before - p_duel.get("hp", hp_before)
-            if dmg_taken > 0:
-                absorbed = int(dmg_taken * 0.40)
-                p_duel["hp"] = min(state["attacker_max_hp"], p_duel["hp"] + absorbed)
-                counter_text = (counter_text or "").split("\n")[0][:120] + f" *(Guarded! -{absorbed} absorbed)*"
-        state["attacker_hp"] = max(0, p_duel.get("hp", 0))
-        state["shadow_hp"]   = max(0, shadow_atk_p.get("hp", state["shadow_hp"]))
-        counter_txt = (counter_text or "").split("\n")[0][:150] or f"👾 *{state['target_name']}* strikes!"
-        if counter_type == "defeat" or state["attacker_hp"] <= 0:
-            state["attacker_hp"] = 0
-            shadow_wins = True
-    state.setdefault("log", []).append(counter_txt)
-
-    if len(state.get("log", [])) > 6:
-        state["log"] = state["log"][-6:]
-
-    if shadow_wins:
-        state["phase"] = "done"
-        await _shadow_duel_resolve(uid, "loss", context.bot, state)
-        return
-
-    p_fresh = get_player(uid) or p
-    try:
-        await query.edit_message_text(
-            _shadow_duel_card(uid, state)[:4096],
-            parse_mode="Markdown",
-            reply_markup=_shadow_duel_markup(uid, state, p_fresh))
-    except Exception:
-        pass
-
+    cp_self = calc_combat_power(p)
+    wager_str = f" for *{wager}g*" if wager > 0 else " (no wager)"
+    duel_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Accept", callback_data=f"duel_acc_{user.id}_{du.id}"),
+        InlineKeyboardButton("❌ Decline", callback_data=f"duel_dec_{user.id}_{du.id}"),
+    ]])
+    await send_group(update,
+        f"⚔️ *{user.first_name}* challenges *{du.first_name}* to a duel{wager_str}!\n\n"
+        f"🔢 {user.first_name}'s CP: *{cp_self:,}*\n\n"
+        f"_{du.first_name}: tap Accept/Decline or type `/duel accept`. Expires in 5m._",
+        permanent=False, delay=60, reply_markup=duel_markup)
 
 async def duel_wager_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle duel wager selection button."""
@@ -23229,6 +22877,398 @@ async def duel_response_callback(update, context):
                 text=result_text[:4096], parse_mode="Markdown")
         except Exception:
             pass
+
+# ── SHADOW DUEL ───────────────────────────────────────────────────────────────
+
+def _shadow_duel_card(uid, state):
+    """Build the shadow duel battle card text."""
+    a_hp   = state.get("attacker_hp", 0)
+    a_max  = max(1, state.get("attacker_max_hp", 1))
+    s_hp   = state.get("shadow_hp", 0)
+    s_max  = max(1, state.get("shadow_max_hp", 1))
+    a_fill = round(a_hp / a_max * 10)
+    s_fill = round(s_hp / s_max * 10)
+    a_bar  = "▓" * a_fill + "░" * (10 - a_fill)
+    s_bar  = "░" * (10 - s_fill) + "▓" * s_fill
+    a_cls_obj = None
+    # Build class/weapon suffixes
+    s_cls_name = state.get("shadow_class", "")
+    s_cls  = f" [{s_cls_name}]" if s_cls_name else ""
+    s_wep  = state.get("shadow_weapon", "")
+    s_info = f"\n  ⚔️ {s_wep}_" if s_wep else "_"
+    lines = [
+        f"⚔️ *Shadow Duel*",
+        f"",
+        f"👤 *You*  _(Lv.{state.get('attacker_level',1)}){' [' + state.get('attacker_class','') + ']' if state.get('attacker_class') else ''}_",
+        f"❤️ `{a_bar}` {a_hp}/{a_max}",
+        f"",
+        f"👾 *{state['target_name']}*  _(Lv.{state['target_level']}){s_cls}_{s_info}",
+        f"💀 `{s_bar}` {s_hp}/{s_max}",
+    ]
+    pet_info = state.get("pet_info")
+    if pet_info:
+        used = " *(used)*" if state.get("pet_ability_used") else ""
+        lines.append(f"🐾 *{pet_info['name']}* Lv.{pet_info.get('level',1)}{used}")
+    log = state.get("log", [])
+    if log:
+        lines.append("")
+        for entry in log[-6:]:
+            lines.append(entry)
+    return "\n".join(lines)
+
+
+def _shadow_duel_markup(uid, state, p):
+    rows = []
+    rows.append([
+        InlineKeyboardButton("⚔️ Attack", callback_data=f"shadowduel_atk_{uid}"),
+        InlineKeyboardButton("🛡️ Guard",  callback_data=f"shadowduel_guard_{uid}"),
+    ])
+    row2 = []
+    inv = sjl(p.get("inventory"), [])
+    if any(i in inv for i in ["Health Potion", "Greater Health Potion", "Grand Restorative Flask"]):
+        row2.append(InlineKeyboardButton("🧪 Potion", callback_data=f"shadowduel_pot_{uid}"))
+    pet_info = state.get("pet_info")
+    if pet_info and not state.get("pet_ability_used"):
+        row2.append(InlineKeyboardButton(f"🐾 {pet_info['name']}", callback_data=f"shadowduel_pet_{uid}"))
+    if row2:
+        rows.append(row2)
+    p_skills = get_combat_skills(p)
+    skill_btns = [
+        InlineKeyboardButton(sk.get("name", "Skill"), callback_data=f"shadowduel_skill_{uid}_{i}")
+        for i, sk in enumerate(p_skills)
+    ]
+    for i in range(0, len(skill_btns), 2):
+        rows.append(skill_btns[i:i+2])
+    rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"shadowduel_flee_{uid}")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def _shadow_duel_resolve(uid, outcome, bot, state):
+    """Finalize a shadow duel — record results, notify player."""
+    p = get_player(uid)
+    if not p:
+        active_shadow_duels.pop(uid, None)
+        return
+
+    chat_id = state.get("chat_id", uid)
+    msg_id  = state.get("msg_id")
+
+    if outcome == "win":
+        p["duel_wins"] = safe_int(p.get("duel_wins")) + 1
+        result_line = f"🏆 *Victory!* You defeated *{state['target_name']}*!"
+    elif outcome == "loss":
+        p["duel_losses"] = safe_int(p.get("duel_losses")) + 1
+        result_line = f"💀 *Defeated!* *{state['target_name']}* won this time."
+    else:  # fled
+        result_line = "🏃 *You fled the duel.*"
+
+    save_player(p)
+    active_shadow_duels.pop(uid, None)
+
+    log = state.get("log", [])
+    lines = [result_line, ""] + log[-6:]
+    text = "\n".join(lines)
+    try:
+        if msg_id:
+            await bot.edit_message_text(
+                chat_id=chat_id, message_id=msg_id,
+                text=text[:4096], parse_mode="Markdown")
+        else:
+            await bot.send_message(chat_id=uid, text=text[:4096], parse_mode="Markdown")
+    except Exception:
+        try:
+            await bot.send_message(chat_id=uid, text=text[:4096], parse_mode="Markdown")
+        except Exception:
+            pass
+
+
+async def duel_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle shadow duel target pick from a duel challenge."""
+    query = update.callback_query
+    await query.answer()
+    data  = query.data   # duelpick_{uid}_{target_uid}
+    parts = data.split("_")
+    try:
+        uid        = int(parts[1])
+        target_uid = int(parts[2])
+    except (IndexError, ValueError):
+        return
+
+    if query.from_user.id != uid:
+        await query.answer("Not your duel!", show_alert=True); return
+
+    if uid in active_shadow_duels:
+        await query.answer("You already have an active duel!", show_alert=True); return
+
+    p  = get_player(uid)
+    tp = get_player(target_uid)
+    if not p or not tp:
+        await query.answer("Player not found.", show_alert=True); return
+
+    # Build shadow — complete mirror of target's real stats/equipment/pets
+    _tp_cls  = get_player_class(tp)
+    _p_cls   = get_player_class(p)
+    # Load player's active pet for duel
+    _duel_pet_rec = get_active_pet_record(uid)
+    _duel_pet_info = None
+    if _duel_pet_rec and not _pet_is_on_adventure(_duel_pet_rec):
+        _sp = PET_SPECIES.get(_duel_pet_rec.get("species"), {})
+        _, _bond_label = _get_bond_tier(_duel_pet_rec.get("bond_score", 0))
+        _duel_pet_info = {
+            "pet_id":     _duel_pet_rec["pet_id"],
+            "name":       _duel_pet_rec.get("nickname") or _sp.get("name", "Pet"),
+            "level":      _duel_pet_rec.get("level", 1),
+            "atk":        get_pet_atk_bonus(_duel_pet_rec),
+            "bond_label": _bond_label,
+            "species":    _duel_pet_rec.get("species"),
+            "def_ability": _sp.get("def_ability"),
+        }
+    state = {
+        "target_uid":       target_uid,
+        "target_name":      tp.get("username", "?"),
+        "target_level":     tp.get("level", 1),
+        "shadow_hp":        tp.get("max_hp", 100),
+        "shadow_max_hp":    tp.get("max_hp", 100),
+        "attacker_hp":      p.get("max_hp", 100),
+        "attacker_max_hp":  p.get("max_hp", 100),
+        "chat_id":          query.message.chat_id,
+        "msg_id":           None,
+        "phase":            "combat",
+        "log":              [],
+        "duel_wins":        safe_int(p.get("duel_wins")),
+        "duel_losses":      safe_int(p.get("duel_losses")),
+        "shadow_weapon":    tp.get("equipped_weapon", ""),
+        "shadow_class":     _tp_cls.get("name", "") if _tp_cls else "",
+        "attacker_weapon":  p.get("equipped_weapon", ""),
+        "attacker_class":   _p_cls.get("name", "") if _p_cls else "",
+        "attacker_level":   p.get("level", 1),
+        "pet_info":         _duel_pet_info,
+        "pet_ability_used": False,
+        "p_guarding":       False,
+        "shadow_stunned":   False,
+    }
+    active_shadow_duels[uid] = state
+
+    try:
+        msg = await query.edit_message_text(
+            _shadow_duel_card(uid, state)[:4096],
+            parse_mode="Markdown",
+            reply_markup=_shadow_duel_markup(uid, state, p))
+        state["msg_id"] = msg.message_id
+    except Exception:
+        try:
+            msg = await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=_shadow_duel_card(uid, state)[:4096],
+                parse_mode="Markdown",
+                reply_markup=_shadow_duel_markup(uid, state, p))
+            state["msg_id"] = msg.message_id
+        except Exception:
+            active_shadow_duels.pop(uid, None)
+            return
+
+
+async def duel_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle duel actions — static turn-based like encounter."""
+    query  = update.callback_query
+    await query.answer()
+    data   = query.data  # shadowduel_{action}_{uid} or shadowduel_skill_{uid}_{idx}
+    parts  = data.split("_")
+    try:
+        action = parts[1]
+        uid    = int(parts[2])
+    except (IndexError, ValueError):
+        return
+    if query.from_user.id != uid:
+        await query.answer("Not your duel!", show_alert=True); return
+
+    state = active_shadow_duels.get(uid)
+    if not state or state.get("phase") != "combat":
+        await query.answer("No active duel.", show_alert=True); return
+
+    p = get_player(uid)
+    if not p:
+        return
+
+    if action == "flee":
+        state["phase"] = "done"
+        await _shadow_duel_resolve(uid, "fled", context.bot, state)
+        return
+
+    action_txt  = ""
+    player_wins = False
+
+    if action == "pot":
+        inv = sjl(p.get("inventory"), [])
+        potion = None; heal_amt = 0
+        for pname, pamt in [("Grand Restorative Flask", 1500), ("Greater Health Potion", 500), ("Health Potion", 250)]:
+            if pname in inv:
+                potion = pname; heal_amt = pamt; break
+        if not potion:
+            await query.answer("No potions!", show_alert=True); return
+        inv.remove(potion); p["inventory"] = json.dumps(inv)
+        actual = min(heal_amt, state["attacker_max_hp"] - state["attacker_hp"])
+        state["attacker_hp"] = min(state["attacker_max_hp"], state["attacker_hp"] + heal_amt)
+        action_txt = f"🧪 Used *{potion}*! +{actual} HP restored."
+        save_player(p)
+
+    elif action == "guard":
+        state["p_guarding"] = True
+        action_txt = "🛡️ You brace for impact! *(40% damage reduction)*"
+
+    elif action == "pet":
+        if state.get("pet_ability_used"):
+            await query.answer("Pet ability already used!", show_alert=True); return
+        pet_info = state.get("pet_info")
+        if not pet_info:
+            await query.answer("No active pet!", show_alert=True); return
+        state["pet_ability_used"] = True
+        da    = pet_info.get("def_ability", "shield")
+        patk  = pet_info.get("atk", 5)
+        pname = pet_info.get("name", "Pet")
+        if da in ("counter", "stun", "poison"):
+            pet_dmg = max(1, int(patk * 1.8 * random.uniform(0.9, 1.1)))
+            state["shadow_hp"] = max(0, state["shadow_hp"] - pet_dmg)
+            if da == "stun":
+                state["shadow_stunned"] = True
+                action_txt = f"🐾 *{pname}* stuns for *{pet_dmg}* dmg! ⚡ Shadow stunned!"
+            elif da == "poison":
+                action_txt = f"🐾 *{pname}* poisons for *{pet_dmg}* dmg! ☠️"
+            else:
+                action_txt = f"🐾 *{pname}* counter-strikes for *{pet_dmg}* dmg!"
+        elif da == "lifesteal":
+            pet_dmg = max(1, int(patk * 1.5 * random.uniform(0.9, 1.1)))
+            state["shadow_hp"] = max(0, state["shadow_hp"] - pet_dmg)
+            heal_p  = round(state["attacker_max_hp"] * 0.20)
+            state["attacker_hp"] = min(state["attacker_max_hp"], state["attacker_hp"] + heal_p)
+            action_txt = f"🐾 *{pname}* drains *{pet_dmg}* dmg and heals *{heal_p}* HP! 💜"
+        elif da == "shield":
+            shield_hp = max(5, patk * 2)
+            state["attacker_hp"] = min(state["attacker_max_hp"], state["attacker_hp"] + shield_hp)
+            action_txt = f"🐾 *{pname}* shields you, restoring *{shield_hp}* HP! ✨"
+        else:
+            pet_dmg = max(1, int(patk * 1.4 * random.uniform(0.9, 1.1)))
+            state["shadow_hp"] = max(0, state["shadow_hp"] - pet_dmg)
+            action_txt = f"🐾 *{pname}* attacks for *{pet_dmg}* dmg!"
+        if state["shadow_hp"] <= 0:
+            player_wins = True
+
+    elif action == "skill":
+        try:
+            skill_idx = int(parts[3])
+        except (IndexError, ValueError):
+            return
+        p_skills = get_combat_skills(p)
+        if skill_idx >= len(p_skills):
+            await query.answer("Invalid skill!", show_alert=True); return
+        sk = p_skills[skill_idx]
+        state["e_hp"]     = state["shadow_hp"]
+        state["e_max_hp"] = state["shadow_max_hp"]
+        state["p_hp"]     = state["attacker_hp"]
+        state["p_max_hp"] = state["attacker_max_hp"]
+        action_txt, _, _ = _enc_process_skill(state, p, sk)
+        state["shadow_hp"]   = max(0, state.get("e_hp", 0))
+        state["attacker_hp"] = min(state["attacker_max_hp"], max(0, state.get("p_hp", 0)))
+        if state["shadow_hp"] <= 0:
+            player_wins = True
+
+    elif action == "atk":
+        real_target = get_player(state["target_uid"])
+        shadow_p = {
+            **(real_target if real_target else {}),
+            "user_id":   state["target_uid"],
+            "username":  state["target_name"],
+            "hp":        state["shadow_hp"],
+            "max_hp":    state["shadow_max_hp"],
+            "stun_turns": 0, "freeze_turns": 0, "entangle_turns": 0,
+            "distract_turns": 0, "silence_turns": 0, "hex_turns": 0,
+            "poison_stacks": 0, "bleed_stacks": 0, "burn_stacks": 0,
+            "charging_killshot": 0, "defeated_until": None, "invincible_until": None,
+            "shield_hp": 0, "shield_charges": 0, "ward_charges": 0,
+        }
+        p_duel = dict(p)
+        p_duel["hp"] = state["attacker_hp"]
+        w = get_weather()
+        result_text, _, result_type = await _execute_pvp_hit(
+            p_duel, shadow_p, uid, state["target_uid"], w, state["chat_id"], context.bot,
+            duel_mode=True)
+        state["shadow_hp"]   = max(0, shadow_p.get("hp", 0))
+        state["attacker_hp"] = max(0, p_duel.get("hp", state["attacker_hp"]))
+        action_txt = result_text.split("\n")[0][:150] if result_text else "⚔️ Strike!"
+        if result_type == "defeat" or state["shadow_hp"] <= 0:
+            state["shadow_hp"] = 0
+            player_wins = True
+
+    if action_txt:
+        state.setdefault("log", []).append(action_txt)
+
+    if player_wins:
+        state["phase"] = "done"
+        if len(state.get("log", [])) > 6:
+            state["log"] = state["log"][-6:]
+        await _shadow_duel_resolve(uid, "win", context.bot, state)
+        return
+
+    # Shadow counter-attack (static turn)
+    shadow_wins = False
+    real_target = get_player(state["target_uid"])
+    shadow_atk_p = {
+        **(real_target if real_target else {}),
+        "user_id":   state["target_uid"],
+        "username":  state["target_name"],
+        "hp":        state["shadow_hp"],
+        "max_hp":    state["shadow_max_hp"],
+        "stun_turns": 0, "freeze_turns": 0, "entangle_turns": 0,
+        "distract_turns": 0, "silence_turns": 0, "hex_turns": 0,
+        "heal_blocked_turns": 0, "revive_blocked_turns": 0,
+        "charging_killshot": 0, "defeated_until": None, "invincible_until": None,
+        "poison_stacks": 0, "bleed_stacks": 0, "burn_stacks": 0,
+        "poison_pct": 0, "bleed_pct": 0, "burn_pct": 0,
+        "poison_damage": 0, "bleed_damage": 0, "burn_damage": 0,
+    }
+    if state.get("shadow_stunned"):
+        state["shadow_stunned"] = False
+        counter_txt = f"⚡ *{state['target_name']}* is stunned — can't counter!"
+    else:
+        p_duel = dict(p)
+        p_duel["hp"] = state["attacker_hp"]
+        hp_before = state["attacker_hp"]
+        w = get_weather()
+        counter_text, _, counter_type = await _execute_pvp_hit(
+            shadow_atk_p, p_duel, state["target_uid"], uid, w, state["chat_id"], context.bot,
+            duel_mode=True)
+        if state.get("p_guarding"):
+            state["p_guarding"] = False
+            dmg_taken = hp_before - p_duel.get("hp", hp_before)
+            if dmg_taken > 0:
+                absorbed = int(dmg_taken * 0.40)
+                p_duel["hp"] = min(state["attacker_max_hp"], p_duel["hp"] + absorbed)
+                counter_text = (counter_text or "").split("\n")[0][:120] + f" *(Guarded! -{absorbed} absorbed)*"
+        state["attacker_hp"] = max(0, p_duel.get("hp", 0))
+        state["shadow_hp"]   = max(0, shadow_atk_p.get("hp", state["shadow_hp"]))
+        counter_txt = (counter_text or "").split("\n")[0][:150] or f"👾 *{state['target_name']}* strikes!"
+        if counter_type == "defeat" or state["attacker_hp"] <= 0:
+            state["attacker_hp"] = 0
+            shadow_wins = True
+    state.setdefault("log", []).append(counter_txt)
+
+    if len(state.get("log", [])) > 6:
+        state["log"] = state["log"][-6:]
+
+    if shadow_wins:
+        state["phase"] = "done"
+        await _shadow_duel_resolve(uid, "loss", context.bot, state)
+        return
+
+    p_fresh = get_player(uid) or p
+    try:
+        await query.edit_message_text(
+            _shadow_duel_card(uid, state)[:4096],
+            parse_mode="Markdown",
+            reply_markup=_shadow_duel_markup(uid, state, p_fresh))
+    except Exception:
+        pass
+
 
 # ── ARENA ─────────────────────────────────────────────────────────────────────
 def _arena_state():
@@ -24447,40 +24487,6 @@ async def rankwins_cmd(update, context):
     await rank_cmd(update, context)
 
 
-async def rankduel_cmd(update, context):
-    c = _db().cursor()
-    c.execute("""SELECT username, duel_wins, duel_losses, level
-                 FROM players WHERE user_id NOT IN (SELECT user_id FROM banned_users)
-                 ORDER BY duel_wins DESC LIMIT 20""")
-    rows = c.fetchall()
-    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-    lines = ["⚔️ *Top 20 — Shadow Duel Wins*\n"]
-    for i, row in enumerate(rows, 1):
-        badge = medals.get(i, f"#{i}")
-        wl    = f"{row['duel_wins']}W / {row['duel_losses']}L"
-        lines.append(f"{badge} *{row['username']}*  —  {wl} | Lv {row['level']}")
-    if not rows:
-        lines.append("_No duels recorded yet!_")
-    await send_group(update, "\n".join(lines), permanent=False, delay=120)
-
-
-async def rankdungeon_cmd(update, context):
-    c = _db().cursor()
-    c.execute("""SELECT username, deepest_dungeon_floor, level
-                 FROM players WHERE user_id NOT IN (SELECT user_id FROM banned_users)
-                   AND deepest_dungeon_floor > 0
-                 ORDER BY deepest_dungeon_floor DESC LIMIT 20""")
-    rows = c.fetchall()
-    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-    lines = ["🏚️ *Top 20 — Deepest Dungeon Floor*\n"]
-    for i, row in enumerate(rows, 1):
-        badge = medals.get(i, f"#{i}")
-        lines.append(f"{badge} *{row['username']}*  —  Floor *{row['deepest_dungeon_floor']}* | Lv {row['level']}")
-    if not rows:
-        lines.append("_No dungeon runs completed yet!_")
-    await send_group(update, "\n".join(lines), permanent=False, delay=120)
-
-
 GUIDE_PAGES = [
     # Page 1 - Getting Started
     (
@@ -24579,66 +24585,61 @@ GUIDE_PAGES = [
     (
         "🎱 *8Ball World  -  Combat & Raids* (4/14)\n"
         "\n"
-        "*PvP  —  Turn-Based Combat*\n"
-        "Reply to any player and use /attack — or use /attack alone to open a live player picker. Combat is *turn-based*:\n"
-        "• ⚔️ YOUR TURN — 6 seconds to pick an action\n"
-        "• ⌛ Opponent's turn — buttons lock until it's your turn\n"
-        "• No action in 6s? /attack fires automatically\n"
-        "Winners steal gold + EXP. Losers are defeated for 6m and lose 10% EXP.\n"
+        "*PvP  -  Player vs Player*\n"
+        "Reply to any player's message and use /attack to fight them. Or use /attack with no target to open a live player picker and choose who to hit. Winners steal gold and EXP. Losers are defeated for 6m and lose 10% EXP.\n"
         "\n"
-        "*Battle Card Buttons*\n"
-        "⚔️ Retaliate  |  ✨ Skills  |  💊 Heal (potion / Priest self-heal)  |  🛡️ Defend\n"
-        "Card auto-deletes 30s after the last action.\n"
-        "\n"
-        "*Shadow Duel  —  /duel*\n"
-        "Challenge any player — no acceptance needed. You fight a CPU copy using their real stats.\n"
-        "• No cooldown — duel anyone, any time\n"
-        "• Win: target loses HP (floor 25% max HP) + small gold drain\n"
-        "• Lose: small gold penalty, no defeat timer for you\n"
-        "• Target gets a DM when their shadow is defeated\n"
-        "• Duel W/L shown on your /stats  |  /rankduel for the leaderboard\n"
+        "*Battle Cards*\n"
+        "When you land a hit, a battle card appears in chat with buttons for the defender:\n"
+        "⚔️ Retaliate — strike back  |  ✨ Skills — open your skill menu\n"
+        "💊 Heal — use a potion (or Priest self-heal)  |  🛡️ Defend — raise your shield\n"
+        "The card auto-deletes 20 seconds after the last button press.\n"
         "\n"
         "*Skills in PvP*\n"
-        "/skill with no target opens a target picker — tap a player, then choose your skill.\n"
+        "/skill with no target opens a target picker — tap a player, then choose your skill. The skill menu stays open so you can keep attacking the same target.\n"
         "\n"
         "*Shield — /defend*\n"
-        "Use /defend before you're hit to charge your shield. Absorbs incoming damage; resets on death.\n"
-        "Use /defend core (with a Monster Core) to permanently increase shield capacity.\n"
+        "Use /defend before you're hit to charge up your shield. The shield absorbs incoming damage before your HP takes a hit. Once it's depleted it's gone for that life — it resets on death and revival.\n"
+        "Use /defend core (with a Monster Core in your inventory) to permanently increase your shield's max capacity.\n"
         "\n"
-        "*Killstreaks & Revenge*\n"
-        "Consecutive kills extend your streak (🔥 in /who). Streaks reset on death.\n"
-        "After being killed you have a 24-hour revenge window — +15% bonus damage on your killer (one-time).\n"
+        "*Killstreaks*\n"
+        "Every consecutive kill without dying extends your streak (shown in /who with 🔥). Streaks reset on death.\n"
         "\n"
-        "*Wanted*  |  Kill 5+ players in one day → 🔴 WANTED on /who and /war.\n"
+        "*Revenge*\n"
+        "When you're killed, you gain a 24-hour revenge window. Attacking your killer deals +15% bonus damage (one-time).\n"
         "\n"
-        "*Leaderboards*\n"
-        "/rankduel — Top duel records (W/L)  |  /rankdungeon — Deepest dungeon floor records\n"
+        "*Wanted*\n"
+        "Kill 5+ players in a single day and you become 🔴 WANTED — visible on /who and /war. High-risk, high-reward.\n"
         "\n"
         "*/who Icons*\n"
-        "❤️ Healthy (>50% HP)  |  🟡 Injured (25–50%)  |  🔴 Critical (<25%)\n"
-        "💀 Defeated — out for 6m, can't be attacked\n"
-        "🛡️ Invincible — immune to damage AND can't initiate PvP\n"
-        "🔥×N Kill streak  |  🔴 WANTED  |  💰 Active bounty\n"
+        "❤️ Healthy (above 50% HP)  |  🟡 Injured (25–50%)  |  🔴 Critical (below 25%)\n"
+        "💀 Defeated — out for 6m, cannot be attacked\n"
+        "🛡️ Invincible — immune to all damage AND cannot initiate PvP (from revival items or Priest skills)\n"
+        "🔥×N Kill streak  |  🔴 WANTED — 5+ kills today  |  💰 Active bounty on this player\n"
         "\n"
-        "*Arena  —  /arena*\n"
-        "Reply to a player for a structured skill-based duel with turn timers.\n"
+        "*Duels and Arena*\n"
+        "/duel  -  Reply to a player to challenge them. Pick a wager via buttons (0 = free). Decided by Combat Power.\n"
+        "/arena  -  Reply to a player for turn-based skill combat.\n"
         "\n"
         "*Boss Fights*\n"
-        "/boss — Group boss encounter (button menu). /attack and /skill auto-redirect while active.\n"
+        "Use /boss to start a group boss encounter (button menu). /attack and /skill redirect to the boss automatically while it's active.\n"
         "\n"
         "*Raids*\n"
-        "/raid — Party up to 4 players; turn-based (25s per turn). /soloraid for a private scaled run.\n"
+        "/raid  -  Create a party (up to 4 players). Others type /raid to join. Use /raidstart when ready.\n"
+        "Turn-based: each player has 25 seconds to /attack or /skill before it auto-advances.\n"
+        "/soloraid  -  Private raid scaled to your level. Great for solo farming.\n"
         "\n"
         "*Defeat & Revival*\n"
-        "HP hits 0 → defeated 6m, lose 10% EXP. Options:\n"
-        "• Wait 6m  |  Scroll of Revival (/use) — full revive + 5 min invincibility\n"
-        "• Priest /heal — free revive  |  Chalker can /heal themselves\n"
+        "When your HP hits 0 you are defeated for 6m and lose 10% EXP. Options to recover:\n"
+        "• Wait it out (6m)\n"
+        "• Use *Scroll of Revival* from your inventory (/use) — grants 5 min invincibility after\n"
+        "• Ask a Priest to /heal you  -  they revive for free\n"
+        "• 📿 Chalkers can also /heal themselves with no reply to self-revive\n"
         "\n"
         "*Offline Protection*\n"
-        "Players inactive 1+ hour can't be attacked or appear in /attack picker.\n"
+        "Players who have been inactive for 1+ hour cannot be attacked or appear in the /attack picker. Using any command keeps you marked as active.\n"
         "\n"
         "*Pets in Combat*\n"
-        "Active pet auto-attacks with you. At Level 10 it may trigger defensive abilities (intercept, counter, poison, stun, lifesteal, shield)."
+        "Your active pet auto-attacks with you. If attacked, it may trigger its defensive ability (intercept, counter, poison, stun, lifesteal, or shield). Defensive abilities unlock at pet Level 10."
     ),
     # Page 5 - Gear & Economy
     (
@@ -26770,17 +26771,17 @@ async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── /combat Hub ────────────────────────────────────────────────────────────────
 _COMBAT_HUB_PAGES = [
-    # Page 1 — Core Combat
+    # Page 1 — Direct Combat (Encounter first)
     [
-        [("⚔️ Attack (PvP)",  "combathub_attack"),    ("✨ Use Skill",    "combathub_skill")],
-        [("⚔️ Duel",          "combathub_duel"),       ("🏚️ Dungeon",     "combathub_dungeon")],
-        [("🗡️ Encounter",    "combathub_encounter"),   ("🛡️ Defend",      "combathub_defend")],
+        [("🗡️ Encounter",     "combathub_encounter"), ("⚔️ Attack (PvP)", "combathub_attack")],
+        [("✨ Use Skill",      "combathub_skill"),     ("🏟️ Arena Duel",   "combathub_arena")],
+        [("🗡️ Duel (Wager)",  "combathub_duel"),      ("🛡️ Defend",       "combathub_defend")],
     ],
     # Page 2 — War & Exploration
     [
-        [("💊 Heal",           "combathub_heal"),      ("⚔️ Guild War",   "combathub_war")],
-        [("📊 Combat Power",   "combathub_cp"),        ("🌍 Explore",     "combathub_explore")],
-        [("🏟️ Arena Duel",    "combathub_arena"),      ("⚔️ Solo Raid",   "combathub_soloraid")],
+        [("💊 Heal",           "combathub_heal"),      ("⚔️ Guild War",    "combathub_war")],
+        [("📊 Combat Power",   "combathub_cp"),        ("🌍 Explore",      "combathub_explore")],
+        [("🏚️ Dungeon",        "combathub_dungeon"),   ("⚔️ Solo Raid",    "combathub_soloraid")],
     ],
     # Page 3 — Info & Tools
     [
@@ -26816,7 +26817,7 @@ async def combat_hub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚔️ *{p['username']}'s Combat Hub*\n\n"
         f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
         f"⚡ CP: {cp:,}  |  {status}\n\n"
-        f"Page 1: Attack · Skill · Duel · Dungeon  |  Page 2: War & Explore  |  Page 3: Info"
+        f"Page 1: Encounter & Combat  |  Page 2: War & Explore  |  Page 3: Info & Tools"
     )
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
@@ -27058,7 +27059,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"🎁 Daily:    {time_remaining(p.get('last_daily'), 86400)}",
             f"🗺️ Quest:    {time_remaining(p.get('last_quest'), 3600)}",
             f"🏋️ Train:    {time_remaining(p.get('last_train'), 1800)}",
-            f"🎱 Pool:     {time_remaining(pool_ts_h, 3)}",
+            f"🎱 Pool:     {time_remaining(pool_ts_h, 8)}",
             f"🗺️ Explore:  {exp_count_h}/2 today",
             f"🏰 Dungeon:  {time_remaining(p.get('last_dungeon'), 86400)}",
         ]
@@ -27087,16 +27088,17 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception: pass
 
     elif action == "duel":
-        txt = (
-            "🎭 *Shadow Duel*\n\n"
-            "Challenge any player — no acceptance needed. You fight a CPU copy of your target using their real stats.\n\n"
-            "• No cooldown — duel anyone, any time\n"
-            "• *Win:* target loses HP (floor 25% max HP) + small gold drain\n"
-            "• *Lose:* small gold penalty, no defeat timer\n"
-            "• Target gets a DM when their shadow is defeated\n"
-            "• Wins/Losses tracked on /rankduel\n\n"
-            "_Use /duel to open the player picker._"
-        )
+        players, total = _get_attackable_players(uid, p.get("guild_id"), 0)
+        if is_defeated(p):
+            txt = "🗡️ *Duel*\n\n💀 You're defeated — can't duel right now."
+        elif total == 0:
+            txt = "🗡️ *Duel*\n\n_No active players to duel right now._"
+        else:
+            lines = ["🗡️ *Duel — Challenge Someone*\n", "*Active players:*"]
+            for pp in players[:6]:
+                cls_n = CLASS_TREE.get(pp.get("class_id",""),{}).get("name","No Class")
+                lines.append(f"• *{pp['username']}* — Lv {pp['level']} {cls_n}")
+            txt = "\n".join(lines)
         try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
@@ -27828,8 +27830,8 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if pool_ts:
             try:
                 elapsed = (datetime.now() - datetime.fromisoformat(pool_ts)).total_seconds()
-                if elapsed < 8:
-                    remaining = int(8 - elapsed)
+                if elapsed < 3:
+                    remaining = int(3 - elapsed)
                     try: await query.edit_message_text(
                         f"🎱 *Pool*\n\n⏳ Cooldown: *{remaining}s*", parse_mode="Markdown", reply_markup=back)
                     except Exception: pass
@@ -28200,7 +28202,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
                  f"🎁 Daily:    {time_remaining(p.get('last_daily'), 86400)}",
                  f"🗺️ Quest:    {time_remaining(p.get('last_quest'), 3600)}",
                  f"🏋️ Train:    {time_remaining(p.get('last_train'), 1800)}",
-                 f"🎱 Pool:     {time_remaining(pool_ts, 8)}",
+                 f"🎱 Pool:     {time_remaining(pool_ts, 3)}",
                  f"🗺️ Explore:  {exp_count}/2 today",
                  f"🏰 Dungeon:  {time_remaining(p.get('last_dungeon'), 86400)}"]
         if is_defeated(p):
@@ -28445,8 +28447,7 @@ async def empire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎱 *{p['username']}'s Empire*\n\n"
         f"_Your master command center. One button for every hub._\n\n"
         f"⚔️ Combat  |  🌍 Activities\n"
-        f"⚙️ Gear  |  💬 Social  |  🐾 Pet Hub\n\n"
-        f"_New: Turn-based PvP · Shadow Duel · /rankduel · /rankdungeon_"
+        f"⚙️ Gear  |  💬 Social  |  🐾 Pet Hub"
     )
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
@@ -28472,7 +28473,7 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if hub == "combat":
         try:
             await query.edit_message_text(
-                f"⚔️ *{p['username']}'s Combat Hub*\n\nPage 1: Attack · Skill · Duel · Dungeon  |  Page 2: War & Explore  |  Page 3: Info",
+                f"⚔️ *{p['username']}'s Combat Hub*\n\nPage 1: Encounter & Combat  |  Page 2: War & Explore\nPage 3: Dungeons",
                 parse_mode="Markdown", reply_markup=_combat_hub_markup(uid, page=1))
         except Exception: pass
 
@@ -28942,20 +28943,20 @@ def _roll_pool_bonus(p=None):
     LUK improves both drop rate and rarity chances."""
     luk = get_stat(p, "LUK") if p else 0
 
-    # ~95% base drop chance, LUK pushes toward 100%
-    drop_chance = min(0.95 + luk * 0.002, 1.00)
+    # ~70% base drop chance, LUK pushes it toward 90%
+    drop_chance = min(0.70 + luk * 0.004, 0.90)
     if random.random() > drop_chance:
         return None
 
     # Rarity distribution — LUK shifts weight toward higher tiers
-    luk_boost = luk * 0.004
+    luk_boost = luk * 0.003
     rarity_weights = [
-        ("common",    max(0.005, 0.25 - luk_boost * 4)),
+        ("common",    max(0.005, 0.38 - luk_boost * 4)),
         ("uncommon",  0.30),
-        ("rare",      min(0.28 + luk_boost, 0.45)),
-        ("epic",      min(0.12 + luk_boost, 0.25)),
-        ("legendary", min(0.06 + luk_boost * 0.5, 0.15)),
-        ("mythic",    min(0.02 + luk_boost * 0.3, 0.08)),
+        ("rare",      min(0.20 + luk_boost, 0.38)),
+        ("epic",      min(0.07 + luk_boost, 0.18)),
+        ("legendary", min(0.025 + luk_boost * 0.5, 0.10)),
+        ("mythic",    min(0.005 + luk_boost * 0.2, 0.04)),
     ]
     rarities, rw = zip(*rarity_weights)
     chosen_rarity = random.choices(rarities, weights=rw, k=1)[0]
@@ -29065,7 +29066,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elapsed = (datetime.now() - datetime.fromisoformat(last_pool)).total_seconds()
             if elapsed < 3:
                 remaining = int(3 - elapsed)
-                await send_group(update, f"🎱 Cooldown: {remaining}s", delay=3)
+                await send_group(update, f"🎱 Cooldown: {remaining}s", delay=5)
                 return
         except Exception:
             pass
@@ -29095,8 +29096,8 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if p:
         lvl_bonus = max(1.0, 1.0 + (p["level"] - 1) * 0.15)
         gold_bonus = max(1.0, 1.0 + (p["level"] - 1) * 0.12)
-        exp_gain  = int(exp_gain  * lvl_bonus * 3.0)
-        gold_gain = int(gold_gain * gold_bonus * 3.0)
+        exp_gain  = int(exp_gain  * lvl_bonus)
+        gold_gain = int(gold_gain * gold_bonus)
         p["gold"] = p.get("gold", 0) + gold_gain
         p["last_pool"] = datetime.now().isoformat()
         lmsgs, leveled = add_exp(p, exp_gain)
@@ -29150,7 +29151,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_obj = await update.get_bot().send_message(
         chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown")
     last_bot_message[key] = msg_obj.message_id
-    asyncio.create_task(_auto_delete(update.get_bot(), chat_id, msg_obj.message_id, 3))
+    asyncio.create_task(_auto_delete(update.get_bot(), chat_id, msg_obj.message_id, 9))
     try:
         await update.message.delete()
     except Exception:
@@ -29239,9 +29240,9 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if last_pool:
         try:
             elapsed = (now - datetime.fromisoformat(last_pool)).total_seconds()
-            if elapsed < 8:
+            if elapsed < 3:
                 pool_ready = False
-                skipped.append(f"🎱 Pool  -  {int(8 - elapsed)}s")
+                skipped.append(f"🎱 Pool  -  {int(3 - elapsed)}s")
         except: pass
     if pool_ready:
         p["last_pool"] = now.isoformat()
@@ -31877,8 +31878,6 @@ def main():
     app.add_handler(CommandHandler("rank",         rank_cmd))
     app.add_handler(CommandHandler("rankme",       rankme_cmd))
     app.add_handler(CommandHandler("rankwins",     rankwins_cmd))
-    app.add_handler(CommandHandler("rankduel",     rankduel_cmd))
-    app.add_handler(CommandHandler("rankdungeon",  rankdungeon_cmd))
     app.add_handler(CommandHandler("stats",        stats_cmd))
     app.add_handler(CommandHandler("guide",        guide_cmd))
     app.add_handler(CommandHandler("guides",       guide_cmd))
@@ -32067,9 +32066,6 @@ def main():
     app.add_handler(CallbackQueryHandler(trade_item_callback,       pattern="^trdi_"))
     app.add_handler(CallbackQueryHandler(trade_price_callback,      pattern="^trdp_"))
     app.add_handler(CallbackQueryHandler(trade_back_callback,       pattern="^trdback_"))
-    app.add_handler(CallbackQueryHandler(duel_pick_callback,    pattern="^duelpick_"))
-    app.add_handler(CallbackQueryHandler(duel_pick_callback,    pattern="^duelpage_"))
-    app.add_handler(CallbackQueryHandler(duel_action_callback,  pattern="^shadowduel_"))
     app.add_handler(CallbackQueryHandler(duel_wager_callback,       pattern="^duelwager_"))
     app.add_handler(CallbackQueryHandler(soloraid_act_callback, pattern="^sr_act_"))
     app.add_handler(CallbackQueryHandler(boss_act_callback,     pattern="^boss_act_"))
@@ -32101,6 +32097,8 @@ def main():
     app.add_handler(CallbackQueryHandler(arena_act_callback,     pattern="^arena_act_"))
     app.add_handler(CallbackQueryHandler(raid_atk_callback,      pattern="^raid_atk_"))
     app.add_handler(CallbackQueryHandler(duel_response_callback, pattern="^duel_(acc|dec)_"))
+    app.add_handler(CallbackQueryHandler(duel_pick_callback,     pattern="^duelpick_"))
+    app.add_handler(CallbackQueryHandler(duel_action_callback,   pattern="^shadowduel_"))
     app.add_handler(CallbackQueryHandler(resetclass_callback,    pattern="^rscls_"))
     app.add_handler(CallbackQueryHandler(resetstats_callback,    pattern="^rsstat_"))
     app.add_handler(CallbackQueryHandler(guilddisband_callback,  pattern="^gdisband_"))
