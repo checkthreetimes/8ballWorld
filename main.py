@@ -22748,7 +22748,7 @@ def _shadow_duel_card(uid, state):
     lines = [
         "⚔️ *DUEL*",
         "",
-        f"👾 *{state['target_name']}*  _(Lv.{state['target_level']}){s_cls} · Shadow_{s_info}",
+        f"👾 *{state['target_name']}*  _(Lv.{state['target_level']}){s_cls}_{s_info}",
         f"`{e_bar}`  {state['shadow_hp']}/{state['shadow_max_hp']} HP",
         "",
         f"👤 *You*  _(Lv.{state.get('attacker_level', '?')}){a_cls}_{a_info}",
@@ -22764,85 +22764,36 @@ def _shadow_duel_card(uid, state):
     return "\n".join(lines)[:4096]
 
 
-def _shadow_duel_markup(uid):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚔️ Attack",  callback_data=f"shadowduel_atk_{uid}"),
-         InlineKeyboardButton("🧪 Potion",  callback_data=f"shadowduel_pot_{uid}")],
-        [InlineKeyboardButton("🏃 Flee",    callback_data=f"shadowduel_flee_{uid}"),
-         InlineKeyboardButton("🏠 Close",   callback_data=f"close_msg_{uid}")],
+def _shadow_duel_markup(uid, state, p):
+    rows = []
+    rows.append([
+        InlineKeyboardButton("⚔️ Attack", callback_data=f"shadowduel_atk_{uid}"),
+        InlineKeyboardButton("🛡️ Guard",  callback_data=f"shadowduel_guard_{uid}"),
     ])
+    row2 = []
+    inv = sjl(p.get("inventory"), [])
+    if any(i in inv for i in ["Health Potion", "Greater Health Potion", "Grand Restorative Flask"]):
+        row2.append(InlineKeyboardButton("🧪 Potion", callback_data=f"shadowduel_pot_{uid}"))
+    pet_info = state.get("pet_info")
+    if pet_info and not state.get("pet_ability_used"):
+        row2.append(InlineKeyboardButton(f"🐾 {pet_info['name']}", callback_data=f"shadowduel_pet_{uid}"))
+    if row2:
+        rows.append(row2)
+    p_skills = get_combat_skills(p)
+    skill_btns = [
+        InlineKeyboardButton(sk.get("name", "Skill"), callback_data=f"shadowduel_skill_{uid}_{i}")
+        for i, sk in enumerate(p_skills)
+    ]
+    for i in range(0, len(skill_btns), 2):
+        rows.append(skill_btns[i:i+2])
+    rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"shadowduel_flee_{uid}")])
+    return InlineKeyboardMarkup(rows)
 
-
-async def _shadow_duel_ticker(uid, bot):
-    """Shadow auto-attacks every 4 seconds using full PvP engine."""
-    while True:
-        await asyncio.sleep(4)
-        state = active_shadow_duels.get(uid)
-        if not state or state.get("phase") != "combat":
-            return
-
-        p = get_player(uid)
-        if not p:
-            return
-
-        # Full replica: shadow uses target's real stats + current duel HP
-        real_target = get_player(state["target_uid"])
-        shadow_atk_p = {
-            **(real_target if real_target else {}),
-            "user_id":   state["target_uid"],
-            "username":  state["target_name"],
-            "hp":        state["shadow_hp"],
-            "max_hp":    state["shadow_max_hp"],
-            # Clear status effects — shadow is a clean CPU copy each tick
-            "stun_turns": 0, "freeze_turns": 0, "entangle_turns": 0,
-            "distract_turns": 0, "silence_turns": 0, "hex_turns": 0,
-            "heal_blocked_turns": 0, "revive_blocked_turns": 0,
-            "charging_killshot": 0, "defeated_until": None, "invincible_until": None,
-            # Clear DOT stacks so they don't tick on shadow when it attacks
-            "poison_stacks": 0, "bleed_stacks": 0, "burn_stacks": 0,
-            "poison_pct": 0, "bleed_pct": 0, "burn_pct": 0,
-            "poison_damage": 0, "bleed_damage": 0, "burn_damage": 0,
-        }
-        # Isolated HP for defender (player)
-        p_duel = dict(p)
-        p_duel["hp"] = state["attacker_hp"]
-
-        w = get_weather()
-        result_text, _, result_type = await _execute_pvp_hit(
-            shadow_atk_p, p_duel, state["target_uid"], uid, w, state["chat_id"], bot,
-            duel_mode=True)
-
-        # Sync HP
-        state["attacker_hp"] = max(0, p_duel.get("hp", 0))
-        state["shadow_hp"]   = max(0, shadow_atk_p.get("hp", state["shadow_hp"]))
-
-        log_line = result_text.split("\n")[0][:150] if result_text else f"👾 *{state['target_name']}* strikes!"
-        state.setdefault("log", []).append(log_line)
-        if len(state["log"]) > 6:
-            state["log"] = state["log"][-6:]
-
-        if result_type == "defeat" or state["attacker_hp"] <= 0:
-            state["attacker_hp"] = 0
-            state["phase"] = "done"
-            await _shadow_duel_resolve(uid, "loss", bot, state)
-            return
-
-        try:
-            await bot.edit_message_text(
-                chat_id=state["chat_id"], message_id=state["msg_id"],
-                text=_shadow_duel_card(uid, state)[:4096], parse_mode="Markdown",
-                reply_markup=_shadow_duel_markup(uid))
-        except Exception:
-            pass
 
 
 async def _shadow_duel_resolve(uid, outcome, bot, state):
     """Apply duel results and clean up."""
     active_shadow_duels.pop(uid, None)
-    ticker = state.get("ticker")
-    if ticker and not ticker.done():
-        ticker.cancel()
-
     p = get_player(uid)
     target_p = get_player(state["target_uid"])
     if not p:
@@ -22957,26 +22908,46 @@ async def duel_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Build shadow — complete mirror of target's real stats/equipment/pets
     _tp_cls  = get_player_class(tp)
     _p_cls   = get_player_class(p)
+    # Load player's active pet for duel
+    _duel_pet_rec = get_active_pet_record(uid)
+    _duel_pet_info = None
+    if _duel_pet_rec and not _pet_is_on_adventure(_duel_pet_rec):
+        _sp = PET_SPECIES.get(_duel_pet_rec.get("species"), {})
+        _, _bond_label = _get_bond_tier(_duel_pet_rec.get("bond_score", 0))
+        _duel_pet_info = {
+            "pet_id":     _duel_pet_rec["pet_id"],
+            "name":       _duel_pet_rec.get("nickname") or _sp.get("name", "Pet"),
+            "level":      _duel_pet_rec.get("level", 1),
+            "atk":        get_pet_atk_bonus(_duel_pet_rec),
+            "bond_label": _bond_label,
+            "species":    _duel_pet_rec.get("species"),
+            "def_ability": _sp.get("def_ability"),
+        }
     state = {
-        "target_uid":      target_uid,
-        "target_name":     tp.get("username", "?"),
-        "target_level":    tp.get("level", 1),
-        "shadow_hp":       tp.get("max_hp", 100),
-        "shadow_max_hp":   tp.get("max_hp", 100),
-        "attacker_hp":     p.get("max_hp", 100),
-        "attacker_max_hp": p.get("max_hp", 100),
-        "chat_id":         query.message.chat_id,
-        "msg_id":          None,
-        "phase":           "combat",
-        "log":             [],
-        "duel_wins":       safe_int(p.get("duel_wins")),
-        "duel_losses":     safe_int(p.get("duel_losses")),
+        "target_uid":       target_uid,
+        "target_name":      tp.get("username", "?"),
+        "target_level":     tp.get("level", 1),
+        "shadow_hp":        tp.get("max_hp", 100),
+        "shadow_max_hp":    tp.get("max_hp", 100),
+        "attacker_hp":      p.get("max_hp", 100),
+        "attacker_max_hp":  p.get("max_hp", 100),
+        "chat_id":          query.message.chat_id,
+        "msg_id":           None,
+        "phase":            "combat",
+        "log":              [],
+        "duel_wins":        safe_int(p.get("duel_wins")),
+        "duel_losses":      safe_int(p.get("duel_losses")),
         # Card display info
-        "shadow_weapon":   tp.get("equipped_weapon", ""),
-        "shadow_class":    _tp_cls.get("name", "") if _tp_cls else "",
-        "attacker_weapon": p.get("equipped_weapon", ""),
-        "attacker_class":  _p_cls.get("name", "") if _p_cls else "",
-        "attacker_level":  p.get("level", 1),
+        "shadow_weapon":    tp.get("equipped_weapon", ""),
+        "shadow_class":     _tp_cls.get("name", "") if _tp_cls else "",
+        "attacker_weapon":  p.get("equipped_weapon", ""),
+        "attacker_class":   _p_cls.get("name", "") if _p_cls else "",
+        "attacker_level":   p.get("level", 1),
+        # Pet & status
+        "pet_info":         _duel_pet_info,
+        "pet_ability_used": False,
+        "p_guarding":       False,
+        "shadow_stunned":   False,
     }
     active_shadow_duels[uid] = state
 
@@ -22984,7 +22955,7 @@ async def duel_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         msg = await query.edit_message_text(
             _shadow_duel_card(uid, state)[:4096],
             parse_mode="Markdown",
-            reply_markup=_shadow_duel_markup(uid))
+            reply_markup=_shadow_duel_markup(uid, state, p))
         state["msg_id"] = msg.message_id
     except Exception:
         try:
@@ -22992,23 +22963,18 @@ async def duel_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 chat_id=query.message.chat_id,
                 text=_shadow_duel_card(uid, state)[:4096],
                 parse_mode="Markdown",
-                reply_markup=_shadow_duel_markup(uid))
+                reply_markup=_shadow_duel_markup(uid, state, p))
             state["msg_id"] = msg.message_id
         except Exception:
             active_shadow_duels.pop(uid, None)
             return
 
-    ticker = asyncio.create_task(_shadow_duel_ticker(uid, context.bot))
-    state["ticker"] = ticker
-    _bg_tasks.add(ticker)
-    ticker.add_done_callback(_bg_tasks.discard)
-
 
 async def duel_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle shadow duel Attack/Potion/Flee buttons."""
+    """Handle duel actions — static turn-based like encounter."""
     query  = update.callback_query
     await query.answer()
-    data   = query.data  # shadowduel_{action}_{uid}
+    data   = query.data  # shadowduel_{action}_{uid} or shadowduel_skill_{uid}_{idx}
     parts  = data.split("_")
     try:
         action = parts[1]
@@ -23026,11 +22992,16 @@ async def duel_action_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if not p:
         return
 
+    # ── Flee ─────────────────────────────────────────────────────────────────
     if action == "flee":
         state["phase"] = "done"
         await _shadow_duel_resolve(uid, "fled", context.bot, state)
         return
 
+    action_txt  = ""
+    player_wins = False
+
+    # ── Player action ─────────────────────────────────────────────────────────
     if action == "pot":
         inv = sjl(p.get("inventory"), [])
         potion = None; heal_amt = 0
@@ -23042,10 +23013,71 @@ async def duel_action_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         inv.remove(potion); p["inventory"] = json.dumps(inv)
         actual = min(heal_amt, state["attacker_max_hp"] - state["attacker_hp"])
         state["attacker_hp"] = min(state["attacker_max_hp"], state["attacker_hp"] + heal_amt)
-        state.setdefault("log", []).append(f"🧪 *Potion!* +{actual} HP restored.")
+        action_txt = f"🧪 Used *{potion}*! +{actual} HP restored."
         save_player(p)
+
+    elif action == "guard":
+        state["p_guarding"] = True
+        action_txt = "🛡️ You brace for impact! *(40% damage reduction)*"
+
+    elif action == "pet":
+        if state.get("pet_ability_used"):
+            await query.answer("Pet ability already used!", show_alert=True); return
+        pet_info = state.get("pet_info")
+        if not pet_info:
+            await query.answer("No active pet!", show_alert=True); return
+        state["pet_ability_used"] = True
+        da    = pet_info.get("def_ability", "shield")
+        patk  = pet_info.get("atk", 5)
+        pname = pet_info.get("name", "Pet")
+        if da in ("counter", "stun", "poison"):
+            pet_dmg = max(1, int(patk * 1.8 * random.uniform(0.9, 1.1)))
+            state["shadow_hp"] = max(0, state["shadow_hp"] - pet_dmg)
+            if da == "stun":
+                state["shadow_stunned"] = True
+                action_txt = f"🐾 *{pname}* stuns for *{pet_dmg}* dmg! ⚡ Shadow stunned!"
+            elif da == "poison":
+                action_txt = f"🐾 *{pname}* poisons for *{pet_dmg}* dmg! ☠️"
+            else:
+                action_txt = f"🐾 *{pname}* counter-strikes for *{pet_dmg}* dmg!"
+        elif da == "lifesteal":
+            pet_dmg = max(1, int(patk * 1.5 * random.uniform(0.9, 1.1)))
+            state["shadow_hp"] = max(0, state["shadow_hp"] - pet_dmg)
+            heal_p  = round(state["attacker_max_hp"] * 0.20)
+            state["attacker_hp"] = min(state["attacker_max_hp"], state["attacker_hp"] + heal_p)
+            action_txt = f"🐾 *{pname}* drains *{pet_dmg}* dmg and heals *{heal_p}* HP! 💜"
+        elif da == "shield":
+            shield_hp = max(5, patk * 2)
+            state["attacker_hp"] = min(state["attacker_max_hp"], state["attacker_hp"] + shield_hp)
+            action_txt = f"🐾 *{pname}* shields you, restoring *{shield_hp}* HP! ✨"
+        else:
+            pet_dmg = max(1, int(patk * 1.4 * random.uniform(0.9, 1.1)))
+            state["shadow_hp"] = max(0, state["shadow_hp"] - pet_dmg)
+            action_txt = f"🐾 *{pname}* attacks for *{pet_dmg}* dmg!"
+        if state["shadow_hp"] <= 0:
+            player_wins = True
+
+    elif action == "skill":
+        try:
+            skill_idx = int(parts[3])
+        except (IndexError, ValueError):
+            return
+        p_skills = get_combat_skills(p)
+        if skill_idx >= len(p_skills):
+            await query.answer("Invalid skill!", show_alert=True); return
+        sk = p_skills[skill_idx]
+        # Use state as enc proxy — _enc_process_skill reads e_hp/p_hp keys
+        state["e_hp"]     = state["shadow_hp"]
+        state["e_max_hp"] = state["shadow_max_hp"]
+        state["p_hp"]     = state["attacker_hp"]
+        state["p_max_hp"] = state["attacker_max_hp"]
+        action_txt, _, _ = _enc_process_skill(state, p, sk)
+        state["shadow_hp"]   = max(0, state.get("e_hp", 0))
+        state["attacker_hp"] = min(state["attacker_max_hp"], max(0, state.get("p_hp", 0)))
+        if state["shadow_hp"] <= 0:
+            player_wins = True
+
     elif action == "atk":
-        # Full replica shadow: target's real stats + current duel HP (no status effects)
         real_target = get_player(state["target_uid"])
         shadow_p = {
             **(real_target if real_target else {}),
@@ -23059,36 +23091,89 @@ async def duel_action_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             "charging_killshot": 0, "defeated_until": None, "invincible_until": None,
             "shield_hp": 0, "shield_charges": 0, "ward_charges": 0,
         }
-        # Use isolated HP for attacker — duel doesn't affect real HP
         p_duel = dict(p)
         p_duel["hp"] = state["attacker_hp"]
         w = get_weather()
         result_text, _, result_type = await _execute_pvp_hit(
             p_duel, shadow_p, uid, state["target_uid"], w, state["chat_id"], context.bot,
             duel_mode=True)
-        # Sync duel HP back (DOTs on attacker may have ticked)
         state["shadow_hp"]   = max(0, shadow_p.get("hp", 0))
         state["attacker_hp"] = max(0, p_duel.get("hp", state["attacker_hp"]))
-        # Keep first line of action text (damage line) for the log
-        log_line = result_text.split("\n")[0][:150] if result_text else "⚔️ Strike!"
-        state.setdefault("log", []).append(log_line)
-
+        action_txt = result_text.split("\n")[0][:150] if result_text else "⚔️ Strike!"
         if result_type == "defeat" or state["shadow_hp"] <= 0:
             state["shadow_hp"] = 0
-            state["phase"] = "done"
-            if len(state.get("log", [])) > 6:
-                state["log"] = state["log"][-6:]
-            await _shadow_duel_resolve(uid, "win", context.bot, state)
-            return
+            player_wins = True
+
+    # Log player action
+    if action_txt:
+        state.setdefault("log", []).append(action_txt)
+
+    # ── Player wins ────────────────────────────────────────────────────────────
+    if player_wins:
+        state["phase"] = "done"
+        if len(state.get("log", [])) > 6:
+            state["log"] = state["log"][-6:]
+        await _shadow_duel_resolve(uid, "win", context.bot, state)
+        return
+
+    # ── Shadow counter-attack (fires after every player action) ───────────────
+    shadow_wins = False
+    real_target = get_player(state["target_uid"])
+    shadow_atk_p = {
+        **(real_target if real_target else {}),
+        "user_id":   state["target_uid"],
+        "username":  state["target_name"],
+        "hp":        state["shadow_hp"],
+        "max_hp":    state["shadow_max_hp"],
+        "stun_turns": 0, "freeze_turns": 0, "entangle_turns": 0,
+        "distract_turns": 0, "silence_turns": 0, "hex_turns": 0,
+        "heal_blocked_turns": 0, "revive_blocked_turns": 0,
+        "charging_killshot": 0, "defeated_until": None, "invincible_until": None,
+        "poison_stacks": 0, "bleed_stacks": 0, "burn_stacks": 0,
+        "poison_pct": 0, "bleed_pct": 0, "burn_pct": 0,
+        "poison_damage": 0, "bleed_damage": 0, "burn_damage": 0,
+    }
+    if state.get("shadow_stunned"):
+        state["shadow_stunned"] = False
+        counter_txt = f"⚡ *{state['target_name']}* is stunned — can't counter!"
+    else:
+        p_duel = dict(p)
+        p_duel["hp"] = state["attacker_hp"]
+        hp_before = state["attacker_hp"]
+        w = get_weather()
+        counter_text, _, counter_type = await _execute_pvp_hit(
+            shadow_atk_p, p_duel, state["target_uid"], uid, w, state["chat_id"], context.bot,
+            duel_mode=True)
+        # Guard: 40% damage reduction
+        if state.get("p_guarding"):
+            state["p_guarding"] = False
+            dmg_taken = hp_before - p_duel.get("hp", hp_before)
+            if dmg_taken > 0:
+                absorbed = int(dmg_taken * 0.40)
+                p_duel["hp"] = min(state["attacker_max_hp"], p_duel["hp"] + absorbed)
+                counter_text = (counter_text or "").split("\n")[0][:120] + f" *(Guarded! -{absorbed} absorbed)*"
+        state["attacker_hp"] = max(0, p_duel.get("hp", 0))
+        state["shadow_hp"]   = max(0, shadow_atk_p.get("hp", state["shadow_hp"]))
+        counter_txt = (counter_text or "").split("\n")[0][:150] or f"👾 *{state['target_name']}* strikes!"
+        if counter_type == "defeat" or state["attacker_hp"] <= 0:
+            state["attacker_hp"] = 0
+            shadow_wins = True
+    state.setdefault("log", []).append(counter_txt)
 
     if len(state.get("log", [])) > 6:
         state["log"] = state["log"][-6:]
 
+    if shadow_wins:
+        state["phase"] = "done"
+        await _shadow_duel_resolve(uid, "loss", context.bot, state)
+        return
+
+    p_fresh = get_player(uid) or p
     try:
         await query.edit_message_text(
             _shadow_duel_card(uid, state)[:4096],
             parse_mode="Markdown",
-            reply_markup=_shadow_duel_markup(uid))
+            reply_markup=_shadow_duel_markup(uid, state, p_fresh))
     except Exception:
         pass
 
