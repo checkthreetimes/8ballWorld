@@ -162,74 +162,12 @@ _wild_pet_offers   = {}     # uid -> {"species": str, "expires": float}
 _pet_trade_offers   = {}  # offeror_uid -> {"target_uid": int, "pet_id": int, "expires": float}
 _pet_breed_sessions = {}  # uid -> {"pet1_id": int, "pet2_id": int, "started": float}
 _active_pet_duels   = {}  # (uid1,uid2) tuple key -> duel state dict
-_pvp_turns         = {}   # pair -> uid whose turn it is
-_pvp_turn_tasks    = {}   # pair -> asyncio.Task (15s countdown)
-_pvp_group_msg_ids = {}   # pair -> (chat_id, message_id) — static "battling" group message
-_pvp_dm_last_msg   = {}   # uid -> (chat_id, message_id) — last DM battle card per player
-_pvp_battle_stats  = {}   # pair -> {"turns": int, "au_id": uid, "du_id": uid}
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
     if (a, b) in _pvp_cards: return (a, b)
     if (b, a) in _pvp_cards: return (b, a)
     return (a, b)
-
-
-def _start_pvp_turn(pair, active_uid, a, d, au_id, du_id, bot):
-    """Set whose turn it is and start the 15-second countdown timer."""
-    _pvp_turns[pair] = active_uid
-    old = _pvp_turn_tasks.pop(pair, None)
-    if old and not old.done():
-        old.cancel()
-    task = asyncio.create_task(
-        _pvp_turn_timeout(pair, active_uid, a, d, au_id, du_id, bot))
-    _pvp_turn_tasks[pair] = task
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
-
-
-async def _pvp_turn_timeout(pair, active_uid, a, d, au_id, du_id, bot):
-    """Auto-advance turn after 15 seconds of inactivity."""
-    try:
-        await asyncio.sleep(5)
-        if _pvp_turns.get(pair) != active_uid:
-            return
-        # 10-second warning
-        opp_uid = du_id if active_uid == au_id else au_id
-        fresh_a = get_player(au_id)
-        fresh_d = get_player(du_id)
-        if not fresh_a or not fresh_d:
-            return
-        active_p = fresh_a if active_uid == au_id else fresh_d
-        opp_p    = fresh_d if active_uid == au_id else fresh_a
-        warn_text = f"⚠️ *10 seconds left — act or {opp_p['username']} gets your turn!*"
-        warn_card = _pvp_fight_card(active_p, opp_p, warn_text)
-        markup    = _build_pvp_card_markup(active_uid, opp_uid, active_p, opp_p, is_my_turn=True)
-        stored = _pvp_dm_last_msg.get(active_uid)
-        if stored:
-            try:
-                await bot.edit_message_text(chat_id=stored[0], message_id=stored[1],
-                                            text=warn_card, parse_mode="Markdown", reply_markup=markup)
-            except Exception:
-                pass
-        await asyncio.sleep(10)
-        if _pvp_turns.get(pair) != active_uid:
-            return
-        # Time expired — pass the turn
-        fresh_a = get_player(au_id)
-        fresh_d = get_player(du_id)
-        if not fresh_a or not fresh_d:
-            return
-        active_p = fresh_a if active_uid == au_id else fresh_d
-        opp_p    = fresh_d if active_uid == au_id else fresh_a
-        timeout_text = f"⏰ *{active_p['username']}* timed out — {opp_p['username']}'s turn!"
-        _pvp_log_append(pair, timeout_text)
-        _pvp_battle_stats.setdefault(pair, {})["turns"] = _pvp_battle_stats[pair].get("turns", 0) + 1
-        await _pvp_notify_both(pair, fresh_a, fresh_d, au_id, du_id, timeout_text, bot)
-        _start_pvp_turn(pair, opp_uid, fresh_a, fresh_d, au_id, du_id, bot)
-    except asyncio.CancelledError:
-        pass
-
 
 def _reset_card_timer(pair, bot, chat_id, mid, seconds=20):
     """Cancel any existing auto-delete task for this card and schedule a fresh one."""
@@ -10316,13 +10254,8 @@ def _pvp_log_append(pair, entry):
     _pvp_cur_page[pair] = max(0, (total - 1) // ROUNDS_PER_PAGE)
 
 
-def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None, is_my_turn=True):
+def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
     """Action buttons for a specific PvP player — all skills inline, like encounter mode."""
-    if not is_my_turn:
-        opp_name = opp_p["username"][:14] if opp_p else "Opponent"
-        return InlineKeyboardMarkup([[
-            InlineKeyboardButton(f"⏳ {opp_name}'s turn…", callback_data="pvp_wait_noop")
-        ]])
     inv = sjl(player_p.get("inventory"), [])
     has_potion = any(i in inv for i in
                      ["Health Potion", "Greater Health Potion", "Grand Restorative Flask"])
@@ -10405,111 +10338,6 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
         _update_one(au_id, a, du_id, d, group_chat_id),
         _update_one(du_id, d, au_id, a, du_id),
     )
-
-
-def _pvp_fight_card(viewer_p, opp_p, action_text):
-    """Build a Street Fighter style DM battle card."""
-    def _hp_bar(hp, max_hp, width=10, left_fill=True):
-        filled = round(max(0, min(hp, max_hp)) / max(1, max_hp) * width)
-        bar = "█" * filled + "░" * (width - filled)
-        return bar if left_fill else bar[::-1]
-
-    v_pct  = round(viewer_p["hp"] / max(1, viewer_p.get("max_hp", viewer_p["hp"])) * 100)
-    o_pct  = round(opp_p["hp"]    / max(1, opp_p.get("max_hp", opp_p["hp"])) * 100)
-    v_bar  = _hp_bar(viewer_p["hp"], viewer_p.get("max_hp", 1), left_fill=True)
-    o_bar  = _hp_bar(opp_p["hp"],    opp_p.get("max_hp", 1),    left_fill=False)
-    v_name = viewer_p.get("username", "You")[:10]
-    o_name = opp_p.get("username", "Foe")[:10]
-    card = (
-        f"`{v_bar}` *{v_name}* {v_pct}%\n"
-        f"*{o_name}* {o_pct}% `{o_bar}`\n"
-        f"{'─'*22}\n"
-        f"{action_text}"
-    )
-    return card
-
-
-async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
-    """Edit or send DM battle cards for both players."""
-    _pvp_cards.setdefault(pair, {})
-    active_uid = _pvp_turns.get(pair)
-
-    async def _update_one(viewer_uid, viewer_p, opp_uid, opp_p):
-        is_my_turn = (active_uid is None) or (active_uid == viewer_uid)
-        try:
-            card   = _pvp_fight_card(viewer_p, opp_p, action_text)
-            markup = _build_pvp_card_markup(viewer_uid, opp_uid, viewer_p, opp_p, is_my_turn=is_my_turn)
-        except Exception:
-            return
-        stored = _pvp_dm_last_msg.get(viewer_uid)
-        if stored:
-            try:
-                await bot.edit_message_text(chat_id=stored[0], message_id=stored[1],
-                                            text=card, parse_mode="Markdown", reply_markup=markup)
-                return
-            except Exception:
-                pass
-        try:
-            msg = await bot.send_message(chat_id=viewer_uid, text=card,
-                                         parse_mode="Markdown", reply_markup=markup)
-            _pvp_dm_last_msg[viewer_uid] = (viewer_uid, msg.message_id)
-        except Exception:
-            pass
-
-    await asyncio.gather(
-        _update_one(au_id, a, du_id, d),
-        _update_one(du_id, d, au_id, a),
-    )
-
-
-async def _finalize_pvp_group_msg(pair, result_text, bot):
-    """On victory: cancel timers, strip DM buttons, update static group message."""
-    old_task = _pvp_turn_tasks.pop(pair, None)
-    if old_task and not old_task.done():
-        old_task.cancel()
-    _pvp_turns.pop(pair, None)
-    _pvp_cards.pop(pair, None)
-    _pvp_battle_logs.pop(pair, None)
-    _pvp_cur_page.pop(pair, None)
-    # Strip buttons from DM cards
-    for _uid in pair:
-        stored = _pvp_dm_last_msg.pop(_uid, None)
-        if stored:
-            try:
-                await bot.edit_message_reply_markup(
-                    chat_id=stored[0], message_id=stored[1], reply_markup=None)
-            except Exception:
-                pass
-    # Build mini-summary for group message
-    stats = _pvp_battle_stats.pop(pair, {})
-    turns = stats.get("turns", 0)
-    first_line = result_text.split("\n")[0][:200]
-    summary = first_line
-    if turns:
-        summary += f"\n\n🔄 *{turns} turn{'s' if turns != 1 else ''}*"
-    stored_g = _pvp_group_msg_ids.pop(pair, None)
-    if stored_g:
-        gchat_id, gmsg_id = stored_g
-        try:
-            await bot.edit_message_text(chat_id=gchat_id, message_id=gmsg_id,
-                                        text=summary[:4096], parse_mode="Markdown")
-        except Exception:
-            try:
-                await bot.send_message(chat_id=gchat_id, text=summary[:4096], parse_mode="Markdown")
-            except Exception:
-                pass
-    # Full result to each player's DM
-    for _dm_uid in pair:
-        try:
-            await bot.send_message(chat_id=_dm_uid, text=result_text[:4096], parse_mode="Markdown")
-        except Exception:
-            pass
-
-
-async def _pvp_wait_noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """No-op handler for the waiting spinner button."""
-    query = update.callback_query
-    await query.answer("Wait for your turn!", show_alert=False)
 
 
 async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
@@ -11420,7 +11248,7 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         chat_id = query.message.chat_id
         w = get_weather()
 
-        # Initialize group "battling" message if not already started
+        # Initialize static group message + turn on first hit
         _init_pair = _pvp_pair_key(uid, target_uid)
         if _init_pair not in _pvp_group_msg_ids and chat_id not in (uid, target_uid):
             try:
@@ -11432,7 +11260,6 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
                 _pvp_group_msg_ids[_init_pair] = (chat_id, _gbm.message_id)
             except Exception:
                 pass
-        # Start with attacker's turn if not yet initialized
         if _pvp_turns.get(_init_pair) is None:
             _pvp_turns[_init_pair] = uid
 
@@ -11449,17 +11276,14 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
             _cb_unlock(uid)
             await _finalize_pvp_group_msg(pair, action_text, context.bot)
         else:
-            # Hit or miss — advance turn
-            opp_uid = target_uid if uid in pair else uid
+            # Hit or miss — advance turn to defender
             _pvp_battle_stats.setdefault(pair, {})["turns"] = _pvp_battle_stats[pair].get("turns", 0) + 1
             fresh_a = get_player(uid)
             fresh_d = get_player(target_uid)
+            _cb_unlock(uid)
             if fresh_a and fresh_d:
-                _cb_unlock(uid)
                 await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_uid, action_text, context.bot)
                 _start_pvp_turn(pair, target_uid, fresh_a, fresh_d, uid, target_uid, context.bot)
-            else:
-                _cb_unlock(uid)
     finally:
         _cb_unlock(uid)  # idempotent
 
@@ -11701,10 +11525,10 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             heal_entry = f"🧪 *{a['username']}* uses *{potion}* — *+{actual} HP* ❤️ {a['hp']}/{a['max_hp']}"
             pair = _pvp_pair_key(uid, target_id)
             _pvp_log_append(pair, heal_entry)
-            _cb_unlock(uid)
             _pvp_battle_stats.setdefault(pair, {})["turns"] = _pvp_battle_stats[pair].get("turns", 0) + 1
             fresh_a = get_player(uid)
             fresh_d = get_player(target_id)
+            _cb_unlock(uid)
             if fresh_a and fresh_d:
                 await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, heal_entry, context.bot)
                 _start_pvp_turn(pair, target_id, fresh_a, fresh_d, uid, target_id, context.bot)
@@ -11729,10 +11553,10 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pair         = _pvp_pair_key(uid, target_id)
             shield_entry = f"🛡️ *{a['username']}* raises their shield — *{max_sh} HP*"
             _pvp_log_append(pair, shield_entry)
-            _cb_unlock(uid)
             _pvp_battle_stats.setdefault(pair, {})["turns"] = _pvp_battle_stats[pair].get("turns", 0) + 1
             fresh_a = get_player(uid)
             fresh_d = get_player(target_id)
+            _cb_unlock(uid)
             if fresh_a and fresh_d:
                 await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, shield_entry, context.bot)
                 _start_pvp_turn(pair, target_id, fresh_a, fresh_d, uid, target_id, context.bot)
@@ -11776,10 +11600,10 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await _finalize_pvp_group_msg(pair_f, kill_msg, context.bot)
             else:
                 save_player(a); save_player(d)
-                _cb_unlock(uid)
                 _pvp_battle_stats.setdefault(pair_f, {})["turns"] = _pvp_battle_stats[pair_f].get("turns", 0) + 1
                 fresh_a = get_player(uid)
                 fresh_d = get_player(target_id)
+                _cb_unlock(uid)
                 if fresh_a and fresh_d:
                     await _pvp_notify_both(pair_f, fresh_a, fresh_d, uid, target_id, kill_msg, context.bot)
                     _start_pvp_turn(pair_f, target_id, fresh_a, fresh_d, uid, target_id, context.bot)
@@ -11821,10 +11645,10 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # miss or hit — advance turn to defender
-        _cb_unlock(uid)
         _pvp_battle_stats.setdefault(pair, {})["turns"] = _pvp_battle_stats[pair].get("turns", 0) + 1
         fresh_a = get_player(uid)
         fresh_d = get_player(target_id)
+        _cb_unlock(uid)
         if fresh_a and fresh_d:
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, result_text, context.bot)
             _start_pvp_turn(pair, target_id, fresh_a, fresh_d, uid, target_id, context.bot)
@@ -17333,7 +17157,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         tp = get_player(target_uid)
         if not tp:
             await send_result("That player hasn't ascended yet!"); return
-        # Turn check — only the active player may act
+        # Turn check
         _sk_pair_chk = _pvp_pair_key(uid, target_uid)
         _sk_active   = _pvp_turns.get(_sk_pair_chk)
         if _sk_active is not None and _sk_active != uid:
@@ -17347,29 +17171,23 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Block defeated and invincible attackers on all offensive skills
         if stype not in _support_types:
             if is_defeated(p):
-                _cb_unlock(uid)
                 await send_result("☠️ You're *Defeated*  -  you can't use offensive skills while defeated."); return
             if is_invincible(p):
-                _cb_unlock(uid)
                 await send_result("🛡️ You're *Still Recovering*  -  you can't use offensive skills while invincible."); return
             if p.get("guild_id") and str(p.get("guild_id")) == str(tp.get("guild_id")):
                 g_s = get_guild(p["guild_id"])
                 gname_s = g_s["name"] if g_s else "your Guild"
-                _cb_unlock(uid)
                 await send_result(f"🏰 {tp['username']} is in {gname_s} — can't use offensive skills on guild members!"); return
         # Healing/support skills bypass invincibility and defeated checks
         if stype not in _support_types:
             if is_defeated(tp):
-                _cb_unlock(uid)
                 await send_result(f"{tp['username']} is already defeated!"); return
             if is_invincible(tp):
-                _cb_unlock(uid)
                 await send_result(f"🛡️ {tp['username']} is still recovering — invincible."); return
         if is_silenced(p) and stype not in ("self_heal", "self_heal_buff", "group_heal", "mass_cleanse"):
             if safe_int(p.get("silence_turns")) > 0:
                 p["silence_turns"] -= 1
                 save_player(p)
-            _cb_unlock(uid)
             await send_result("🤐 You are silenced — can't use skills!"); return
         # Per-action charge burn on skill turns (mirrors the attack-turn burn in _execute_pvp_hit)
         _skill_turn_changed = False
@@ -17378,18 +17196,15 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 p[_sf] -= 1; _skill_turn_changed = True
         if _skill_turn_changed:
             save_player(p)
-        # Override send_result for PvP: log to battle log and update both Pokemon cards
+        # Override send_result for PvP: log and notify both players
         _pvp_pair_k = _pvp_pair_key(uid, target_uid)
-        _pvp_gcid_k = _pvp_player_cards.get(target_uid, (chat_id,))[0]
         async def send_result(text):  # noqa: F811
-            _cb_unlock(uid)
             _pvp_log_append(_pvp_pair_k, text[:300])
             p_upd  = get_player(uid) or p
             tp_upd = get_player(target_uid) or tp
-            await _pvp_update_both_cards(
-                _pvp_pair_k, p_upd, tp_upd, uid, target_uid,
-                _pvp_gcid_k, context.bot, query=query
-            )
+            _cb_unlock(uid)
+            await _pvp_notify_both(_pvp_pair_k, p_upd, tp_upd, uid, target_uid, text[:300], context.bot)
+            _start_pvp_turn(_pvp_pair_k, target_uid, p_upd, tp_upd, uid, target_uid, context.bot)
         base = calc_attack_damage(p, w)
         out = [f"⚡ *{p['username']}* uses *{sk['name']}*!"]
         # ── Self / group skills — execute on caster, no target needed ──
@@ -18012,12 +17827,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             _pvp_battle_stats.setdefault(_sk_pair, {})["turns"] = _pvp_battle_stats[_sk_pair].get("turns", 0) + 1
             fresh_p  = get_player(uid)
             fresh_tp = get_player(target_uid)
+            _cb_unlock(uid)
             if fresh_p and fresh_tp:
-                _cb_unlock(uid)
                 await _pvp_notify_both(_sk_pair, fresh_p, fresh_tp, uid, target_uid, _sk_result_text, context.bot)
                 _start_pvp_turn(_sk_pair, target_uid, fresh_p, fresh_tp, uid, target_uid, context.bot)
-            else:
-                _cb_unlock(uid)
 
 async def _execute_skill(update, context, p, sk):
     """Core skill execution logic."""
@@ -28303,87 +28116,87 @@ async def guide_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 POOL_SHOTS = [
     {"id":"scratch","weight":40,"rarity":"common",
      "text":"Scratch. Cue ball drops into the corner pocket. Rookie mistake.",
-     "exp":285,"gold":0,"loot":None},
+     "exp":19,"gold":0,"loot":None},
     {"id":"rail_kiss","weight":40,"rarity":"common",
      "text":"Rail kiss, no pocket. The felt absorbs the hit and gives nothing back.",
-     "exp":375,"gold":0,"loot":None},
+     "exp":25,"gold":0,"loot":None},
     {"id":"cluster_stuck","weight":40,"rarity":"common",
      "text":"You crack the cluster but nothing drops. The rack laughs at you.",
-     "exp":375,"gold":10,"loot":None},
+     "exp":25,"gold":2,"loot":None},
     {"id":"thin_cut","weight":38,"rarity":"common",
      "text":"Thin cut on the 3 ball. It grazes the pocket and rolls away.",
-     "exp":465,"gold":15,"loot":None},
+     "exp":31,"gold":3,"loot":None},
     {"id":"safe_play","weight":38,"rarity":"common",
      "text":"You play safe. Smart. Boring. The table respects it.",
-     "exp":570,"gold":25,"loot":None},
+     "exp":38,"gold":5,"loot":None},
     {"id":"solid_pot","weight":35,"rarity":"common",
      "text":"Clean pot on the 2 ball. Nothing fancy, just good fundamentals.",
-     "exp":660,"gold":25,"loot":None},
+     "exp":44,"gold":5,"loot":None},
     {"id":"two_ball_run","weight":35,"rarity":"common",
      "text":"Two ball run before the pattern breaks. You'll take it.",
-     "exp":750,"gold":40,"loot":[("Health Potion",0.08)]},
+     "exp":50,"gold":8,"loot":[("Health Potion",0.08)]},
     {"id":"long_pot","weight":33,"rarity":"common",
      "text":"Long pot, full length of the table. The satisfying thud of a good hit.",
-     "exp":840,"gold":40,"loot":[("Health Potion",0.10)]},
+     "exp":56,"gold":8,"loot":[("Health Potion",0.10)]},
     {"id":"three_cushion","weight":30,"rarity":"common",
      "text":"Three cushion shot, exactly as planned. Nobody saw it but you know.",
-     "exp":945,"gold":50,"loot":[("Health Potion",0.12)]},
+     "exp":63,"gold":10,"loot":[("Health Potion",0.12)]},
     {"id":"position_play","weight":30,"rarity":"common",
      "text":"Perfect position play. You pot the ball and land exactly where you wanted.",
-     "exp":1035,"gold":60,"loot":[("Health Potion",0.12),("Brass Ring",0.05)]},
+     "exp":69,"gold":12,"loot":[("Health Potion",0.12),("Brass Ring",0.05)]},
     {"id":"break_and_run","weight":20,"rarity":"uncommon",
      "text":"Break and run. Four targets drop on the break and you clear the field from there.",
-     "exp":1500,"gold":100,"loot":[("Greater Health Potion",0.12),("Iron Shard Ring",0.08)]},
+     "exp":100,"gold":20,"loot":[("Greater Health Potion",0.12),("Iron Shard Ring",0.08)]},
     {"id":"masse_shot","weight":20,"rarity":"uncommon",
      "text":"Massé shot curves around the obstacle perfectly. The crowd would have gone wild.",
-     "exp":1590,"gold":110,"loot":[("Greater Health Potion",0.15),("Scout's Pendant",0.08)]},
+     "exp":106,"gold":22,"loot":[("Greater Health Potion",0.15),("Scout's Pendant",0.08)]},
     {"id":"bank_pot","weight":18,"rarity":"uncommon",
      "text":"Bank pot off the far wall drops clean. Calculated.",
-     "exp":1695,"gold":125,"loot":[("Greater Health Potion",0.15),("Iron Shard",0.06)]},
+     "exp":113,"gold":25,"loot":[("Greater Health Potion",0.15),("Iron Shard",0.06)]},
     {"id":"combo_pot","weight":18,"rarity":"uncommon",
      "text":"Combo strike  -  clips the 5, sends the 7 into the corner. Beautiful.",
-     "exp":1785,"gold":140,"loot":[("Greater Health Potion",0.15),("Iron Shard",0.08)]},
+     "exp":119,"gold":28,"loot":[("Greater Health Potion",0.15),("Iron Shard",0.08)]},
     {"id":"five_ball_run","weight":16,"rarity":"uncommon",
      "text":"Five target run. Your focus is absolute. The field offers no resistance.",
-     "exp":1875,"gold":150,"loot":[("Iron Shard",0.12),("Worn Leather Band",0.08)]},
+     "exp":125,"gold":30,"loot":[("Iron Shard",0.12),("Worn Leather Band",0.08)]},
     {"id":"called_shot","weight":16,"rarity":"uncommon",
      "text":"Called shot  -  6 ball, side pocket, two walls. You called it. It dropped.",
-     "exp":2070,"gold":175,"loot":[("Iron Shard",0.15),("Silk Band",0.05)]},
+     "exp":138,"gold":35,"loot":[("Iron Shard",0.15),("Silk Band",0.05)]},
     {"id":"century_break","weight":14,"rarity":"uncommon",
      "text":"Century break. You stop counting at twelve balls. The table is yours.",
-     "exp":2250,"gold":200,"loot":[("Iron Shard",0.18),("Bloodstone Band",0.06)]},
+     "exp":150,"gold":40,"loot":[("Iron Shard",0.18),("Bloodstone Band",0.06)]},
     {"id":"maximum_break","weight":8,"rarity":"rare",
      "text":"Maximum break. Every ball. Every pocket. The felt bows to your command.",
-     "exp":3750,"gold":400,"loot":[("Iron Shard",0.30),("Enchanting Scroll",0.12),("Fortune Coin",0.06),
+     "exp":250,"gold":80,"loot":[("Iron Shard",0.30),("Enchanting Scroll",0.12),("Fortune Coin",0.06),
                                   ("Asp's Edge",0.015),("King Cobra Claymore",0.015)]},
     {"id":"trick_shot","weight":8,"rarity":"rare",
      "text":"Trick shot  -  a blind shot over the cluster, corner pocket. "
             "You don't even watch it drop. You already knew.",
-     "exp":4125,"gold":450,"loot":[("Iron Shard",0.30),("Enchanting Scroll",0.15),("War Master's Clasp",0.04),
+     "exp":275,"gold":90,"loot":[("Iron Shard",0.30),("Enchanting Scroll",0.15),("War Master's Clasp",0.04),
                                   ("Fang of the Viper",0.015),("Warlord's Coil Blade",0.015)]},
     {"id":"ghost_ball","weight":7,"rarity":"rare",
      "text":"Ghost ball method on an impossible cut. The path threads a gap "
             "that shouldn't exist. It drops. You breathe.",
-     "exp":4500,"gold":500,"loot":[("Iron Shard",0.35),("Enchanting Scroll",0.18),("Hawk Eye Medallion",0.04),
+     "exp":300,"gold":100,"loot":[("Iron Shard",0.35),("Enchanting Scroll",0.18),("Hawk Eye Medallion",0.04),
                                    ("Asp's Edge",0.020),("King Cobra Claymore",0.020)]},
     {"id":"full_rack_clear","weight":6,"rarity":"rare",
      "text":"Full rack clear on the break. All fifteen targets. One strike. "
             "The field is empty before the echo dies.",
-     "exp":5250,"gold":600,"loot":[("Iron Shard",0.40),("Enchanting Scroll",0.20),
+     "exp":350,"gold":120,"loot":[("Iron Shard",0.40),("Enchanting Scroll",0.20),
                                    ("Scroll of Revival",0.08),("Phantom Loop",0.04),
                                    ("Fang of the Viper",0.025),("Warlord's Coil Blade",0.025)]},
     {"id":"void_pocket","weight":3,"rarity":"epic",
      "text":"The path leads toward a void that wasn't there a moment ago. "
             "A pocket between worlds. Something disappears. Something falls out "
             "that was never inside it.",
-     "exp":9375,"gold":1000,"loot":[("Iron Shard",0.60),("Enchanting Scroll",0.35),
+     "exp":625,"gold":200,"loot":[("Iron Shard",0.60),("Enchanting Scroll",0.35),
                                    ("Scroll of Revival",0.15),("Runed Heart",0.05),
                                    ("Eye of the Void",0.04),
                                    ("Neurotoxin Blade",0.025),("Serpent Warlord's Edge",0.025)]},
     {"id":"eight_ball_break","weight":3,"rarity":"epic",
      "text":"8 ball on the break. Dead center. Corner pocket. "
             "The felt goes silent. Something ancient stirs beneath.",
-     "exp":11250,"gold":1250,"loot":[("Iron Shard",0.65),("Enchanting Scroll",0.40),
+     "exp":750,"gold":250,"loot":[("Iron Shard",0.65),("Enchanting Scroll",0.40),
                                    ("The Shadow Whisper",0.05),("Guardian's Talisman",0.04),
                                    ("Ophidian's Kiss",0.025),("Ancient Coil Sword",0.025)]},
     {"id":"corner_pocket_singularity","weight":1,"rarity":"legendary",
@@ -28392,7 +28205,7 @@ POOL_SHOTS = [
             "They vanish one by one. The field is left perfectly bare. "
             "You didn't do that. Or maybe you did. The dust settles. "
             "Something was left behind.",
-     "exp":22500,"gold":2500,"loot":[("Iron Shard",0.80),("Enchanting Scroll",0.60),
+     "exp":1500,"gold":500,"loot":[("Iron Shard",0.80),("Enchanting Scroll",0.60),
                                     ("Shard of the Void",0.03),("Ring of the Endless",0.03),
                                     ("The Last Stand Locket",0.03),
                                     ("Venom of the Ancients",0.015),("The World Serpent",0.015)]},
@@ -28400,62 +28213,62 @@ POOL_SHOTS = [
     # ── Additional Common ────────────────────────────────────────────────
     {"id":"chalk_up","weight":38,"rarity":"common",
      "text":"You chalk up carefully. Take your time. Miss anyway.",
-     "exp":330,"gold":0,"loot":None},
+     "exp":22,"gold":0,"loot":None},
 
     {"id":"wrong_ball","weight":36,"rarity":"common",
      "text":"Wrong ball first. Foul. Your opponent would have loved that.",
-     "exp":270,"gold":0,"loot":None},
+     "exp":18,"gold":0,"loot":None},
 
     {"id":"kitchen_shot","weight":34,"rarity":"common",
      "text":"Ball in hand from the kitchen. You make the most of it.",
-     "exp":570,"gold":30,"loot":[("Health Potion",0.10)]},
+     "exp":38,"gold":6,"loot":[("Health Potion",0.10)]},
 
     {"id":"frozen_ball","weight":33,"rarity":"common",
      "text":"Frozen ball on the rail. You play it safe and take the defensive.",
-     "exp":480,"gold":20,"loot":None},
+     "exp":32,"gold":4,"loot":None},
 
     {"id":"diamond_system","weight":31,"rarity":"common",
      "text":"You use the diamond system for a kick shot. It works. You act like it always does.",
-     "exp":630,"gold":35,"loot":[("Health Potion",0.08)]},
+     "exp":42,"gold":7,"loot":[("Health Potion",0.08)]},
 
     {"id":"one_pocket_defense","weight":30,"rarity":"common",
      "text":"A defensive shot worthy of one pocket. Nothing to pocket but nowhere to run either.",
-     "exp":675,"gold":45,"loot":[("Health Potion",0.10)]},
+     "exp":45,"gold":9,"loot":[("Health Potion",0.10)]},
 
     {"id":"stroke_check","weight":28,"rarity":"common",
      "text":"You pause. Check your stroke. Restart. It was worth the delay.",
-     "exp":720,"gold":50,"loot":[("Health Potion",0.12),("Brass Ring",0.05)]},
+     "exp":48,"gold":10,"loot":[("Health Potion",0.12),("Brass Ring",0.05)]},
 
     # ── Additional Uncommon ──────────────────────────────────────────────
     {"id":"running_english","weight":18,"rarity":"uncommon",
      "text":"Running English off the far cushion opens the table completely. "
             "You read it perfectly.",
-     "exp":1575,"gold":160,"loot":[("Iron Shard",0.10),("Silk Band",0.07)]},
+     "exp":105,"gold":32,"loot":[("Iron Shard",0.10),("Silk Band",0.07)]},
 
     {"id":"stun_shot","weight":17,"rarity":"uncommon",
      "text":"Stun shot. Dead stop. Exactly where you needed it. "
             "Nobody else saw that coming.",
-     "exp":1725,"gold":180,"loot":[("Iron Shard",0.12),("Shadowmark Signet",0.04)]},
+     "exp":115,"gold":36,"loot":[("Iron Shard",0.12),("Shadowmark Signet",0.04)]},
 
     {"id":"screw_back","weight":16,"rarity":"uncommon",
      "text":"Strong draw back across the field. "
             "It returns to you like it owed you something.",
-     "exp":1875,"gold":200,"loot":[("Iron Shard",0.15),("Obsidian Stud",0.05)]},
+     "exp":125,"gold":40,"loot":[("Iron Shard",0.15),("Obsidian Stud",0.05)]},
 
     {"id":"two_way_shot","weight":15,"rarity":"uncommon",
      "text":"Two-way shot. If you make it, great. If you miss, you left them nothing. "
             "You make it.",
-     "exp":1950,"gold":210,"loot":[("Iron Shard",0.18),("Enchanting Scroll",0.08)]},
+     "exp":130,"gold":42,"loot":[("Iron Shard",0.18),("Enchanting Scroll",0.08)]},
 
     {"id":"jump_shot","weight":14,"rarity":"uncommon",
      "text":"Jump shot over the obstacle. Clean contact. The blocker never had a chance.",
-     "exp":2100,"gold":225,"loot":[("Iron Shard",0.20),("Enchanting Scroll",0.10),
+     "exp":140,"gold":45,"loot":[("Iron Shard",0.20),("Enchanting Scroll",0.10),
                                    ("Worn Leather Band",0.06)]},
 
     {"id":"nine_ball_rotation","weight":13,"rarity":"uncommon",
      "text":"Nine ball rotation  -  lowest target first, every time, "
             "three targets cleared in sequence. The field is learning to fear you.",
-     "exp":2250,"gold":250,"loot":[("Iron Shard",0.22),("Enchanting Scroll",0.12),
+     "exp":150,"gold":50,"loot":[("Iron Shard",0.22),("Enchanting Scroll",0.12),
                                    ("Traveler's Coin",0.05)]},
 
     # ── Additional Rare ──────────────────────────────────────────────────
@@ -28463,20 +28276,20 @@ POOL_SHOTS = [
      "text":"Power strike with extreme spin, "
             "the path curves around the blocker like it changed its mind. "
             "The field remembers this moment.",
-     "exp":3900,"gold":550,"loot":[("Iron Shard",0.40),("Enchanting Scroll",0.22),
+     "exp":260,"gold":110,"loot":[("Iron Shard",0.40),("Enchanting Scroll",0.22),
                                     ("Scroll of Revival",0.06),("Fortune Coin",0.05)]},
 
     {"id":"ghost_ball_method","weight":5,"rarity":"rare",
      "text":"Ghost ball method on a thin cut  -  you aim at where the strike "
             "needs to land, not where the target stands. It drops clean.",
-     "exp":4350,"gold":625,"loot":[("Iron Shard",0.45),("Enchanting Scroll",0.25),
+     "exp":290,"gold":125,"loot":[("Iron Shard",0.45),("Enchanting Scroll",0.25),
                                     ("Scroll of Revival",0.08),("Phantom Loop",0.04)]},
 
     {"id":"three_cushion_carom","weight":4,"rarity":"rare",
      "text":"Three cushion carom. Three walls before the second target. "
             "Technically you weren't even trying to drop anything. "
             "Somehow something falls.",
-     "exp":4800,"gold":675,"loot":[("Iron Shard",0.50),("Enchanting Scroll",0.28),
+     "exp":320,"gold":135,"loot":[("Iron Shard",0.50),("Enchanting Scroll",0.28),
                                     ("Scroll of Revival",0.10),("Hawk Eye Medallion",0.04)]},
 
     # ── Additional Epic ──────────────────────────────────────────────────
@@ -28484,7 +28297,7 @@ POOL_SHOTS = [
      "text":"Golden break. Nine ball drops on the break. "
             "You called it. Nobody believed you. "
             "The table is already empty. The game is already won.",
-     "exp":10500,"gold":1400,"loot":[("Iron Shard",0.70),("Enchanting Scroll",0.45),
+     "exp":700,"gold":280,"loot":[("Iron Shard",0.70),("Enchanting Scroll",0.45),
                                     ("Scroll of Revival",0.20),("Deathwhisper Amulet",0.06),
                                     ("Dragon Soul Pendant",0.04)]},
 
@@ -28493,7 +28306,7 @@ POOL_SHOTS = [
             "Every ball dropped in the called pocket. "
             "Not one fluke, not one assumption. "
             "Pure declared intention, executed perfectly.",
-     "exp":11250,"gold":1500,"loot":[("Iron Shard",0.72),("Enchanting Scroll",0.48),
+     "exp":750,"gold":300,"loot":[("Iron Shard",0.72),("Enchanting Scroll",0.48),
                                     ("Scroll of Revival",0.22),("Eye of the Storm",0.05),
                                     ("Aegis Talisman",0.04)]},
 
@@ -28503,7 +28316,7 @@ POOL_SHOTS = [
             "Every ball traces a perfect arc, as if physics itself conceded. "
             "The pocket doesn't just receive — it accepts what was always meant to be. "
             "You weren't playing pool. You were declaring law.",
-     "exp":45000,"gold":5000,
+     "exp":3000,"gold":1000,
      "loot":[("Oath of the First Knight",0.02),("Eternal Arcanum",0.02),
              ("The Final Cut",0.02),("The Infinity Quiver",0.02),
              ("The Divine Rosary",0.02),("The Root of Worlds",0.02),
@@ -28517,7 +28330,7 @@ POOL_SHOTS = [
             "In a room that shouldn't exist, with a table that was always waiting for you. "
             "The balls dropped in silence. The silence lasted longer than it should have. "
             "Something in the dark nodded.",
-     "exp":60000,"gold":7500,
+     "exp":4000,"gold":1500,
      "loot":[("The Titan's Aegis Armor",0.02),("The Eternal Weave",0.02),
              ("The Void Walker's Cloak",0.02),("The Ghost Walker Vest",0.02),
              ("Heaven's Blessing Robe",0.02),("The Living Robe",0.02),
@@ -31751,7 +31564,6 @@ def main():
     app.add_handler(CallbackQueryHandler(attack_picker_callback,       pattern="^atk_"))
     app.add_handler(CallbackQueryHandler(skill_target_picker_callback, pattern="^skl2_"))
     app.add_handler(CallbackQueryHandler(pvp_card_callback,  pattern="^pvpcard_"))
-    app.add_handler(CallbackQueryHandler(_pvp_wait_noop_callback, pattern="^pvp_wait_noop$"))
     app.add_handler(CommandHandler("heal",         heal_cmd))
     app.add_handler(CommandHandler("defend",       defend_cmd))
     app.add_handler(CommandHandler("curepriority",   curepriority_cmd))
