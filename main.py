@@ -10331,8 +10331,11 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
 
     async def _update_one(viewer_uid, viewer_p, opp_uid, opp_p):
         is_my_turn = (active_uid is None) or (active_uid == viewer_uid)
-        card   = _pvp_fight_card(viewer_p, opp_p, action_text)
-        markup = _build_pvp_card_markup(viewer_uid, opp_uid, viewer_p, opp_p, is_my_turn=is_my_turn)
+        try:
+            card   = _pvp_fight_card(viewer_p, opp_p, action_text)
+            markup = _build_pvp_card_markup(viewer_uid, opp_uid, viewer_p, opp_p, is_my_turn=is_my_turn)
+        except Exception:
+            return
         stored = _pvp_dm_last_msg.get(viewer_uid)
         if stored:
             try:
@@ -11623,10 +11626,14 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── PVP CARD CALLBACK ─────────────────────────────────────────────────────────
+async def _pvp_wait_noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Answer the ⏳ waiting button so the spinner closes."""
+    await update.callback_query.answer("⏳ Wait for your opponent!", show_alert=False)
+
+
 async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle Retaliate / Skills / Heal buttons on PvP combat cards."""
     query = update.callback_query
-    await query.answer()
     data = query.data
     parts = data.split("_")
     try:
@@ -11634,21 +11641,22 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid         = int(parts[2])
         target_id   = int(parts[3])
     except (IndexError, ValueError):
-        return
+        await query.answer(); return
 
     if query.from_user.id != uid:
         await query.answer("These aren't your buttons!", show_alert=True); return
 
     if not _cb_lock(uid):
-        return  # silently drop concurrent tap
+        await query.answer(); return  # silently drop concurrent tap
 
     try:
         pair = _pvp_pair_key(uid, target_id)
         active = _pvp_turns.get(pair)
         if active is not None and active != uid:
-            await query.answer("⏳ Not your turn!", show_alert=True)
+            await query.answer("⏳ Not your turn yet!", show_alert=True)
             _cb_unlock(uid)
             return
+        await query.answer()
 
         a = get_player(uid)
         d = get_player(target_id)
@@ -17322,6 +17330,12 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         tp = get_player(target_uid)
         if not tp:
             await send_result("That player hasn't ascended yet!"); return
+        _sk_turn_pair = _pvp_pair_key(uid, target_uid)
+        _sk_turn_active = _pvp_turns.get(_sk_turn_pair)
+        if _sk_turn_active is not None and _sk_turn_active != uid:
+            try: await query.answer("⏳ Not your turn!", show_alert=True)
+            except Exception: pass
+            return
         stype = sk.get("type", "damage")
         _support_types = {"self_heal", "self_heal_buff", "group_heal", "dmg_reduction_buff",
                           "revive_heal", "regen", "full_revive", "heal_shield", "mass_cleanse"}
@@ -32116,7 +32130,8 @@ def main():
     app.add_handler(CommandHandler("attack",     attack_cmd))
     app.add_handler(CallbackQueryHandler(attack_picker_callback,       pattern="^atk_"))
     app.add_handler(CallbackQueryHandler(skill_target_picker_callback, pattern="^skl2_"))
-    app.add_handler(CallbackQueryHandler(pvp_card_callback,  pattern="^pvpcard_"))
+    app.add_handler(CallbackQueryHandler(pvp_card_callback,          pattern="^pvpcard_"))
+    app.add_handler(CallbackQueryHandler(_pvp_wait_noop_callback,    pattern="^pvp_wait_noop$"))
     app.add_handler(CommandHandler("heal",         heal_cmd))
     app.add_handler(CommandHandler("defend",       defend_cmd))
     app.add_handler(CommandHandler("curepriority",   curepriority_cmd))
