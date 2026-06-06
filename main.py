@@ -10285,17 +10285,11 @@ def _pvp_fight_card(viewer_p, opp_p, action_text=""):
     return "\n".join(lines)[:4096]
 
 
-async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot, cmd_text=None):
-    """Send new DM battle card to both players; flash a command text first if given."""
+async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
+    """Send new DM battle card to both players."""
     _pvp_cards.setdefault(pair, {})
 
     async def _send_one(viewer_uid, viewer_p, opp_uid, opp_p):
-        if cmd_text:
-            try:
-                cm = await bot.send_message(chat_id=viewer_uid, text=cmd_text)
-                asyncio.create_task(_auto_delete(bot, viewer_uid, cm.message_id, 2))
-            except Exception:
-                pass
         card   = _pvp_fight_card(viewer_p, opp_p, action_text)
         markup = _build_pvp_card_markup(viewer_uid, opp_uid, viewer_p, opp_p)
         try:
@@ -11341,7 +11335,7 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         else:
             _cb_unlock(uid)
             await _ensure_pvp_group_msg(pair, chat_id, a["username"], d["username"], context.bot)
-            await _pvp_notify_both(pair, a, d, uid, target_uid, action_text, context.bot, cmd_text="/attack")
+            await _pvp_notify_both(pair, a, d, uid, target_uid, action_text, context.bot)
     finally:
         _cb_unlock(uid)  # idempotent
 
@@ -11529,7 +11523,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await _ensure_pvp_group_msg(pair, chat, a["username"], d["username"], bot)
-    await _pvp_notify_both(pair, a, d, au.id, du_id, action, bot, cmd_text="/attack")
+    await _pvp_notify_both(pair, a, d, au.id, du_id, action, bot)
 
 
 # ── PVP CARD CALLBACK ─────────────────────────────────────────────────────────
@@ -11585,7 +11579,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pair = _pvp_pair_key(uid, target_id)
             _pvp_log_append(pair, heal_entry)
             _cb_unlock(uid)
-            await _pvp_notify_both(pair, a, d, uid, target_id, heal_entry, context.bot, cmd_text="/potion")
+            await _pvp_notify_both(pair, a, d, uid, target_id, heal_entry, context.bot)
             return
 
         if action_type == "def":
@@ -11608,7 +11602,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shield_entry = f"🛡️ *{a['username']}* raises their shield — *{max_sh} HP*"
             _pvp_log_append(pair, shield_entry)
             _cb_unlock(uid)
-            await _pvp_notify_both(pair, a, d, uid, target_id, shield_entry, context.bot, cmd_text="/defend")
+            await _pvp_notify_both(pair, a, d, uid, target_id, shield_entry, context.bot)
             return
 
         if action_type == "finish":
@@ -11699,7 +11693,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         _cb_unlock(uid)
-        await _pvp_notify_both(pair, a, d, uid, target_id, result_text, context.bot, cmd_text="/attack")
+        await _pvp_notify_both(pair, a, d, uid, target_id, result_text, context.bot)
 
     finally:
         _cb_unlock(uid)  # idempotent — safe to call again
@@ -17870,7 +17864,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             _pvp_log_append(_sk_pair, _sk_result_text)
             sk_name = sk.get("name", "skill") if 'sk' in dir() else "skill"
-            await _pvp_notify_both(_sk_pair, p, tp, uid, target_uid, _sk_result_text, context.bot, cmd_text=f"/{sk_name.lower().replace(' ','')}")
+            await _pvp_notify_both(_sk_pair, p, tp, uid, target_uid, _sk_result_text, context.bot)
 
 async def _execute_skill(update, context, p, sk):
     """Core skill execution logic."""
