@@ -10423,7 +10423,7 @@ async def _pvp_turn_timeout(pair, uid, bot):
         _reset_card_timer(pair, bot, group_cid, 0, 30)
 
 
-async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
+async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, duel_mode=False):
     """
     Full PvP combat resolution. Modifies a and d in-place and saves them.
     Returns (action_text, lvl_msgs, result_type) where result_type is
@@ -10527,47 +10527,52 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         update_recent_attackers(d, au_id)
         if d["hp"] <= 0:
             d["hp"] = 0
-            d["defeated_until"] = (datetime.now() + timedelta(minutes=6)).isoformat()
-            d["last_defeated_by"] = f"{a['username']} (Killshot)"
-            _d_was_wanted = safe_int(d.get("is_wanted"))
-            d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
-            d["revenge_target"] = au_id
-            d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
-            _fire(check_and_claim_bounty(bot, a, d, chat_id))
-            exp_loss = round(d.get("exp", 0) * 0.10)
-            d["exp"] = max(0, d.get("exp", 0) - exp_loss)
-            d["losses"] = d.get("losses", 0) + 1
-            a["wins"] = a.get("wins", 0) + 1
-            a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
-            if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
-                a["max_kill_streak"] = a["kill_streak"]
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            if a.get("kills_today_date") != today_str:
-                a["kills_today"] = 0; a["kills_today_date"] = today_str
-            a["kills_today"] = safe_int(a.get("kills_today")) + 1
-            if a["kills_today"] >= 5: a["is_wanted"] = 1
-            hist_ks = sjl(d.get("pvp_history"), [])
-            hist_ks.insert(0, {"attacker": a["username"], "dmg": "KO",
-                               "ts": datetime.now().strftime("%m/%d %H:%M")})
-            d["pvp_history"] = json.dumps(hist_ks[:5])
-            for _desc, _exp, _gold in track_objective(a, "pvp_win"):
-                a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
-            exp_gain = 60 + a["level"] * 8
-            if _d_was_wanted:
-                wanted_gold = 250; wanted_exp = round(exp_gain * 0.5)
-                a["gold"] = a.get("gold", 0) + wanted_gold
-                exp_gain += wanted_exp
-                action += f"\n🔴 *WANTED BOUNTY!* +{wanted_gold}g +{wanted_exp} bonus EXP for taking down a wanted player!"
-                asyncio.create_task(announce(bot, chat_id,
-                    f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
-            lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
-            _defeat_timer_ks = time_until(d.get("defeated_until")) or "6m"
-            action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_ks}*."
-            if leveled and a["level"] % 10 == 0:
-                asyncio.create_task(announce(bot, chat_id,
-                    f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
-        check_titles(a); check_titles(d)
-        save_player(a); save_player(d)
+            if not duel_mode:
+                d["defeated_until"] = (datetime.now() + timedelta(minutes=6)).isoformat()
+                d["last_defeated_by"] = f"{a['username']} (Killshot)"
+                _d_was_wanted = safe_int(d.get("is_wanted"))
+                d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
+                d["revenge_target"] = au_id
+                d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
+                _fire(check_and_claim_bounty(bot, a, d, chat_id))
+                exp_loss = round(d.get("exp", 0) * 0.10)
+                d["exp"] = max(0, d.get("exp", 0) - exp_loss)
+                d["losses"] = d.get("losses", 0) + 1
+                a["wins"] = a.get("wins", 0) + 1
+                a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
+                if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
+                    a["max_kill_streak"] = a["kill_streak"]
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                if a.get("kills_today_date") != today_str:
+                    a["kills_today"] = 0; a["kills_today_date"] = today_str
+                a["kills_today"] = safe_int(a.get("kills_today")) + 1
+                if a["kills_today"] >= 5: a["is_wanted"] = 1
+                hist_ks = sjl(d.get("pvp_history"), [])
+                hist_ks.insert(0, {"attacker": a["username"], "dmg": "KO",
+                                   "ts": datetime.now().strftime("%m/%d %H:%M")})
+                d["pvp_history"] = json.dumps(hist_ks[:5])
+                for _desc, _exp, _gold in track_objective(a, "pvp_win"):
+                    a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
+                exp_gain = 60 + a["level"] * 8
+                if _d_was_wanted:
+                    wanted_gold = 250; wanted_exp = round(exp_gain * 0.5)
+                    a["gold"] = a.get("gold", 0) + wanted_gold
+                    exp_gain += wanted_exp
+                    action += f"\n🔴 *WANTED BOUNTY!* +{wanted_gold}g +{wanted_exp} bonus EXP for taking down a wanted player!"
+                    asyncio.create_task(announce(bot, chat_id,
+                        f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
+                lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
+                _defeat_timer_ks = time_until(d.get("defeated_until")) or "6m"
+                action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_ks}*."
+                if leveled and a["level"] % 10 == 0:
+                    asyncio.create_task(announce(bot, chat_id,
+                        f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
+            else:
+                action += f"\n💀 *Shadow {d['username']}* destroyed!"
+        check_titles(a)
+        if not duel_mode: check_titles(d)
+        save_player(a)
+        if not duel_mode: save_player(d)
         if lvl_msgs: action += "\n\n" + "\n".join(lvl_msgs)
         return action, lvl_msgs, "defeat" if d["hp"] <= 0 else "hit"
 
@@ -10600,7 +10605,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             a["melody_stacks"] = 0
         if "rhythm" in get_all_passive_keys(a):
             a["rhythm_stacks"] = 0
-        save_player(d); save_player(a)
+        save_player(a)
+        if not duel_mode: save_player(d)
         return f"🌀 *{a['username']}* swings at *{d['username']}*  -  *MISS!*", [], "miss"
 
     # Damage
@@ -10706,7 +10712,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     if safe_int(d.get("shield_charges")) > 0:
         d["shield_charges"] -= 1
         _sc_rem = d["shield_charges"]
-        save_player(d); save_player(a)
+        save_player(a)
+        if not duel_mode: save_player(d)
         return (f"🛡️ *{d['username']}*'s *Shield* negated the attack!" +
                 (f" ({_sc_rem} charges left)" if _sc_rem else " *(shield broken!)*"),
                 [], "miss")
@@ -11002,80 +11009,83 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     if d["hp"] <= 0:
         d["hp"] = 0
-        d["defeated_until"] = (datetime.now() + timedelta(minutes=6)).isoformat()
-        d["last_defeated_by"] = f"{a['username']} (PvP)"
-        _d_was_wanted = safe_int(d.get("is_wanted"))
-        d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
-        d["revenge_target"] = au_id
-        d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
-        # Clear turn-based combat debuffs from both players when battle ends
-        for _cf in ("heal_blocked_turns", "revive_blocked_turns", "silence_turns", "hex_turns",
-                    "stun_turns", "freeze_turns", "entangle_turns", "distract_turns"):
-            d[_cf] = 0
-            if safe_int(a.get(_cf)) > 0:
-                a[_cf] = 0
-        exp_loss = round(d.get("exp", 0) * 0.10)
-        d["exp"] = max(0, d.get("exp", 0) - exp_loss)
-        d["losses"] = d.get("losses", 0) + 1
-        a["wins"] = a.get("wins", 0) + 1
-        a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
-        if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
-            a["max_kill_streak"] = a["kill_streak"]
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        if a.get("kills_today_date") != today_str:
-            a["kills_today"] = 0; a["kills_today_date"] = today_str
-        a["kills_today"] = safe_int(a.get("kills_today")) + 1
-        if a["kills_today"] >= 5: a["is_wanted"] = 1
-        hist = sjl(d.get("pvp_history"), [])
-        hist.insert(0, {"attacker": a["username"], "dmg": "KO",
-                        "ts": datetime.now().strftime("%m/%d %H:%M")})
-        d["pvp_history"] = json.dumps(hist[:5])
-        for _desc, _exp, _gold in track_objective(a, "pvp_win"):
-            a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
-        if cls_a and cls_a.get("passive_key") == "dead_or_alive":
-            d["defeated_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
-            action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 1 hour!"
-            asyncio.create_task(announce(bot, chat_id,
-                f"🏹 *{a['username']}* took down *{d['username']}* with *Last Shot*! "
-                f"1-hour defeat.", delay=30))
-            a["gold"] = a.get("gold", 0) + 150
-        exp_gain = 60 + a["level"] * 8
-        if _d_was_wanted:
-            wanted_gold = 250; wanted_exp = round(exp_gain * 0.5)
-            a["gold"] = a.get("gold", 0) + wanted_gold
-            exp_gain += wanted_exp
-            action += f"\n🔴 *WANTED BOUNTY!* +{wanted_gold}g +{wanted_exp} bonus EXP for taking down a wanted player!"
-            asyncio.create_task(announce(bot, chat_id,
-                f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
-        lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
-        if cls_a and cls_a.get("passive_key") == "conqueror":
-            restore = round(a["max_hp"] * 0.20)
-            a["hp"] = min(a["max_hp"], a["hp"] + restore)
-            _wk_add = min(5, max(0, 5 - safe_int(d.get("weakened_hits", 0))))
-            if _wk_add: add_charges(d, "weakened_hits", _wk_add)
-        _fire(check_and_claim_bounty(bot, a, d, chat_id))
-        a_guild = get_guild(a.get("guild_id")) if a.get("guild_id") else None
-        d_guild = get_guild(d.get("guild_id")) if d.get("guild_id") else None
-        if a_guild and d_guild and a_guild["guild_id"] != d_guild["guild_id"]:
-            war_gw = get_active_war(a_guild["guild_id"], d_guild["guild_id"])
-            if war_gw:
-                _db_kw = _db(); c_kr = _db_kw.cursor()
-                if str(war_gw["guild1_id"]) == str(a_guild["guild_id"]):
-                    c_kr.execute("UPDATE guild_wars SET kills1=kills1+1 WHERE war_id=?", (war_gw["war_id"],))
-                else:
-                    c_kr.execute("UPDATE guild_wars SET kills2=kills2+1 WHERE war_id=?", (war_gw["war_id"],))
-                _db_kw.commit()
-                action += f"\n⚔️ *Guild War kill!* Score updated for {a_guild['name']}."
-        if cls_a and cls_a.get("passive_key") == "dead_or_alive":
-            a["deadeye_kill_bonus"] = min(50, safe_int(a.get("deadeye_kill_bonus")) + 2)
-        if cls_a and cls_a.get("passive_key") == "marked_for_death":
-            mfd_bonus = round((d.get("gold", 0) * 0.05 + 25) * 0.25)
-            a["gold"] = a.get("gold", 0) + mfd_bonus
-        _defeat_timer_pvp = time_until(d.get("defeated_until")) or "6m"
-        action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_pvp}*."
-        if leveled and a["level"] % 10 == 0:
-            asyncio.create_task(announce(bot, chat_id,
-                f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
+        if not duel_mode:
+            d["defeated_until"] = (datetime.now() + timedelta(minutes=6)).isoformat()
+            d["last_defeated_by"] = f"{a['username']} (PvP)"
+            _d_was_wanted = safe_int(d.get("is_wanted"))
+            d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
+            d["revenge_target"] = au_id
+            d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
+            # Clear turn-based combat debuffs from both players when battle ends
+            for _cf in ("heal_blocked_turns", "revive_blocked_turns", "silence_turns", "hex_turns",
+                        "stun_turns", "freeze_turns", "entangle_turns", "distract_turns"):
+                d[_cf] = 0
+                if safe_int(a.get(_cf)) > 0:
+                    a[_cf] = 0
+            exp_loss = round(d.get("exp", 0) * 0.10)
+            d["exp"] = max(0, d.get("exp", 0) - exp_loss)
+            d["losses"] = d.get("losses", 0) + 1
+            a["wins"] = a.get("wins", 0) + 1
+            a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
+            if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
+                a["max_kill_streak"] = a["kill_streak"]
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            if a.get("kills_today_date") != today_str:
+                a["kills_today"] = 0; a["kills_today_date"] = today_str
+            a["kills_today"] = safe_int(a.get("kills_today")) + 1
+            if a["kills_today"] >= 5: a["is_wanted"] = 1
+            hist = sjl(d.get("pvp_history"), [])
+            hist.insert(0, {"attacker": a["username"], "dmg": "KO",
+                            "ts": datetime.now().strftime("%m/%d %H:%M")})
+            d["pvp_history"] = json.dumps(hist[:5])
+            for _desc, _exp, _gold in track_objective(a, "pvp_win"):
+                a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
+            if cls_a and cls_a.get("passive_key") == "dead_or_alive":
+                d["defeated_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
+                action += f"\n☠️ *LAST SHOT!* {d['username']} defeated for 1 hour!"
+                asyncio.create_task(announce(bot, chat_id,
+                    f"🏹 *{a['username']}* took down *{d['username']}* with *Last Shot*! "
+                    f"1-hour defeat.", delay=30))
+                a["gold"] = a.get("gold", 0) + 150
+            exp_gain = 60 + a["level"] * 8
+            if _d_was_wanted:
+                wanted_gold = 250; wanted_exp = round(exp_gain * 0.5)
+                a["gold"] = a.get("gold", 0) + wanted_gold
+                exp_gain += wanted_exp
+                action += f"\n🔴 *WANTED BOUNTY!* +{wanted_gold}g +{wanted_exp} bonus EXP for taking down a wanted player!"
+                asyncio.create_task(announce(bot, chat_id,
+                    f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
+            lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
+            if cls_a and cls_a.get("passive_key") == "conqueror":
+                restore = round(a["max_hp"] * 0.20)
+                a["hp"] = min(a["max_hp"], a["hp"] + restore)
+                _wk_add = min(5, max(0, 5 - safe_int(d.get("weakened_hits", 0))))
+                if _wk_add: add_charges(d, "weakened_hits", _wk_add)
+            _fire(check_and_claim_bounty(bot, a, d, chat_id))
+            a_guild = get_guild(a.get("guild_id")) if a.get("guild_id") else None
+            d_guild = get_guild(d.get("guild_id")) if d.get("guild_id") else None
+            if a_guild and d_guild and a_guild["guild_id"] != d_guild["guild_id"]:
+                war_gw = get_active_war(a_guild["guild_id"], d_guild["guild_id"])
+                if war_gw:
+                    _db_kw = _db(); c_kr = _db_kw.cursor()
+                    if str(war_gw["guild1_id"]) == str(a_guild["guild_id"]):
+                        c_kr.execute("UPDATE guild_wars SET kills1=kills1+1 WHERE war_id=?", (war_gw["war_id"],))
+                    else:
+                        c_kr.execute("UPDATE guild_wars SET kills2=kills2+1 WHERE war_id=?", (war_gw["war_id"],))
+                    _db_kw.commit()
+                    action += f"\n⚔️ *Guild War kill!* Score updated for {a_guild['name']}."
+            if cls_a and cls_a.get("passive_key") == "dead_or_alive":
+                a["deadeye_kill_bonus"] = min(50, safe_int(a.get("deadeye_kill_bonus")) + 2)
+            if cls_a and cls_a.get("passive_key") == "marked_for_death":
+                mfd_bonus = round((d.get("gold", 0) * 0.05 + 25) * 0.25)
+                a["gold"] = a.get("gold", 0) + mfd_bonus
+            _defeat_timer_pvp = time_until(d.get("defeated_until")) or "6m"
+            action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_pvp}*."
+            if leveled and a["level"] % 10 == 0:
+                asyncio.create_task(announce(bot, chat_id,
+                    f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
+        else:
+            action += f"\n💀 *Shadow {d['username']}* destroyed!"
 
     if d["hp"] > 0:
         hist_nl = sjl(d.get("pvp_history"), [])
@@ -11087,12 +11097,17 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         hist_nl.insert(0, _hist_entry)
         d["pvp_history"] = json.dumps(hist_nl[:5])
 
-    check_titles(a); check_titles(d)
-    _a_snap, _d_snap = a.copy(), d.copy()
-    await asyncio.get_running_loop().run_in_executor(
-        None, lambda: (save_player(_a_snap), save_player(_d_snap)))
+    check_titles(a)
+    if not duel_mode: check_titles(d)
+    _a_snap = a.copy()
+    if not duel_mode:
+        _d_snap = d.copy()
+        await asyncio.get_running_loop().run_in_executor(
+            None, lambda: (save_player(_a_snap), save_player(_d_snap)))
+    else:
+        await asyncio.get_running_loop().run_in_executor(None, lambda: save_player(_a_snap))
 
-    if d["hp"] > 0:
+    if d["hp"] > 0 and not duel_mode:
         _total_hp_lost = max(0, _d_hp_before_attack - d["hp"])
         asyncio.create_task(_notify_attack(bot, d, a["username"], _total_hp_lost))
 
@@ -11354,7 +11369,7 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
             if chat_id not in (uid, target_uid):
                 try:
                     _gm = await context.bot.send_message(chat_id=chat_id, text=action_text[:4096], parse_mode="Markdown")
-                    asyncio.create_task(_auto_delete(context.bot, chat_id, _gm.message_id, 6))
+                    asyncio.create_task(_auto_delete(context.bot, chat_id, _gm.message_id, 30))
                 except Exception: pass
             for _dm_uid in (uid, target_uid):
                 try: await context.bot.send_message(chat_id=_dm_uid, text=action_text[:4096], parse_mode="Markdown")
@@ -11758,7 +11773,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if chat_id not in (uid, target_id):
                 try:
                     _gm = await context.bot.send_message(chat_id=chat_id, text=result_text[:4096], parse_mode="Markdown")
-                    asyncio.create_task(_auto_delete(context.bot, chat_id, _gm.message_id, 6))
+                    asyncio.create_task(_auto_delete(context.bot, chat_id, _gm.message_id, 30))
                 except Exception: pass
             for _dm_uid in (uid, target_id):
                 try: await context.bot.send_message(chat_id=_dm_uid, text=result_text[:4096], parse_mode="Markdown")
@@ -22728,7 +22743,7 @@ def _shadow_duel_card(uid, state):
     e_bar = _enc_hp_bar(state["shadow_hp"], state["shadow_max_hp"])
     p_bar = _enc_hp_bar(state["attacker_hp"], state["attacker_max_hp"])
     lines = [
-        "⚔️ *SHADOW DUEL*",
+        "⚔️ *DUEL*",
         "",
         f"👾 *Shadow {state['target_name']}*  _(Lv.{state['target_level']})_",
         f"`{e_bar}`  {state['shadow_hp']}/{state['shadow_max_hp']} HP",
@@ -22748,9 +22763,10 @@ def _shadow_duel_card(uid, state):
 
 def _shadow_duel_markup(uid):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚔️ Attack", callback_data=f"shadowduel_atk_{uid}"),
+        [InlineKeyboardButton("⚔️ Attack",  callback_data=f"shadowduel_atk_{uid}"),
          InlineKeyboardButton("🧪 Potion",  callback_data=f"shadowduel_pot_{uid}")],
-        [InlineKeyboardButton("🏃 Flee",   callback_data=f"shadowduel_flee_{uid}")],
+        [InlineKeyboardButton("🏃 Flee",    callback_data=f"shadowduel_flee_{uid}"),
+         InlineKeyboardButton("🏠 Close",   callback_data=f"close_msg_{uid}")],
     ])
 
 
@@ -22823,7 +22839,7 @@ async def _shadow_duel_resolve(uid, outcome, bot, state):
                 try:
                     await bot.send_message(
                         chat_id=state["target_uid"],
-                        text=f"⚔️ *{p['username']}* shadow-dueled you and won!\n"
+                        text=f"⚔️ *{p['username']}* dueled you and won!\n"
                              f"💢 -{drain} HP  |  -{gold_loss}g\n"
                              f"_Come online to get revenge!_",
                         parse_mode="Markdown")
@@ -22839,7 +22855,7 @@ async def _shadow_duel_resolve(uid, outcome, bot, state):
         save_player(p)
         result_lines = [
             f"💀 *Shadow {state['target_name']} defeated you!*",
-            f"Lost *{gold_pen}g*  _(no defeat timer — it's just a shadow duel)_",
+            f"Lost *{gold_pen}g*  _(no defeat timer — it's just a duel)_",
         ]
     else:  # fled
         result_lines = [f"🏃 *You fled the shadow duel!*  No record change."]
@@ -22860,15 +22876,15 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
     if user.id in active_shadow_duels:
-        await send_group(update, "⚔️ You already have an active shadow duel!", delay=9); return
+        await send_group(update, "⚔️ You already have an active duel!", delay=9); return
 
     chat_id = update.effective_chat.id
     markup  = _build_duel_picker_markup(user.id, 0)
     cp_self = calc_combat_power(p)
     await send_group(update,
-        f"⚔️ *Shadow Duel* — pick a target!\n\n"
+        f"⚔️ *Duel* — pick a target!\n\n"
         f"Your CP: *{cp_self:,}*\n\n"
-        f"_You'll fight a CPU shadow of the chosen player.\n"
+        f"_You'll fight a CPU copy of the chosen player using their real stats.\n"
         f"Win to drain their HP and gold. No acceptance needed!_",
         permanent=True, reply_markup=markup)
 
@@ -22992,16 +23008,34 @@ async def duel_action_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         state.setdefault("log", []).append(f"🧪 *Potion!* +{actual} HP restored.")
         save_player(p)
     elif action == "atk":
-        # Player attacks shadow
-        p_atk = get_stat(p, "STR") * 2 + get_stat(p, "AGI")
-        raw   = random.randint(int(p_atk * 0.80), int(p_atk * 1.20))
-        # Shadow "defense" — simple reduction
-        s_def_reduction = max(0, state["shadow_def"] * 0.5)
-        dmg = max(1, int(raw - s_def_reduction))
-        state["shadow_hp"] = max(0, state["shadow_hp"] - dmg)
-        state.setdefault("log", []).append(f"⚔️ *You strike* — *{dmg} dmg!*")
+        # Build shadow player dict from target's real stats but with current duel HP
+        real_target = get_player(state["target_uid"])
+        shadow_p = {
+            **(real_target if real_target else {}),
+            "user_id":   state["target_uid"],
+            "username":  state["target_name"],
+            "hp":        state["shadow_hp"],
+            "max_hp":    state["shadow_max_hp"],
+            # Strip status effects from shadow — it's a clean CPU copy
+            "stun_turns": 0, "freeze_turns": 0, "entangle_turns": 0,
+            "distract_turns": 0, "silence_turns": 0, "hex_turns": 0,
+            "poison_stacks": 0, "bleed_stacks": 0, "burn_stacks": 0,
+            "charging_killshot": 0, "defeated_until": None, "invincible_until": None,
+            "shield_hp": 0, "shield_charges": 0, "ward_charges": 0,
+        }
+        w = get_weather()
+        result_text, _, result_type = await _execute_pvp_hit(
+            p, shadow_p, uid, state["target_uid"], w, state["chat_id"], context.bot,
+            duel_mode=True)
+        # Sync HP back from the combat resolution
+        state["shadow_hp"] = max(0, shadow_p.get("hp", 0))
+        state["attacker_hp"] = max(0, p.get("hp", state["attacker_hp"]))
+        # Strip defeat/exp text from duel log lines, keep action description
+        log_line = result_text.split("\n")[0][:120] if result_text else "⚔️ Strike!"
+        state.setdefault("log", []).append(log_line)
 
-        if state["shadow_hp"] <= 0:
+        if result_type == "defeat" or state["shadow_hp"] <= 0:
+            state["shadow_hp"] = 0
             state["phase"] = "done"
             if len(state.get("log", [])) > 6:
                 state["log"] = state["log"][-6:]
@@ -26703,7 +26737,7 @@ _COMBAT_HUB_PAGES = [
     # Page 1 — Core Combat
     [
         [("⚔️ Attack (PvP)",  "combathub_attack"),    ("✨ Use Skill",    "combathub_skill")],
-        [("🎭 Shadow Duel",   "combathub_duel"),       ("🏚️ Dungeon",     "combathub_dungeon")],
+        [("⚔️ Duel",          "combathub_duel"),       ("🏚️ Dungeon",     "combathub_dungeon")],
         [("🗡️ Encounter",    "combathub_encounter"),   ("🛡️ Defend",      "combathub_defend")],
     ],
     # Page 2 — War & Exploration
@@ -28872,20 +28906,20 @@ def _roll_pool_bonus(p=None):
     LUK improves both drop rate and rarity chances."""
     luk = get_stat(p, "LUK") if p else 0
 
-    # ~70% base drop chance, LUK pushes it toward 90%
-    drop_chance = min(0.70 + luk * 0.004, 0.90)
+    # ~95% base drop chance, LUK pushes toward 100%
+    drop_chance = min(0.95 + luk * 0.002, 1.00)
     if random.random() > drop_chance:
         return None
 
     # Rarity distribution — LUK shifts weight toward higher tiers
-    luk_boost = luk * 0.003
+    luk_boost = luk * 0.004
     rarity_weights = [
-        ("common",    max(0.005, 0.38 - luk_boost * 4)),
+        ("common",    max(0.005, 0.25 - luk_boost * 4)),
         ("uncommon",  0.30),
-        ("rare",      min(0.20 + luk_boost, 0.38)),
-        ("epic",      min(0.07 + luk_boost, 0.18)),
-        ("legendary", min(0.025 + luk_boost * 0.5, 0.10)),
-        ("mythic",    min(0.005 + luk_boost * 0.2, 0.04)),
+        ("rare",      min(0.28 + luk_boost, 0.45)),
+        ("epic",      min(0.12 + luk_boost, 0.25)),
+        ("legendary", min(0.06 + luk_boost * 0.5, 0.15)),
+        ("mythic",    min(0.02 + luk_boost * 0.3, 0.08)),
     ]
     rarities, rw = zip(*rarity_weights)
     chosen_rarity = random.choices(rarities, weights=rw, k=1)[0]
@@ -28995,7 +29029,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elapsed = (datetime.now() - datetime.fromisoformat(last_pool)).total_seconds()
             if elapsed < 8:
                 remaining = int(8 - elapsed)
-                await send_group(update, f"🎱 Cooldown: {remaining}s", delay=5)
+                await send_group(update, f"🎱 Cooldown: {remaining}s", delay=3)
                 return
         except Exception:
             pass
@@ -29025,8 +29059,8 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if p:
         lvl_bonus = max(1.0, 1.0 + (p["level"] - 1) * 0.15)
         gold_bonus = max(1.0, 1.0 + (p["level"] - 1) * 0.12)
-        exp_gain  = int(exp_gain  * lvl_bonus)
-        gold_gain = int(gold_gain * gold_bonus)
+        exp_gain  = int(exp_gain  * lvl_bonus * 3.0)
+        gold_gain = int(gold_gain * gold_bonus * 3.0)
         p["gold"] = p.get("gold", 0) + gold_gain
         p["last_pool"] = datetime.now().isoformat()
         lmsgs, leveled = add_exp(p, exp_gain)
@@ -29080,7 +29114,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_obj = await update.get_bot().send_message(
         chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown")
     last_bot_message[key] = msg_obj.message_id
-    asyncio.create_task(_auto_delete(update.get_bot(), chat_id, msg_obj.message_id, 9))
+    asyncio.create_task(_auto_delete(update.get_bot(), chat_id, msg_obj.message_id, 3))
     try:
         await update.message.delete()
     except Exception:
