@@ -167,12 +167,71 @@ _pvp_turn_tasks    = {}   # pair -> asyncio.Task (15s countdown)
 _pvp_group_msg_ids = {}   # pair -> (chat_id, message_id) — static group message
 _pvp_dm_last_msg   = {}   # uid -> (chat_id, message_id) — last DM battle card
 _pvp_battle_stats  = {}   # pair -> {"turns": int}
+_pvp_turns         = {}   # pair -> uid whose turn it is
+_pvp_turn_tasks    = {}   # pair -> asyncio.Task (15s countdown)
+_pvp_group_msg_ids = {}   # pair -> (chat_id, message_id) — static group message
+_pvp_dm_last_msg   = {}   # uid -> (chat_id, message_id) — last DM battle card
+_pvp_battle_stats  = {}   # pair -> {"turns": int}
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
     if (a, b) in _pvp_cards: return (a, b)
     if (b, a) in _pvp_cards: return (b, a)
     return (a, b)
+
+def _start_pvp_turn(pair, active_uid, a, d, au_id, du_id, bot):
+    """Set whose turn it is and start the 15-second countdown timer."""
+    _pvp_turns[pair] = active_uid
+    old = _pvp_turn_tasks.pop(pair, None)
+    if old and not old.done():
+        old.cancel()
+    task = asyncio.create_task(
+        _pvp_turn_timeout(pair, active_uid, a, d, au_id, du_id, bot))
+    _pvp_turn_tasks[pair] = task
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
+async def _pvp_turn_timeout(pair, active_uid, a, d, au_id, du_id, bot):
+    """Auto-advance turn after 15 seconds of inactivity."""
+    try:
+        await asyncio.sleep(5)
+        if _pvp_turns.get(pair) != active_uid:
+            return
+        opp_uid = du_id if active_uid == au_id else au_id
+        fresh_a = get_player(au_id)
+        fresh_d = get_player(du_id)
+        if not fresh_a or not fresh_d:
+            return
+        active_p = fresh_a if active_uid == au_id else fresh_d
+        opp_p    = fresh_d if active_uid == au_id else fresh_a
+        warn_text = "⚠️ *10 seconds left — act or " + opp_p['username'] + " gets your turn!*"
+        warn_card = _pvp_fight_card(active_p, opp_p, warn_text)
+        markup    = _build_pvp_card_markup(active_uid, opp_uid, active_p, opp_p, is_my_turn=True)
+        stored = _pvp_dm_last_msg.get(active_uid)
+        if stored:
+            try:
+                await bot.edit_message_text(chat_id=stored[0], message_id=stored[1],
+                                            text=warn_card, parse_mode="Markdown", reply_markup=markup)
+            except Exception:
+                pass
+        await asyncio.sleep(10)
+        if _pvp_turns.get(pair) != active_uid:
+            return
+        fresh_a = get_player(au_id)
+        fresh_d = get_player(du_id)
+        if not fresh_a or not fresh_d:
+            return
+        active_p = fresh_a if active_uid == au_id else fresh_d
+        opp_p    = fresh_d if active_uid == au_id else fresh_a
+        timeout_text = "⏰ *" + active_p['username'] + "* timed out — " + opp_p['username'] + "'s turn!"
+        _pvp_log_append(pair, timeout_text)
+        _pvp_battle_stats.setdefault(pair, {})["turns"] = _pvp_battle_stats[pair].get("turns", 0) + 1
+        await _pvp_notify_both(pair, fresh_a, fresh_d, au_id, du_id, timeout_text, bot)
+        _start_pvp_turn(pair, opp_uid, fresh_a, fresh_d, au_id, du_id, bot)
+    except asyncio.CancelledError:
+        pass
+
 
 def _start_pvp_turn(pair, active_uid, a, d, au_id, du_id, bot):
     """Set whose turn it is and start the 15-second countdown timer."""
@@ -10405,24 +10464,27 @@ async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, q
 
 
 def _pvp_fight_card(viewer_p, opp_p, action_text):
-    """Street Fighter style DM battle card."""
-    def _hp_bar(hp, max_hp, width=10, left_fill=True):
-        filled = round(max(0, min(hp, max_hp)) / max(1, max_hp) * width)
-        bar = "█" * filled + "░" * (width - filled)
-        return bar if left_fill else bar[::-1]
-    v_pct = round(viewer_p["hp"] / max(1, viewer_p.get("max_hp", viewer_p["hp"])) * 100)
-    o_pct = round(opp_p["hp"]    / max(1, opp_p.get("max_hp", opp_p["hp"])) * 100)
-    v_bar = _hp_bar(viewer_p["hp"], viewer_p.get("max_hp", 1), left_fill=True)
-    o_bar = _hp_bar(opp_p["hp"],    opp_p.get("max_hp", 1),    left_fill=False)
-    v_name = viewer_p.get("username", "You")[:10]
-    o_name = opp_p.get("username", "Foe")[:10]
-    sep = "─" * 22
-    return (
-        "`" + v_bar + "` *" + v_name + "* " + str(v_pct) + "%\n"
-        "*" + o_name + "* " + str(o_pct) + "% `" + o_bar + "`\n"
-        + sep + "\n"
-        + action_text
-    )
+    """DM battle card with HP bars."""
+    def _hp_bar(hp, max_hp, width=10):
+        filled = round(max(0, min(int(hp), int(max_hp))) / max(1, int(max_hp)) * width)
+        return "█" * filled + "░" * (width - filled)
+    v_hp   = max(0, int(viewer_p.get("hp", 0)))
+    v_max  = max(1, int(viewer_p.get("max_hp", 100)))
+    o_hp   = max(0, int(opp_p.get("hp", 0)))
+    o_max  = max(1, int(opp_p.get("max_hp", 100)))
+    v_pct  = round(v_hp / v_max * 100)
+    o_pct  = round(o_hp / o_max * 100)
+    v_bar  = _hp_bar(v_hp, v_max)
+    o_bar  = _hp_bar(o_hp, o_max)
+    v_name = str(viewer_p.get("username", "You"))[:10]
+    o_name = str(opp_p.get("username", "Foe"))[:10]
+    lines = [
+        "❤️ *" + v_name + "*: " + v_bar + " " + str(v_pct) + "%",
+        "\U0001f5e1️ *" + o_name + "*: " + o_bar + " " + str(o_pct) + "%",
+        "─" * 20,
+        action_text,
+    ]
+    return "\n".join(lines)
 
 
 async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
@@ -10457,7 +10519,7 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
 
 
 async def _finalize_pvp_group_msg(pair, result_text, bot):
-    """On victory: cancel timers, strip DM buttons, update group message."""
+    """On victory: show final HP card in DMs, cancel timers, update group message."""
     old_task = _pvp_turn_tasks.pop(pair, None)
     if old_task and not old_task.done():
         old_task.cancel()
@@ -10465,14 +10527,39 @@ async def _finalize_pvp_group_msg(pair, result_text, bot):
     _pvp_cards.pop(pair, None)
     _pvp_battle_logs.pop(pair, None)
     _pvp_cur_page.pop(pair, None)
-    for _uid in pair:
-        stored = _pvp_dm_last_msg.pop(_uid, None)
-        if stored:
+    # Send final fight card (with HP=0 for loser) to each DM, no buttons
+    if len(pair) == 2:
+        _f_au, _f_du = pair
+        _f_a = get_player(_f_au)
+        _f_d = get_player(_f_du)
+        async def _send_final(viewer_uid, viewer_p, opp_p):
+            if not viewer_p or not opp_p:
+                return
             try:
-                await bot.edit_message_reply_markup(
-                    chat_id=stored[0], message_id=stored[1], reply_markup=None)
+                card = _pvp_fight_card(viewer_p, opp_p, result_text)
+            except Exception:
+                card = result_text
+            stored = _pvp_dm_last_msg.get(viewer_uid)
+            if stored:
+                try:
+                    await bot.edit_message_text(chat_id=stored[0], message_id=stored[1],
+                                                text=card[:4096], parse_mode="Markdown",
+                                                reply_markup=None)
+                    return
+                except Exception:
+                    pass
+            try:
+                await bot.send_message(chat_id=viewer_uid, text=card[:4096], parse_mode="Markdown")
             except Exception:
                 pass
+        await asyncio.gather(
+            _send_final(_f_au, _f_a, _f_d),
+            _send_final(_f_du, _f_d, _f_a),
+        )
+    # Clear DM card tracking
+    for _uid in pair:
+        _pvp_dm_last_msg.pop(_uid, None)
+    # Update group message with mini-summary
     stats = _pvp_battle_stats.pop(pair, {})
     turns = stats.get("turns", 0)
     first_line = result_text.split("\n")[0][:200]
@@ -10490,11 +10577,6 @@ async def _finalize_pvp_group_msg(pair, result_text, bot):
                 await bot.send_message(chat_id=gchat_id, text=summary[:4096], parse_mode="Markdown")
             except Exception:
                 pass
-    for _dm_uid in pair:
-        try:
-            await bot.send_message(chat_id=_dm_uid, text=result_text[:4096], parse_mode="Markdown")
-        except Exception:
-            pass
 
 
 async def _pvp_wait_noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -31721,6 +31803,7 @@ def main():
     app.add_handler(CallbackQueryHandler(attack_picker_callback,       pattern="^atk_"))
     app.add_handler(CallbackQueryHandler(skill_target_picker_callback, pattern="^skl2_"))
     app.add_handler(CallbackQueryHandler(pvp_card_callback,  pattern="^pvpcard_"))
+    app.add_handler(CallbackQueryHandler(_pvp_wait_noop_callback, pattern="^pvp_wait_noop$"))
     app.add_handler(CallbackQueryHandler(_pvp_wait_noop_callback, pattern="^pvp_wait_noop$"))
     app.add_handler(CommandHandler("heal",         heal_cmd))
     app.add_handler(CommandHandler("defend",       defend_cmd))
