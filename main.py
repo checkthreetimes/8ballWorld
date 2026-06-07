@@ -165,6 +165,17 @@ _pvp_origin_chat   = {}   # pair -> group chat_id for kill announcements
 _pvp_log_msg       = {}   # uid -> (chat_id, message_id) — separate live battle log message
 _bot_ref           = None  # set after app is built; used for async tasks from sync code
 
+async def _auto_delete_pvp_card(bot, uid, chat_id, msg_id, delay=300):
+    """Delete a PvP battle card after `delay` seconds if it hasn't been replaced."""
+    await asyncio.sleep(delay)
+    stored = _pvp_dm_last_msg.get(uid)
+    if stored and stored[1] == msg_id:
+        _pvp_dm_last_msg.pop(uid, None)
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception:
+            pass
+
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
     if (a, b) in _pvp_cards: return (a, b)
@@ -236,6 +247,7 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
             msg = await bot.send_message(chat_id=viewer_uid, text=card,
                                          parse_mode="Markdown", reply_markup=markup)
             _pvp_dm_last_msg[viewer_uid] = (viewer_uid, msg.message_id)
+            asyncio.create_task(_auto_delete_pvp_card(bot, viewer_uid, viewer_uid, msg.message_id))
         except Exception:
             pass
     await asyncio.gather(_upd_card(au_id, a, du_id, d), _upd_card(du_id, d, au_id, a))
@@ -2435,6 +2447,17 @@ ARMORS = {
     "Indomitable Plate":         {"class":"warrior","def":34,"rarity":"epic",     "line":"warrior"},
     "Dragonscale Plate":         {"class":"warrior","def":52,"rarity":"legendary","line":"warrior"},
     "The Titan's Aegis Armor":   {"class":"warrior","def":76,"rarity":"mythic",   "line":"warrior"},
+    # ── SERPENT SCALES ────────────────────────────────────────────────────────────
+    "Shedding Scales":           {"class":"serpent","def":4, "rarity":"common",   "line":"serpent"},
+    "Rough Serpent Hide":        {"class":"serpent","def":5, "rarity":"common",   "line":"serpent"},
+    "Cobra Scale Vest":          {"class":"serpent","def":11,"rarity":"uncommon", "line":"serpent","stat_bonus":{"AGI":1}},
+    "Viper's Coil Wrap":         {"class":"serpent","def":12,"rarity":"uncommon", "line":"serpent","stat_bonus":{"STR":1}},
+    "Asp Scale Armor":           {"class":"serpent","def":22,"rarity":"rare",     "line":"serpent","stat_bonus":{"AGI":2,"STR":1}},
+    "Fanged Serpent Plate":      {"class":"serpent","def":23,"rarity":"rare",     "line":"serpent","stat_bonus":{"STR":2,"DEF":1}},
+    "Ophidian War Scales":       {"class":"serpent","def":36,"rarity":"epic",     "line":"serpent","stat_bonus":{"STR":3,"AGI":2}},
+    "Ancient Serpent Carapace":  {"class":"serpent","def":37,"rarity":"epic",     "line":"serpent","stat_bonus":{"DEF":3,"STR":2}},
+    "Scales of the Ancients":    {"class":"serpent","def":54,"rarity":"legendary","line":"serpent","stat_bonus":{"STR":4,"AGI":3,"DEF":2}},
+    "The Undying Coil":          {"class":"serpent","def":78,"rarity":"mythic",   "line":"serpent","stat_bonus":{"STR":5,"AGI":4,"DEF":3}},
     # ── MAGE ROBES ────────────────────────────────────────────────────────────
     "Worn Cloth Robe":           {"class":"mage","def":3, "rarity":"common",   "line":"mage"},
     "Apprentice's Robe":         {"class":"mage","def":3, "rarity":"common",   "line":"mage"},
@@ -2690,15 +2713,15 @@ EVO_STAGE_TITLES = {
 }
 
 PET_COMBAT_SKILLS = {
-    "fire":      {"name":"Ember Blast",    "mult":1.75, "msg":"unleashes *Ember Blast*! 🔥"},
-    "water":     {"name":"Tidal Wave",     "mult":1.50, "msg":"crashes with *Tidal Wave*! 🌊", "heal_pct":0.20},
-    "lightning": {"name":"Thunder Strike", "mult":2.00, "msg":"strikes with *Thunder Strike*! ⚡"},
-    "earth":     {"name":"Stone Crush",    "mult":1.60, "msg":"slams with *Stone Crush*! 🪨"},
-    "nature":    {"name":"Vine Snare",     "mult":1.40, "msg":"strikes with *Vine Snare*! 🌿"},
-    "shadow":    {"name":"Shadow Claw",    "mult":1.80, "msg":"tears with *Shadow Claw*! 🌑"},
-    "void":      {"name":"Void Tear",      "mult":2.20, "msg":"rips open *Void Tear*! 🌀"},
-    "holy":      {"name":"Divine Smite",   "mult":1.60, "msg":"smites with *Divine Smite*! ✨"},
-    "wind":      {"name":"Gale Slash",     "mult":1.90, "msg":"slashes with *Gale Slash*! 💨"},
+    "fire":      {"name":"Ember Blast",    "mult":3.50, "msg":"unleashes *Ember Blast*! 🔥"},
+    "water":     {"name":"Tidal Wave",     "mult":3.00, "msg":"crashes with *Tidal Wave*! 🌊", "heal_pct":0.35},
+    "lightning": {"name":"Thunder Strike", "mult":4.00, "msg":"strikes with *Thunder Strike*! ⚡"},
+    "earth":     {"name":"Stone Crush",    "mult":3.20, "msg":"slams with *Stone Crush*! 🪨"},
+    "nature":    {"name":"Vine Snare",     "mult":2.80, "msg":"strikes with *Vine Snare*! 🌿"},
+    "shadow":    {"name":"Shadow Claw",    "mult":3.60, "msg":"tears with *Shadow Claw*! 🌑"},
+    "void":      {"name":"Void Tear",      "mult":4.40, "msg":"rips open *Void Tear*! 🌀"},
+    "holy":      {"name":"Divine Smite",   "mult":3.20, "msg":"smites with *Divine Smite*! ✨"},
+    "wind":      {"name":"Gale Slash",     "mult":3.80, "msg":"slashes with *Gale Slash*! 💨"},
 }
 
 # Each species: name, element, rarity, base_atk, base_def, personality, emoji, desc, egg
@@ -2975,12 +2998,12 @@ def _hatch_species(egg_name):
 def get_pet_atk_bonus(pet):
     """Raw ATK a pet contributes per attack. Bonus when well-fed and happy; penalty when neglected."""
     sp = PET_SPECIES.get(pet.get("species"), {})
-    base = sp.get("base_atk", 0) + pet.get("level", 1) * 4
+    base = sp.get("base_atk", 0) * 2 + pet.get("level", 1) * 10  # doubled base, 10x level (was ×4)
     passives = get_pet_passives(pet.get("level", 1))
-    base += passives.get("atk_flat", 0)
-    base += _get_bond_atk_bonus(pet)
+    base += passives.get("atk_flat", 0) * 2
+    base += _get_bond_atk_bonus(pet) * 2
     evo = pet.get("evolution_stage", 0)
-    if evo > 0: base += evo * 8
+    if evo > 0: base += evo * 25  # was ×8
     # Personality modifier
     pers = sp.get("personality", "calm")
     base = round(base * PERSONALITY_ATK_MOD.get(pers, 1.0))
@@ -3096,7 +3119,7 @@ def _pet_skill_check(pet):
     skill = PET_COMBAT_SKILLS.get(elem)
     if not skill:
         return False, None
-    chance = 0.15 + (0.05 if lvl >= 25 else 0) + (0.05 if lvl >= 40 else 0)
+    chance = 0.25 + (0.08 if lvl >= 25 else 0) + (0.07 if lvl >= 40 else 0)  # max 40% (was 25%)
     return random.random() < chance, skill
 
 def _pet_display_name(pet):
@@ -3419,28 +3442,28 @@ ENHANCE_RATES = {1:1.00, 2:0.95, 3:0.90, 4:0.85, 5:0.75,
 
 ENCHANT_EFFECTS = {
     "weapon": [
-        {"id":"lifesteal",    "desc":"Each hit restores 15% of damage as HP", "type":"lifesteal_flat","val":3},
-        {"id":"flaming",      "desc":"10% chance to burn on hit (2 stacks, 10% max HP/action)","type":"burn_proc","val":5},
-        {"id":"keen",         "desc":"+8% crit chance",                 "type":"crit_bonus","val":0.08},
-        {"id":"heavy",        "desc":"+5 flat damage per hit",          "type":"flat_dmg","val":5},
-        {"id":"vampiric",     "desc":"Kills restore 15 HP",             "type":"kill_heal","val":15},
-        {"id":"swift",        "desc":"+5% dodge chance",                "type":"dodge_bonus","val":0.05},
+        {"id":"lifesteal",    "desc":"Each hit restores HP equal to 30% of damage dealt", "type":"lifesteal_flat","val":6},
+        {"id":"flaming",      "desc":"15% chance to burn on hit (3 stacks, 10% max HP/action)","type":"burn_proc","val":10},
+        {"id":"keen",         "desc":"+16% crit chance",               "type":"crit_bonus","val":0.16},
+        {"id":"heavy",        "desc":"+12 flat damage per hit",        "type":"flat_dmg","val":12},
+        {"id":"vampiric",     "desc":"Kills restore 35 HP",            "type":"kill_heal","val":35},
+        {"id":"swift",        "desc":"+10% dodge chance",              "type":"dodge_bonus","val":0.10},
     ],
     "armor": [
-        {"id":"reinforced",   "desc":"+8 DEF",                         "type":"armor_def","val":8},
-        {"id":"thorned",      "desc":"Reflect 5 dmg to attacker",      "type":"reflect_flat","val":5},
-        {"id":"warded",       "desc":"+10% healing received",           "type":"heal_bonus","val":0.10},
-        {"id":"resilient",    "desc":"+15 max HP",                     "type":"max_hp","val":15},
-        {"id":"hardened",     "desc":"5% chance to fully block a hit", "type":"block_chance","val":0.05},
-        {"id":"quickened",    "desc":"+4% dodge",                      "type":"dodge_bonus","val":0.04},
+        {"id":"reinforced",   "desc":"+18 DEF",                        "type":"armor_def","val":18},
+        {"id":"thorned",      "desc":"Reflect 12 dmg to attacker",     "type":"reflect_flat","val":12},
+        {"id":"warded",       "desc":"+20% healing received",          "type":"heal_bonus","val":0.20},
+        {"id":"resilient",    "desc":"+35 max HP",                     "type":"max_hp","val":35},
+        {"id":"hardened",     "desc":"10% chance to fully block a hit","type":"block_chance","val":0.10},
+        {"id":"quickened",    "desc":"+8% dodge",                      "type":"dodge_bonus","val":0.08},
     ],
     "accessory": [
-        {"id":"amplified",    "desc":"+3 to all stats",                "type":"all_stats","val":3},
-        {"id":"golden",       "desc":"+10% gold from all sources",     "type":"gold_bonus","val":0.10},
-        {"id":"soulbound",    "desc":"+5% EXP from all sources",       "type":"exp_bonus","val":0.05},
-        {"id":"fortified",    "desc":"+20 max HP",                     "type":"max_hp","val":20},
-        {"id":"empowered",    "desc":"+5 ATK",                         "type":"atk","val":5},
-        {"id":"mystical",     "desc":"+6 to primary class stat",       "type":"primary_stat","val":6},
+        {"id":"amplified",    "desc":"+6 to all stats",                "type":"all_stats","val":6},
+        {"id":"golden",       "desc":"+20% gold from all sources",     "type":"gold_bonus","val":0.20},
+        {"id":"soulbound",    "desc":"+10% EXP from all sources",      "type":"exp_bonus","val":0.10},
+        {"id":"fortified",    "desc":"+45 max HP",                     "type":"max_hp","val":45},
+        {"id":"empowered",    "desc":"+12 ATK",                        "type":"atk","val":12},
+        {"id":"mystical",     "desc":"+12 to primary class stat",      "type":"primary_stat","val":12},
     ],
 }
 
@@ -4794,31 +4817,31 @@ def _enc_monster_attack(enc):
 
 # ── BOSSES ────────────────────────────────────────────────────────────────────
 BOSSES = {
-    "1 ball": {"name":"The 1 Ball","hp":1800,"max_hp":1800,"dmg_min":80,"dmg_max":140,
+    "1 ball": {"name":"The 1 Ball","hp":5400,"max_hp":5400,"dmg_min":160,"dmg_max":280,
                "exp":1600,"gold":130,"title":"1-Ball Slayer","desc":"Every warrior left it standing. It has grown tired of waiting.",
                "loot_table":[("Greater Health Potion","uncommon"),("Iron Shard","uncommon"),("Soldier's Plating","uncommon"),
                              ("Chain Coif","uncommon"),("Chain Gauntlets","uncommon"),("Chain Boots","uncommon"),("Shadow Mask","uncommon"),
                              ("Shadow Hood","uncommon"),("Rogue's Wraps","uncommon"),("Shadow Treads","uncommon"),("War Paint Mask","uncommon")]},
-    "3 ball": {"name":"The 3 Ball","hp":3200,"max_hp":3200,"dmg_min":120,"dmg_max":190,
+    "3 ball": {"name":"The 3 Ball","hp":9600,"max_hp":9600,"dmg_min":240,"dmg_max":380,
                "exp":3200,"gold":260,"title":"3-Ball Slayer","desc":"Lurks in the shadows and waits. When it strikes, things shatter.",
                "loot_table":[("Grand Restorative Flask","rare"),("Iron Shard","uncommon"),("Ranger's Marked Bow","rare"),
                              ("Templar's Helm","rare"),("Templar's Gauntlets","rare"),("Templar's Sabatons","rare"),("Templar's Visor","rare"),
                              ("Void Cowl","rare"),("Shadow Wraps","rare"),("Void Walkers","rare"),("Assassin's Veil","rare")]},
-    "5 ball": {"name":"The 5 Ball","hp":4800,"max_hp":4800,"dmg_min":165,"dmg_max":245,
+    "5 ball": {"name":"The 5 Ball","hp":14400,"max_hp":14400,"dmg_min":330,"dmg_max":490,
                "exp":5600,"gold":440,"title":"5-Ball Slayer","desc":"The heart of the dungeon. The middle cannot be ignored.",
                "loot_table":[("Scroll of Revival","rare"),("Warlock's Dread Staff","rare"),("Fortune Coin","rare"),
                              ("Templar's Helm","rare"),("Templar's Gauntlets","rare"),("Templar's Sabatons","rare"),("Templar's Visor","rare"),
                              ("Void Cowl","rare"),("Shadow Wraps","rare"),("Void Walkers","rare"),("Assassin's Veil","rare")]},
-    "7 ball": {"name":"The 7 Ball","hp":7000,"max_hp":7000,"dmg_min":210,"dmg_max":310,
+    "7 ball": {"name":"The 7 Ball","hp":21000,"max_hp":21000,"dmg_min":420,"dmg_max":620,
                "exp":9500,"gold":700,"title":"7-Ball Slayer","desc":"The last guardian before the final boss. It knows what it protects.",
                "loot_table":[("Warlord's Edge","epic"),("Void-Touched Robe","epic"),("Twin Strike Ring","epic"),
                              ("Battleborn Crown","epic"),("Battleborn Gauntlets","epic"),("Battleborn Treads","epic"),("Phantom Mask","epic"),
                              ("Phantom Visage","epic"),("Void Gloves","epic"),("Phantom Boots","epic"),("Void Visor","epic")]},
-    "8 ball": {"name":"The 8 Ball","hp":13000,"max_hp":13000,"dmg_min":260,"dmg_max":420,
+    "8 ball": {"name":"The 8 Ball","hp":39000,"max_hp":39000,"dmg_min":520,"dmg_max":840,
                "exp":16000,"gold":1800,"title":"8-Ball Champion","desc":"The final boss. The only one that matters in the end.",
                "loot_table":[("Ruinblade","legendary"),("Archmage's Sanctum Robe","legendary"),("Ring of the Endless","legendary"),
                              ("Helm of the Eternal","legendary"),("Gauntlets of the Eternal","legendary"),("Boots of the Eternal","legendary"),("Mask of the Eternal","legendary")]},
-    "void":   {"name":"The Void Ball","hp":22000,"max_hp":22000,"dmg_min":420,"dmg_max":680,
+    "void":   {"name":"The Void Ball","hp":66000,"max_hp":66000,"dmg_min":840,"dmg_max":1360,
                "exp":40000,"gold":4500,"title":"Blackball Slayer","desc":"It was never part of this realm. It came from somewhere else.","secret":True,
                "loot_table":[("Shard of the Void","legendary"),("The Last Stand Locket","legendary"),("The Void Mark","legendary"),
                              ("Crown of the Void","mythic"),("Hands of the Void","mythic"),("Steps of the Void","mythic"),("Face of the Void","mythic"),
@@ -6819,7 +6842,10 @@ def get_enchant_bonus(p, stat):
                      "equipped_hat","equipped_gloves","equipped_boots","equipped_mask"]:
         name = p.get(slot_key)
         if not name: continue
-        for enchant in get_enchant(p, name):
+        # Slot-keyed enchants take priority (fixes duplicate-accessory bug); fall back to item-name for old data
+        slot_encs = get_enchant(p, slot_key)
+        encs = slot_encs if slot_encs else get_enchant(p, name)
+        for enchant in encs:
             if enchant.get("type") == stat:
                 total += enchant.get("val", 0)
     return total
@@ -6833,7 +6859,7 @@ def set_enhancement(p, item_name, level):
     p["enhancements"] = json.dumps(enh)
 
 def get_enhance_bonus(p, item_name):
-    return get_enhancement(p, item_name) * 2
+    return get_enhancement(p, item_name) * 6  # was *2
 
 # ── REINFORCE HELPERS ─────────────────────────────────────────────────────────
 def get_reinforce_data(p):
@@ -6852,7 +6878,7 @@ def star_str(s):
 def reinforce_atk_bonus(p, item_name):
     if not item_name: return 0
     d = get_item_reinforce(p, item_name)
-    return d["r"] + d["s"] * 5
+    return d["r"] * 3 + d["s"] * 15  # tripled (was r + s*5)
 
 # ── ITEM SET HELPERS ───────────────────────────────────────────────────────────
 def get_active_set_bonuses(p):
@@ -7014,6 +7040,7 @@ _GEAR_LINE_MAP = {
     "enchantress":    "mage",
     "valkyrie":       "warrior",
     "phantom_dancer": "thief",
+    "serpent":        "warrior",   # serpent can wear warrior armors + their own scales
 }
 
 def _weapon_class_tag(item_name):
@@ -7194,8 +7221,9 @@ def calc_max_hp(p):
     set_hp = set_bonuses.get("hp", 0)
     def_hp = round(get_stat(p, "DEF") * 10)
     str_hp = round(get_stat(p, "STR") * 2)   # secondary: physical constitution
+    wis_hp = round(get_stat(p, "WIS") * 3)   # wisdom: mental fortitude / resilience
     retire_hp = safe_int(p.get("pet_retire_hp"))
-    return base + acc_hp + enc_hp + temp + set_hp + def_hp + str_hp + retire_hp
+    return base + acc_hp + enc_hp + temp + set_hp + def_hp + str_hp + wis_hp + retire_hp
 
 TIER_THRESHOLDS = {1: 5, 2: 10, 3: 30, 4: 60, 5: 100}
  
@@ -7276,16 +7304,16 @@ def calc_proc_effect(attacker, defender, dmg):
 
     # ── ARCHER PATH A  -  Pin Down ──────────────────────────────
     elif line == "archer" and path == "A":
-        chance = get_proc_chance(0.12, attacker)
+        chance = get_proc_chance(0.20, attacker)
         if random.random() < chance and safe_int(defender.get("distract_turns", 0)) < 3:
-            add_charges(defender, "distract_turns", 2)
-            return True, "🏹 *Pin Down!* Distracted ×2 — 30% miss chance next 2 attacks!", 0
+            add_charges(defender, "distract_turns", 3)
+            return True, "🏹 *Pin Down!* Distracted ×3 — 30% miss chance next 3 attacks!", 0
 
     # ── ARCHER PATH B  -  Headshot ──────────────────────────────
     elif line == "archer" and path == "B":
-        chance = get_proc_chance(0.12, attacker)
+        chance = get_proc_chance(0.20, attacker)
         if random.random() < chance:
-            extra = round(dmg * 0.75)
+            extra = round(dmg * 1.50)
             extra = calc_defense(defender, extra)
             defender["hp"] = max(0, defender["hp"] - extra)
             return True, f"🎯 *Headshot!* Clean hit for {extra} bonus dmg!", extra
@@ -7306,24 +7334,24 @@ def calc_proc_effect(attacker, defender, dmg):
 
     # ── SERPENT PATH A  -  Venom Coil ───────────────────────────
     elif line == "serpent" and path == "A":
-        chance = get_proc_chance(0.13, attacker)
-        if random.random() < chance and safe_int(defender.get("poison_stacks", 0)) < 8:
-            add_charges(defender, "poison_stacks", 2)
+        chance = get_proc_chance(0.22, attacker)
+        if random.random() < chance and safe_int(defender.get("poison_stacks", 0)) < 12:
+            add_charges(defender, "poison_stacks", 3)
             _a_pks_proc = get_all_passive_keys(attacker)
-            _vpct = (40 if "serpentine_mastery" in _a_pks_proc else
-                     30 if "death_venom"        in _a_pks_proc else
-                     27 if "toxic_fangs"         in _a_pks_proc else 20)
+            _vpct = (50 if "serpentine_mastery" in _a_pks_proc else
+                     40 if "death_venom"        in _a_pks_proc else
+                     35 if "toxic_fangs"         in _a_pks_proc else 25)
             defender["poison_pct"] = max(safe_int(defender.get("poison_pct", 0)), _vpct)
-            return True, f"🐍 *Venom Coil!* Venom ×2 seeps in — {_vpct}% max HP/action!", 0
+            return True, f"🐍 *Venom Coil!* Venom ×3 seeps in — {_vpct}% max HP/action!", 0
 
     # ── SERPENT PATH B  -  Crushing Coils ───────────────────────
     elif line == "serpent" and path == "B":
-        chance = get_proc_chance(0.13, attacker)
+        chance = get_proc_chance(0.22, attacker)
         if random.random() < chance:
             _cc_dist = safe_int(defender.get("distract_turns", 0))
             _cc_weak = safe_int(defender.get("weakened_hits", 0))
-            if _cc_dist < 3: add_charges(defender, "distract_turns", min(2, 3 - _cc_dist))
-            if _cc_weak < 4: add_charges(defender, "weakened_hits", 1)
+            if _cc_dist < 4: add_charges(defender, "distract_turns", min(3, 4 - _cc_dist))
+            if _cc_weak < 5: add_charges(defender, "weakened_hits", 2)
             return True, f"🐍 *Crushing Coils!* {defender['username']} coiled — Distract ×2 + Weakened ×1!", 0
 
     return False, "", 0
@@ -7340,11 +7368,15 @@ def calc_attack_damage(attacker, weather=None):
     stat_val  = get_stat(attacker, primary)
     # All classes scale 1.0× their primary stat
     stat_bonus = round(stat_val * 1.0)
+    # Universal off-stat bleed: every non-primary stat contributes 0.20× damage
+    # so investing in any stat always has a real effect regardless of class
+    for _os in ("STR", "AGI", "INT", "WIS", "DEX", "LUK"):
+        if _os != primary:
+            stat_bonus += round(get_stat(attacker, _os) * 0.20)
     # Level matters — 4 damage per level so level 30 = +120 (was +15)
     level_bonus = attacker["level"] * 4
 
     retire_atk = safe_int(attacker.get("pet_retire_atk"))
-    # Secondary stat bleed (DEX, LUK) removed — class passives handle stat identity
     raw = base + weapon + perm + acc_atk + stat_bonus + level_bonus + retire_atk
 
     # Weather
@@ -7377,7 +7409,7 @@ def calc_attack_damage(attacker, weather=None):
                 buff_mod += 0.25
         if "steady_aim" in active_pks:
             stacks = safe_int(attacker.get("steady_aim_stacks"))
-            buff_mod += min(0.50, stacks * 0.10)
+            buff_mod += min(1.00, stacks * 0.15)  # was 0.50 cap at 0.10/stack
         if "dead_or_alive" in active_pks:
             extra = safe_int(attacker.get("deadeye_kill_bonus"))
             raw += extra
@@ -7500,6 +7532,26 @@ def calc_defense(defender, dmg):
     secondary_armor_def = _get_secondary_armor_def(defender)
     primary_armor_def   = armor_def - secondary_armor_def
     armor_reduction = min(0.20, primary_armor_def / 300) + min(0.10, secondary_armor_def / 300)
+
+    # Universal stat bonuses: WIS → DR, AGI → dodge (all classes benefit regardless of primary)
+    wis_dr = min(0.10, get_stat(defender, "WIS") * 0.005)   # 0.5% per WIS, cap 10%
+    agi_dodge = min(0.08, get_stat(defender, "AGI") * 0.0015)  # 0.15% per AGI, cap 8%
+    if random.random() < agi_dodge:
+        return 0
+    def_reduction += wis_dr
+
+    # Serpent class: built-in snake companion absorbs a portion of damage
+    _defender_line = get_class_line(defender)
+    if _defender_line == "serpent":
+        _def_pks_serp = get_all_passive_keys(defender)
+        # Higher-tier serpents get more absorption
+        if "immortal_coils" in _def_pks_serp or "coiling_stance" in _def_pks_serp:
+            _snake_absorb = 0.30  # Ancient Serpent / Serpent Warlord: 30% absorbed
+        elif "armored_scales" in _def_pks_serp or "serpents_resolve" in _def_pks_serp:
+            _snake_absorb = 0.25  # Serpent Guard / Knight: 25% absorbed
+        else:
+            _snake_absorb = 0.20  # Base serpent: 20% absorbed by companion
+        dmg = round(dmg * (1.0 - _snake_absorb))
 
     # Passive class bonuses — use get_all_passive_keys so inherited passives apply
     def_pks = get_all_passive_keys(defender)
@@ -8461,9 +8513,12 @@ def check_crit(attacker):
         base_crit = min(0.40, stat_val * 0.008)
     base_crit += get_accessory_bonus(attacker, "crit_bonus")
     base_crit += get_enchant_bonus(attacker, "crit_bonus")
-    # LUK secondary: non-thieves gain a smaller crit bonus from LUK (0.3% per LUK, cap 10%)
+    # LUK secondary: non-thieves gain a smaller crit bonus from LUK (0.5% per LUK, cap 15%)
     if line != "thief":
-        base_crit += min(0.10, get_stat(attacker, "LUK") * 0.003)
+        base_crit += min(0.15, get_stat(attacker, "LUK") * 0.005)
+    # DEX secondary: non-archers gain a crit bonus from DEX (0.3% per DEX, cap 10%)
+    if line != "archer":
+        base_crit += min(0.10, get_stat(attacker, "DEX") * 0.003)
     if cls and cls.get("passive_key") == "quick_hands":
         base_crit += 0.15
     # New class passives
@@ -19845,7 +19900,7 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ("🎭 Mask",        "equipped_mask",        "mask")]:
             name = p.get(slot_key)
             if not name: continue
-            encs = get_enchant(p, name)
+            encs = get_enchant(p, slot_key) or get_enchant(p, name)  # slot-keyed first, fallback for old data
             count = len(encs); remaining = 3 - count
             enc_str = ", ".join(e["id"].capitalize() for e in encs) if encs else "None"
             lines.append(f"{slot_label}: *{name}*\n  Enchants ({count}/3): {enc_str} | {remaining} slot(s) left")
@@ -19887,7 +19942,7 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ You need an *Enchanting Scroll*.\n"
             "They drop from explores, quests, and the shop.", delay=9); return
 
-    encs = get_enchant(p, item_name)
+    encs = get_enchant(p, slot_key) or get_enchant(p, item_name)
     if len(encs) >= 3:
         await send_group(update,
             f"❌ *{item_name}* already has 3 enchants (maximum).\n"
@@ -19898,9 +19953,9 @@ async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pool = ENCHANT_EFFECTS.get(effect_pool_key, [])
     effect = random.choice(pool)
-    set_enchant(p, item_name, effect)
+    set_enchant(p, slot_key, effect)  # store by slot so duplicates are independent
     save_player(p)
-    new_encs = get_enchant(p, item_name)
+    new_encs = get_enchant(p, slot_key)
     all_str = "\n".join(f"✨ {e['id'].capitalize()}  -  {e['desc']}" for e in new_encs)
     await send_group(update,
         f"✨ *Enchanted!*\n\n"
@@ -19942,7 +19997,7 @@ async def enchant_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
     inv = sjl(p.get("inventory"), [])
     if "Enchanting Scroll" not in inv:
         await query.answer("You need an Enchanting Scroll to enchant!", show_alert=True); return
-    encs = get_enchant(p, item_name)
+    encs = get_enchant(p, slot_key) or get_enchant(p, item_name)
     if len(encs) >= 3:
         await query.answer(f"{item_name} already has 3 enchants (max)!", show_alert=True); return
     await query.answer()
@@ -19950,9 +20005,9 @@ async def enchant_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
     p["inventory"] = json.dumps(inv)
     pool = ENCHANT_EFFECTS.get(effect_pool_key, [])
     effect = random.choice(pool)
-    set_enchant(p, item_name, effect)
+    set_enchant(p, slot_key, effect)  # store by slot so duplicates are independent
     save_player(p)
-    new_encs = get_enchant(p, item_name)
+    new_encs = get_enchant(p, slot_key)
     all_str = "\n".join(f"✨ {e['id'].capitalize()}  —  {e['desc']}" for e in new_encs)
     await query.edit_message_text(
         f"✨ *Enchanted!*\n\n*{item_name}*  —  Enchants ({len(new_encs)}/3):\n{all_str}",
