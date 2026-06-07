@@ -162,10 +162,7 @@ _wild_pet_offers   = {}     # uid -> {"species": str, "expires": float}
 _pet_trade_offers   = {}  # offeror_uid -> {"target_uid": int, "pet_id": int, "expires": float}
 _pet_breed_sessions = {}  # uid -> {"pet1_id": int, "pet2_id": int, "started": float}
 _active_pet_duels   = {}  # (uid1,uid2) tuple key -> duel state dict
-_pvp_turns         = {}   # pair -> uid whose turn it is
-_pvp_turn_tasks    = {}   # pair -> asyncio.Task (15s countdown)
 _pvp_dm_last_msg   = {}   # uid -> (chat_id, message_id) — last DM battle card
-_pvp_battle_stats  = {}   # pair -> {"turns": int}
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
@@ -173,10 +170,10 @@ def _pvp_pair_key(a, b):
     if (b, a) in _pvp_cards: return (b, a)
     return (a, b)
 
-def _pvp_fight_card(viewer_p, opp_p, action_text):
+def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     def _bar(hp, mx, w=10):
         f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
-        return "▓" * f + "░" * (w - f)
+        return "█" * f + "░" * (w - f)
     v_hp = max(0, int(viewer_p.get("hp", 0)))
     v_mx = max(1, int(viewer_p.get("max_hp", 100)))
     o_hp = max(0, int(opp_p.get("hp", 0)))
@@ -188,80 +185,27 @@ def _pvp_fight_card(viewer_p, opp_p, action_text):
     v_hp_str = str(v_hp) + "/" + str(v_mx) + " HP"
     o_hp_str = str(o_hp) + "/" + str(o_mx) + " HP"
     pad = 10
-    vn_pad = vn.ljust(pad)
-    on_pad = on.rjust(pad)
-    bar_line = vn_pad + "  " + v_bar + " ⚔️ " + o_bar + "  " + on_pad
-    hp_indent = " " * (pad + 2)
-    hp_line   = hp_indent + v_hp_str + "    " + o_hp_str
-    return action_text + "\n\n" + bar_line + "\n" + hp_line
-
-
-def _start_pvp_turn(pair, active_uid, a, d, au_id, du_id, bot):
-    _pvp_turns[pair] = active_uid
-    old = _pvp_turn_tasks.pop(pair, None)
-    if old and not old.done():
-        old.cancel()
-    task = asyncio.create_task(_pvp_turn_timeout(pair, active_uid, a, d, au_id, du_id, bot))
-    _pvp_turn_tasks[pair] = task
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
-
-
-async def _pvp_turn_timeout(pair, active_uid, a, d, au_id, du_id, bot):
-    try:
-        await asyncio.sleep(5)
-        if _pvp_turns.get(pair) != active_uid:
-            return
-        opp_uid  = du_id if active_uid == au_id else au_id
-        fresh_a  = get_player(au_id)
-        fresh_d  = get_player(du_id)
-        if not fresh_a or not fresh_d:
-            return
-        active_p = fresh_a if active_uid == au_id else fresh_d
-        opp_p    = fresh_d if active_uid == au_id else fresh_a
-        warn_txt = "⚠️ *10 seconds left — act or " + opp_p["username"] + " gets your turn!*"
-        try:
-            wc = _pvp_fight_card(active_p, opp_p, warn_txt)
-            wm = _build_pvp_card_markup(active_uid, opp_uid, active_p, opp_p, is_my_turn=True)
-        except Exception:
-            wc = warn_txt; wm = None
-        stored = _pvp_dm_last_msg.get(active_uid)
-        if stored:
-            try:
-                await bot.edit_message_text(chat_id=stored[0], message_id=stored[1],
-                                            text=wc, parse_mode="Markdown", reply_markup=wm)
-            except Exception:
-                pass
-        await asyncio.sleep(10)
-        if _pvp_turns.get(pair) != active_uid:
-            return
-        fresh_a = get_player(au_id)
-        fresh_d = get_player(du_id)
-        if not fresh_a or not fresh_d:
-            return
-        active_p = fresh_a if active_uid == au_id else fresh_d
-        opp_p    = fresh_d if active_uid == au_id else fresh_a
-        tout_txt = "⏰ *" + active_p["username"] + "* timed out — " + opp_p["username"] + "'s turn!"
-        _pvp_log_append(pair, tout_txt)
-        _pvp_battle_stats.setdefault(pair, {})["turns"] = _pvp_battle_stats[pair].get("turns", 0) + 1
-        _pvp_turns[pair] = opp_uid
-        await _pvp_notify_both(pair, fresh_a, fresh_d, au_id, du_id, tout_txt, bot)
-        _start_pvp_turn(pair, opp_uid, fresh_a, fresh_d, au_id, du_id, bot)
-    except asyncio.CancelledError:
-        pass
+    bar_line = vn.ljust(pad) + "  " + v_bar + " ⚔️ " + o_bar + "  " + on.rjust(pad)
+    hp_line  = " " * (pad + 2) + v_hp_str + "    " + o_hp_str
+    lines = [action_text, "", bar_line, hp_line]
+    logs = _pvp_battle_logs.get(pair, []) if pair else []
+    if logs:
+        lines.append("─" * 22)
+        for entry in logs[-2:]:
+            first = entry.split("\n")[0].strip()
+            lines.append(first[:80])
+    return "\n".join(lines)
 
 
 async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
     _pvp_cards.setdefault(pair, {})
-    active_uid = _pvp_turns.get(pair)
     async def _upd(viewer_uid, viewer_p, opp_uid, opp_p):
-        is_my_turn = (active_uid is None) or (active_uid == viewer_uid)
         try:
-            card = _pvp_fight_card(viewer_p, opp_p, action_text)
+            card = _pvp_fight_card(viewer_p, opp_p, action_text, pair=pair)
         except Exception:
             card = action_text
         try:
-            markup = _build_pvp_card_markup(viewer_uid, opp_uid, viewer_p, opp_p, is_my_turn=is_my_turn)
+            markup = _build_pvp_card_markup(viewer_uid, opp_uid, viewer_p, opp_p)
         except Exception:
             markup = None
         stored = _pvp_dm_last_msg.get(viewer_uid)
@@ -282,10 +226,6 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
 
 
 async def _finalize_pvp(pair, result_text, bot):
-    old = _pvp_turn_tasks.pop(pair, None)
-    if old and not old.done():
-        old.cancel()
-    _pvp_turns.pop(pair, None)
     _pvp_cards.pop(pair, None)
     _pvp_battle_logs.pop(pair, None)
     _pvp_cur_page.pop(pair, None)
@@ -316,10 +256,6 @@ async def _finalize_pvp(pair, result_text, bot):
         await asyncio.gather(_fin(_f_au, _f_a, _f_d), _fin(_f_du, _f_d, _f_a))
     for _uid in pair:
         _pvp_dm_last_msg.pop(_uid, None)
-
-
-async def _pvp_wait_noop_callback(update, context):
-    await update.callback_query.answer("Waiting for opponent's move…", show_alert=False)
 
 
 def _reset_card_timer(pair, bot, chat_id, mid, seconds=20):
@@ -10407,18 +10343,13 @@ def _pvp_log_append(pair, entry):
     _pvp_cur_page[pair] = max(0, (total - 1) // ROUNDS_PER_PAGE)
 
 
-def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None, is_my_turn=True):
-    """Action buttons for a specific PvP player — all skills inline, like encounter mode."""
-    if not is_my_turn:
-        opp_name = (opp_p["username"][:14] if opp_p else "Opponent")
-        return InlineKeyboardMarkup([[InlineKeyboardButton(
-            "⏳ " + opp_name + "'s turn…", callback_data="pvp_wait_noop"
-        )]])
+def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
+    """Action buttons for PvP card — Attack, Defend, Skills, Potion, Finisher."""
     inv = sjl(player_p.get("inventory"), [])
     has_potion = any(i in inv for i in
                      ["Health Potion", "Greater Health Potion", "Grand Restorative Flask"])
     all_skills = sjl(player_p.get("all_skills"), [])
-    shield_available = safe_int(player_p.get("shield_used")) == 0
+    shield_active   = safe_int(player_p.get("shield_used")) == 1
     kill_ready = opp_p is not None and _check_kill_condition(player_p, opp_p)
     rows = []
     if kill_ready:
@@ -10428,13 +10359,16 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None, is_my_turn
         )])
     # Row 1: Attack + Defend
     row1 = [InlineKeyboardButton("⚔️ Attack", callback_data=f"pvpcard_atk_{player_uid}_{opp_uid}")]
-    if shield_available:
-        row1.append(InlineKeyboardButton("🛡️ Defend", callback_data=f"pvpcard_def_{player_uid}_{opp_uid}"))
+    defend_label = "🛡️ Shield ✓" if shield_active else "🛡️ Defend"
+    row1.append(InlineKeyboardButton(defend_label, callback_data=f"pvpcard_def_{player_uid}_{opp_uid}"))
     rows.append(row1)
-    # Row 2: Potion (only shown when player has one; priest heals come from their skill buttons)
+    # Row 2: Potion + Options
+    row2 = []
     if has_potion:
-        rows.append([InlineKeyboardButton("🧪 Potion", callback_data=f"pvpcard_heal_{player_uid}_{opp_uid}")])
-    # Class combat skills inline — 2 per row, like encounter/hunt mode
+        row2.append(InlineKeyboardButton("🧪 Potion", callback_data=f"pvpcard_heal_{player_uid}_{opp_uid}"))
+    row2.append(InlineKeyboardButton("⚙️ Options", callback_data=f"pvpcard_opts_{player_uid}_{opp_uid}"))
+    rows.append(row2)
+    # Class combat skills inline — 2 per row
     p_skills = get_combat_skills(player_p)
     all_sk_by_name = {sk.get("name"): i for i, sk in enumerate(all_skills)}
     skill_btns = []
@@ -11413,15 +11347,13 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         _pvp_cards.setdefault(pair, {})
         _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": query.message.chat_id}
 
-        # Show fight card to both players in DM and start attacker's turn
-        start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started! *" + a["username"] + "* goes first."
+        # Show fight card to both players in DM
+        start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
         _pvp_log_append(pair, start_txt)
-        _pvp_turns[pair] = uid
         fresh_a = get_player(uid) or a
         fresh_d = get_player(target_uid) or d
         _cb_unlock(uid)
         await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_uid, start_txt, context.bot)
-        _start_pvp_turn(pair, uid, fresh_a, fresh_d, uid, target_uid, context.bot)
     finally:
         _cb_unlock(uid)  # idempotent
 
@@ -11590,13 +11522,11 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot  = update.get_bot()
     pair = (au.id, du_id)
     _pvp_cards.setdefault(pair, {})
-    start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started! *" + a["username"] + "* goes first."
+    start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
     _pvp_log_append(pair, start_txt)
-    _pvp_turns[pair] = au.id
     fresh_a = get_player(au.id) or a
     fresh_d = get_player(du_id) or d
     await _pvp_notify_both(pair, fresh_a, fresh_d, au.id, du_id, start_txt, bot)
-    _start_pvp_turn(pair, au.id, fresh_a, fresh_d, au.id, du_id, bot)
 
 
 # ── PVP CARD CALLBACK ─────────────────────────────────────────────────────────
@@ -11616,10 +11546,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.from_user.id != uid:
         await query.answer("These aren't your buttons!", show_alert=True); return
 
-    # Turn check — only the active player may act
     pair = _pvp_pair_key(uid, target_id)
-    if _pvp_turns.get(pair) not in (None, uid):
-        await query.answer("⏳ Not your turn!", show_alert=True); return
 
     if not _cb_lock(uid):
         return
@@ -11628,6 +11555,22 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         a = get_player(uid)
         d = get_player(target_id)
         if not a or not d:
+            return
+
+        # ── OPTIONS ───────────────────────────────────────────────────────────
+        if action_type == "opts":
+            inv = sjl(a.get("inventory"), [])
+            shield_hp = safe_int(a.get("shield_hp"))
+            shield_max = _shield_max(a)
+            potions = [i for i in inv if "Potion" in i or "Flask" in i]
+            msg = "*⚙️ Your status:*\n"
+            msg += f"❤️ HP: {a['hp']}/{a['max_hp']}\n"
+            if safe_int(a.get("shield_used")):
+                msg += f"🛡️ Shield: {shield_hp}/{shield_max} HP\n"
+            if potions:
+                msg += "🧪 Potions: " + ", ".join(potions) + "\n"
+            msg += f"📊 Level {a.get('level',1)} {a.get('class','?')}"
+            await query.answer(msg[:200], show_alert=True)
             return
 
         # ── HEAL ──────────────────────────────────────────────────────────────
@@ -11652,13 +11595,10 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_player(a)
             heal_entry = f"🧪 *{a['username']}* uses *{potion}* — *+{actual} HP* ❤️ {a['hp']}/{a['max_hp']}"
             _pvp_log_append(pair, heal_entry)
-            _pvp_battle_stats.setdefault(pair, {})["turns"] = _pvp_battle_stats[pair].get("turns", 0) + 1
             fresh_a = get_player(uid) or a
             fresh_d = get_player(target_id) or d
-            _pvp_turns[pair] = target_id
             _cb_unlock(uid)
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, heal_entry, context.bot)
-            _start_pvp_turn(pair, target_id, fresh_a, fresh_d, uid, target_id, context.bot)
             return
 
         # ── DEFEND ────────────────────────────────────────────────────────────
@@ -11677,13 +11617,10 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_player(a)
             shield_entry = f"🛡️ *{a['username']}* raises their shield — *{max_sh} HP*"
             _pvp_log_append(pair, shield_entry)
-            _pvp_battle_stats.setdefault(pair, {})["turns"] = _pvp_battle_stats[pair].get("turns", 0) + 1
             fresh_a = get_player(uid) or a
             fresh_d = get_player(target_id) or d
-            _pvp_turns[pair] = target_id
             _cb_unlock(uid)
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, shield_entry, context.bot)
-            _start_pvp_turn(pair, target_id, fresh_a, fresh_d, uid, target_id, context.bot)
             return
 
         # ── FINISHER ──────────────────────────────────────────────────────────
@@ -11724,10 +11661,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 save_player(a); save_player(d)
                 fresh_a = get_player(uid) or a
                 fresh_d = get_player(target_id) or d
-                _pvp_turns[pair] = target_id
                 _cb_unlock(uid)
                 await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, kill_msg, context.bot)
-                _start_pvp_turn(pair, target_id, fresh_a, fresh_d, uid, target_id, context.bot)
             return
 
         # ── ATTACK ────────────────────────────────────────────────────────────
@@ -11755,7 +11690,6 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             a, d, uid, target_id, w, chat_id, context.bot)
 
         _pvp_log_append(pair, result_text)
-        _pvp_battle_stats.setdefault(pair, {})["turns"] = _pvp_battle_stats[pair].get("turns", 0) + 1
 
         if result_type == "defeat":
             _cb_unlock(uid)
@@ -11764,10 +11698,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         fresh_a = get_player(uid) or a
         fresh_d = get_player(target_id) or d
-        _pvp_turns[pair] = target_id
         _cb_unlock(uid)
         await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, result_text, context.bot)
-        _start_pvp_turn(pair, target_id, fresh_a, fresh_d, uid, target_id, context.bot)
 
     finally:
         _cb_unlock(uid)  # idempotent
@@ -17308,13 +17240,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         _pvp_pair_k = _pvp_pair_key(uid, target_uid)
         async def send_result(text):  # noqa: F811
             _pvp_log_append(_pvp_pair_k, text[:300])
-            _pvp_battle_stats.setdefault(_pvp_pair_k, {})["turns"] = _pvp_battle_stats[_pvp_pair_k].get("turns", 0) + 1
             p_upd  = get_player(uid) or p
             tp_upd = get_player(target_uid) or tp
-            _pvp_turns[_pvp_pair_k] = target_uid
             _cb_unlock(uid)
             await _pvp_notify_both(_pvp_pair_k, p_upd, tp_upd, uid, target_uid, text[:300], context.bot)
-            _start_pvp_turn(_pvp_pair_k, target_uid, p_upd, tp_upd, uid, target_uid, context.bot)
         base = calc_attack_damage(p, w)
         out = [f"⚡ *{p['username']}* uses *{sk['name']}*!"]
         # ── Self / group skills — execute on caster, no target needed ──
@@ -17933,13 +17862,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await _finalize_pvp(_sk_pair, _sk_result_text, context.bot)
         else:
             _pvp_log_append(_sk_pair, _sk_result_text)
-            _pvp_battle_stats.setdefault(_sk_pair, {})["turns"] = _pvp_battle_stats[_sk_pair].get("turns", 0) + 1
             fresh_p  = get_player(uid) or p
             fresh_tp = get_player(target_uid) or tp
-            _pvp_turns[_sk_pair] = target_uid
             _cb_unlock(uid)
             await _pvp_notify_both(_sk_pair, fresh_p, fresh_tp, uid, target_uid, _sk_result_text, context.bot)
-            _start_pvp_turn(_sk_pair, target_uid, fresh_p, fresh_tp, uid, target_uid, context.bot)
 
 async def _execute_skill(update, context, p, sk):
     """Core skill execution logic."""
@@ -31673,7 +31599,6 @@ def main():
     app.add_handler(CallbackQueryHandler(attack_picker_callback,       pattern="^atk_"))
     app.add_handler(CallbackQueryHandler(skill_target_picker_callback, pattern="^skl2_"))
     app.add_handler(CallbackQueryHandler(pvp_card_callback,  pattern="^pvpcard_"))
-    app.add_handler(CallbackQueryHandler(_pvp_wait_noop_callback, pattern="^pvp_wait_noop$"))
     app.add_handler(CommandHandler("heal",         heal_cmd))
     app.add_handler(CommandHandler("defend",       defend_cmd))
     app.add_handler(CommandHandler("curepriority",   curepriority_cmd))
