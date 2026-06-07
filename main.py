@@ -171,35 +171,36 @@ def _pvp_pair_key(a, b):
     return (a, b)
 
 def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
-    def _bar_left(hp, mx, w=12):
+    def _bar(hp, mx, w=14):
         f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
         return "█" * f + "░" * (w - f)
-    def _bar_right(hp, mx, w=12):
-        f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
-        return "░" * (w - f) + "█" * f
     v_hp = max(0, int(viewer_p.get("hp", 0)))
     v_mx = max(1, int(viewer_p.get("max_hp", 100)))
     o_hp = max(0, int(opp_p.get("hp", 0)))
     o_mx = max(1, int(opp_p.get("max_hp", 100)))
-    vn = str(viewer_p.get("username", "You"))[:14]
-    on = str(opp_p.get("username", "Foe"))[:14]
+    vn = str(viewer_p.get("username", "You"))[:16]
+    on = str(opp_p.get("username", "Foe"))[:16]
     v_lvl = viewer_p.get("level", 1)
     o_lvl = opp_p.get("level", 1)
     v_pct = round(v_hp / v_mx * 100)
     o_pct = round(o_hp / o_mx * 100)
-    v_bar = _bar_left(v_hp, v_mx)
-    o_bar = _bar_right(o_hp, o_mx)
     v_status = _compact_status_emojis(viewer_p)
     o_status = _compact_status_emojis(opp_p)
     v_shield = safe_int(viewer_p.get("shield_hp"))
     o_shield = safe_int(opp_p.get("shield_hp"))
-    v_sh_str = f" 🛡️{v_shield}" if v_shield > 0 else ""
-    o_sh_str = f" 🛡️{o_shield}" if o_shield > 0 else ""
+    v_sh_str = f"  🛡️{v_shield}" if v_shield > 0 else ""
+    o_sh_str = f"  🛡️{o_shield}" if o_shield > 0 else ""
     lines = [
-        f"👤 *{vn}* · Lv{v_lvl} · {v_pct}%{v_sh_str}{(' · ' + v_status) if v_status else ''}",
-        f"`{v_bar}` ⚔️ `{o_bar}`",
-        f"👾 *{on}* · Lv{o_lvl} · {o_pct}%{o_sh_str}{(' · ' + o_status) if o_status else ''}",
+        f"👤 *{vn}*  Lv{v_lvl}",
+        f"`{_bar(v_hp, v_mx)}`  {v_pct}%{v_sh_str}",
     ]
+    if v_status:
+        lines.append(f"↳ {v_status}")
+    lines.append("──────────────────")
+    lines.append(f"👾 *{on}*  Lv{o_lvl}")
+    lines.append(f"`{_bar(o_hp, o_mx)}`  {o_pct}%{o_sh_str}")
+    if o_status:
+        lines.append(f"↳ {o_status}")
     return "\n".join(lines)
 
 
@@ -17260,6 +17261,19 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_player(p)
         # Override send_result for PvP: log to battle log and update DM fight cards
         _pvp_pair_k = _pvp_pair_key(uid, target_uid)
+        # Register group chat origin (needed for kill announcements / _execute_pvp_hit)
+        _pvp_origin_chat.setdefault(_pvp_pair_k, query.message.chat_id)
+        # If this is a brand-new fight (no existing card), alert the defender and clear stale msgs
+        if _pvp_pair_k not in _pvp_cards or not _pvp_cards.get(_pvp_pair_k):
+            _pvp_cards.setdefault(_pvp_pair_k, {})
+            _pvp_dm_last_msg.pop(target_uid, None)
+            _pvp_log_msg.pop(target_uid, None)
+            try:
+                await context.bot.send_message(chat_id=target_uid,
+                    text=f"⚔️ *{p['username']}* is attacking you with *{sk['name']}*!",
+                    parse_mode="Markdown")
+            except Exception:
+                pass
         async def send_result(text):  # noqa: F811
             _pvp_log_append(_pvp_pair_k, text[:4096])
             p_upd  = get_player(uid) or p
