@@ -132,8 +132,6 @@ _bg_tasks: set    = set() # keeps create_task refs alive until done
 active_drakes      = {}   # chat_id -> drake dict
 message_counters   = {}   # chat_id -> int
 pending_trades     = {}   # user_id -> trade dict
-pending_duels      = {}   # challenger_id -> {target_id, wager, chat_id, expires}
-active_arenas      = {}   # chat_id -> arena state
 pending_guild_reqs = {}   # guild_id -> [requests]
 explore_timers     = {}   # user_id -> asyncio task
 _idle_last_awarded = {}   # user_id -> timestamp — prevents double-awarding on rapid messages
@@ -278,6 +276,7 @@ async def _finalize_pvp(pair, result_text, bot):
     _pvp_battle_logs.pop(pair, None)
     _pvp_cur_page.pop(pair, None)
     _pvp_origin_chat.pop(pair, None)
+    _pvp_card_tasks.pop(pair, None)
     if len(pair) == 2:
         _f_au, _f_du = pair
         _f_a = get_player(_f_au)
@@ -4127,7 +4126,7 @@ _RANDOM_EVENTS = {
 def _enc_level_stats(enc_level, p_level):
     """Return (hp, atk, reward_mult, num_gear, num_pots, gear_rarities) scaled from enc_level."""
     hp  = max(50, round(max_hp_for_level(enc_level) * random.uniform(0.80, 1.20)))
-    atk = max(1, enc_level * 4 + random.randint(5, 15))
+    atk = max(1, enc_level * 9 + random.randint(10, 30))
     diff = enc_level - p_level
     # tier_bonus: each 20 levels adds 0.3× (level 20=+0.3, 40=+0.6, 60=+0.9, 80=+1.2, 100=+1.5)
     tier_bonus = (enc_level // 20) * 0.3
@@ -4643,11 +4642,11 @@ def _enc_npc_attack(enc, p):
         label         = ""
 
     # Wide variance so repeated hits feel different
-    raw     = int(enc["e_atk"] * dmg_mult * random.uniform(0.60, 1.40))
-    def_red = int(get_stat(p, "DEF") * 0.50)
+    raw     = int(enc["e_atk"] * dmg_mult * random.uniform(0.70, 1.50))
+    def_red = int(get_stat(p, "DEF") * 0.25)
     dmg     = max(1, raw - def_red)
-    # Cap single hit at 25% of player max HP — no one-shots
-    dmg     = min(dmg, max(1, int(enc["p_max_hp"] * 0.25)))
+    # Cap single hit at 40% of player max HP
+    dmg     = min(dmg, max(1, int(enc["p_max_hp"] * 0.40)))
 
     _enc_cls = get_player_class(p)
     _enc_pk  = _enc_cls.get("passive_key", "") if _enc_cls else ""
@@ -4760,8 +4759,8 @@ def _enc_monster_attack(enc):
             dmg_mult = dmg_mult * random.uniform(1.20, 1.55)
         # normal: use dmg_mult as-is
 
-        raw     = int(enc["e_atk"] * dmg_mult * random.uniform(0.60, 1.40))
-        def_red = int(get_stat(p, "DEF") * 0.50) if p else 0
+        raw     = int(enc["e_atk"] * dmg_mult * random.uniform(0.70, 1.50))
+        def_red = int(get_stat(p, "DEF") * 0.25) if p else 0
         dmg     = max(1, raw - def_red)
         if _mon_pk == "iron_will":
             dmg = max(1, int(dmg * 0.50))
@@ -4770,8 +4769,8 @@ def _enc_monster_attack(enc):
                 dmg = max(1, dmg - 30)
         if enc.pop("e_weakened", False):
             dmg = max(1, int(dmg * 0.75))
-        # Cap single hit at 25% of player max HP — no one-shots
-        dmg = min(dmg, max(1, int(enc["p_max_hp"] * 0.25)))
+        # Cap single hit at 40% of player max HP
+        dmg = min(dmg, max(1, int(enc["p_max_hp"] * 0.40)))
         enc["p_hp"] = max(0, enc["p_hp"] - dmg)
         eff = _apply_move_effect(enc, move_key) if mv.get("effect") else ""
         return f"*{enc['e_name']}* used *{mv['name']}* — {dmg} damage!{eff}"
@@ -5425,12 +5424,12 @@ _DNG_NARRATION = {
 
 # Loot tables per floor tier
 _DNG_LOOT_TIER = {
-    1: {"gold":(30,80),   "exp":(2000,5000),      "gear_rarity":["common","uncommon"]},
-    2: {"gold":(70,150),  "exp":(6000,14000),     "gear_rarity":["uncommon","rare"]},
-    3: {"gold":(130,250), "exp":(20000,50000),    "gear_rarity":["uncommon","rare","rare"]},
-    4: {"gold":(220,400), "exp":(70000,150000),   "gear_rarity":["rare","epic"]},
-    5: {"gold":(380,650), "exp":(200000,450000),  "gear_rarity":["rare","epic","epic"]},
-    6: {"gold":(600,1000),"exp":(600000,1200000), "gear_rarity":["epic","legendary"]},
+    1: {"gold":(90,240),    "exp":(20000,50000),       "gear_rarity":["common","uncommon"]},
+    2: {"gold":(210,450),   "exp":(60000,140000),      "gear_rarity":["uncommon","rare"]},
+    3: {"gold":(390,750),   "exp":(200000,500000),     "gear_rarity":["uncommon","rare","rare"]},
+    4: {"gold":(660,1200),  "exp":(700000,1500000),    "gear_rarity":["rare","epic"]},
+    5: {"gold":(1140,1950), "exp":(2000000,4500000),   "gear_rarity":["rare","epic","epic"]},
+    6: {"gold":(1800,3000), "exp":(6000000,12000000),  "gear_rarity":["epic","legendary"]},
 }
 
 _DNG_BOSS_LOOT = [
@@ -6341,11 +6340,11 @@ async def _dng_on_enemy_killed(uid, bot, p, state):
     is_boss = e.get("is_boss", False)
 
     if is_boss:
-        gold_mult = 6.0; exp_mult = 7.0
+        gold_mult = 54.0; exp_mult = 700.0
     elif e.get("room_type") == "miniboss":
-        gold_mult = 2.5; exp_mult = 2.8
+        gold_mult = 22.5; exp_mult = 280.0
     else:
-        gold_mult = 1.0; exp_mult = 1.0
+        gold_mult = 9.0; exp_mult = 100.0
 
     gold    = int(random.randint(*loot_tier["gold"]) * gold_mult)
     p_level = p.get("level", 1)
@@ -7513,7 +7512,6 @@ def calc_defense(defender, dmg):
             if random.random() < 0.25: return 0  # 25% block chance (up from equipment-gated 15% DR)
         if "divine_grace" in def_pks:
             if random.random() < 0.15: return 0  # 15% block chance (divine protection)
-        if "runic_ward" in def_pks:     dmg = max(0, dmg - 20)
         # beguile reflect handled in apply_reflect, not here
     # def_reflect — charge-based (new) or legacy timestamp
     if safe_int(defender.get("def_reflect_hits")) > 0:
@@ -10612,9 +10610,6 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             dmg *= 2; extra_notes.append("⚡ *Flurry!* Double hit!")
         if pk_a == "one_shot" and random.random() < 0.10:
             dmg *= 5; extra_notes.append("🎯 *ONE-SHOT!* 5x damage!")
-        if pk_a == "mark_first_hit" and safe_int(a.get("mark_first_hit")):
-            dmg = round(dmg * 1.25); a["mark_first_hit"] = 0
-            extra_notes.append("🎯 *First strike bonus!* +25%!")
         if pk_a == "trailblazer" and random.random() < 0.15:
             if safe_int(d.get("distract_turns", 0)) < 3:
                 add_charges(d, "distract_turns", 1)
@@ -10817,10 +10812,6 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
                 _mfd_bonus = round(dmg_after_def * 0.20)
                 dmg_after_def += _mfd_bonus; d["hp"] = max(0, d["hp"] - _mfd_bonus)
                 extra_notes.append(f"🎯 *Marked for Death!* +{_mfd_bonus} bonus dmg vs marked target!")
-        if d.get("mana_overload_reflect"):
-            reflect_dmg = d.pop("mana_overload_reflect")
-            a["hp"] = max(1, a["hp"] - reflect_dmg)
-            extra_notes.append(f"⚡ *Mana Overload!* {d['username']} reflects *{reflect_dmg} dmg*!")
         if "harmonize" in get_all_passive_keys(a):
             a["harmony_stacks"] = min(3, safe_int(a.get("harmony_stacks", 0)) + 1)
         if pk_a == "melody":
@@ -10886,6 +10877,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             _cs_reduce = round(dmg_after_def * 0.10)
             d["hp"] = min(calc_max_hp(d), d["hp"] + _cs_reduce)
             extra_notes.append(f"🐍 *Coiling Stance!* {d['username']} resists — {_cs_reduce} damage absorbed!")
+
+    # mana_overload_reflect fires regardless of attacker class
+    if d.get("mana_overload_reflect"):
+        reflect_dmg = d.pop("mana_overload_reflect")
+        a["hp"] = max(1, a["hp"] - reflect_dmg)
+        extra_notes.append(f"⚡ *Mana Overload!* {d['username']} reflects *{reflect_dmg} dmg*!")
 
     # ── Automatic class affliction proc (15% per hit) ────────────────────────
     _line_a_auto = get_class_line(a) if cls_a else None
@@ -11636,8 +11633,35 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if d["hp"] <= 0:
                 apply_pvp_death(d, a["username"], kc["name"], killer_id=uid)
                 a["wins"] = a.get("wins", 0) + 1
-                add_exp(a, 60 + a["level"] * 8, get_weather())
+                a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
+                if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
+                    a["max_kill_streak"] = a["kill_streak"]
+                _fin_today = datetime.now().strftime("%Y-%m-%d")
+                if a.get("kills_today_date") != _fin_today:
+                    a["kills_today"] = 0; a["kills_today_date"] = _fin_today
+                a["kills_today"] = safe_int(a.get("kills_today")) + 1
+                if a["kills_today"] >= 5: a["is_wanted"] = 1
+                _fin_exp = 60 + a["level"] * 8
+                add_exp(a, _fin_exp, get_weather())
+                for _fd, _fe, _fg in track_objective(a, "pvp_win"):
+                    a["gold"] = a.get("gold", 0) + _fg; add_exp(a, _fe)
+                _fin_cls_a = get_player_class(a)
+                if _fin_cls_a and _fin_cls_a.get("passive_key") == "dead_or_alive":
+                    d["defeated_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
+                a_guild = get_guild(a.get("guild_id")) if a.get("guild_id") else None
+                d_guild = get_guild(d.get("guild_id")) if d.get("guild_id") else None
+                if a_guild and d_guild and a_guild["guild_id"] != d_guild["guild_id"]:
+                    war_gw = get_active_war(a_guild["guild_id"], d_guild["guild_id"])
+                    if war_gw:
+                        _db_fw = _db(); _c_fw = _db_fw.cursor()
+                        if str(war_gw["guild1_id"]) == str(a_guild["guild_id"]):
+                            _c_fw.execute("UPDATE guild_wars SET kills1=kills1+1 WHERE war_id=?", (war_gw["war_id"],))
+                        else:
+                            _c_fw.execute("UPDATE guild_wars SET kills2=kills2+1 WHERE war_id=?", (war_gw["war_id"],))
+                        _db_fw.commit()
+                check_titles(a); check_titles(d)
                 save_player(a); save_player(d)
+                _fire(check_and_claim_bounty(context.bot, a, d, _pvp_origin_chat.get(pair, uid)))
                 _cb_unlock(uid)
                 await _finalize_pvp(pair, kill_msg, context.bot)
             else:
@@ -17212,6 +17236,21 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 p["silence_turns"] -= 1
                 save_player(p)
             await send_result("🤐 You are silenced — can't use skills!"); return
+        # Block stunned/frozen/entangled players from using skills (mirrors _execute_pvp_hit CC check)
+        if stype not in _support_types:
+            if safe_int(p.get("stun_turns")) > 0:
+                p["stun_turns"] -= 1; save_player(p)
+                await send_result(f"😵 You are *Stunned* — can't act this turn!"); return
+            if safe_int(p.get("freeze_turns")) > 0:
+                p["freeze_turns"] -= 1; save_player(p)
+                await send_result(f"🧊 You are *Frozen* — can't act this turn!"); return
+            if safe_int(p.get("entangle_turns")) > 0:
+                p["entangle_turns"] -= 1; save_player(p)
+                await send_result(f"🌿 You are *Entangled* — can't act this turn!"); return
+        # Acquire per-player lock to prevent concurrent skill+attack races
+        if not _cb_lock(uid):
+            await query.answer("Still processing — try again!", show_alert=True)
+            return
         # Per-action charge burn on skill turns (mirrors the attack-turn burn in _execute_pvp_hit)
         _skill_turn_changed = False
         for _sf in ("heal_blocked_turns", "hex_turns", "revive_blocked_turns"):
@@ -17222,11 +17261,11 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Override send_result for PvP: log to battle log and update DM fight cards
         _pvp_pair_k = _pvp_pair_key(uid, target_uid)
         async def send_result(text):  # noqa: F811
-            _pvp_log_append(_pvp_pair_k, text[:300])
+            _pvp_log_append(_pvp_pair_k, text[:4096])
             p_upd  = get_player(uid) or p
             tp_upd = get_player(target_uid) or tp
             _cb_unlock(uid)
-            await _pvp_notify_both(_pvp_pair_k, p_upd, tp_upd, uid, target_uid, text[:300], context.bot)
+            await _pvp_notify_both(_pvp_pair_k, p_upd, tp_upd, uid, target_uid, text[:4096], context.bot)
         base = calc_attack_damage(p, w)
         out = [f"⚡ *{p['username']}* uses *{sk['name']}*!"]
         # ── Self / group skills — execute on caster, no target needed ──
@@ -17832,6 +17871,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             out.append(f"💀 *{tp['username']}* has been defeated by {sk['name']}!")
             for _d, _e, _g in track_objective(p, "pvp_win"):
                 p["gold"] = p.get("gold", 0) + _g; add_exp(p, _e)
+            _sk_exp = 60 + p["level"] * 8
+            add_exp(p, _sk_exp, w)
+            out.append(f"✨ +{_sk_exp} EXP")
+            check_titles(p); check_titles(tp)
         save_player(p); save_player(tp)
         _sk_result_text = "\n".join(out)
         _sk_pair = _pvp_pair_key(uid, target_uid)
@@ -22577,1492 +22620,6 @@ async def bonds_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         pass
 
-
-async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user; p = get_player(user.id)
-    chat_id = update.effective_chat.id
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    if is_defeated(p):
-        await send_group(update, "💀 You're defeated  -  can't duel!", delay=9); return
-    if is_invincible(p):
-        await send_group(update, "🛡️ You're *Still Recovering*  -  can't duel while invincible.", delay=9); return
-
-    # Reply-to-message shortcut: replying to a challenge message counts as /duel accept
-    if update.message.reply_to_message and (not context.args or context.args[0].lower() != "accept"):
-        replied_uid = update.message.reply_to_message.from_user.id
-        if replied_uid != user.id:
-            duel_check = pending_duels.get(replied_uid)
-            if duel_check and duel_check["target_id"] == user.id and duel_check["chat_id"] == chat_id:
-                if datetime.now() < datetime.fromisoformat(duel_check["expires"]):
-                    context.args = ["accept"]
-                else:
-                    pending_duels.pop(replied_uid, None)
-                    await send_group(update, "⏰ That duel challenge has already expired.", delay=9)
-                    return
-
-    if context.args and context.args[0].lower() == "accept":
-        duel = None; challenger_id = None
-        for cid, d in list(pending_duels.items()):
-            if d["target_id"] == user.id and d["chat_id"] == chat_id:
-                if datetime.now() < datetime.fromisoformat(d["expires"]):
-                    duel = d; challenger_id = cid; break
-                else:
-                    pending_duels.pop(cid, None)
-        if not duel:
-            await send_group(update, "No pending duel challenge for you!", delay=9); return
-        challenger = get_player(challenger_id)
-        if not challenger:
-            pending_duels.pop(challenger_id, None)
-            await send_group(update, "Challenger not found.", delay=9); return
-        wager = duel["wager"]
-        if wager > 0 and p["gold"] < wager:
-            await send_group(update,
-                f"❌ You need {wager}g for the wager. Have {p['gold']}g.", delay=9); return
-        if wager > 0 and challenger["gold"] < wager:
-            pending_duels.pop(challenger_id, None)
-            await send_group(update, "Challenger can no longer afford the wager.", delay=9); return
-        pending_duels.pop(challenger_id, None)
-        # Deduct wager from both players upfront, then award wager*2 to winner
-        if wager > 0:
-            p["gold"]          = max(0, p.get("gold", 0) - wager)
-            challenger["gold"] = max(0, challenger.get("gold", 0) - wager)
-        cp_a = calc_combat_power(challenger)
-        cp_b = calc_combat_power(p)
-        total = cp_a + cp_b
-        winner = challenger if random.random() < (cp_a / total) else p
-        loser  = p if winner["user_id"] == challenger["user_id"] else challenger
-        if wager > 0:
-            winner["gold"] = winner.get("gold",0) + wager * 2
-        winner["wins"] = winner.get("wins",0) + 1
-        save_player(winner); save_player(loser)
-        lines = [
-            f"⚔️ *DUEL  -  {challenger['username']} vs {p['username']}*",
-            f"━━━━━━━━━━━━━━━━",
-            f"🔢 {challenger['username']} CP: *{cp_a:,}*",
-            f"🔢 {p['username']} CP: *{cp_b:,}*",
-            f"━━━━━━━━━━━━━━━━",
-        ]
-        advantage = abs(cp_a - cp_b)
-        if advantage < total * 0.05:
-            lines.append("⚡ *Perfectly matched!* It could have gone either way...")
-        elif winner["user_id"] == challenger["user_id"]:
-            lines.append(f"📈 {challenger['username']} had the edge  -  *{cp_a - cp_b:,} CP advantage!*")
-        else:
-            lines.append(f"📈 {p['username']} had the edge  -  *{cp_b - cp_a:,} CP advantage!*")
-        lines.append(f"\n🏆 *{winner['username']}* wins the duel!")
-        if wager > 0:
-            lines.append(f"💰 +{wager}g collected from {loser['username']}.")
-        await send_group(update, "\n".join(lines), permanent=False, delay=60)
-        return
-
-    if not update.message.reply_to_message:
-        await send_group(update,
-            "Reply to a player's message to challenge them!\n"
-            "`/duel`  -  pick wager via buttons\n"
-            "`/duel 500`  -  duel with 500g wager", delay=9); return
-    du = update.message.reply_to_message.from_user
-    if du.id == user.id:
-        await send_group(update, "Can't duel yourself!", delay=9); return
-    tp = get_player(du.id)
-    if not tp:
-        await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
-    if is_defeated(tp):
-        await send_group(update, f"{tp['username']} is currently defeated — can't duel them.", delay=9); return
-    # Show wager buttons when no amount typed
-    if not context.args:
-        cp_self = calc_combat_power(p)
-        cp_them = calc_combat_power(tp)
-        wagers = [0, 100, 500, 1000, 5000]
-        buttons = []
-        row = []
-        for w in wagers:
-            can_afford = p.get("gold", 0) >= w
-            label = "⚔️ Free Duel" if w == 0 else f"{'✅' if can_afford else '🔴'} {w:,}g wager"
-            row.append(InlineKeyboardButton(label,
-                callback_data=f"duelwager_{user.id}_{du.id}_{w}"))
-            if len(row) == 2 or w == 0:
-                buttons.append(row); row = []
-        if row: buttons.append(row)
-        markup = InlineKeyboardMarkup(buttons)
-        await send_group(update,
-            f"⚔️ *Duel Challenge — {p['username']} vs {tp['username']}*\n\n"
-            f"Your CP: *{cp_self:,}*  |  Their CP: *{cp_them:,}*\n\n"
-            f"Pick a wager amount:",
-            delay=60, reply_markup=markup)
-        return
-    wager = 0
-    if context.args:
-        try: wager = max(0, int(context.args[0]))
-        except: pass
-    if wager > 0 and p["gold"] < wager:
-        await send_group(update,
-            f"❌ Need {wager}g for this wager. Have {p['gold']}g.", delay=9); return
-    pending_duels[user.id] = {
-        "target_id": du.id, "wager": wager,
-        "chat_id": chat_id,
-        "expires": (datetime.now() + timedelta(minutes=5)).isoformat()
-    }
-    cp_self = calc_combat_power(p)
-    wager_str = f" for *{wager}g*" if wager > 0 else " (no wager)"
-    duel_markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Accept", callback_data=f"duel_acc_{user.id}_{du.id}"),
-        InlineKeyboardButton("❌ Decline", callback_data=f"duel_dec_{user.id}_{du.id}"),
-    ]])
-    await send_group(update,
-        f"⚔️ *{user.first_name}* challenges *{du.first_name}* to a duel{wager_str}!\n\n"
-        f"🔢 {user.first_name}'s CP: *{cp_self:,}*\n\n"
-        f"_{du.first_name}: tap Accept/Decline or type `/duel accept`. Expires in 5m._",
-        permanent=False, delay=60, reply_markup=duel_markup)
-
-async def duel_wager_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle duel wager selection button."""
-    query = update.callback_query
-    parts = query.data.split("_", 3)  # duelwager_{challenger}_{target}_{wager}
-    try:
-        challenger_uid = int(parts[1]); target_uid = int(parts[2]); wager = int(parts[3])
-    except (IndexError, ValueError):
-        await query.answer(); return
-    if query.from_user.id != challenger_uid:
-        await query.answer("This isn't your duel!", show_alert=True); return
-    await query.answer()
-
-    p  = get_player(challenger_uid)
-    tp = get_player(target_uid)
-    if not p or not tp:
-        await query.edit_message_text("Player not found."); return
-    if is_defeated(tp):
-        await query.edit_message_text(f"{tp['username']} is now defeated — can't duel them."); return
-    if wager > 0 and p.get("gold", 0) < wager:
-        await query.edit_message_text(
-            f"❌ Not enough gold! Need *{wager:,}g*, have *{p.get('gold',0):,}g*.",
-            parse_mode="Markdown"); return
-
-    chat_id = query.message.chat_id
-    pending_duels[challenger_uid] = {
-        "target_id": target_uid, "wager": wager,
-        "chat_id": chat_id,
-        "expires": (datetime.now() + timedelta(minutes=5)).isoformat()
-    }
-    cp_self = calc_combat_power(p)
-    wager_str = f" for *{wager:,}g*" if wager > 0 else " (no wager)"
-    duel_markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Accept", callback_data=f"duel_acc_{challenger_uid}_{target_uid}"),
-        InlineKeyboardButton("❌ Decline", callback_data=f"duel_dec_{challenger_uid}_{target_uid}"),
-    ]])
-    await query.edit_message_text(
-        f"⚔️ *{p['username']}* challenges *{tp['username']}* to a duel{wager_str}!\n\n"
-        f"🔢 {p['username']}'s CP: *{cp_self:,}*\n\n"
-        f"_{tp['username']}: tap Accept/Decline or type `/duel accept`. Expires in 5m._",
-        parse_mode="Markdown", reply_markup=duel_markup)
-
-
-async def duel_response_callback(update, context):
-    """Handle duel Accept/Decline button presses."""
-    query = update.callback_query
-    await query.answer()
-    data = query.data  # duel_acc_{challenger_uid}_{target_uid} or duel_dec_...
-    parts = data.split("_")
-    # parts: ['duel','acc'/'dec', challenger_uid, target_uid]
-    if len(parts) < 4:
-        return
-    action = parts[1]  # 'acc' or 'dec'
-    try:
-        challenger_uid = int(parts[2])
-        target_uid     = int(parts[3])
-    except (ValueError, IndexError):
-        return
-
-    if query.from_user.id != target_uid:
-        await query.answer("This duel challenge isn't for you!", show_alert=True)
-        return
-
-    if action == "dec":
-        pending_duels.pop(challenger_uid, None)
-        try:
-            await query.edit_message_text("❌ Duel declined.", parse_mode="Markdown")
-        except Exception:
-            pass
-        return
-
-    # action == "acc" — run the accept logic
-    duel = pending_duels.get(challenger_uid)
-    if not duel:
-        await query.answer("No pending duel found!", show_alert=True)
-        return
-    if duel["target_id"] != target_uid:
-        await query.answer("This duel challenge isn't for you!", show_alert=True)
-        return
-    if datetime.now() > datetime.fromisoformat(duel["expires"]):
-        pending_duels.pop(challenger_uid, None)
-        await query.answer("Duel challenge has expired!", show_alert=True)
-        return
-
-    p = get_player(target_uid)
-    challenger = get_player(challenger_uid)
-    if not p or not challenger:
-        await query.answer("Player data not found!", show_alert=True)
-        return
-
-    wager = duel["wager"]
-    if wager > 0 and p.get("gold", 0) < wager:
-        await query.answer(f"You need {wager}g for the wager!", show_alert=True)
-        return
-    if wager > 0 and challenger.get("gold", 0) < wager:
-        pending_duels.pop(challenger_uid, None)
-        await query.answer("Challenger can no longer afford the wager!", show_alert=True)
-        return
-
-    pending_duels.pop(challenger_uid, None)
-    # Deduct wager from both players upfront, then award wager*2 to winner
-    if wager > 0:
-        p["gold"]          = max(0, p.get("gold", 0) - wager)
-        challenger["gold"] = max(0, challenger.get("gold", 0) - wager)
-    cp_a = calc_combat_power(challenger)
-    cp_b = calc_combat_power(p)
-    total = cp_a + cp_b
-    winner = challenger if random.random() < (cp_a / total) else p
-    loser  = p if winner["user_id"] == challenger["user_id"] else challenger
-    if wager > 0:
-        winner["gold"] = winner.get("gold",0) + wager * 2
-    winner["wins"] = winner.get("wins",0) + 1
-    save_player(winner); save_player(loser)
-    lines = [
-        f"⚔️ *DUEL  -  {challenger['username']} vs {p['username']}*",
-        f"━━━━━━━━━━━━━━━━",
-        f"🔢 {challenger['username']} CP: *{cp_a:,}*",
-        f"🔢 {p['username']} CP: *{cp_b:,}*",
-        f"━━━━━━━━━━━━━━━━",
-    ]
-    advantage = abs(cp_a - cp_b)
-    if advantage < total * 0.05:
-        lines.append("⚡ *Perfectly matched!* It could have gone either way...")
-    elif winner["user_id"] == challenger["user_id"]:
-        lines.append(f"📈 {challenger['username']} had the edge  -  *{cp_a - cp_b:,} CP advantage!*")
-    else:
-        lines.append(f"📈 {p['username']} had the edge  -  *{cp_b - cp_a:,} CP advantage!*")
-    lines.append(f"\n🏆 *{winner['username']}* wins the duel!")
-    if wager > 0:
-        lines.append(f"💰 +{wager}g collected from {loser['username']}.")
-    result_text = "\n".join(lines)
-    try:
-        await query.edit_message_text(text=result_text[:4096], parse_mode="Markdown")
-    except Exception:
-        try:
-            await query.get_bot().send_message(
-                chat_id=duel.get("chat_id", query.message.chat.id),
-                text=result_text[:4096], parse_mode="Markdown")
-        except Exception:
-            pass
-
-# ── ARENA ─────────────────────────────────────────────────────────────────────
-def _arena_state():
-    return {
-        "atk_mod": 1.0, "def_mod": 1.0,
-        "dot_type": None, "dot_dmg": 0, "dot_turns": 0,
-        "acc_debuff": False, "acc_debuff_pct": 0.0,
-        "charge_ready": False, "charge_mult": 1.0,
-        "shield_turns": 0, "shield_pct": 0.0,
-        "buff_turns": 0, "debuff_turns": 0,
-        "taunt": False, "skip_turns": 0,
-        "heal_block_turns": 0, "bind_turns": 0,
-        "skill_block_turns": 0,
-        "regen_hp": 0, "regen_turns": 0,
-        "reflect_on_hit": 0, "reflect_turns": 0,
-        "reflect_dot": 0, "reflect_dot_turns": 0,
-        "next_atk_bonus": 1.0,
-        "amplify_pct": 1.0,
-        "miss_next_enemy": False,
-        "ambush_bonus": 1.0,
-        "mark_bonus": 1.0, "mark_attacks": 0,
-        "extra_dmg_per_hit": 0, "extra_dmg_turns": 0,
-    }
-
-def build_arena_card(arena, viewer_uid=None):
-    """Pokémon-style arena card: opponent at top, self at bottom, log at bottom."""
-    p1 = arena["p1"]; p2 = arena["p2"]
-    hp1 = arena["p1_hp"]; hp2 = arena["p2_hp"]
-    max1 = arena["p1_max"]; max2 = arena["p2_max"]
-    def bar(hp, mx, length=10):
-        filled = max(0, round((hp / max(1, mx)) * length))
-        return "█" * filled + "░" * (length - filled)
-    turn_name = p1["username"] if arena["turn"] == arena["p1_id"] else p2["username"]
-    # Perspective: if viewer_uid set, show opponent at top; else show p1 at top
-    if viewer_uid and viewer_uid == arena["p2_id"]:
-        top_p, top_hp, top_max = p1, hp1, max1
-        bot_p, bot_hp, bot_max = p2, hp2, max2
-    else:
-        top_p, top_hp, top_max = p1, hp1, max1
-        bot_p, bot_hp, bot_max = p2, hp2, max2
-    top_name = top_p["username"]; bot_name = bot_p["username"]
-    top_s = _compact_status_emojis(top_p)
-    bot_s = _compact_status_emojis(bot_p)
-    lines = ["🎪 *ARENA BATTLE*", ""]
-    lines.append(f"👾 *{top_name}*{'  ' + top_s if top_s else ''}")
-    lines.append(f"`{bar(top_hp, top_max)}`  {top_hp}/{top_max} HP")
-    lines.append("")
-    lines.append(f"👤 *{bot_name}*{'  ' + bot_s if bot_s else ''}")
-    lines.append(f"`{bar(bot_hp, bot_max)}`  {bot_hp}/{bot_max} HP")
-    if arena["status"] == "done":
-        winner = p1["username"] if hp1 > 0 else p2["username"]
-        lines.append("")
-        lines.append(f"🏆 *{winner} WINS!*")
-    else:
-        lines.append(f"\n⏳ *{turn_name}'s turn*")
-    log = arena.get("log", [])
-    if log:
-        lines.append("")
-        lines.append("─────────────")
-        for entry in log[-3:]:
-            lines.append(entry)
-    return "\n".join(lines)
-
-def build_arena_markup(arena, chat_id):
-    """Return InlineKeyboardMarkup for the current player's turn, or None if done."""
-    if arena["status"] == "done":
-        return None
-    uid = arena["turn"]
-    p = get_player(uid)
-    skills = sjl(p.get("all_skills"), []) if p else []
-    rows = [[
-        InlineKeyboardButton("⚔️ Attack", callback_data=f"arena_act_{chat_id}_{uid}_atk"),
-        InlineKeyboardButton("🏃 Flee",   callback_data=f"arena_act_{chat_id}_{uid}_flee"),
-    ]]
-    skill_row = []
-    for i, sk in enumerate(skills):
-        skill_row.append(InlineKeyboardButton(
-            f"✨ {sk['name']}", callback_data=f"arena_act_{chat_id}_{uid}_skl_{i}"
-        ))
-        if len(skill_row) == 2:
-            rows.append(skill_row)
-            skill_row = []
-    if skill_row:
-        rows.append(skill_row)
-    return InlineKeyboardMarkup(rows)
-
-async def arena_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user; p = get_player(user.id)
-    chat_id = update.effective_chat.id
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    if is_defeated(p): await send_group(update, _defeated_msg(p), delay=15); return
-    if is_invincible(p):
-        await send_group(update, "🛡️ You're *Still Recovering*  -  can't arena while invincible.", delay=9); return
-
-    # Reply-to-message shortcut: replying to a challenge message counts as /arena accept
-    if update.message.reply_to_message and (not context.args or context.args[0].lower() != "accept"):
-        replied_uid = update.message.reply_to_message.from_user.id
-        if replied_uid != user.id:
-            arena_check = active_arenas.get(chat_id)
-            if (arena_check
-                    and arena_check["status"] == "waiting"
-                    and arena_check["p1_id"] == replied_uid
-                    and arena_check["p2_id"] == user.id):
-                if datetime.now() < datetime.fromisoformat(arena_check["expires"]):
-                    context.args = ["accept"]
-                else:
-                    active_arenas.pop(chat_id, None)
-                    await send_group(update, "⏰ That arena challenge has already expired.", delay=9)
-                    return
-
-    # /arena accept
-    if context.args and context.args[0].lower() == "accept":
-        arena = active_arenas.get(chat_id)
-        if not arena or arena["status"] != "waiting":
-            await send_group(update, "No pending arena challenge here!", delay=9); return
-        if arena["p2_id"] != user.id:
-            await send_group(update, "This challenge isn't for you!", delay=9); return
-        if datetime.now() > datetime.fromisoformat(arena["expires"]):
-            active_arenas.pop(chat_id, None)
-            await send_group(update, "Challenge expired.", delay=9); return
-        wager = arena["wager"]
-        if wager > 0 and p["gold"] < wager:
-            await send_group(update, f"❌ Need {wager}g. Have {p['gold']}g.", delay=9); return
-        p1 = get_player(arena["p1_id"])
-        if not p1:
-            active_arenas.pop(chat_id, None); return
-        if wager > 0 and p1["gold"] < wager:
-            active_arenas.pop(chat_id, None)
-            await send_group(update, "❌ Challenger can no longer afford the wager.", delay=9); return
-        if wager > 0:
-            p["gold"] = p.get("gold", 0) - wager
-            p1["gold"] = p1.get("gold", 0) - wager
-            save_player(p)
-            save_player(p1)
-        arena["p1"] = p1; arena["p2"] = p
-        arena["p1_hp"]  = p1["max_hp"]; arena["p2_hp"]  = p["max_hp"]
-        arena["p1_max"] = p1["max_hp"]; arena["p2_max"] = p["max_hp"]
-        arena["p1_items"] = dict(Counter(sjl(p1.get("inventory"),[])))
-        arena["p2_items"] = dict(Counter(sjl(p.get("inventory"),[])))
-        arena["turn"]   = arena["p1_id"]
-        arena["round"]  = 1
-        arena["status"] = "active"
-        arena["log"]    = ["⚔️ Arena battle begins!"]
-        card_text = build_arena_card(arena)
-        markup = build_arena_markup(arena, chat_id)
-        try:
-            msg = await update.get_bot().send_message(
-                chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown",
-                reply_markup=markup)
-            arena["msg_id"] = msg.message_id
-        except Exception:
-            arena["msg_id"] = None
-        return
-
-    # Active arena turn handling
-    arena = active_arenas.get(chat_id)
-    if arena and arena["status"] == "active":
-        if arena["turn"] != user.id:
-            await send_group(update, "It's not your turn!", delay=5); return
-        is_p1 = (user.id == arena["p1_id"])
-        attacker_data  = arena["p1"] if is_p1 else arena["p2"]
-        defender_data  = arena["p2"] if is_p1 else arena["p1"]
-        atk_hp_key     = "p1_hp" if is_p1 else "p2_hp"
-        def_hp_key     = "p2_hp" if is_p1 else "p1_hp"
-        atk_max_key    = "p1_max" if is_p1 else "p2_max"
-        def_max_key    = "p2_max" if is_p1 else "p1_max"
-        atk_items_key  = "p1_items" if is_p1 else "p2_items"
-        atk_state_key  = "p1_state" if is_p1 else "p2_state"
-        def_state_key  = "p2_state" if is_p1 else "p1_state"
-        atk_name  = attacker_data["username"]
-        def_name  = defender_data["username"]
-        atk_state = arena[atk_state_key]
-        def_state = arena[def_state_key]
-        log_entry = ""
-
-        # Turn-start effects for the ACTING player
-        if atk_state["dot_turns"] > 0:
-            arena[atk_hp_key] = max(0, arena[atk_hp_key] - atk_state["dot_dmg"])
-            atk_state["dot_turns"] -= 1
-            arena["log"].append(f"🩸 {atk_name} takes {atk_state['dot_dmg']} from {atk_state['dot_type']}!")
-            if atk_state["dot_turns"] == 0:
-                atk_state["dot_type"] = None; atk_state["dot_dmg"] = 0
-            if arena[atk_hp_key] <= 0:
-                arena["status"] = "done"
-                winner_id = arena["p2_id"] if is_p1 else arena["p1_id"]
-                loser_id  = arena["p1_id"] if is_p1 else arena["p2_id"]
-                wp = get_player(winner_id); lp = get_player(loser_id)
-                wager = arena["wager"]
-                if wp and lp:
-                    if wager > 0: wp["gold"] = wp.get("gold",0) + wager * 2
-                    wp["wins"] = wp.get("wins",0) + 1
-                    for _d, _e, _g in track_objective(wp, "arena_win"):
-                        wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
-                    add_exp(wp, 50 + wp["level"] * 5)
-                    save_player(wp); save_player(lp)
-                w_name = wp["username"] if wp else "Unknown"
-                arena["log"].append(f"☠️ {atk_name} falls to DOT! 🏆 *{w_name}* wins!")
-                active_arenas.pop(chat_id, None)
-                card_text = build_arena_card(arena)
-                if arena.get("msg_id"):
-                    try: await update.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
-                    except Exception: pass
-                try:
-                    await update.get_bot().send_message(chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown")
-                except Exception: pass
-                return
-        if atk_state["regen_turns"] > 0:
-            arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + atk_state["regen_hp"])
-            atk_state["regen_turns"] -= 1
-            arena["log"].append(f"💚 {atk_name} regenerates {atk_state['regen_hp']} HP!")
-        if atk_state["buff_turns"] > 0:
-            atk_state["buff_turns"] -= 1
-            if atk_state["buff_turns"] == 0: atk_state["atk_mod"] = 1.0
-        if atk_state["debuff_turns"] > 0:
-            atk_state["debuff_turns"] -= 1
-            if atk_state["debuff_turns"] == 0:
-                atk_state["def_mod"] = 1.0; atk_state["acc_debuff"] = False; atk_state["acc_debuff_pct"] = 0.0
-        for timer_key in ["heal_block_turns","bind_turns","skill_block_turns","extra_dmg_turns"]:
-            if atk_state.get(timer_key, 0) > 0:
-                atk_state[timer_key] -= 1
-        if atk_state.get("reflect_turns", 0) > 0:
-            atk_state["reflect_turns"] -= 1
-            if atk_state["reflect_turns"] == 0: atk_state["reflect_on_hit"] = 0
-        if atk_state.get("reflect_dot_turns", 0) > 0:
-            atk_state["reflect_dot_turns"] -= 1
-            if atk_state["reflect_dot_turns"] == 0: atk_state["reflect_dot"] = 0
-        if atk_state.get("skip_turns", 0) > 0:
-            atk_state["skip_turns"] -= 1
-            arena["log"].append(f"⚡ {atk_name} is stunned  -  turn skipped!")
-            arena["turn"] = arena["p2_id"] if is_p1 else arena["p1_id"]
-            arena["round"] += 1
-            card_text = build_arena_card(arena)
-            stun_markup = build_arena_markup(arena, chat_id)
-            if arena.get("msg_id"):
-                try:
-                    await update.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
-                except Exception: pass
-            try:
-                msg = await update.get_bot().send_message(
-                    chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown",
-                    reply_markup=stun_markup)
-                arena["msg_id"] = msg.message_id
-            except Exception: pass
-            return
-
-        action = context.args[0].lower() if context.args else "attack"
-
-        if atk_state.get("bind_turns", 0) > 0 and action in ("skill","item"):
-            await send_group(update, "⛓️ You are bound  -  only `/arena attack` is available!", delay=5); return
-        if action == "skill" and atk_state.get("skill_block_turns", 0) > 0:
-            await send_group(update, "🤐 You're silenced  -  no skills this turn!", delay=5); return
-
-        w = get_weather()
-        skip_turn_after = False
-
-        if action == "attack":
-            dmg = calc_attack_damage(attacker_data, w)
-            dmg = round(dmg * atk_state["atk_mod"])
-            if atk_state.get("mark_attacks", 0) > 0:
-                dmg = round(dmg * atk_state.get("mark_bonus", 1.0))
-                atk_state["mark_attacks"] -= 1
-                if atk_state["mark_attacks"] == 0: atk_state["mark_bonus"] = 1.0
-            if atk_state.get("ambush_bonus", 1.0) > 1.0:
-                dmg = round(dmg * atk_state["ambush_bonus"])
-                atk_state["ambush_bonus"] = 1.0
-                arena["log"].append(f"🌑 *Ambush!* Bonus damage!")
-            if atk_state.get("next_atk_bonus", 1.0) > 1.0:
-                dmg = round(dmg * atk_state["next_atk_bonus"])
-                atk_state["next_atk_bonus"] = 1.0
-            if atk_state.get("charge_ready"):
-                dmg = round(dmg * atk_state.get("charge_mult", 2.0))
-                atk_state["charge_ready"] = False; atk_state["charge_mult"] = 1.0
-                arena["log"].append(f"💥 *CHARGED STRIKE!*")
-            if atk_state.get("acc_debuff") and random.random() < atk_state.get("acc_debuff_pct", 0.40):
-                arena["log"].append(f"😵 {atk_name} missed  -  accuracy debuffed!")
-                dmg = 0
-            if def_state.get("miss_next_enemy"):
-                def_state["miss_next_enemy"] = False
-                arena["log"].append(f"🌫️ {def_name}'s evasion causes {atk_name} to miss!")
-                dmg = 0
-            # Battle Cry passive: refresh +80 STR (5 hit charges) on each attack
-            _arena_cls = get_player_class(attacker_data)
-            if _arena_cls and _arena_cls.get("passive_key") == "battle_cry":
-                attacker_data["battle_cry_str_hits"] = 5
-                save_player(attacker_data)
-            if dmg > 0 and check_crit(attacker_data):
-                dmg = apply_crit(attacker_data, dmg)
-                log_entry = f"💥 CRIT! {atk_name} hits {def_name} for *{dmg}*!"
-            else:
-                log_entry = f"⚔️ {atk_name} hits {def_name} for *{dmg}*." if dmg > 0 else f"🌀 {atk_name} missed!"
-            if dmg > 0:
-                dmg = round(dmg * def_state.get("def_mod", 1.0))
-                dmg = round(dmg * def_state.get("amplify_pct", 1.0))
-                if def_state.get("extra_dmg_turns", 0) > 0:
-                    dmg += def_state.get("extra_dmg_per_hit", 0)
-                if def_state["shield_turns"] > 0:
-                    dmg = round(dmg * (1 - def_state["shield_pct"]))
-                    def_state["shield_turns"] -= 1
-                    if def_state["shield_turns"] == 0: def_state["shield_pct"] = 0.0
-                if def_state.get("reflect_on_hit", 0) > 0 and def_state.get("reflect_turns", 0) > 0:
-                    arena[atk_hp_key] = max(0, arena[atk_hp_key] - def_state["reflect_on_hit"])
-                    arena["log"].append(f"⚡ {def_name} reflects {def_state['reflect_on_hit']} dmg!")
-                if def_state.get("bind_turns", 0) > 0:
-                    dmg = round(dmg * def_state.get("bind_dmg_mod", 1.0))
-            arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-
-        elif action == "skill":
-            skills = sjl(attacker_data.get("all_skills"), [])
-            sk = None
-            if len(context.args) > 1:
-                arg = " ".join(context.args[1:])
-                if arg.isdigit():
-                    idx = int(arg) - 1
-                    if 0 <= idx < len(skills): sk = skills[idx]
-                if not sk:
-                    sk = next((s for s in skills if s["name"].lower() == arg.lower()), None)
-            if not sk and skills:
-                sk = skills[0]
-            if not sk:
-                await send_group(update, "No skill found.", delay=5); return
-            stype = sk.get("type", "damage")
-            base_dmg = calc_attack_damage(attacker_data, w)
-            base_dmg = round(base_dmg * atk_state["atk_mod"])
-            dmg = 0
-
-            if stype == "atk_buff":
-                atk_state["atk_mod"] = sk.get("atk_mod", 1.40)
-                atk_state["buff_turns"] = sk.get("buff_turns", 3)
-                log_entry = f"💪 {atk_name} uses *{sk['name']}*! ATK ×{sk.get('atk_mod',1.4)} for {sk.get('buff_turns',3)} turns."
-            elif stype in ("def_buff","dmg_reduction_buff"):
-                def_mod = sk.get("def_mod", 0.65)
-                atk_state["def_mod"] = def_mod
-                atk_state["buff_turns"] = sk.get("buff_turns", 2)
-                log_entry = f"🛡️ {atk_name} uses *{sk['name']}*! Damage reduced for {sk.get('buff_turns',2)} turns."
-            elif stype == "self_heal_buff":
-                if atk_state.get("heal_block_turns", 0) > 0:
-                    log_entry = f"🚫 {atk_name}'s healing is blocked!"
-                else:
-                    heal = round(arena[atk_max_key] * 0.20)
-                    arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
-                    add_charges(attacker_data, "battle_cry_str_hits", 2)
-                    save_player(attacker_data)
-                    log_entry = f"💪 {atk_name} uses *{sk['name']}*! +{heal} HP + +80 STR for 2 attacks!"
-            elif stype in ("self_heal","revive_heal"):
-                if atk_state.get("heal_block_turns", 0) > 0:
-                    arena["log"].append(f"🚫 {atk_name} cannot be healed!")
-                    log_entry = f"🚫 {atk_name}'s healing is blocked!"
-                else:
-                    stat_name = sk.get("stat","WIS")
-                    heal_mult = sk.get("mult", sk.get("wis_mult", 4.0))
-                    heal_flat = sk.get("heal_flat", 0)
-                    heal = round(get_stat(attacker_data, stat_name) * heal_mult) + heal_flat
-                    arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
-                    log_entry = f"💚 {atk_name} uses *{sk['name']}*! Restored {heal} HP."
-            elif stype == "heal_shield":
-                if atk_state.get("heal_block_turns", 0) <= 0:
-                    stat_name = sk.get("stat","WIS")
-                    heal = round(get_stat(attacker_data, stat_name) * sk.get("heal_mult", 2.0)) + sk.get("heal_flat", 0)
-                    arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
-                atk_state["shield_pct"] = sk.get("shield_pct", 0.35)
-                atk_state["shield_turns"] = sk.get("shield_turns", 2)
-                log_entry = f"🛡️ {atk_name} uses *{sk['name']}*! Shield + heal applied."
-            elif stype == "dmg_shield":
-                dmg = round(base_dmg * sk.get("dmg_mult", 1.0))
-                if def_state["shield_turns"] > 0:
-                    dmg = round(dmg * (1 - def_state["shield_pct"]))
-                    def_state["shield_turns"] -= 1
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                atk_state["shield_pct"] = sk.get("shield_pct", 0.30)
-                atk_state["shield_turns"] = sk.get("shield_turns", 2)
-                log_entry = f"⚔️🛡️ {atk_name} uses *{sk['name']}*! {dmg} dmg + shield!"
-            elif stype == "stun":
-                dmg = round(base_dmg * sk.get("dmg_mult", 0.80))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                if random.random() < sk.get("stun_chance", 0.75):
-                    def_state["skip_turns"] = def_state.get("skip_turns", 0) + 1
-                    log_entry = f"💫 {atk_name} uses *{sk['name']}*! {dmg} dmg + STUN!"
-                else:
-                    log_entry = f"⚔️ {atk_name} uses *{sk['name']}*! {dmg} dmg. (Stun missed)"
-            elif stype == "stun_dmg":
-                stat_name = sk.get("stat","WIS")
-                dmg = round(get_stat(attacker_data, stat_name) * sk.get("mult", 2.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                if random.random() < sk.get("stun_chance", 0.40):
-                    def_state["skip_turns"] = def_state.get("skip_turns", 0) + 1
-                    log_entry = f"💫 {atk_name} uses *{sk['name']}*! {dmg} dmg + STUN!"
-                else:
-                    log_entry = f"⚔️ {atk_name} uses *{sk['name']}*! {dmg} dmg."
-            elif stype == "def_shred":
-                dmg = round(base_dmg * sk.get("dmg_mult", 0.80))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                def_state["def_mod"] = sk.get("def_mod", 0.60)
-                def_state["debuff_turns"] = sk.get("debuff_turns", 3)
-                log_entry = f"🩹 {atk_name} uses *{sk['name']}*! {dmg} dmg + DEF shred!"
-            elif stype == "multi_hit":
-                hits = sk.get("hits", 3); mult = sk.get("dmg_mult", 0.60)
-                total_dmg = 0
-                for _ in range(hits):
-                    h = round(base_dmg * mult)
-                    if check_crit(attacker_data): h = apply_crit(attacker_data, h)
-                    total_dmg += h
-                arena[def_hp_key] = max(0, arena[def_hp_key] - total_dmg)
-                log_entry = f"⚡ {atk_name} uses *{sk['name']}*! {hits} hits for *{total_dmg}* total!"
-            elif stype in ("charge_nuke","charge_pierce","charge_execute","charge_multihit"):
-                atk_state["charge_ready"] = True
-                atk_state["charge_mult"] = sk.get("charge_mult", sk.get("mult", 2.0))
-                log_entry = f"🔋 {atk_name} is *charging*! Next attack hits at ×{atk_state['charge_mult']}!"
-            elif stype == "charge_heal_shield":
-                atk_state["charge_ready"] = True
-                atk_state["charge_mult"] = 1.0
-                atk_state["charge_heal_pct"] = sk.get("heal_pct", 0.60)
-                atk_state["charge_shield_pct"] = sk.get("shield_pct", 0.40)
-                atk_state["charge_shield_turns"] = sk.get("shield_turns", 2)
-                log_entry = f"🙏 {atk_name} is *channeling*! Next turn: massive heal + shield."
-            elif stype in ("dmg_dot","guaranteed_crit_bleed"):
-                if stype == "guaranteed_crit_bleed":
-                    dmg = apply_crit(attacker_data, round(base_dmg * sk.get("dmg_mult", 1.80)))
-                else:
-                    stat_n = sk.get("stat")
-                    if stat_n:
-                        dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 3.0))
-                    else:
-                        dmg = round(base_dmg * sk.get("dmg_mult", 0.90))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                def_state["dot_type"] = sk.get("dot_type","poison")
-                def_state["dot_dmg"]  = sk.get("dot_dmg", 8)
-                def_state["dot_turns"] = sk.get("dot_turns", 3)
-                log_entry = f"☠️ {atk_name} uses *{sk['name']}*! {dmg} dmg + {def_state['dot_type']} DOT!"
-            elif stype == "hp_drain":
-                drain = round(arena[def_hp_key] * sk.get("drain_pct", 0.35))
-                heal  = round(drain * sk.get("heal_pct", 0.25))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - drain)
-                if atk_state.get("heal_block_turns", 0) <= 0:
-                    arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
-                log_entry = f"🧛 {atk_name} uses *{sk['name']}*! Drained {drain} HP, healed {heal}!"
-            elif stype == "lifesteal":
-                dmg = round(base_dmg * sk.get("dmg_mult", 1.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                heal = round(dmg * sk.get("steal_pct", 0.12))
-                if atk_state.get("heal_block_turns", 0) <= 0:
-                    arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
-                log_entry = f"🩸 {atk_name} uses *{sk['name']}*! {dmg} dmg, +{heal} HP!"
-            elif stype == "crit_execute":
-                threshold = sk.get("execute_threshold", 0.50)
-                hp_pct = arena[def_hp_key] / max(1, arena[def_max_key])
-                mult = sk.get("execute_mult", 1.80) if hp_pct < threshold else sk.get("dmg_mult", 1.20)
-                dmg = apply_crit(attacker_data, round(base_dmg * mult))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                tag = " *(EXECUTE!)*" if hp_pct < threshold else " *(CRIT!)*"
-                log_entry = f"💥 {atk_name} uses *{sk['name']}*!{tag} {dmg} dmg!"
-            elif stype == "dual_buff_debuff":
-                atk_state["atk_mod"] = sk.get("atk_mod", 1.60)
-                atk_state["buff_turns"] = sk.get("buff_turns", 2)
-                def_state["atk_mod"] = sk.get("enemy_atk_mod", 0.80)
-                def_state["debuff_turns"] = sk.get("debuff_turns", 2)
-                log_entry = f"📢 {atk_name} uses *{sk['name']}*! ATK up + enemy ATK down!"
-            elif stype == "dmg_acc_debuff":
-                dmg = round(base_dmg * sk.get("dmg_mult", 1.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                def_state["acc_debuff"] = True
-                def_state["acc_debuff_pct"] = sk.get("acc_debuff_pct", 0.40)
-                def_state["debuff_turns"] = sk.get("debuff_turns", 2)
-                log_entry = f"🎯 {atk_name} uses *{sk['name']}*! {dmg} dmg + accuracy debuff!"
-            elif stype == "acc_debuff_only":
-                def_state["acc_debuff"] = True
-                def_state["acc_debuff_pct"] = sk.get("acc_debuff_pct", 0.50)
-                def_state["debuff_turns"] = sk.get("debuff_turns", 1)
-                log_entry = f"👻 {atk_name} uses *{sk['name']}*! Enemy accuracy reduced!"
-            elif stype == "mark_buff":
-                atk_state["mark_bonus"] = sk.get("mark_bonus", 1.30)
-                atk_state["mark_attacks"] = sk.get("mark_attacks", 3)
-                log_entry = f"🎯 {atk_name} uses *{sk['name']}*! Next {sk.get('mark_attacks',3)} attacks ×{sk.get('mark_bonus',1.3)}!"
-            elif stype == "atk_buff_recoil":
-                atk_state["atk_mod"] = sk.get("atk_mod", 1.50)
-                atk_state["buff_turns"] = sk.get("buff_turns", 2)
-                self_dmg = sk.get("self_dmg", 15)
-                arena[atk_hp_key] = max(0, arena[atk_hp_key] - self_dmg)
-                log_entry = f"💉 {atk_name} uses *{sk['name']}*! ATK boosted but -{self_dmg} HP!"
-            elif stype == "dot_aura":
-                stat_n = sk.get("stat","WIS")
-                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 2.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                atk_state["reflect_dot"] = sk.get("reflect_dot", 6)
-                atk_state["reflect_dot_turns"] = sk.get("reflect_turns", 3)
-                log_entry = f"🔥 {atk_name} uses *{sk['name']}*! {dmg} dmg + radiance aura!"
-            elif stype == "dot_on_attack":
-                atk_state["reflect_on_hit"] = sk.get("reflect_on_hit", 10)
-                atk_state["reflect_turns"] = sk.get("reflect_turns", 3)
-                log_entry = f"⚡ {atk_name} uses *{sk['name']}*! Static field charged  -  {sk.get('reflect_on_hit',10)} dmg on hit!"
-            elif stype == "atk_debuff":
-                dmg = round(base_dmg * sk.get("dmg_mult", 0.70))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                def_state["atk_mod"] = sk.get("enemy_atk_mod", 0.70)
-                def_state["debuff_turns"] = sk.get("debuff_turns", 3)
-                log_entry = f"💀 {atk_name} uses *{sk['name']}*! {dmg} dmg + enemy ATK reduced!"
-            elif stype == "dodge_buff":
-                atk_state["miss_next_enemy"] = sk.get("dodge_next", True)
-                atk_state["next_atk_bonus"] = sk.get("next_atk_bonus", 1.40)
-                log_entry = f"🌫️ {atk_name} uses *{sk['name']}*! Next hit on them misses, next attack boosted!"
-            elif stype == "silence_dmg":
-                dmg = round(base_dmg * sk.get("dmg_mult", 0.90))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                def_state["skill_block_turns"] = sk.get("skill_block_turns", 2)
-                log_entry = f"🤐 {atk_name} uses *{sk['name']}*! {dmg} dmg + silenced for {sk.get('skill_block_turns',2)} turns!"
-            elif stype == "regen":
-                atk_state["regen_hp"] = sk.get("regen_hp", 12)
-                atk_state["regen_turns"] = sk.get("regen_turns", 3)
-                log_entry = f"🌿 {atk_name} uses *{sk['name']}*! Regenerating {sk.get('regen_hp',12)} HP/turn for {sk.get('regen_turns',3)} turns."
-            elif stype == "crit_followup":
-                dmg = round(base_dmg * sk.get("dmg_mult", 0.70))
-                if check_crit(attacker_data):
-                    dmg = apply_crit(attacker_data, dmg)
-                    followup = round(base_dmg * sk.get("followup_mult", 1.20))
-                    arena[def_hp_key] = max(0, arena[def_hp_key] - dmg - followup)
-                    log_entry = f"🌑 {atk_name} uses *{sk['name']}*! CRIT {dmg} + Shadowstep {followup}!"
-                    dmg += followup
-                else:
-                    arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                    log_entry = f"🌑 {atk_name} uses *{sk['name']}*! {dmg} dmg."
-            elif stype == "vanish_ambush":
-                def_state["miss_next_enemy"] = True
-                atk_state["ambush_bonus"] = sk.get("ambush_bonus", 1.80)
-                log_entry = f"👻 {atk_name} *vanishes*! Next enemy attack misses + ambush ready!"
-            elif stype == "pierce_dodge":
-                dmg = round(base_dmg * sk.get("dmg_mult", 1.40))
-                dmg = round(dmg * def_state.get("def_mod", 1.0))
-                dmg = round(dmg * def_state.get("amplify_pct", 1.0))
-                if def_state["shield_turns"] > 0:
-                    dmg = round(dmg * (1 - def_state["shield_pct"]))
-                    def_state["shield_turns"] -= 1
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                log_entry = f"🏹 {atk_name} uses *{sk['name']}*! Piercing shot for {dmg} dmg!"
-            elif stype == "crit_conditional":
-                force_crit = sk.get("first_turn_crit") and arena["round"] <= 2
-                dmg = round(base_dmg * sk.get("dmg_mult", 1.80))
-                if force_crit or check_crit(attacker_data):
-                    dmg = apply_crit(attacker_data, dmg)
-                    log_entry = f"🗡️ {atk_name} uses *{sk['name']}*! CRIT {dmg} dmg!"
-                else:
-                    log_entry = f"🗡️ {atk_name} uses *{sk['name']}*! {dmg} dmg."
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-            elif stype == "dodge_counter":
-                atk_state["miss_next_enemy"] = sk.get("dodge_next", True)
-                counter_dmg = round(base_dmg * sk.get("counter_mult", 0.60))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - counter_dmg)
-                dmg = counter_dmg
-                log_entry = f"💨 {atk_name} uses *{sk['name']}*! Dodge set + counter {counter_dmg}!"
-            elif stype == "hp_percentage_nuke":
-                dmg = round(arena[def_hp_key] * sk.get("pct", 0.50))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                if sk.get("heal_block_turns", 0) > 0:
-                    def_state["heal_block_turns"] = sk["heal_block_turns"]
-                log_entry = f"💀 {atk_name} uses *{sk['name']}*! Ripped {dmg} HP instantly!"
-            elif stype == "dmg_heal_block":
-                stat_n = sk.get("stat","INT")
-                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 3.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                def_state["heal_block_turns"] = sk.get("block_turns", 3)
-                log_entry = f"🚫 {atk_name} uses *{sk['name']}*! {dmg} dmg + heal blocked!"
-            elif stype == "strip_heal_block":
-                stat_n = sk.get("stat","WIS")
-                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 2.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                def_state["atk_mod"] = 1.0; def_state["buff_turns"] = 0
-                def_state["shield_turns"] = 0
-                def_state["heal_block_turns"] = sk.get("heal_block_turns", 2)
-                log_entry = f"✝️ {atk_name} uses *{sk['name']}*! {dmg} dmg + buffs stripped + heal blocked!"
-            elif stype == "amplify_debuff":
-                def_state["extra_dmg_per_hit"] = sk.get("extra_dmg_per_hit", 8)
-                def_state["extra_dmg_turns"] = sk.get("debuff_turns", 3)
-                log_entry = f"🔍 {atk_name} uses *{sk['name']}*! {def_name} takes +{sk.get('extra_dmg_per_hit',8)} per hit for {sk.get('debuff_turns',3)} turns."
-            elif stype == "full_bind":
-                def_state["bind_turns"] = sk.get("bind_turns", 3)
-                def_state["bind_dmg_mod"] = sk.get("dmg_reduction", 0.70)
-                log_entry = f"⛓️ {atk_name} uses *{sk['name']}*! {def_name} bound for {sk.get('bind_turns',3)} turns!"
-            elif stype == "cleanse_nuke_buff":
-                stat_n = sk.get("stat","WIS")
-                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 5.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                for field in ["dot_type","dot_dmg","dot_turns","acc_debuff","debuff_turns","heal_block_turns","bind_turns","skill_block_turns"]:
-                    if field in ("dot_type",): atk_state[field] = None
-                    elif field in ("acc_debuff",): atk_state[field] = False
-                    else: atk_state[field] = 0
-                atk_state["atk_mod"] = sk.get("atk_buff", 1.20)
-                atk_state["buff_turns"] = sk.get("buff_turns", 3)
-                log_entry = f"✨ {atk_name} uses *{sk['name']}*! {dmg} dmg + cleansed + buffed!"
-            elif stype == "everything_debuff_nuke":
-                stat_n = sk.get("stat","WIS")
-                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 8.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                def_state["atk_mod"] = 1.0; def_state["buff_turns"] = 0; def_state["shield_turns"] = 0
-                def_state["dot_type"] = sk.get("dot_type","bleed"); def_state["dot_dmg"] = sk.get("dot_dmg",10); def_state["dot_turns"] = sk.get("dot_turns",3)
-                def_state["acc_debuff"] = True; def_state["acc_debuff_pct"] = sk.get("acc_debuff", 0.30); def_state["debuff_turns"] = sk.get("dot_turns",3)
-                def_state["heal_block_turns"] = sk.get("heal_block_turns", 2)
-                def_state["atk_mod"] = sk.get("atk_debuff", 0.75)
-                log_entry = f"💀 {atk_name} uses *{sk['name']}*! {dmg} MASSIVE dmg + all debuffs!"
-            elif stype == "ignore_def_stat":
-                stat_n = sk.get("stat","DEX")
-                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 2.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                log_entry = f"🎯 {atk_name} uses *{sk['name']}*! Piercing {dmg} dmg (ignores DEF)!"
-            elif stype == "ignore_def_nuke":
-                stat_n = sk.get("stat","STR")
-                combo_stats = sk.get("stat_combo", [stat_n])
-                combo_val = sum(get_stat(attacker_data, s) for s in combo_stats)
-                dmg = round(combo_val * sk.get("mult", 6.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                log_entry = f"⚔️ {atk_name} uses *{sk['name']}*! Unstoppable {dmg} dmg!"
-            elif stype == "nuke_debuff":
-                stat_n = sk.get("stat","DEX")
-                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 5.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                if arena[def_hp_key] > 0 and sk.get("survive_debuff"):
-                    def_state["atk_mod"] = sk["survive_debuff"]
-                    def_state["debuff_turns"] = 99
-                log_entry = f"🏹 {atk_name} uses *{sk['name']}*! {dmg} dmg!"
-            elif stype == "dmg_multi_debuff":
-                dmg = round(base_dmg * sk.get("dmg_mult", 0.60))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                def_state["acc_debuff"] = True; def_state["acc_debuff_pct"] = sk.get("acc_mod", 0.50)
-                def_state["atk_mod"] = sk.get("atk_mod", 0.80); def_state["debuff_turns"] = sk.get("debuff_turns", 2)
-                log_entry = f"🎯 {atk_name} uses *{sk['name']}*! {dmg} dmg + multi-debuff!"
-            elif stype == "amplify_debuff_no_dmg":
-                def_state["amplify_pct"] = sk.get("amplify_pct", 1.25)
-                def_state["debuff_turns"] = sk.get("debuff_turns", 3)
-                log_entry = f"🔍 {atk_name} uses *{sk['name']}*! {def_name} takes 25% more damage for {sk.get('debuff_turns',3)} turns!"
-            elif stype == "stat_nuke":
-                stat_n = sk.get("stat","INT")
-                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 2.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                log_entry = f"🔮 {atk_name} uses *{sk['name']}*! {dmg} dmg!"
-            elif stype == "surge_hit":
-                dmg = round(base_dmg * sk.get("dmg_mult", 1.20))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                log_entry = f"💥 {atk_name} uses *{sk['name']}*! {dmg} dmg!"
-                if random.random() < sk.get("surge_chance", 0.30):
-                    surge_dmg = round(base_dmg * sk.get("surge_mult", 0.60))
-                    arena[def_hp_key] = max(0, arena[def_hp_key] - surge_dmg)
-                    log_entry += f" SURGE! +{surge_dmg}!"
-            elif stype == "dmg_debuff_chance":
-                stat_n = sk.get("stat","INT")
-                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 1.5))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                if random.random() < sk.get("hex_chance", 0.25):
-                    def_state["atk_mod"] = sk.get("hex_mod", 0.80)
-                    def_state["debuff_turns"] = sk.get("hex_turns", 2)
-                    log_entry = f"🌑 {atk_name} uses *{sk['name']}*! {dmg} dmg + HEX!"
-                else:
-                    log_entry = f"🌑 {atk_name} uses *{sk['name']}*! {dmg} dmg."
-            elif stype == "multi_hit_proc":
-                hits = sk.get("hits", 4); mult = sk.get("dmg_mult", 0.50)
-                total_dmg = 0; proc_fired = False
-                for i in range(hits):
-                    h = round(base_dmg * mult)
-                    total_dmg += h
-                    if i == 0 and random.random() < sk.get("proc_chance", 0.30):
-                        def_state["skip_turns"] = def_state.get("skip_turns", 0) + 1
-                        proc_fired = True
-                arena[def_hp_key] = max(0, arena[def_hp_key] - total_dmg)
-                log_entry = f"🏹 {atk_name} uses *{sk['name']}*! {total_dmg} dmg!"
-                if proc_fired: log_entry += " PIN!"
-            elif stype == "crit_announce":
-                dmg = round(base_dmg * sk.get("dmg_mult", 1.10))
-                if check_crit(attacker_data):
-                    dmg = apply_crit(attacker_data, dmg)
-                    log_entry = f"💥 *HEADSHOT!* {atk_name} deals {dmg} dmg!"
-                else:
-                    log_entry = f"🎯 {atk_name} uses *{sk['name']}*! {dmg} dmg."
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-            elif stype == "execute_buff":
-                stat_n = sk.get("stat","AGI")
-                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 4.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                log_entry = f"⚔️ {atk_name} uses *{sk['name']}*! {dmg} dmg!"
-                if arena[def_hp_key] <= 0 and sk.get("kill_atk_bonus"):
-                    atk_state["atk_mod"] = 1.0 + sk["kill_atk_bonus"]
-                    atk_state["buff_turns"] = 99
-                    log_entry += " KILL BONUS  -  ATK surged!"
-            elif stype == "undodgeable_execute":
-                stat_n = sk.get("stat","AGI")
-                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 6.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                log_entry = f"💀 {atk_name} uses *{sk['name']}*! Unavoidable {dmg} dmg!"
-            elif stype == "risky_hit":
-                if random.random() < sk.get("miss_chance", 0.20):
-                    log_entry = f"💨 {atk_name} uses *{sk['name']}*! MISSED the wild swing!"
-                    dmg = 0
-                else:
-                    dmg = round(base_dmg * sk.get("dmg_mult", 1.50))
-                    arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                    log_entry = f"💥 {atk_name} uses *{sk['name']}*! Reckless {dmg} dmg!"
-            elif stype == "stun_nuke":
-                stat_n = sk.get("stat","WIS")
-                dmg = round(get_stat(attacker_data, stat_n) * sk.get("mult", 2.0))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                if random.random() < sk.get("stun_chance", 0.35):
-                    def_state["skip_turns"] = def_state.get("skip_turns", 0) + 1
-                    log_entry = f"🌑 {atk_name} uses *{sk['name']}*! {dmg} dmg + STUN!"
-                else:
-                    log_entry = f"🌑 {atk_name} uses *{sk['name']}*! {dmg} dmg."
-            else:
-                dmg = round(base_dmg * sk.get("dmg_mult", sk.get("mult", 1.2)))
-                arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-                log_entry = f"⚡ {atk_name} uses *{sk['name']}*! {dmg} dmg."
-
-        elif action == "item":
-            if len(context.args) < 2:
-                await send_group(update, "Usage: /arena item [item name]", delay=5); return
-            item_name = " ".join(context.args[1:])
-            items = arena[atk_items_key]
-            if not items.get(item_name, 0):
-                await send_group(update, f"You don't have *{item_name}* in your arena kit.", delay=5); return
-            if atk_state.get("heal_block_turns", 0) > 0 and ("Chalk" in item_name or "Flask" in item_name):
-                arena["log"].append(f"🚫 {atk_name}'s healing is blocked!")
-                await send_group(update, "Your healing is blocked!", delay=5); return
-            items[item_name] -= 1
-            if items[item_name] <= 0: del items[item_name]
-            if "Health Potion" in item_name or "Restorative Flask" in item_name or "Greater Health" in item_name:
-                heal_val = {"Health Potion":250,"Greater Health Potion":500,"Grand Restorative Flask":1500}.get(item_name,250)
-                arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal_val)
-                log_entry = f"🧪 {atk_name} drinks *{item_name}*! +{heal_val} HP."
-            else:
-                log_entry = f"🎒 {atk_name} used *{item_name}*."
-        else:
-            await send_group(update, "Use: `/arena attack`, `/arena skill [number]`, `/arena item [name]`", delay=5); return
-
-        if log_entry:
-            arena["log"].append(log_entry)
-
-        if arena["p1_hp"] <= 0 or arena["p2_hp"] <= 0:
-            arena["status"] = "done"
-            winner_id = arena["p1_id"] if arena["p1_hp"] > 0 else arena["p2_id"]
-            loser_id  = arena["p2_id"] if winner_id == arena["p1_id"] else arena["p1_id"]
-            wp = get_player(winner_id); lp = get_player(loser_id)
-            wager = arena["wager"]
-            if wp and lp:
-                if wager > 0:
-                    wp["gold"] = wp.get("gold",0) + wager * 2
-                wp["wins"] = wp.get("wins",0) + 1
-                for _d, _e, _g in track_objective(wp, "arena_win"):
-                    wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
-                _fire(check_and_claim_bounty(update.get_bot(), wp, lp, chat_id))
-                exp_gain = 50 + wp["level"] * 5
-                add_exp(wp, exp_gain)
-                save_player(wp); save_player(lp)
-            w_name = arena["p1"]["username"] if arena["p1_hp"] > 0 else arena["p2"]["username"]
-            arena["log"].append(f"🏆 *{w_name}* wins the arena!")
-            active_arenas.pop(chat_id, None)
-        else:
-            arena["turn"] = arena["p2_id"] if is_p1 else arena["p1_id"]
-            arena["round"] += 1
-
-        card_text = build_arena_card(arena)
-        end_markup = build_arena_markup(arena, chat_id)
-        if arena.get("msg_id"):
-            try:
-                await update.get_bot().delete_message(chat_id=chat_id, message_id=arena["msg_id"])
-            except Exception: pass
-        try:
-            msg = await update.get_bot().send_message(
-                chat_id=chat_id, text=card_text[:4096], parse_mode="Markdown",
-                reply_markup=end_markup)
-            arena["msg_id"] = msg.message_id
-        except Exception: pass
-        return
-
-    # Challenge initiation
-    if not update.message.reply_to_message:
-        await send_group(update,
-            "⚔️ *Arena  -  Turn-based PvP*\n\n"
-            "Reply to a player's message to challenge them!\n"
-            "`/arena`  -  free fight\n"
-            "`/arena 200`  -  fight with 200g wager\n\n"
-            "Each turn: `/arena attack`, `/arena skill [1-7]`, `/arena item [name]`",
-            delay=30); return
-
-    du = update.message.reply_to_message.from_user
-    if du.id == user.id:
-        await send_group(update, "Can't challenge yourself!", delay=9); return
-    tp = get_player(du.id)
-    if not tp:
-        await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
-    if chat_id in active_arenas:
-        await send_group(update, "An arena fight is already active here!", delay=9); return
-    wager = 0
-    if context.args:
-        try: wager = max(0, int(context.args[0]))
-        except: pass
-    if wager > 0 and p["gold"] < wager:
-        await send_group(update, f"❌ Need {wager}g for the wager. Have {p['gold']}g.", delay=9); return
-
-    active_arenas[chat_id] = {
-        "p1_id": user.id, "p2_id": du.id,
-        "p1": None, "p2": None,
-        "p1_hp": 0, "p2_hp": 0, "p1_max": 0, "p2_max": 0,
-        "turn": user.id, "round": 0, "log": [], "msg_id": None,
-        "wager": wager, "status": "waiting",
-        "p1_items": {}, "p2_items": {},
-        "p1_state": _arena_state(), "p2_state": _arena_state(),
-        "expires": (datetime.now() + timedelta(minutes=5)).isoformat(),
-    }
-    wager_str = f" for *{wager}g*" if wager > 0 else " (no wager)"
-    arena_challenge_markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Accept", callback_data=f"arena_acc_{user.id}_{du.id}"),
-        InlineKeyboardButton("❌ Decline", callback_data=f"arena_dec_{user.id}_{du.id}"),
-    ]])
-    await send_group(update,
-        f"🎪 *{user.first_name}* challenges *{du.first_name}* to an Arena fight{wager_str}!\n\n"
-        f"_HP changes are arena-only — your real HP is safe._\n"
-        f"_Challenge expires in 5m._",
-        permanent=False, delay=300, reply_markup=arena_challenge_markup)
-
-
-async def arena_respond_callback(update, context):
-    """Handle arena challenge Accept/Decline button presses."""
-    query = update.callback_query
-    await query.answer()
-    parts = query.data.split("_")  # arena_acc_{p1_uid}_{p2_uid} or arena_dec_...
-    if len(parts) < 4:
-        return
-    action   = parts[1]  # 'acc' or 'dec'
-    try:
-        p1_uid = int(parts[2]); p2_uid = int(parts[3])
-    except (ValueError, IndexError):
-        return
-    if query.from_user.id != p2_uid:
-        await query.answer("This challenge isn't for you!", show_alert=True); return
-
-    # Find the arena by scanning active_arenas
-    arena = None; arena_cid = None
-    for cid, a in list(active_arenas.items()):
-        if a["p1_id"] == p1_uid and a["p2_id"] == p2_uid:
-            arena = a; arena_cid = cid; break
-    if not arena or arena["status"] != "waiting":
-        try: await query.edit_message_text("❌ Challenge no longer available.")
-        except Exception: pass
-        return
-
-    if action == "dec":
-        active_arenas.pop(arena_cid, None)
-        try: await query.edit_message_text("❌ Arena challenge declined.")
-        except Exception: pass
-        return
-
-    # Accept
-    if datetime.now() > datetime.fromisoformat(arena["expires"]):
-        active_arenas.pop(arena_cid, None)
-        try: await query.edit_message_text("⏰ Challenge has expired.")
-        except Exception: pass
-        return
-
-    p1 = get_player(p1_uid); p2 = get_player(p2_uid)
-    if not p1 or not p2:
-        active_arenas.pop(arena_cid, None)
-        try:
-            await query.edit_message_text("Player not found.")
-        except Exception:
-            pass
-        return
-
-    wager = arena["wager"]
-    if wager > 0 and p2["gold"] < wager:
-        try:
-            await query.edit_message_text(f"❌ Need {wager}g. Have {p2['gold']}g.")
-        except Exception:
-            pass
-        return
-    if wager > 0 and p1["gold"] < wager:
-        active_arenas.pop(arena_cid, None)
-        try:
-            await query.edit_message_text("❌ Challenger can no longer afford the wager.")
-        except Exception:
-            pass
-        return
-    if wager > 0:
-        p1["gold"] -= wager; p2["gold"] -= wager
-        save_player(p1); save_player(p2)
-
-    arena["p1"] = p1; arena["p2"] = p2
-    arena["p1_hp"] = p1["max_hp"]; arena["p2_hp"] = p2["max_hp"]
-    arena["p1_max"] = p1["max_hp"]; arena["p2_max"] = p2["max_hp"]
-    arena["p1_items"] = dict(Counter(sjl(p1.get("inventory"), [])))
-    arena["p2_items"] = dict(Counter(sjl(p2.get("inventory"), [])))
-    arena["turn"] = p1_uid; arena["round"] = 1
-    arena["status"] = "active"; arena["log"] = ["⚔️ Arena battle begins!"]
-    card_text = build_arena_card(arena)
-    markup    = build_arena_markup(arena, arena_cid)
-    try:
-        msg = await context.bot.send_message(
-            chat_id=arena_cid, text=card_text[:4096], parse_mode="Markdown",
-            reply_markup=markup)
-        arena["msg_id"] = msg.message_id
-    except Exception:
-        arena["msg_id"] = None
-    try: await query.edit_message_text("⚔️ Arena battle started!")
-    except Exception: pass
-
-
-async def arena_act_callback(update, context):
-    """Handle arena button presses: attack, skill, flee."""
-    query = update.callback_query
-    await query.answer()
-    data = query.data  # arena_act_{chat_id}_{uid}_{action}
-    parts = data.split("_")
-    # Format: arena_act_{chat_id}_{uid}_{action}
-    # parts: ['arena','act',chat_id,uid,action]
-    if len(parts) < 5:
-        return
-    try:
-        chat_id   = int(parts[2])
-        uid       = int(parts[3])
-        action    = parts[4]
-        skill_idx = int(parts[5]) if len(parts) > 5 else None
-    except (ValueError, IndexError):
-        return
-
-    if query.from_user.id != uid:
-        await query.answer("It's not your turn!", show_alert=True)
-        return
-
-    arena = active_arenas.get(chat_id)
-    if not arena or arena["status"] != "active":
-        await query.answer("No active arena.", show_alert=True)
-        return
-    if arena["turn"] != uid:
-        await query.answer("It's not your turn!", show_alert=True)
-        return
-
-    is_p1 = (uid == arena["p1_id"])
-    attacker_data = arena["p1"] if is_p1 else arena["p2"]
-    defender_data = arena["p2"] if is_p1 else arena["p1"]
-    atk_hp_key    = "p1_hp" if is_p1 else "p2_hp"
-    def_hp_key    = "p2_hp" if is_p1 else "p1_hp"
-    atk_max_key   = "p1_max" if is_p1 else "p2_max"
-    atk_state_key = "p1_state" if is_p1 else "p2_state"
-    def_state_key = "p2_state" if is_p1 else "p1_state"
-    atk_name  = attacker_data["username"]
-    def_name  = defender_data["username"]
-    atk_state = arena[atk_state_key]
-    def_state = arena[def_state_key]
-
-    # Turn-start DOT / regen effects
-    if atk_state["dot_turns"] > 0:
-        arena[atk_hp_key] = max(0, arena[atk_hp_key] - atk_state["dot_dmg"])
-        atk_state["dot_turns"] -= 1
-        arena["log"].append(f"🩸 {atk_name} takes {atk_state['dot_dmg']} from {atk_state['dot_type']}!")
-        if atk_state["dot_turns"] == 0:
-            atk_state["dot_type"] = None; atk_state["dot_dmg"] = 0
-    if atk_state["regen_turns"] > 0:
-        arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + atk_state["regen_hp"])
-        atk_state["regen_turns"] -= 1
-        arena["log"].append(f"💚 {atk_name} regenerates {atk_state['regen_hp']} HP!")
-    if atk_state["buff_turns"] > 0:
-        atk_state["buff_turns"] -= 1
-        if atk_state["buff_turns"] == 0: atk_state["atk_mod"] = 1.0
-    if atk_state["debuff_turns"] > 0:
-        atk_state["debuff_turns"] -= 1
-        if atk_state["debuff_turns"] == 0:
-            atk_state["def_mod"] = 1.0; atk_state["acc_debuff"] = False; atk_state["acc_debuff_pct"] = 0.0
-    for timer_key in ["heal_block_turns","bind_turns","skill_block_turns","extra_dmg_turns"]:
-        if atk_state.get(timer_key, 0) > 0:
-            atk_state[timer_key] -= 1
-
-    # DOT death check — if attacker dies to DOT, end the fight
-    if arena[atk_hp_key] <= 0:
-        arena["status"] = "done"
-        winner_id = arena["p2_id"] if is_p1 else arena["p1_id"]
-        loser_id  = arena["p1_id"] if is_p1 else arena["p2_id"]
-        wp = get_player(winner_id); lp = get_player(loser_id)
-        wager = arena["wager"]
-        if wp and lp:
-            if wager > 0:
-                wp["gold"] = wp.get("gold",0) + wager * 2
-            wp["wins"] = wp.get("wins",0) + 1
-            save_player(wp); save_player(lp)
-        w_name = arena["p1"]["username"] if winner_id == arena["p1_id"] else arena["p2"]["username"]
-        arena["log"].append(f"☠️ {atk_name} dies to damage over time! 🏆 *{w_name}* wins!")
-        active_arenas.pop(chat_id, None)
-        card_text = build_arena_card(arena)
-        markup = build_arena_markup(arena, chat_id)
-        try:
-            await query.edit_message_text(text=card_text[:4096], parse_mode="Markdown", reply_markup=markup)
-        except Exception: pass
-        return
-
-    # Stun check
-    if atk_state.get("skip_turns", 0) > 0:
-        atk_state["skip_turns"] -= 1
-        arena["log"].append(f"⚡ {atk_name} is stunned — turn skipped!")
-        arena["turn"] = arena["p2_id"] if is_p1 else arena["p1_id"]
-        arena["round"] += 1
-        card_text = build_arena_card(arena)
-        markup = build_arena_markup(arena, chat_id)
-        try:
-            await query.edit_message_text(text=card_text[:4096], parse_mode="Markdown", reply_markup=markup)
-        except Exception: pass
-        return
-
-    log_entry = ""
-    w = get_weather()
-
-    if action == "flee":
-        # End the arena — declare the other player winner
-        arena["status"] = "done"
-        winner_id = arena["p2_id"] if is_p1 else arena["p1_id"]
-        loser_id  = uid
-        wp = get_player(winner_id); lp = get_player(loser_id)
-        wager = arena["wager"]
-        if wp and lp:
-            if wager > 0:
-                wp["gold"] = wp.get("gold",0) + wager * 2
-            wp["wins"] = wp.get("wins",0) + 1
-            for _d, _e, _g in track_objective(wp, "arena_win"):
-                wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
-            _fire(check_and_claim_bounty(query.get_bot(), wp, lp, chat_id))
-            exp_gain = 50 + wp["level"] * 5
-            add_exp(wp, exp_gain)
-            save_player(wp); save_player(lp)
-        w_name = defender_data["username"]
-        arena["log"].append(f"🏃 {atk_name} flees! 🏆 *{w_name}* wins the arena!")
-        if is_p1:
-            arena["p1_hp"] = 0  # Force done display
-        else:
-            arena["p2_hp"] = 0  # Force done display
-        active_arenas.pop(chat_id, None)
-        card_text = build_arena_card(arena)
-        try:
-            await query.edit_message_text(text=card_text[:4096], parse_mode="Markdown")
-        except Exception: pass
-        return
-
-    elif action == "atk":
-        dmg = calc_attack_damage(attacker_data, w)
-        dmg = round(dmg * atk_state["atk_mod"])
-        if atk_state.get("mark_attacks", 0) > 0:
-            dmg = round(dmg * atk_state.get("mark_bonus", 1.0))
-            atk_state["mark_attacks"] -= 1
-            if atk_state["mark_attacks"] == 0: atk_state["mark_bonus"] = 1.0
-        if atk_state.get("ambush_bonus", 1.0) > 1.0:
-            dmg = round(dmg * atk_state["ambush_bonus"])
-            atk_state["ambush_bonus"] = 1.0
-            arena["log"].append(f"🌑 *Ambush!* Bonus damage!")
-        if atk_state.get("next_atk_bonus", 1.0) > 1.0:
-            dmg = round(dmg * atk_state["next_atk_bonus"])
-            atk_state["next_atk_bonus"] = 1.0
-        if atk_state.get("charge_ready"):
-            dmg = round(dmg * atk_state.get("charge_mult", 2.0))
-            atk_state["charge_ready"] = False; atk_state["charge_mult"] = 1.0
-            arena["log"].append(f"💥 *CHARGED STRIKE!*")
-        if atk_state.get("acc_debuff") and random.random() < atk_state.get("acc_debuff_pct", 0.40):
-            arena["log"].append(f"😵 {atk_name} missed — accuracy debuffed!")
-            dmg = 0
-        if def_state.get("miss_next_enemy"):
-            def_state["miss_next_enemy"] = False
-            arena["log"].append(f"🌫️ {def_name}'s evasion causes {atk_name} to miss!")
-            dmg = 0
-        # Battle Cry passive: refresh +80 STR (5 hit charges) on each attack
-        _arena_cls = get_player_class(attacker_data)
-        if _arena_cls and _arena_cls.get("passive_key") == "battle_cry":
-            attacker_data["battle_cry_str_hits"] = 5
-            save_player(attacker_data)
-        if dmg > 0 and check_crit(attacker_data):
-            dmg = apply_crit(attacker_data, dmg)
-            log_entry = f"💥 CRIT! {atk_name} hits {def_name} for *{dmg}*!"
-        else:
-            log_entry = f"⚔️ {atk_name} hits {def_name} for *{dmg}*." if dmg > 0 else f"🌀 {atk_name} missed!"
-        if dmg > 0:
-            dmg = round(dmg * def_state.get("def_mod", 1.0))
-            dmg = round(dmg * def_state.get("amplify_pct", 1.0))
-            if def_state.get("extra_dmg_turns", 0) > 0:
-                dmg += def_state.get("extra_dmg_per_hit", 0)
-            if def_state["shield_turns"] > 0:
-                dmg = round(dmg * (1 - def_state["shield_pct"]))
-                def_state["shield_turns"] -= 1
-                if def_state["shield_turns"] == 0: def_state["shield_pct"] = 0.0
-            if def_state.get("reflect_on_hit", 0) > 0 and def_state.get("reflect_turns", 0) > 0:
-                arena[atk_hp_key] = max(0, arena[atk_hp_key] - def_state["reflect_on_hit"])
-                arena["log"].append(f"⚡ {def_name} reflects {def_state['reflect_on_hit']} dmg!")
-            if def_state.get("bind_turns", 0) > 0:
-                dmg = round(dmg * def_state.get("bind_dmg_mod", 1.0))
-        arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-
-    elif action == "skl":
-        if atk_state.get("skill_block_turns", 0) > 0:
-            await query.answer("You're silenced — no skills this turn!", show_alert=True)
-            return
-        skills = sjl(attacker_data.get("all_skills"), [])
-        sk = None
-        if skill_idx is not None and 0 <= skill_idx < len(skills):
-            sk = skills[skill_idx]
-        elif skills:
-            sk = skills[0]
-        if not sk:
-            await query.answer("No skill available.", show_alert=True)
-            return
-        stype = sk.get("type", "damage")
-        base_dmg = calc_attack_damage(attacker_data, w)
-        base_dmg = round(base_dmg * atk_state["atk_mod"])
-        dmg = 0
-
-        if stype == "atk_buff":
-            atk_state["atk_mod"] = sk.get("atk_mod", 1.40)
-            atk_state["buff_turns"] = sk.get("buff_turns", 3)
-            log_entry = f"💪 {atk_name} uses *{sk['name']}*! ATK ×{sk.get('atk_mod',1.4)} for {sk.get('buff_turns',3)} turns."
-        elif stype in ("def_buff","dmg_reduction_buff"):
-            def_mod = sk.get("def_mod", 0.65)
-            atk_state["def_mod"] = def_mod
-            atk_state["buff_turns"] = sk.get("buff_turns", 2)
-            log_entry = f"🛡️ {atk_name} uses *{sk['name']}*! Damage reduced for {sk.get('buff_turns',2)} turns."
-        elif stype == "self_heal_buff":
-            if atk_state.get("heal_block_turns", 0) > 0:
-                log_entry = f"🚫 {atk_name}'s healing is blocked!"
-            else:
-                heal = round(arena[atk_max_key] * 0.20)
-                arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
-                add_charges(attacker_data, "battle_cry_str_hits", 2)
-                save_player(attacker_data)
-                log_entry = f"💪 {atk_name} uses *{sk['name']}*! +{heal} HP + +80 STR for 2 attacks!"
-        elif stype in ("self_heal","revive_heal"):
-            if atk_state.get("heal_block_turns", 0) > 0:
-                log_entry = f"🚫 {atk_name}'s healing is blocked!"
-            else:
-                stat_name = sk.get("stat","WIS")
-                heal_mult = sk.get("mult", sk.get("wis_mult", 4.0))
-                heal = round(get_stat(attacker_data, stat_name) * heal_mult)
-                arena[atk_hp_key] = min(arena[atk_max_key], arena[atk_hp_key] + heal)
-                log_entry = f"💚 {atk_name} uses *{sk['name']}*! Restored {heal} HP."
-        elif stype == "stun":
-            dmg = round(base_dmg * sk.get("dmg_mult", 0.80))
-            arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-            if random.random() < sk.get("stun_chance", 0.75):
-                def_state["skip_turns"] = def_state.get("skip_turns", 0) + 1
-                log_entry = f"💫 {atk_name} uses *{sk['name']}*! {dmg} dmg + STUN!"
-            else:
-                log_entry = f"⚔️ {atk_name} uses *{sk['name']}*! {dmg} dmg. (Stun missed)"
-        elif stype == "dodge_buff":
-            atk_state["miss_next_enemy"] = sk.get("dodge_next", True)
-            atk_state["next_atk_bonus"] = sk.get("next_atk_bonus", 1.40)
-            log_entry = f"🌫️ {atk_name} uses *{sk['name']}*! Next hit on them misses, next attack boosted!"
-        elif stype == "regen":
-            atk_state["regen_hp"] = sk.get("regen_hp", 12)
-            atk_state["regen_turns"] = sk.get("regen_turns", 3)
-            log_entry = f"🌿 {atk_name} uses *{sk['name']}*! Regenerating {sk.get('regen_hp',12)} HP/turn for {sk.get('regen_turns',3)} turns."
-        else:
-            dmg = round(base_dmg * sk.get("dmg_mult", sk.get("mult", 1.2)))
-            arena[def_hp_key] = max(0, arena[def_hp_key] - dmg)
-            log_entry = f"⚡ {atk_name} uses *{sk['name']}*! {dmg} dmg."
-    else:
-        return
-
-    if log_entry:
-        arena["log"].append(log_entry)
-
-    # Pet attacks alongside the player whenever they deal direct damage
-    if action == "atk" or (action == "skl" and dmg > 0):
-        _arena_pet = get_active_pet_record(uid)
-        if _arena_pet:
-            _pet_atk    = get_pet_atk_bonus(_arena_pet)
-            _sp_pet     = PET_SPECIES.get(_arena_pet.get("species"), {})
-            _pname      = _pet_display_name(_arena_pet)
-            _pers       = _sp_pet.get("personality", "calm")
-            _emoji_p    = _sp_pet.get("emoji", "🐾")
-            _battle_msg = PERSONALITY_BATTLE.get(_pers, "attacks")
-            # Elemental matchup vs defender's pet
-            _def_uid    = arena["p2_id"] if is_p1 else arena["p1_id"]
-            _def_pet    = get_active_pet_record(_def_uid)
-            _elem_mult  = _get_pet_element_mult(_arena_pet, _def_pet)
-            # Skill proc
-            _skill_fired, _pskill = _pet_skill_check(_arena_pet)
-            if _skill_fired and _pskill:
-                _pet_atk  = round(_pet_atk * _pskill["mult"])
-                _skill_tag = f" _{_pskill['name']}_"
-            else:
-                _skill_tag = ""
-            _pet_atk = round(_pet_atk * _elem_mult)
-            _elem_tag = " 🌟*(type adv!)*" if _elem_mult > 1.0 else (" *(resisted)*" if _elem_mult < 1.0 else "")
-            arena[def_hp_key] = max(0, arena[def_hp_key] - _pet_atk)
-            arena["log"].append(f"{_emoji_p} *{_pname}* {_battle_msg} for *{_pet_atk}*{_skill_tag}{_elem_tag}!")
-
-    if arena["p1_hp"] <= 0 or arena["p2_hp"] <= 0:
-        arena["status"] = "done"
-        winner_id = arena["p1_id"] if arena["p1_hp"] > 0 else arena["p2_id"]
-        loser_id  = arena["p2_id"] if winner_id == arena["p1_id"] else arena["p1_id"]
-        wp = get_player(winner_id); lp = get_player(loser_id)
-        wager = arena["wager"]
-        if wp and lp:
-            if wager > 0:
-                wp["gold"] = wp.get("gold",0) + wager * 2
-            wp["wins"] = wp.get("wins",0) + 1
-            for _d, _e, _g in track_objective(wp, "arena_win"):
-                wp["gold"] = wp.get("gold",0) + _g; add_exp(wp, _e)
-            _fire(check_and_claim_bounty(query.get_bot(), wp, lp, chat_id))
-            exp_gain = 50 + wp["level"] * 5
-            add_exp(wp, exp_gain)
-            save_player(wp); save_player(lp)
-        w_name = arena["p1"]["username"] if arena["p1_hp"] > 0 else arena["p2"]["username"]
-        arena["log"].append(f"🏆 *{w_name}* wins the arena!")
-        active_arenas.pop(chat_id, None)
-    else:
-        arena["turn"] = arena["p2_id"] if is_p1 else arena["p1_id"]
-        arena["round"] += 1
-
-    card_text = build_arena_card(arena)
-    markup = build_arena_markup(arena, chat_id)
-    try:
-        await query.edit_message_text(text=card_text[:4096], parse_mode="Markdown", reply_markup=markup)
-    except Exception: pass
-
 async def rankme_cmd(update, context):
     context.args = ["me"]
     await rank_cmd(update, context)
@@ -24201,10 +22758,6 @@ GUIDE_PAGES = [
         "🛡️ Invincible — immune to all damage AND cannot initiate PvP (from revival items or Priest skills)\n"
         "🔥×N Kill streak  |  🔴 WANTED — 5+ kills today  |  💰 Active bounty on this player\n"
         "\n"
-        "*Duels and Arena*\n"
-        "/duel  -  Reply to a player to challenge them. Pick a wager via buttons (0 = free). Decided by Combat Power.\n"
-        "/arena  -  Reply to a player for turn-based skill combat.\n"
-        "\n"
         "*Boss Fights*\n"
         "Use /boss to start a group boss encounter (button menu). /attack and /skill redirect to the boss automatically while it's active.\n"
         "\n"
@@ -24309,8 +22862,6 @@ GUIDE_PAGES = [
         "/skill  -  Target picker → skill picker → stays open to chain attacks\n"
         "/defend  -  Charge up your shield (absorbs damage before HP)\n"
         "/defend core  -  Use a Monster Core to increase shield max capacity\n"
-        "/duel  -  Reply to challenge. Wager buttons pop up.\n"
-        "/arena  -  Reply for turn-based skill combat\n"
         "/heal  -  Heal yourself or reply to heal ally\n"
         "/boss  -  Start a group boss (button menu)\n"
         "/raid  -  Create or join a raid party\n"
@@ -26359,8 +24910,7 @@ _COMBAT_HUB_PAGES = [
     # Page 1 — Direct Combat (Encounter first)
     [
         [("🗡️ Encounter",     "combathub_encounter"), ("⚔️ Attack (PvP)", "combathub_attack")],
-        [("✨ Use Skill",      "combathub_skill"),     ("🏟️ Arena Duel",   "combathub_arena")],
-        [("🗡️ Duel (Wager)",  "combathub_duel"),      ("🛡️ Defend",       "combathub_defend")],
+        [("✨ Use Skill",      "combathub_skill"),     ("🛡️ Defend",       "combathub_defend")],
     ],
     # Page 2 — War & Exploration
     [
@@ -26451,7 +25001,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not p:
         await query.answer("Register first.", show_alert=True); return
 
-    _PAGE = {"attack":1,"skill":1,"arena":1,"duel":1,"defend":1,"heal":1,
+    _PAGE = {"attack":1,"skill":1,"defend":1,"heal":1,
              "war":2,"cp":3,"explore":2,"encounter":1,"dungeon":2,"soloraid":2,
              "killcondition":3,"curepriority":3,"cooldowns":3,"petbattle":3}
     page = _PAGE.get(action, 1)
@@ -26460,8 +25010,6 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     _TIPS = {
         "attack":      ("⚔️ *Attack*",          "Reply to a player and type */attack* — or */attack @username* to strike them."),
         "skill":       ("✨ *Use Skill*",        "Type */skill* to pick a target and fire your class skill."),
-        "arena":       ("🏟️ *Arena Duel*",       "Type */arena @player [wager]* for a turn-based wager duel."),
-        "duel":        ("🗡️ *Duel*",             "Type */duel @player* for a quick challenge fight."),
         "war":         ("⚔️ *Guild War*",        "Type */guildwar @guild* to declare war. Both guilds fight over 24h."),
         "cp":          ("📊 *Combat Power*",     f"Your Combat Power: *{calc_combat_power(p):,}*\n\nHigher CP = bigger damage multiplier. Comes from gear quality."),
         "explore":     ("🌍 *Explore*",          "Type */explore* for a 1-hour expedition — best loot. 2× per day."),
@@ -26655,36 +25203,6 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             cd_lines.append(f"💀 Defeat:   {hh}h {mh}m remaining")
         txt_cd = f"⏳ *{p['username']}'s Cooldowns:*\n\n" + "\n".join(cd_lines)
         try: await query.edit_message_text(txt_cd, parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
-
-    elif action == "arena":
-        players, total = _get_attackable_players(uid, p.get("guild_id"), 0)
-        if is_defeated(p):
-            txt = "🏟️ *Arena Duel*\n\n💀 You're defeated — can't duel right now."
-        elif total == 0:
-            txt = "🏟️ *Arena Duel*\n\n_No active players to challenge right now._\nPlayers must have been active in the last hour."
-        else:
-            lines = ["🏟️ *Arena Duel — Pick a Target*\n", "_Reply to a player in the chat and they'll receive your challenge._\n", "*Active players:*"]
-            for pp in players[:6]:
-                cls_n = CLASS_TREE.get(pp.get("class_id",""),{}).get("name","No Class")
-                lines.append(f"• *{pp['username']}* — Lv {pp['level']} {cls_n}")
-            txt = "\n".join(lines)
-        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
-
-    elif action == "duel":
-        players, total = _get_attackable_players(uid, p.get("guild_id"), 0)
-        if is_defeated(p):
-            txt = "🗡️ *Duel*\n\n💀 You're defeated — can't duel right now."
-        elif total == 0:
-            txt = "🗡️ *Duel*\n\n_No active players to duel right now._"
-        else:
-            lines = ["🗡️ *Duel — Challenge Someone*\n", "*Active players:*"]
-            for pp in players[:6]:
-                cls_n = CLASS_TREE.get(pp.get("class_id",""),{}).get("name","No Class")
-                lines.append(f"• *{pp['username']}* — Lv {pp['level']} {cls_n}")
-            txt = "\n".join(lines)
-        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "war":
@@ -29227,7 +27745,6 @@ async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_event_times.clear()
     message_counters.clear()
     pending_trades.clear(); pending_guild_reqs.clear()
-    pending_duels.clear(); active_arenas.clear()
     await send_group(update,
         "🗑️ *Database wiped and reset.*\n"
         "All players, guilds, and data cleared.\n"
@@ -31575,8 +30092,6 @@ def main():
     app.add_handler(CallbackQueryHandler(_noop_cb, pattern="^noop$"))
 
     # Combat & Dungeons
-    app.add_handler(CommandHandler("duel",       duel_cmd))
-    app.add_handler(CommandHandler("arena",      arena_cmd))
     app.add_handler(CommandHandler("attack",     attack_cmd))
     app.add_handler(CallbackQueryHandler(attack_picker_callback,       pattern="^atk_"))
     app.add_handler(CallbackQueryHandler(skill_target_picker_callback, pattern="^skl2_"))
@@ -31651,7 +30166,6 @@ def main():
     app.add_handler(CallbackQueryHandler(trade_item_callback,       pattern="^trdi_"))
     app.add_handler(CallbackQueryHandler(trade_price_callback,      pattern="^trdp_"))
     app.add_handler(CallbackQueryHandler(trade_back_callback,       pattern="^trdback_"))
-    app.add_handler(CallbackQueryHandler(duel_wager_callback,       pattern="^duelwager_"))
     app.add_handler(CallbackQueryHandler(soloraid_act_callback, pattern="^sr_act_"))
     app.add_handler(CallbackQueryHandler(boss_act_callback,     pattern="^boss_act_"))
     # Social orders & secrets
@@ -31678,10 +30192,7 @@ def main():
     app.add_handler(CallbackQueryHandler(enchant_slot_callback, pattern="^enchant_"))
     app.add_handler(CallbackQueryHandler(allocate_callback,     pattern="^alloc_"))
     # New inline button callbacks
-    app.add_handler(CallbackQueryHandler(arena_respond_callback, pattern="^arena_acc_|^arena_dec_"))
-    app.add_handler(CallbackQueryHandler(arena_act_callback,     pattern="^arena_act_"))
     app.add_handler(CallbackQueryHandler(raid_atk_callback,      pattern="^raid_atk_"))
-    app.add_handler(CallbackQueryHandler(duel_response_callback, pattern="^duel_(acc|dec)_"))
     app.add_handler(CallbackQueryHandler(resetclass_callback,    pattern="^rscls_"))
     app.add_handler(CallbackQueryHandler(resetstats_callback,    pattern="^rsstat_"))
     app.add_handler(CallbackQueryHandler(guilddisband_callback,  pattern="^gdisband_"))
