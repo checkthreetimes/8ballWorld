@@ -173,11 +173,9 @@ def _pvp_pair_key(a, b):
 
 def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     def _bar_left(hp, mx, w=10):
-        # Viewer bar: fills left-to-right, depletes from right
         f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
         return "█" * f + "░" * (w - f)
     def _bar_right(hp, mx, w=10):
-        # Opponent bar: fills right-to-left (Tekken P2 style), depletes from left
         f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
         return "░" * (w - f) + "█" * f
     v_hp = max(0, int(viewer_p.get("hp", 0)))
@@ -190,28 +188,14 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     o_bar = _bar_right(o_hp, o_mx)
     v_status = _compact_status_emojis(viewer_p)
     o_status = _compact_status_emojis(opp_p)
-    v_pct = round(v_hp / v_mx * 100)
-    o_pct = round(o_hp / o_mx * 100)
     lines = [
         "⚡ *PVP BATTLE* ⚡",
         "",
         f"*{vn}*" + "  VS  " + f"*{on}*",
         f"`{v_bar}` ⚔️ `{o_bar}`",
-        f"❤️ {v_hp}/{v_mx} ({v_pct}%)    ❤️ {o_hp}/{o_mx} ({o_pct}%)",
     ]
     if v_status or o_status:
         lines.append(f"{v_status or '  '}          {o_status or '  '}")
-    logs = _pvp_battle_logs.get(pair, []) if pair else []
-    if logs:
-        lines.append("")
-        lines.append("─── 📜 BATTLE LOG ───")
-        for entry in logs[-2:]:
-            parts = [l.strip() for l in entry.split("\n") if l.strip()]
-            if not parts:
-                continue
-            lines.append(f"▸ {parts[0]}")
-            for extra in parts[1:]:
-                lines.append(f"  ↳ {extra[:90]}")
     return "\n".join(lines)
 
 
@@ -232,8 +216,10 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
                 await bot.edit_message_text(chat_id=stored[0], message_id=stored[1],
                                             text=card, parse_mode="Markdown", reply_markup=markup)
                 return
-            except Exception:
-                pass
+            except Exception as _e:
+                if "not modified" in str(_e).lower():
+                    return
+                # message was deleted or inaccessible — fall through to send a fresh one
         try:
             msg = await bot.send_message(chat_id=viewer_uid, text=card,
                                          parse_mode="Markdown", reply_markup=markup)
@@ -10335,7 +10321,6 @@ def _pvp_pokemon_card(viewer_uid, a, d, pair):
         "",
         f"*{vn}*" + "  VS  " + f"*{on}*",
         f"`{v_bar}` ⚔️ `{o_bar}`",
-        f"❤️ {v_hp}/{v_mx} ({v_pct}%)    ❤️ {o_hp}/{o_mx} ({o_pct}%)",
     ]
     if v_status or o_status:
         lines.append(f"{v_status or '  '}          {o_status or '  '}")
@@ -10354,17 +10339,6 @@ def _pvp_pokemon_card(viewer_uid, a, d, pair):
                           "silence_turns":"🤐"}.get(_f, "•")
                 _kc_parts.append(f"{_emoji}{_cur}/{_v}")
             lines.append(f"🎯 Kill: {' '.join(_kc_parts)}")
-    logs = _pvp_battle_logs.get(pair, [])
-    if logs:
-        lines.append("")
-        lines.append("─── 📜 BATTLE LOG ───")
-        for entry in logs[-2:]:
-            parts = [l.strip() for l in entry.split("\n") if l.strip()]
-            if not parts:
-                continue
-            lines.append(f"▸ {parts[0]}")
-            for extra in parts[1:]:
-                lines.append(f"  ↳ {extra[:90]}")
     return "\n".join(lines)[:4096]
 
 
@@ -10394,12 +10368,8 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
     defend_label = "🛡️ Shield ✓" if shield_active else "🛡️ Defend"
     row1.append(InlineKeyboardButton(defend_label, callback_data=f"pvpcard_def_{player_uid}_{opp_uid}"))
     rows.append(row1)
-    # Row 2: Potion + Options
-    row2 = []
     if has_potion:
-        row2.append(InlineKeyboardButton("🧪 Potion", callback_data=f"pvpcard_heal_{player_uid}_{opp_uid}"))
-    row2.append(InlineKeyboardButton("⚙️ Options", callback_data=f"pvpcard_opts_{player_uid}_{opp_uid}"))
-    rows.append(row2)
+        rows.append([InlineKeyboardButton("🧪 Potion", callback_data=f"pvpcard_heal_{player_uid}_{opp_uid}")])
     # Class combat skills inline — 2 per row
     p_skills = get_combat_skills(player_p)
     all_sk_by_name = {sk.get("name"): i for i, sk in enumerate(all_skills)}
