@@ -21643,8 +21643,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             gold_r = enc.get("e_gold_range", (5, 15))
             gold   = (random.randint(*gold_r) if isinstance(gold_r, tuple) else random.randint(5, 30)) * 4 + e_level * 20
             exp_r  = enc.get("e_exp_range", (20, 50))
-            # Scale EXP so ~100 fights earns one level's worth of EXP
-            exp    = exp_for_level(max(1, e_level)) // 100 + (random.randint(*exp_r) if isinstance(exp_r, tuple) else random.randint(20, 50))
+            exp    = exp_for_level(max(1, e_level)) // 8 + (random.randint(*exp_r) if isinstance(exp_r, tuple) else random.randint(20, 50)) * 50
 
             # Close-fight bonus
             hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
@@ -21912,7 +21911,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 _core_qty = 3 if _core_roll < 0.05 else (2 if _core_roll < 0.30 else 1)
                 for _ in range(_core_qty):
                     add_item(p, core_item)
-                exp_gain  = enc["e_level"] * 8
+                exp_gain  = enc["e_level"] * 40
                 gold_gain = enc["e_level"] * 8
                 add_exp(p, exp_gain)
                 p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
@@ -21993,7 +21992,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if enc["e_hp"] <= 0:
             _kh = get_enchant_bonus(p, "kill_heal")
             if _kh: enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _kh)
-            exp_gain  = exp_for_level(max(1, enc["e_level"])) // 100
+            exp_gain  = exp_for_level(max(1, enc["e_level"])) // 20
             gold_gain = enc["e_level"] * 28
             hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
             close_bonus = ""
@@ -27416,8 +27415,8 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if pool_ts:
             try:
                 elapsed = (datetime.now() - datetime.fromisoformat(pool_ts)).total_seconds()
-                if elapsed < 8:
-                    remaining = int(8 - elapsed)
+                if elapsed < 3:
+                    remaining = int(3 - elapsed)
                     try: await query.edit_message_text(
                         f"🎱 *Pool*\n\n⏳ Cooldown: *{remaining}s*", parse_mode="Markdown", reply_markup=back)
                     except Exception: pass
@@ -28650,8 +28649,8 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if last_pool:
         try:
             elapsed = (datetime.now() - datetime.fromisoformat(last_pool)).total_seconds()
-            if elapsed < 8:
-                remaining = int(8 - elapsed)
+            if elapsed < 3:
+                remaining = int(3 - elapsed)
                 await send_group(update, f"🎱 Cooldown: {remaining}s", delay=5)
                 return
         except Exception:
@@ -28676,7 +28675,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if item_found:
             add_item(p, item_found)
 
-    exp_gain  = shot["exp"]
+    exp_gain  = shot["exp"] * 20
     gold_gain = shot["gold"]
 
     if p:
@@ -28826,9 +28825,9 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if last_pool:
         try:
             elapsed = (now - datetime.fromisoformat(last_pool)).total_seconds()
-            if elapsed < 8:
+            if elapsed < 3:
                 pool_ready = False
-                skipped.append(f"🎱 Pool  -  {int(8 - elapsed)}s")
+                skipped.append(f"🎱 Pool  -  {int(3 - elapsed)}s")
         except: pass
     if pool_ready:
         p["last_pool"] = now.isoformat()
