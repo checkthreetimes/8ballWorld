@@ -163,6 +163,7 @@ _active_pet_duels   = {}  # (uid1,uid2) tuple key -> duel state dict
 _pvp_dm_last_msg   = {}   # uid -> (chat_id, message_id) — last DM battle card
 _pvp_origin_chat   = {}   # pair -> group chat_id for kill announcements
 _pvp_log_msg       = {}   # uid -> (chat_id, message_id) — separate live battle log message
+_bot_ref           = None  # set after app is built; used for async tasks from sync code
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
@@ -9756,6 +9757,24 @@ def add_exp(p, amount, weather=None):
         points_per_level = 6 if p["level"] > 20 else 3
         p["stat_points"] = safe_int(p.get("stat_points")) + points_per_level
         msgs.append(f"⬆️ *LEVEL UP!* {p['username']} is now *Level {p['level']}*! +{points_per_level} stat points.")
+        # Fire DM notification for level-up
+        _lvl = p["level"]; _uid = p.get("user_id"); _uname = p.get("username", "You")
+        _pts = points_per_level
+        if _bot_ref and _uid:
+            async def _send_lvlup_dm(bot=_bot_ref, uid=_uid, lvl=_lvl, name=_uname, pts=_pts):
+                try:
+                    await bot.send_message(
+                        chat_id=uid,
+                        text=f"⬆️ *LEVEL UP!*\n\n*{name}* reached *Level {lvl}*!\n"
+                             f"💪 +{pts} stat points  •  HP fully restored\n\n"
+                             f"_Use /stats to view your progress._",
+                        parse_mode="Markdown")
+                except Exception:
+                    pass
+            try:
+                asyncio.get_event_loop().create_task(_send_lvlup_dm())
+            except Exception:
+                pass
         if p["level"] == 5 and not p.get("class_id"):
             msgs.append("⚔️ You can now choose a class! Use /class.")
         if p["level"] == 10 and p.get("class_id") and not p.get("class_path"):
@@ -15557,30 +15576,6 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if not p: await query.answer("Use /ascend first!", show_alert=True); return
 
-    if data == "social_party_view":
-        party = _get_party_of(p["user_id"])
-        back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data="social_hub")]])
-        if not party:
-            try: await query.edit_message_text(
-                "⚔️ *Party*\n\nYou're not in a party.\n\n"
-                "_Reply to someone in chat with /party to invite them.\n"
-                "Members share +25% EXP from all Battle & Hunt encounters._",
-                parse_mode="Markdown", reply_markup=back)
-            except Exception: pass
-        else:
-            members = _get_party_members(party["id"])
-            pname = _party_display_name(party)
-            lines = [f"⚔️ {pname}  •  {len(members)} members\n"]
-            for mid in members:
-                mp = get_player(mid)
-                if not mp: continue
-                tag = " 👑" if mid == party["leader_id"] else ""
-                lines.append(f"• *{mp['username']}* Lv.{mp['level']}{tag}")
-            lines += ["", "_+25% EXP from all Battle & Hunt encounter wins._"]
-            try: await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back)
-            except Exception: pass
-        return
-
     if data == "social_party_leave":
         party = _get_party_of(p["user_id"])
         if not party:
@@ -15599,6 +15594,96 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             _leave_party(mid)
         await query.answer("Party disbanded.", show_alert=False)
         await _social_hub(None, get_player(p["user_id"]), query=query)
+        return
+
+    if data == "social_party_close":
+        try: await query.message.delete()
+        except Exception: pass
+        return
+
+    if data == "social_party_view":
+        # Redirect to the full party menu
+        await _party_menu(None, get_player(p["user_id"]) or p, query=query); return
+
+    if data == "social_party_invite_info":
+        party = _get_party_of(p["user_id"])
+        if not party:
+            await query.answer("You're not in a party.", show_alert=True); return
+        try:
+            await query.edit_message_text(
+                "📨 *Invite to Party*\n\n"
+                "To invite someone:\n"
+                "• *Reply* to their message with `/party`\n"
+                "• Or type `/partyinvite @username`\n\n"
+                "_They'll receive a DM with Accept/Decline buttons._",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("← Back", callback_data="social_party_view")
+                ]]))
+        except Exception: pass
+        return
+
+    if data == "social_party_rename_info":
+        party = _get_party_of(p["user_id"])
+        if not party or party["leader_id"] != p["user_id"]:
+            await query.answer("Only the party leader can rename.", show_alert=True); return
+        try:
+            await query.edit_message_text(
+                "✏️ *Rename Party*\n\nType in chat:\n`/partyname <new name>`",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("← Back", callback_data="social_party_view")
+                ]]))
+        except Exception: pass
+        return
+
+    if data == "social_party_kick_menu":
+        uid_k = p["user_id"]
+        party = _get_party_of(uid_k)
+        if not party or party["leader_id"] != uid_k:
+            await query.answer("Only the party leader can kick.", show_alert=True); return
+        members = _get_party_members(party["id"])
+        others = [mid for mid in members if mid != uid_k]
+        if not others:
+            await query.answer("No members to kick.", show_alert=True); return
+        lines = ["🚫 *Kick a Member*\n\nSelect a player to remove from the party:\n"]
+        kb = []
+        for mid in others:
+            mp = get_player(mid)
+            if not mp: continue
+            kb.append([InlineKeyboardButton(
+                f"🚫 {mp['username']} (Lv.{mp['level']})",
+                callback_data=f"social_party_kick_{mid}")])
+        kb.append([InlineKeyboardButton("← Back", callback_data="social_party_view")])
+        try:
+            await query.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                                          reply_markup=InlineKeyboardMarkup(kb))
+        except Exception: pass
+        return
+
+    if data.startswith("social_party_kick_") and data != "social_party_kick_menu":
+        uid_k = p["user_id"]
+        try: target_uid = int(data.split("_")[-1])
+        except (ValueError, IndexError):
+            await query.answer("Invalid action.", show_alert=True); return
+        party = _get_party_of(uid_k)
+        if not party or party["leader_id"] != uid_k:
+            await query.answer("Only the party leader can kick.", show_alert=True); return
+        target_party = _get_party_of(target_uid)
+        if not target_party or target_party["id"] != party["id"]:
+            await query.answer("That player isn't in your party.", show_alert=True); return
+        tp = get_player(target_uid)
+        tp_name = tp["username"] if tp else str(target_uid)
+        _leave_party(target_uid)
+        # Notify kicked player
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text=f"🚫 You were removed from *{_party_display_name(party)}*.",
+                parse_mode="Markdown")
+        except Exception: pass
+        await query.answer(f"🚫 {tp_name} was removed.", show_alert=False)
+        await _party_menu(None, get_player(uid_k) or p, query=query)
         return
 
     if data == "social_gjoin":
@@ -20770,6 +20855,54 @@ def _party_guard(update, p):
     """Returns player or None after sending error."""
     return p  # caller already checked
 
+
+async def _party_menu(update_or_none, p, query=None):
+    """Show the party management menu card."""
+    uid = p["user_id"]
+    party = _get_party_of(uid)
+
+    if not party:
+        text = (
+            "⚔️ *Party*\n\n"
+            "You're not in a party.\n\n"
+            "_Reply to a player in chat with /party to invite them.\n"
+            "Party members earn *+25% EXP* from each other's Battle & Hunt encounters._"
+        )
+        kb = [[InlineKeyboardButton("❌ Close", callback_data="social_party_close")]]
+        markup = InlineKeyboardMarkup(kb)
+    else:
+        members = _get_party_members(party["id"])
+        pname = _party_display_name(party).strip("*")
+        is_leader = party["leader_id"] == uid
+
+        lines = [f"⚔️ *{pname}*  •  {len(members)} member{'s' if len(members) != 1 else ''}",
+                 "_+25% EXP from all Battle & Hunt encounter wins._\n"]
+        for mid in members:
+            mp = get_player(mid)
+            if not mp: continue
+            you_tag = " _(you)_" if mid == uid else ""
+            crown = " 👑" if mid == party["leader_id"] else ""
+            lines.append(f"• *{mp['username']}* Lv.{mp['level']}{crown}{you_tag}")
+        text = "\n".join(lines)
+
+        kb = []
+        if is_leader:
+            kb.append([InlineKeyboardButton("📨 Invite",      callback_data="social_party_invite_info"),
+                       InlineKeyboardButton("🚫 Kick Member", callback_data="social_party_kick_menu")])
+            kb.append([InlineKeyboardButton("✏️ Rename",      callback_data="social_party_rename_info"),
+                       InlineKeyboardButton("🗑️ Disband",     callback_data="social_party_disband")])
+        else:
+            kb.append([InlineKeyboardButton("🚪 Leave Party", callback_data="social_party_leave")])
+        kb.append([InlineKeyboardButton("❌ Close", callback_data="social_party_close")])
+        markup = InlineKeyboardMarkup(kb)
+
+    if query:
+        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        except Exception: pass
+    elif update_or_none:
+        await send_group(update_or_none, text, reply_markup=markup, permanent=True)
+
+
 async def party_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     p = get_player(user.id)
@@ -20803,24 +20936,7 @@ async def party_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await send_group(update, f"❌ Couldn't DM *{target['username']}* — they need to message the bot first.", delay=10)
             return
 
-    party = _get_party_of(uid)
-    if not party:
-        await send_group(update,
-            "⚔️ You're not in a party.\n\n"
-            "Use `/partyinvite @username` or reply to someone with `/party` to invite them.\n"
-            "Members earn *+25% EXP* from each other's Battle and Hunt encounters.",
-            delay=12); return
-    members = _get_party_members(party["id"])
-    pname = _party_display_name(party)
-    lines = [f"⚔️ {pname}  •  {len(members)} members\n"]
-    for mid in members:
-        mp = get_player(mid)
-        if not mp: continue
-        tag = " 👑" if mid == party["leader_id"] else ""
-        lines.append(f"• *{mp['username']}* Lv.{mp['level']}{tag}")
-    lines += ["", "_+25% EXP from all Battle & Hunt encounter wins._",
-              "_/partyinvite @user | /partyname <name> | /partyleave | /partykick @user_"]
-    await send_group(update, "\n".join(lines), delay=15)
+    await _party_menu(update, p)
 
 
 async def partyinvite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -30289,6 +30405,8 @@ def main():
                 except Exception: pass
     app.add_handler(MessageHandler(filters.COMMAND, _cmd_pre_filter), group=-1)
 
+    global _bot_ref
+    _bot_ref = app.bot
     explore_timers.clear()
     print(f"🎱 {WORLD_NAME} {CURRENT_VERSION} is running...")
     app.run_polling(poll_interval=0.3)
