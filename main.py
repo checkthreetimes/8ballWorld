@@ -164,6 +164,7 @@ _pet_breed_sessions = {}  # uid -> {"pet1_id": int, "pet2_id": int, "started": f
 _active_pet_duels   = {}  # (uid1,uid2) tuple key -> duel state dict
 _pvp_dm_last_msg   = {}   # uid -> (chat_id, message_id) — last DM battle card
 _pvp_origin_chat   = {}   # pair -> group chat_id for kill announcements
+_pvp_log_msg       = {}   # uid -> (chat_id, message_id) — separate live battle log message
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
@@ -189,8 +190,6 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     v_status = _compact_status_emojis(viewer_p)
     o_status = _compact_status_emojis(opp_p)
     lines = [
-        "⚡ *PVP BATTLE* ⚡",
-        "",
         f"*{vn}*" + "  VS  " + f"*{on}*",
         f"`{v_bar}` ⚔️ `{o_bar}`",
     ]
@@ -201,7 +200,7 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
 
 async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
     _pvp_cards.setdefault(pair, {})
-    async def _upd(viewer_uid, viewer_p, opp_uid, opp_p):
+    async def _upd_card(viewer_uid, viewer_p, opp_uid, opp_p):
         try:
             card = _pvp_fight_card(viewer_p, opp_p, action_text, pair=pair)
         except Exception:
@@ -219,14 +218,52 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
             except Exception as _e:
                 if "not modified" in str(_e).lower():
                     return
-                # message was deleted or inaccessible — fall through to send a fresh one
         try:
             msg = await bot.send_message(chat_id=viewer_uid, text=card,
                                          parse_mode="Markdown", reply_markup=markup)
             _pvp_dm_last_msg[viewer_uid] = (viewer_uid, msg.message_id)
         except Exception:
             pass
-    await asyncio.gather(_upd(au_id, a, du_id, d), _upd(du_id, d, au_id, a))
+    await asyncio.gather(_upd_card(au_id, a, du_id, d), _upd_card(du_id, d, au_id, a))
+    await _pvp_update_log(pair, au_id, du_id, None, bot)
+
+
+async def _pvp_update_log(pair, au_id, du_id, override_text, bot):
+    """Edit (or send) each player's separate live battle log message."""
+    if override_text:
+        text = override_text[:4096]
+    else:
+        logs = _pvp_battle_logs.get(pair, [])
+        if not logs:
+            return
+        parts = []
+        for entry in logs[-2:]:
+            lines = [l.strip() for l in entry.split("\n") if l.strip()]
+            if lines:
+                parts.append("▸ " + lines[0])
+                for extra in lines[1:]:
+                    parts.append(f"  ↳ {extra[:90]}")
+        text = "\n".join(parts)[:4096] if parts else None
+        if not text:
+            return
+
+    async def _upd_log(uid):
+        stored = _pvp_log_msg.get(uid)
+        if stored:
+            try:
+                await bot.edit_message_text(chat_id=stored[0], message_id=stored[1],
+                                            text=text, parse_mode="Markdown")
+                return
+            except Exception as _e:
+                if "not modified" in str(_e).lower():
+                    return
+        try:
+            msg = await bot.send_message(chat_id=uid, text=text, parse_mode="Markdown")
+            _pvp_log_msg[uid] = (uid, msg.message_id)
+        except Exception:
+            pass
+
+    await asyncio.gather(_upd_log(au_id), _upd_log(du_id))
 
 
 async def _finalize_pvp(pair, result_text, bot):
@@ -238,7 +275,7 @@ async def _finalize_pvp(pair, result_text, bot):
         _f_au, _f_du = pair
         _f_a = get_player(_f_au)
         _f_d = get_player(_f_du)
-        async def _fin(viewer_uid, vp, op):
+        async def _fin_card(viewer_uid, vp, op):
             if not vp or not op:
                 return
             try:
@@ -258,9 +295,11 @@ async def _finalize_pvp(pair, result_text, bot):
                 await bot.send_message(chat_id=viewer_uid, text=card[:4096], parse_mode="Markdown")
             except Exception:
                 pass
-        await asyncio.gather(_fin(_f_au, _f_a, _f_d), _fin(_f_du, _f_d, _f_a))
+        await asyncio.gather(_fin_card(_f_au, _f_a, _f_d), _fin_card(_f_du, _f_d, _f_a))
+        await _pvp_update_log(pair, _f_au, _f_du, result_text, bot)
     for _uid in pair:
         _pvp_dm_last_msg.pop(_uid, None)
+        _pvp_log_msg.pop(_uid, None)
 
 
 def _reset_card_timer(pair, bot, chat_id, mid, seconds=20):
@@ -11305,7 +11344,14 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         _pvp_origin_chat[pair] = query.message.chat_id
         _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": query.message.chat_id}
 
-        # Show fight card to both players in DM
+        # Alert the defender — clear any old card so Telegram sends a fresh push notification
+        _pvp_dm_last_msg.pop(target_uid, None)
+        _pvp_log_msg.pop(target_uid, None)
+        try:
+            await context.bot.send_message(chat_id=target_uid,
+                text=f"⚔️ *{a['username']}* is attacking you!", parse_mode="Markdown")
+        except Exception:
+            pass
         start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
         _pvp_log_append(pair, start_txt)
         fresh_a = get_player(uid) or a
@@ -11481,6 +11527,14 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pair = _pvp_pair_key(au.id, du_id)
     _pvp_cards.setdefault(pair, {})
     _pvp_origin_chat[pair] = chat_id
+    # Alert the defender — clear old card so Telegram sends a fresh push notification
+    _pvp_dm_last_msg.pop(du_id, None)
+    _pvp_log_msg.pop(du_id, None)
+    try:
+        await bot.send_message(chat_id=du_id,
+            text=f"⚔️ *{a['username']}* is attacking you!", parse_mode="Markdown")
+    except Exception:
+        pass
     start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
     _pvp_log_append(pair, start_txt)
     fresh_a = get_player(au.id) or a
