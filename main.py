@@ -6455,37 +6455,37 @@ async def _dng_on_enemy_killed(uid, bot, p, state):
 
 KEYWORD_TRIGGERS = [
     {"pattern":r"\b(8ball|8ballin|rack|felt|cue|billiards|pool table|corner pocket|break shot|chalk up)\b",
-     "exp":120,"gold_chance":0.30,"cooldown":45,"key":"billiards"},
-    {"pattern":r"🎱","exp":200,"gold_chance":0.20,"cooldown":300,"key":"8ball_emoji"},
+     "exp":1800,"gold_chance":0.50,"cooldown":30,"key":"billiards"},
+    {"pattern":r"🎱","exp":3000,"gold_chance":0.40,"cooldown":120,"key":"8ball_emoji"},
     {"pattern":r"\b(hello|hi|hey|sup|what'?s up|wassup|yo|heya|hiya|howdy)\b",
-     "exp":60,"gold_chance":0.10,"cooldown":30,"key":"greet"},
+     "exp":900,"gold_chance":0.15,"cooldown":20,"key":"greet"},
     {"pattern":r"\b(good morning|gm|good night|gn|good evening|good afternoon)\b",
-     "exp":70,"gold_chance":0.10,"cooldown":30,"key":"greeting_time"},
+     "exp":1200,"gold_chance":0.20,"cooldown":20,"key":"greeting_time"},
     {"pattern":r"\b(lol|lmao|lmfao|haha|hahaha|funny|dead|💀|😂|🤣|bruh|bro|fam)\b",
-     "exp":40,"gold_chance":0.05,"cooldown":45,"key":"humor"},
+     "exp":600,"gold_chance":0.08,"cooldown":25,"key":"humor"},
     {"pattern":r"\b(omg|oh my god|no way|wtf|wth|damn|dang|sheesh|fr fr|facts|bet)\b",
-     "exp":40,"gold_chance":0.05,"cooldown":40,"key":"reaction"},
+     "exp":600,"gold_chance":0.08,"cooldown":25,"key":"reaction"},
     {"pattern":r"\b(thanks|thank you|ty|thx|cheers|appreciated|grateful|respect)\b",
-     "exp":70,"gold_chance":0.10,"cooldown":60,"key":"gratitude"},
+     "exp":1000,"gold_chance":0.15,"cooldown":30,"key":"gratitude"},
     {"pattern":r"\b(nice|great|awesome|amazing|sick|fire|goated|legendary|insane|clean)\b",
-     "exp":40,"gold_chance":0.05,"cooldown":40,"key":"hype"},
+     "exp":600,"gold_chance":0.08,"cooldown":25,"key":"hype"},
     {"pattern":r"\b(win|won|victory|gg|good game|let'?s go|lets go|dub|clutch|carry)\b",
-     "exp":70,"gold_chance":0.10,"cooldown":50,"key":"win"},
+     "exp":1000,"gold_chance":0.15,"cooldown":30,"key":"win"},
     {"pattern":r"\b(grind|grinding|leveling|farm|farming|rank up|ranked)\b",
-     "exp":40,"gold_chance":0.05,"cooldown":90,"key":"grind"},
+     "exp":700,"gold_chance":0.08,"cooldown":45,"key":"grind"},
     {"pattern":r"\b(food|eat|eating|hungry|snack|lunch|dinner|breakfast|meal|cook)\b",
-     "exp":40,"gold_chance":0.05,"cooldown":45,"key":"food"},
+     "exp":600,"gold_chance":0.08,"cooldown":25,"key":"food"},
     {"pattern":r"\b(work|working|job|office|meeting|shift|hustle)\b",
-     "exp":40,"gold_chance":0.05,"cooldown":60,"key":"work"},
+     "exp":600,"gold_chance":0.08,"cooldown":30,"key":"work"},
     {"pattern":r"\b(music|song|track|album|artist|rapper|beat|vibes|playlist|banger)\b",
-     "exp":40,"gold_chance":0.05,"cooldown":60,"key":"music"},
+     "exp":600,"gold_chance":0.08,"cooldown":30,"key":"music"},
     {"pattern":r"\b(football|soccer|basketball|tennis|gym|workout|run|running|lift)\b",
-     "exp":40,"gold_chance":0.05,"cooldown":60,"key":"sports"},
+     "exp":600,"gold_chance":0.08,"cooldown":30,"key":"sports"},
     {"pattern":r"\b(friend|friends|bro|sis|brother|sister|mate|homie|squad|crew|family)\b",
-     "exp":40,"gold_chance":0.05,"cooldown":50,"key":"social"},
+     "exp":600,"gold_chance":0.08,"cooldown":25,"key":"social"},
     {"pattern":r"\b(dragon|magic|spell|quest|wizard|warrior|dungeon|boss|raid|sword|shield|potion|knight)\b",
-     "exp":60,"gold_chance":0.05,"cooldown":90,"key":"fantasy"},
-    {"pattern":r".","exp":8,"gold_chance":0.02,"cooldown":10,"key":"passive_trickle"},
+     "exp":1000,"gold_chance":0.10,"cooldown":45,"key":"fantasy"},
+    {"pattern":r".","exp":10000,"gold_chance":0.04,"cooldown":8,"key":"passive_trickle"},
 ]
 
 EASTER_EGGS = [
@@ -29086,28 +29086,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                           "streak_50":False,"streak_100":False,"streak_500":False})
         if not cds_s.get("daily_bonus_given"):
             cds_s["daily_bonus_given"] = True
-            shadow_exp += 50
-            if p: rpg_exp += 50
+            shadow_exp += 1500
+            if p: rpg_exp += 1500
 
         cds_s["daily_messages"] = cds_s.get("daily_messages",0) + 1
         dm = cds_s["daily_messages"]
         if dm >= 50 and not cds_s.get("streak_50"):
-            cds_s["streak_50"] = True; shadow_exp += 150
-            if p: rpg_exp += 150
+            cds_s["streak_50"] = True; shadow_exp += 4000
+            if p: rpg_exp += 4000
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🔥 *{user.first_name}* hit a *50 message streak!* +150 EXP!",
+                f"🔥 *{user.first_name}* hit a *50 message streak!* +4,000 EXP!",
                 delay=8))
         if dm >= 100 and not cds_s.get("streak_100"):
-            cds_s["streak_100"] = True; shadow_exp += 300; rpg_gold += 30
-            if p: rpg_exp += 300
+            cds_s["streak_100"] = True; shadow_exp += 10000; rpg_gold += 100
+            if p: rpg_exp += 10000
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🔥 *{user.first_name}* hit a *100 message streak!* +300 EXP!",
+                f"🔥 *{user.first_name}* hit a *100 message streak!* +10,000 EXP!",
                 delay=8))
         if dm >= 500 and not cds_s.get("streak_500"):
-            cds_s["streak_500"] = True; shadow_exp += 800
-            if p: rpg_exp += 800
+            cds_s["streak_500"] = True; shadow_exp += 30000
+            if p: rpg_exp += 30000
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🏆 *{user.first_name}* hit a *500 message streak!* +800 EXP! 🎱",
+                f"🏆 *{user.first_name}* hit a *500 message streak!* +30,000 EXP! 🎱",
                 delay=8))
 
     # Apply shadow EXP
