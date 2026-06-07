@@ -173,28 +173,35 @@ def _pvp_pair_key(a, b):
     return (a, b)
 
 def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
-    def _bar_left(hp, mx, w=10):
+    def _bar_left(hp, mx, w=12):
         f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
         return "█" * f + "░" * (w - f)
-    def _bar_right(hp, mx, w=10):
+    def _bar_right(hp, mx, w=12):
         f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
         return "░" * (w - f) + "█" * f
     v_hp = max(0, int(viewer_p.get("hp", 0)))
     v_mx = max(1, int(viewer_p.get("max_hp", 100)))
     o_hp = max(0, int(opp_p.get("hp", 0)))
     o_mx = max(1, int(opp_p.get("max_hp", 100)))
-    vn = str(viewer_p.get("username", "You"))[:12]
-    on = str(opp_p.get("username", "Foe"))[:12]
+    vn = str(viewer_p.get("username", "You"))[:14]
+    on = str(opp_p.get("username", "Foe"))[:14]
+    v_lvl = viewer_p.get("level", 1)
+    o_lvl = opp_p.get("level", 1)
+    v_pct = round(v_hp / v_mx * 100)
+    o_pct = round(o_hp / o_mx * 100)
     v_bar = _bar_left(v_hp, v_mx)
     o_bar = _bar_right(o_hp, o_mx)
     v_status = _compact_status_emojis(viewer_p)
     o_status = _compact_status_emojis(opp_p)
+    v_shield = safe_int(viewer_p.get("shield_hp"))
+    o_shield = safe_int(opp_p.get("shield_hp"))
+    v_sh_str = f" 🛡️{v_shield}" if v_shield > 0 else ""
+    o_sh_str = f" 🛡️{o_shield}" if o_shield > 0 else ""
     lines = [
-        f"*{vn}*" + "  VS  " + f"*{on}*",
+        f"👤 *{vn}* · Lv{v_lvl} · {v_pct}%{v_sh_str}{(' · ' + v_status) if v_status else ''}",
         f"`{v_bar}` ⚔️ `{o_bar}`",
+        f"👾 *{on}* · Lv{o_lvl} · {o_pct}%{o_sh_str}{(' · ' + o_status) if o_status else ''}",
     ]
-    if v_status or o_status:
-        lines.append(f"{v_status or '  '}          {o_status or '  '}")
     return "\n".join(lines)
 
 
@@ -10332,53 +10339,8 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── PVP COMBAT HELPERS ────────────────────────────────────────────────────────
 
 def _pvp_pokemon_card(viewer_uid, a, d, pair):
-    """Tekken-style PvP card: viewer on left, opponent on right, battle log below."""
-    def _bar_left(hp, mx, w=10):
-        f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
-        return "█" * f + "░" * (w - f)
-    def _bar_right(hp, mx, w=10):
-        f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
-        return "░" * (w - f) + "█" * f
-    if viewer_uid == a["user_id"]:
-        viewer_p, opp_p = a, d
-    else:
-        viewer_p, opp_p = d, a
-    v_hp = max(0, int(viewer_p.get("hp", 0)))
-    v_mx = max(1, int(viewer_p.get("max_hp", 100)))
-    o_hp = max(0, int(opp_p.get("hp", 0)))
-    o_mx = max(1, int(opp_p.get("max_hp", 100)))
-    vn = str(viewer_p.get("username", "You"))[:12]
-    on = str(opp_p.get("username", "Foe"))[:12]
-    v_bar = _bar_left(v_hp, v_mx)
-    o_bar = _bar_right(o_hp, o_mx)
-    v_status = _compact_status_emojis(viewer_p)
-    o_status = _compact_status_emojis(opp_p)
-    v_pct = round(v_hp / v_mx * 100)
-    o_pct = round(o_hp / o_mx * 100)
-    lines = [
-        "⚡ *PVP BATTLE* ⚡",
-        "",
-        f"*{vn}*" + "  VS  " + f"*{on}*",
-        f"`{v_bar}` ⚔️ `{o_bar}`",
-    ]
-    if v_status or o_status:
-        lines.append(f"{v_status or '  '}          {o_status or '  '}")
-    # Kill condition hint for viewer
-    _kc = _KILL_CONDITIONS.get(get_class_line(viewer_p))
-    if _kc:
-        _kc_met = _check_kill_condition(viewer_p, opp_p)
-        if _kc_met:
-            lines.append("⚡ *KILL CONDITION MET* — use FINISHER!")
-        else:
-            _kc_parts = []
-            for _f, _v in _kc["conds"]:
-                _cur = safe_int(opp_p.get(_f, 0))
-                _emoji = {"bleed_stacks":"🩸","poison_stacks":"🐍","hex_turns":"💀",
-                          "weakened_hits":"💔","exposed_hits":"💥","distract_turns":"😵",
-                          "silence_turns":"🤐"}.get(_f, "•")
-                _kc_parts.append(f"{_emoji}{_cur}/{_v}")
-            lines.append(f"🎯 Kill: {' '.join(_kc_parts)}")
-    return "\n".join(lines)[:4096]
+    viewer_p, opp_p = (a, d) if viewer_uid == a["user_id"] else (d, a)
+    return _pvp_fight_card(viewer_p, opp_p, "", pair)
 
 
 def _pvp_log_append(pair, entry):
@@ -11600,7 +11562,13 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if pname in inv:
                     potion = pname; heal_amount = pamt; break
             if not potion:
-                await query.answer("No potions left!", show_alert=True); return
+                no_pot_entry = f"🧪 *{a['username']}* reaches for a potion — *none left!*"
+                _pvp_log_append(pair, no_pot_entry)
+                fresh_a = get_player(uid) or a
+                fresh_d = get_player(target_id) or d
+                _cb_unlock(uid)
+                await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, no_pot_entry, context.bot)
+                return
             inv.remove(potion); a["inventory"] = json.dumps(inv)
             old_hp = a["hp"]
             a["hp"] = min(a["max_hp"], a["hp"] + heal_amount)
