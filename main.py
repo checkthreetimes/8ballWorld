@@ -176,20 +176,24 @@ def _pvp_pair_key(a, b):
 def _pvp_fight_card(viewer_p, opp_p, action_text):
     def _bar(hp, mx, w=10):
         f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
-        return "█" * f + "░" * (w - f)
+        return "▓" * f + "░" * (w - f)
     v_hp = max(0, int(viewer_p.get("hp", 0)))
     v_mx = max(1, int(viewer_p.get("max_hp", 100)))
     o_hp = max(0, int(opp_p.get("hp", 0)))
     o_mx = max(1, int(opp_p.get("max_hp", 100)))
     vn = str(viewer_p.get("username", "You"))[:10]
     on = str(opp_p.get("username", "Foe"))[:10]
-    lines = [
-        "❤️ *" + vn + "*: " + _bar(v_hp, v_mx) + " " + str(round(v_hp / v_mx * 100)) + "%",
-        "⚔️ *" + on + "*: " + _bar(o_hp, o_mx) + " " + str(round(o_hp / o_mx * 100)) + "%",
-        "─" * 20,
-        action_text,
-    ]
-    return "\n".join(lines)
+    v_bar = _bar(v_hp, v_mx)
+    o_bar = _bar(o_hp, o_mx)
+    v_hp_str = str(v_hp) + "/" + str(v_mx) + " HP"
+    o_hp_str = str(o_hp) + "/" + str(o_mx) + " HP"
+    pad = 10
+    vn_pad = vn.ljust(pad)
+    on_pad = on.rjust(pad)
+    bar_line = vn_pad + "  " + v_bar + " ⚔️ " + o_bar + "  " + on_pad
+    hp_indent = " " * (pad + 2)
+    hp_line   = hp_indent + v_hp_str + "    " + o_hp_str
+    return action_text + "\n\n" + bar_line + "\n" + hp_line
 
 
 def _start_pvp_turn(pair, active_uid, a, d, au_id, du_id, bot):
