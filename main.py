@@ -292,22 +292,30 @@ async def _finalize_pvp(pair, result_text, bot):
         _f_d = get_player(_f_du)
         async def _fin_card(viewer_uid, vp, op):
             if not vp or not op:
+                # At minimum send the defeat text as a plain DM
+                try:
+                    await bot.send_message(chat_id=viewer_uid, text=result_text[:4096],
+                                           parse_mode="Markdown")
+                except Exception:
+                    pass
                 return
             try:
                 card = _pvp_fight_card(vp, op, result_text)
             except Exception:
-                card = result_text
+                card = ""
+            # Append the full result text below the HP card so defeat/win is visible
+            full_text = (card + "\n\n" + result_text)[:4096] if card else result_text[:4096]
             stored = _pvp_dm_last_msg.get(viewer_uid)
             if stored:
                 try:
                     await bot.edit_message_text(chat_id=stored[0], message_id=stored[1],
-                                                text=card[:4096], parse_mode="Markdown",
+                                                text=full_text, parse_mode="Markdown",
                                                 reply_markup=None)
                     return
                 except Exception:
                     pass
             try:
-                await bot.send_message(chat_id=viewer_uid, text=card[:4096], parse_mode="Markdown")
+                await bot.send_message(chat_id=viewer_uid, text=full_text, parse_mode="Markdown")
             except Exception:
                 pass
         await asyncio.gather(_fin_card(_f_au, _f_a, _f_d), _fin_card(_f_du, _f_d, _f_a))
@@ -4816,6 +4824,40 @@ BOSSES = {
                              ("Crown of the Void","mythic"),("Hands of the Void","mythic"),("Steps of the Void","mythic"),("Face of the Void","mythic"),
                              ("Helm of the Eternal","legendary"),("Gauntlets of the Eternal","legendary"),("Boots of the Eternal","legendary"),("Mask of the Eternal","legendary")]},
 }
+
+def _boss_guaranteed_loot(p):
+    """Return 5-6 guaranteed legendary/mythic items for boss kill rewards."""
+    cls = p.get("class", "")
+    results = []
+
+    def _wpick(pool):
+        return random.choices(pool, weights=[0.55, 0.45])[0][0]
+
+    results.append(_wpick([("Helm of the Eternal","legendary"),("Crown of the Void","mythic")]))
+    results.append(_wpick([("Gauntlets of the Eternal","legendary"),("Hands of the Void","mythic")]))
+    results.append(_wpick([("Boots of the Eternal","legendary"),("Steps of the Void","mythic")]))
+    results.append(_wpick([("Mask of the Eternal","legendary"),("Face of the Void","mythic")]))
+
+    wpn_pool = [n for n,d in WEAPONS.items() if d.get("rarity") in ("legendary","mythic") and d.get("class") == cls]
+    if not wpn_pool:
+        wpn_pool = [n for n,d in WEAPONS.items() if d.get("rarity") in ("legendary","mythic")]
+    if wpn_pool:
+        results.append(random.choice(wpn_pool))
+
+    if random.random() < 0.70:
+        armor_pool = [n for n,d in ARMORS.items() if d.get("rarity") in ("legendary","mythic") and d.get("class") == cls]
+        if not armor_pool:
+            armor_pool = [n for n,d in ARMORS.items() if d.get("rarity") in ("legendary","mythic")]
+        if armor_pool:
+            results.append(random.choice(armor_pool))
+    else:
+        acc_pool = [n for n,d in ACCESSORIES.items() if d.get("rarity") in ("legendary","mythic")]
+        if acc_pool:
+            results.append(random.choice(acc_pool))
+
+    return results
+
+BOSS_RAID_EXP = 500  # low EXP for boss mode
 
 RAID_TIERS = [
     {"name":"The Forest Skirmish","min_level":1,"waves":2,"wave_boss_key":"1 ball",
@@ -14675,7 +14717,27 @@ def _build_sr_markup(uid):
     ])
 
 async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_group(update, "🐉 Boss Raids have been removed. Use /encounter for combat!", delay=10)
+    uid = update.effective_user.id
+    p = get_player(uid)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=10); return
+    chat_id = update.effective_chat.id
+    if chat_id in active_bosses:
+        await send_group(update, "⚠️ A boss is already active here! Defeat it first.", delay=10); return
+    buttons = []
+    for key, bd in BOSSES.items():
+        if bd.get("secret"): continue
+        buttons.append([InlineKeyboardButton(
+            f"🎱 {bd['name']}  ❤️ {bd['max_hp']:,}  💀 {bd['dmg_min']}–{bd['dmg_max']}",
+            callback_data=f"bossstart_{uid}_{key}")])
+    markup = InlineKeyboardMarkup(buttons)
+    await update.message.reply_text(
+        "🐉 *Boss Raid*\n\n"
+        "Summon a boss for the whole group to fight together!\n"
+        "✨ All skills and potions are available.\n"
+        "🎒 Victory rewards *5–6 legendary/mythic items* per player!\n\n"
+        "Choose your boss:",
+        parse_mode="Markdown", reply_markup=markup)
 
 async def boss_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle boss selection button from /boss menu."""
@@ -14836,18 +14898,17 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
             if inst_hp is not None and not is_defeated(pp):
                 pp["hp"] = max(1, inst_hp)
             pp["gold"] = pp.get("gold", 0) + data["gold"]
-            loot = roll_loot_table(data.get("loot_table", []), boss=True)
-            if loot:
+            for loot in _boss_guaranteed_loot(pp):
                 add_item(pp, loot); r = ""
-                for pool in [WEAPONS, ARMORS, ACCESSORIES]:
+                for pool in [WEAPONS, ARMORS, ACCESSORIES, HATS, GLOVES, BOOTS, MASKS]:
                     if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity",""),""); break
                 lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
             if award_title(pp, data["title"]):
                 lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
-            add_exp(pp, data["exp"], w2)
+            add_exp(pp, BOSS_RAID_EXP, w2)
             _add_influence(pp, 3)
             save_player(pp)
-            lines.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
+            lines.append(f"✅ *{pp['username']}*  -  +{BOSS_RAID_EXP} EXP | +{data['gold']} Gold")
 
     # Delete the /attack command message, then edit the boss card in place
     try: await update.message.delete()
@@ -29689,18 +29750,16 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pp = get_player(u["id"])
                 if not pp: continue
                 pp["gold"] = pp.get("gold", 0) + data["gold"]
-                loot = roll_loot_table(data.get("loot_table", []), boss=True)
-                if loot:
-                    add_item(pp, loot)
-                    r = ""
-                    for pool in [WEAPONS, ARMORS, ACCESSORIES]:
-                        if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), ""); break
+                for loot in _boss_guaranteed_loot(pp):
+                    add_item(pp, loot); r = ""
+                    for pool in [WEAPONS, ARMORS, ACCESSORIES, HATS, GLOVES, BOOTS, MASKS]:
+                        if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity",""),""); break
                     lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
                 if award_title(pp, data["title"]):
                     lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
-                lmsgs, leveled = add_exp(pp, data["exp"], w2)
+                add_exp(pp, BOSS_RAID_EXP, w2)
                 save_player(pp)
-                lines.append(f"✅ *{pp['username']}*  -  +{data['exp']:,} EXP | +{data['gold']} Gold")
+                lines.append(f"✅ *{pp['username']}*  -  +{BOSS_RAID_EXP} EXP | +{data['gold']} Gold")
             try:
                 await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
             except Exception: pass
@@ -29827,16 +29886,15 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pp = get_player(u["id"])
             if not pp: continue
             pp["gold"] = pp.get("gold", 0) + data["gold"]
-            loot = roll_loot_table(data.get("loot_table", []), boss=True)
-            if loot:
+            for loot in _boss_guaranteed_loot(pp):
                 add_item(pp, loot); r = ""
-                for pool in [WEAPONS, ARMORS, ACCESSORIES]:
-                    if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), ""); break
+                for pool in [WEAPONS, ARMORS, ACCESSORIES, HATS, GLOVES, BOOTS, MASKS]:
+                    if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity",""),""); break
                 lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
             if award_title(pp, data["title"]):
                 lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
-            add_exp(pp, data["exp"], w2); save_player(pp)
-            lines.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
+            add_exp(pp, BOSS_RAID_EXP, w2); save_player(pp)
+            lines.append(f"✅ *{pp['username']}*  -  +{BOSS_RAID_EXP} EXP | +{data['gold']} Gold")
         try:
             await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
         except Exception: pass
