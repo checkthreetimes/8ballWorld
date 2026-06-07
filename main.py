@@ -163,6 +163,7 @@ _pet_trade_offers   = {}  # offeror_uid -> {"target_uid": int, "pet_id": int, "e
 _pet_breed_sessions = {}  # uid -> {"pet1_id": int, "pet2_id": int, "started": float}
 _active_pet_duels   = {}  # (uid1,uid2) tuple key -> duel state dict
 _pvp_dm_last_msg   = {}   # uid -> (chat_id, message_id) — last DM battle card
+_pvp_origin_chat   = {}   # pair -> group chat_id for kill announcements
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
@@ -171,29 +172,46 @@ def _pvp_pair_key(a, b):
     return (a, b)
 
 def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
-    def _bar(hp, mx, w=10):
+    def _bar_left(hp, mx, w=10):
+        # Viewer bar: fills left-to-right, depletes from right
         f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
         return "█" * f + "░" * (w - f)
+    def _bar_right(hp, mx, w=10):
+        # Opponent bar: fills right-to-left (Tekken P2 style), depletes from left
+        f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
+        return "░" * (w - f) + "█" * f
     v_hp = max(0, int(viewer_p.get("hp", 0)))
     v_mx = max(1, int(viewer_p.get("max_hp", 100)))
     o_hp = max(0, int(opp_p.get("hp", 0)))
     o_mx = max(1, int(opp_p.get("max_hp", 100)))
-    vn = str(viewer_p.get("username", "You"))[:10]
-    on = str(opp_p.get("username", "Foe"))[:10]
-    v_bar = _bar(v_hp, v_mx)
-    o_bar = _bar(o_hp, o_mx)
-    v_hp_str = str(v_hp) + "/" + str(v_mx) + " HP"
-    o_hp_str = str(o_hp) + "/" + str(o_mx) + " HP"
-    pad = 10
-    bar_line = vn.ljust(pad) + "  " + v_bar + " ⚔️ " + o_bar + "  " + on.rjust(pad)
-    hp_line  = " " * (pad + 2) + v_hp_str + "    " + o_hp_str
-    lines = [action_text, "", bar_line, hp_line]
+    vn = str(viewer_p.get("username", "You"))[:12]
+    on = str(opp_p.get("username", "Foe"))[:12]
+    v_bar = _bar_left(v_hp, v_mx)
+    o_bar = _bar_right(o_hp, o_mx)
+    v_status = _compact_status_emojis(viewer_p)
+    o_status = _compact_status_emojis(opp_p)
+    v_pct = round(v_hp / v_mx * 100)
+    o_pct = round(o_hp / o_mx * 100)
+    lines = [
+        "⚡ *PVP BATTLE* ⚡",
+        "",
+        f"*{vn}*" + "  VS  " + f"*{on}*",
+        f"`{v_bar}` ⚔️ `{o_bar}`",
+        f"❤️ {v_hp}/{v_mx} ({v_pct}%)    ❤️ {o_hp}/{o_mx} ({o_pct}%)",
+    ]
+    if v_status or o_status:
+        lines.append(f"{v_status or '  '}          {o_status or '  '}")
     logs = _pvp_battle_logs.get(pair, []) if pair else []
     if logs:
-        lines.append("─" * 22)
+        lines.append("")
+        lines.append("─── 📜 BATTLE LOG ───")
         for entry in logs[-2:]:
-            first = entry.split("\n")[0].strip()
-            lines.append(first[:80])
+            parts = [l.strip() for l in entry.split("\n") if l.strip()]
+            if not parts:
+                continue
+            lines.append(f"▸ {parts[0]}")
+            for extra in parts[1:]:
+                lines.append(f"  ↳ {extra[:90]}")
     return "\n".join(lines)
 
 
@@ -229,6 +247,7 @@ async def _finalize_pvp(pair, result_text, bot):
     _pvp_cards.pop(pair, None)
     _pvp_battle_logs.pop(pair, None)
     _pvp_cur_page.pop(pair, None)
+    _pvp_origin_chat.pop(pair, None)
     if len(pair) == 2:
         _f_au, _f_du = pair
         _f_a = get_player(_f_au)
@@ -10288,51 +10307,64 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── PVP COMBAT HELPERS ────────────────────────────────────────────────────────
 
 def _pvp_pokemon_card(viewer_uid, a, d, pair):
-    """Pokémon-style PvP card: opponent at top, self at bottom, last 2 log entries."""
-    logs = _pvp_battle_logs.get(pair, [])
-    # Perspective: viewer sees their opponent at top, themselves at bottom
+    """Tekken-style PvP card: viewer on left, opponent on right, battle log below."""
+    def _bar_left(hp, mx, w=10):
+        f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
+        return "█" * f + "░" * (w - f)
+    def _bar_right(hp, mx, w=10):
+        f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
+        return "░" * (w - f) + "█" * f
     if viewer_uid == a["user_id"]:
-        top, bot = d, a
+        viewer_p, opp_p = a, d
     else:
-        top, bot = a, d
-    top_bar = _enc_hp_bar(top["hp"], max(1, top.get("max_hp", top["hp"])))
-    bot_bar = _enc_hp_bar(bot["hp"], max(1, bot.get("max_hp", bot["hp"])))
-    top_s = _compact_status_emojis(top)
-    bot_s = _compact_status_emojis(bot)
-    lines = ["⚔️ PVP BATTLE", ""]
-    lines.append(f"👾 *{top['username']}*{'  ' + top_s if top_s else ''}")
-    lines.append(f"`{top_bar}`  {top['hp']}/{top.get('max_hp', top['hp'])} HP")
-    lines.append("")
-    lines.append(f"👤 *{bot['username']}*{'  ' + bot_s if bot_s else ''}")
-    lines.append(f"`{bot_bar}`  {bot['hp']}/{bot.get('max_hp', bot['hp'])} HP")
-    # Kill condition hint: show what attacker (viewer) needs on their opponent (top)
-    _kc = _KILL_CONDITIONS.get(get_class_line(bot)) if viewer_uid == bot["user_id"] else None
+        viewer_p, opp_p = d, a
+    v_hp = max(0, int(viewer_p.get("hp", 0)))
+    v_mx = max(1, int(viewer_p.get("max_hp", 100)))
+    o_hp = max(0, int(opp_p.get("hp", 0)))
+    o_mx = max(1, int(opp_p.get("max_hp", 100)))
+    vn = str(viewer_p.get("username", "You"))[:12]
+    on = str(opp_p.get("username", "Foe"))[:12]
+    v_bar = _bar_left(v_hp, v_mx)
+    o_bar = _bar_right(o_hp, o_mx)
+    v_status = _compact_status_emojis(viewer_p)
+    o_status = _compact_status_emojis(opp_p)
+    v_pct = round(v_hp / v_mx * 100)
+    o_pct = round(o_hp / o_mx * 100)
+    lines = [
+        "⚡ *PVP BATTLE* ⚡",
+        "",
+        f"*{vn}*" + "  VS  " + f"*{on}*",
+        f"`{v_bar}` ⚔️ `{o_bar}`",
+        f"❤️ {v_hp}/{v_mx} ({v_pct}%)    ❤️ {o_hp}/{o_mx} ({o_pct}%)",
+    ]
+    if v_status or o_status:
+        lines.append(f"{v_status or '  '}          {o_status or '  '}")
+    # Kill condition hint for viewer
+    _kc = _KILL_CONDITIONS.get(get_class_line(viewer_p))
     if _kc:
-        _kc_met = _check_kill_condition(bot, top)
+        _kc_met = _check_kill_condition(viewer_p, opp_p)
         if _kc_met:
-            lines.append(f"⚡ *KILL CONDITION MET* — use FINISHER!")
+            lines.append("⚡ *KILL CONDITION MET* — use FINISHER!")
         else:
             _kc_parts = []
             for _f, _v in _kc["conds"]:
-                _cur = safe_int(top.get(_f, 0))
+                _cur = safe_int(opp_p.get(_f, 0))
                 _emoji = {"bleed_stacks":"🩸","poison_stacks":"🐍","hex_turns":"💀",
                           "weakened_hits":"💔","exposed_hits":"💥","distract_turns":"😵",
                           "silence_turns":"🤐"}.get(_f, "•")
                 _kc_parts.append(f"{_emoji}{_cur}/{_v}")
             lines.append(f"🎯 Kill: {' '.join(_kc_parts)}")
+    logs = _pvp_battle_logs.get(pair, [])
     if logs:
         lines.append("")
-        lines.append("─────────────")
+        lines.append("─── 📜 BATTLE LOG ───")
         for entry in logs[-2:]:
             parts = [l.strip() for l in entry.split("\n") if l.strip()]
             if not parts:
                 continue
-            lines.append(parts[0])
-            if len(parts) > 1:
-                extras = "  ".join(parts[1:])
-                if len(extras) > 90:
-                    extras = extras[:87] + "…"
-                lines.append(f"  ↳ {extras}")
+            lines.append(f"▸ {parts[0]}")
+            for extra in parts[1:]:
+                lines.append(f"  ↳ {extra[:90]}")
     return "\n".join(lines)[:4096]
 
 
@@ -10383,53 +10415,6 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
         rows.append(skill_btns[i:i+2])
     return InlineKeyboardMarkup(rows)
 
-
-async def _pvp_update_both_cards(pair, a, d, au_id, du_id, group_chat_id, bot, query=None):
-    """Each player's card is updated in place wherever it already lives.
-    Fallback: attacker → group chat, defender → their DM (uid == DM chat_id).
-    Both cards are updated in parallel via asyncio.gather.
-    """
-    async def _update_one(viewer_uid, player_p, opp_uid, opp_p_data, fallback_chat):
-        card_text = _pvp_pokemon_card(viewer_uid, a, d, pair)
-        markup    = _build_pvp_card_markup(viewer_uid, opp_uid, player_p, opp_p=opp_p_data)
-        updated   = False
-        if query and query.from_user.id == viewer_uid:
-            try:
-                await query.edit_message_text(card_text, parse_mode="Markdown", reply_markup=markup)
-                _pvp_player_cards[viewer_uid] = (query.message.chat_id, query.message.message_id)
-                updated = True
-            except Exception as _qe:
-                if "not modified" in str(_qe).lower():
-                    _pvp_player_cards[viewer_uid] = (query.message.chat_id, query.message.message_id)
-                    updated = True
-        if not updated:
-            existing = _pvp_player_cards.get(viewer_uid)
-            if existing:
-                try:
-                    await bot.edit_message_text(chat_id=existing[0], message_id=existing[1],
-                        text=card_text, parse_mode="Markdown", reply_markup=markup)
-                    updated = True
-                except Exception as _be:
-                    if "not modified" in str(_be).lower():
-                        updated = True
-        if not updated:
-            existing = _pvp_player_cards.get(viewer_uid)
-            try:
-                msg = await bot.send_message(chat_id=fallback_chat, text=card_text,
-                    parse_mode="Markdown", reply_markup=markup)
-                # Only delete old card after new one is confirmed sent
-                if existing:
-                    try: await bot.delete_message(chat_id=existing[0], message_id=existing[1])
-                    except Exception: pass
-                _pvp_player_cards[viewer_uid] = (fallback_chat, msg.message_id)
-                _pvp_cards.setdefault(pair, {})[viewer_uid] = msg.message_id
-            except Exception:
-                pass
-
-    await asyncio.gather(
-        _update_one(au_id, a, du_id, d, group_chat_id),
-        _update_one(du_id, d, au_id, a, du_id),
-    )
 
 
 async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
@@ -11325,6 +11310,8 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer("You're defeated!", show_alert=True); return
         if is_invincible(a):
             await query.answer("You're invincible!", show_alert=True); return
+        if is_vanished(a):
+            await query.answer("You're vanished — can't attack while hidden!", show_alert=True); return
         _cc = _consume_cc(a)
         if _cc:
             await query.answer(_cc, show_alert=True); return
@@ -11343,8 +11330,9 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         except Exception:
             pass
 
-        pair = (uid, target_uid)
+        pair = _pvp_pair_key(uid, target_uid)
         _pvp_cards.setdefault(pair, {})
+        _pvp_origin_chat[pair] = query.message.chat_id
         _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": query.message.chat_id}
 
         # Show fight card to both players in DM
@@ -11520,8 +11508,9 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
 
     bot  = update.get_bot()
-    pair = (au.id, du_id)
+    pair = _pvp_pair_key(au.id, du_id)
     _pvp_cards.setdefault(pair, {})
+    _pvp_origin_chat[pair] = chat_id
     start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
     _pvp_log_append(pair, start_txt)
     fresh_a = get_player(au.id) or a
@@ -11629,6 +11618,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kc = _KILL_CONDITIONS.get(line_a)
             if not kc or not _check_kill_condition(a, d):
                 await query.answer("⚡ Kill condition not met!", show_alert=True); return
+            if is_vanished(a):
+                await query.answer("You're vanished — can't use finisher while hidden!", show_alert=True); return
             stat_val = get_stat(a, kc["stat"])
             dmg = round(stat_val * kc["mult"])
             if kc.get("drain_pct"):
@@ -11685,7 +11676,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Can't attack your own guild member!", show_alert=True); return
 
         w = get_weather()
-        chat_id = query.message.chat_id
+        chat_id = _pvp_origin_chat.get(pair) or query.message.chat_id
         result_text, lvl_msgs, result_type = await _execute_pvp_hit(
             a, d, uid, target_id, w, chat_id, context.bot)
 
