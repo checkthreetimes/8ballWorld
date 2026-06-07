@@ -223,8 +223,15 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
                                             text=card, parse_mode="Markdown", reply_markup=markup)
                 return
             except Exception as _e:
-                if "not modified" in str(_e).lower():
+                err = str(_e).lower()
+                if "not modified" in err:
                     return
+                # Edit failed (deleted, flood, etc.) — delete stale ref, send fresh below
+                _pvp_dm_last_msg.pop(viewer_uid, None)
+                try:
+                    await bot.delete_message(chat_id=stored[0], message_id=stored[1])
+                except Exception:
+                    pass
         try:
             msg = await bot.send_message(chat_id=viewer_uid, text=card,
                                          parse_mode="Markdown", reply_markup=markup)
@@ -17348,10 +17355,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         _pvp_pair_k = _pvp_pair_key(uid, target_uid)
         # Register group chat origin (needed for kill announcements / _execute_pvp_hit)
         _pvp_origin_chat.setdefault(_pvp_pair_k, query.message.chat_id)
-        # If this is a brand-new fight (no existing card), alert the defender and clear stale msgs
-        if _pvp_pair_k not in _pvp_cards or not _pvp_cards.get(_pvp_pair_k):
+        # Only alert defender and clear stale card if no card is currently active for them
+        _is_new_fight = _pvp_dm_last_msg.get(target_uid) is None
+        if _is_new_fight:
             _pvp_cards.setdefault(_pvp_pair_k, {})
-            _pvp_dm_last_msg.pop(target_uid, None)
             _pvp_log_msg.pop(target_uid, None)
             try:
                 await context.bot.send_message(chat_id=target_uid,
