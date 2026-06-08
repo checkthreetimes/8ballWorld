@@ -150,6 +150,7 @@ _pvp_battle_logs   = {}   # pair -> list[str], one entry per round (chronologica
 _pvp_cur_page      = {}   # pair -> int, current page index (0 = oldest)
 _pvp_player_cards  = {}   # uid -> (chat_id, message_id) — each player's own battle card
 _pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
+_pvp_battle_state  = {}   # uid -> per-battle dungeon item charge state
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
 _PVP_ACTION_CD     = 1.5  # seconds between PvP card button presses (not used for gate — kept for reference)
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
@@ -3483,7 +3484,9 @@ CONSUMABLES = {
     # Healing
     "Health Potion":          {"desc":"Restores 250 HP.","sell":75},
     "Greater Health Potion":  {"desc":"Restores 500 HP.","sell":200},
-    "Grand Restorative Flask":{"desc":"Restores 1500 HP.","sell":450},
+    "Grand Restorative Flask":    {"desc":"Restores 1500 HP.",  "sell":450},
+    "Supreme Restorative Flask":  {"desc":"Restores 5000 HP.",  "sell":1200},
+    "Ultimate Vitality Draught":  {"desc":"Restores 15000 HP.", "sell":3500},
     # Revive
     "Scroll of Revival":      {"desc":"Revive a defeated player.","sell":750},
     # Skill items
@@ -3585,14 +3588,16 @@ _RARITY_PRICES = {"common":350,"uncommon":950,"rare":2800,"epic":7000}
 
 _SHOP_STATIC_TABS = {
     "pot": [
-        {"item":"Health Potion",          "price":300,  "desc":"Restores 250 HP."},
-        {"item":"Greater Health Potion",  "price":750,  "desc":"Restores 500 HP."},
-        {"item":"Grand Restorative Flask","price":1800, "desc":"Restores 1500 HP."},
-        {"item":"Scroll of Revival",      "price":2500, "desc":"Revive a defeated player."},
+        {"item":"Health Potion",              "price":300,   "desc":"Restores 250 HP.",   "bulk":True},
+        {"item":"Greater Health Potion",      "price":750,   "desc":"Restores 500 HP.",   "bulk":True},
+        {"item":"Grand Restorative Flask",    "price":1800,  "desc":"Restores 1500 HP.",  "bulk":True},
+        {"item":"Supreme Restorative Flask",  "price":4500,  "desc":"Restores 5000 HP.",  "bulk":True},
+        {"item":"Ultimate Vitality Draught",  "price":12000, "desc":"Restores 15000 HP.", "bulk":True},
+        {"item":"Scroll of Revival",          "price":2500,  "desc":"Revive a defeated player."},
     ],
     "mat": [
-        {"item":"Iron Shard",        "price":300,  "desc":"Crafting material."},
-        {"item":"Enchanting Scroll", "price":500,  "desc":"Enchant a piece of gear."},
+        {"item":"Iron Shard",        "price":300,  "desc":"Crafting material.", "bulk":True},
+        {"item":"Enchanting Scroll", "price":500,  "desc":"Enchant a piece of gear.", "bulk":True},
     ],
 }
 
@@ -3774,8 +3779,17 @@ def _build_shop_view(p, tab, uid, discount=0):
     buy_rows = []
     for i, e in enumerate(items):
         price = round(e["price"] * (1-discount))
-        buy_rows.append([InlineKeyboardButton(
-            f"Buy: {e['item']} ({price:,}g)", callback_data=f"shopbuy_{uid}_{tab}_{i}")])
+        if e.get("bulk"):
+            buy_rows.append([
+                InlineKeyboardButton(f"Buy 1× {e['item']} ({price:,}g)", callback_data=f"shopbuy_{uid}_{tab}_{i}"),
+            ])
+            buy_rows.append([
+                InlineKeyboardButton(f"Buy 5×  ({price*5:,}g)", callback_data=f"shopbulk_{uid}_{tab}_{i}_5"),
+                InlineKeyboardButton(f"Buy 10× ({price*10:,}g)", callback_data=f"shopbulk_{uid}_{tab}_{i}_10"),
+            ])
+        else:
+            buy_rows.append([InlineKeyboardButton(
+                f"Buy: {e['item']} ({price:,}g)", callback_data=f"shopbuy_{uid}_{tab}_{i}")])
     today = datetime.now().strftime("%Y-%m-%d")
     reroll_count = safe_int(p.get("shop_reroll_count", 0)) if p.get("shop_reroll_date") == today else 0
     reroll_label = f"🎲 Reroll (1,000g)" if reroll_count < 3 else "🎲 Rerolled 3×"
@@ -5786,12 +5800,14 @@ _DNG_TRAPS = [
 ]
 
 _DNG_SHOP_ITEMS = [
-    {"name":"Health Potion",         "cost":300,  "type":"item"},
-    {"name":"Greater Health Potion", "cost":700,  "type":"item"},
-    {"name":"Grand Restorative Flask","cost":1800, "type":"item"},
-    {"name":"Enchanting Scroll",      "cost":2500, "type":"item"},
-    {"name":"MP Tonic",               "cost":400,  "type":"mp_restore", "mp":30},
-    {"name":"Antidote",               "cost":250,  "type":"cure_status"},
+    {"name":"Health Potion",             "cost":300,   "type":"item"},
+    {"name":"Greater Health Potion",     "cost":700,   "type":"item"},
+    {"name":"Grand Restorative Flask",   "cost":1800,  "type":"item"},
+    {"name":"Supreme Restorative Flask", "cost":4500,  "type":"item"},
+    {"name":"Ultimate Vitality Draught", "cost":12000, "type":"item"},
+    {"name":"Enchanting Scroll",         "cost":2500,  "type":"item"},
+    {"name":"MP Tonic",                  "cost":400,   "type":"mp_restore", "mp":30},
+    {"name":"Antidote",                  "cost":250,   "type":"cure_status"},
 ]
 
 _DNG_NARRATION = {
@@ -6069,6 +6085,39 @@ _DNG_BOSS_LOOT = [
 ]
 
 # ──────────────────────────────────────────────────────────────────────────────
+
+def _dng_pvp_effects(p):
+    """Return set of active PvP effect keys from dungeon exclusive items + companions."""
+    fx = set()
+    inv = sjl(p.get("inventory"), [])
+    for item_name, item_data in DNG_EXCLUSIVE_ITEMS.items():
+        if item_name in inv:
+            fx.add(item_data["effect"])
+    for comp_key in p.get("dng_companions", []):
+        comp = DNG_COMPANIONS.get(comp_key, {})
+        for eff in comp.get("pvp_effects", []):
+            fx.add(eff)
+    return fx
+
+def _dng_pvp_init(uid, p):
+    """Initialize per-battle charge state for dungeon items. Call at battle start."""
+    inv = sjl(p.get("inventory"), [])
+    state = {}
+    if "Abyssal Plate" in inv:
+        state["abyssal_plate_hits"] = 5
+    if "crystal_golem" in p.get("dng_companions", []):
+        state["golem_absorbs"] = 3
+        state["golem_block_used"] = False
+    if "null_herald" in p.get("dng_companions", []):
+        state["herald_blocks"] = 2
+    if "iron_guardian" in p.get("dng_companions", []):
+        state["guardian_block_used"] = False
+    if "Cryptwalker's Blade" in inv:
+        state["cryptwalker_shield"] = False
+    _pvp_battle_state[uid] = state
+
+def _dng_pvp_state(uid):
+    return _pvp_battle_state.get(uid, {})
 
 def _dng_roll_narration(key, **kwargs):
     pool = _DNG_NARRATION.get(key, ["..."])
@@ -7085,9 +7134,11 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("dng_heal_"):
         inv = sjl(p.get("inventory"), [])
         potion, heal = None, 0
-        if "Grand Restorative Flask" in inv:   potion, heal = "Grand Restorative Flask", 1500
-        elif "Greater Health Potion" in inv:   potion, heal = "Greater Health Potion", 500
-        elif "Health Potion" in inv:           potion, heal = "Health Potion", 250
+        if "Ultimate Vitality Draught" in inv:  potion, heal = "Ultimate Vitality Draught", 15000
+        elif "Supreme Restorative Flask" in inv: potion, heal = "Supreme Restorative Flask", 5000
+        elif "Grand Restorative Flask" in inv:   potion, heal = "Grand Restorative Flask", 1500
+        elif "Greater Health Potion" in inv:     potion, heal = "Greater Health Potion", 500
+        elif "Health Potion" in inv:             potion, heal = "Health Potion", 250
         if not potion:
             state.setdefault("combat_log",[]).append("🧪 No potions!")
             await _dng_edit(uid, context.bot, _dng_combat_card(state), _dng_combat_markup(uid, state)); return
@@ -9125,6 +9176,9 @@ def check_miss(attacker, defender):
         cls_a2 = get_player_class(attacker)
         if cls_a2 and cls_a2.get("passive_key") == "keen_sight":
             dodge -= min(0.15, atk_dex * 0.005)
+    # Shadow Sprite companion: +20% dodge
+    if "dodge_20" in _dng_pvp_effects(defender):
+        dodge += 0.20
     dodge = max(0.0, dodge)
 
     did_dodge = random.random() < dodge
@@ -9198,6 +9252,9 @@ def apply_crit(attacker, dmg):
         mult = 3.0
     elif cls and cls.get("passive_key") == "celestial_wrath":
         mult = 2.5
+    # Storm Drake companion: +25% crit damage
+    if "crit_dmg_25" in _dng_pvp_effects(attacker):
+        mult += 0.25
     return round(dmg * mult)
 
 def apply_lifesteal(attacker, dmg):
@@ -11204,6 +11261,13 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             _dot_notes.append(f"{_em} *{_nm} tick!* -{_d_amt} HP ({_pct_txt})" + (f" [{_rem} left]" if _rem else " *(cleared!)*"))
     _dot_prefix = "\n".join(_dot_notes) + "\n" if _dot_notes else ""
 
+    # Blessed Specter companion: regen 3% max HP per turn when attacker acts
+    if "regen_3pct" in _dng_pvp_effects(a):
+        _bs_regen = max(1, round(calc_max_hp(a) * 0.03))
+        a["hp"] = min(calc_max_hp(a), a["hp"] + _bs_regen)
+        _dot_notes.append(f"👻 *Blessed Specter* mends {a.get('username','?')} — *+{_bs_regen} HP*!")
+    if _dot_notes: _dot_prefix = "\n".join(_dot_notes) + "\n"
+
     # ── Auto-cure: fire top-priority active affliction ────────────────────────
     _cure_prio = sjl(a.get("cure_priority"), []) or _DEFAULT_CURE_PRIORITY
     _cured_note = ""
@@ -11370,7 +11434,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     if cls_a:
         pk_a = cls_a.get("passive_key", "")
         if pk_a == "execute":
-            if d["hp"] / max(1, d["max_hp"]) < 0.25:
+            if d["hp"] / max(1, d["max_hp"]) < 0.25 and "execute_immune" not in _dng_pvp_effects(d):
                 dmg *= 2; extra_notes.append("💀 *Execute!* Double damage below 25% HP!")
         if pk_a == "devotion":
             charge = safe_int(a.get("devotion_charge"))
@@ -11454,7 +11518,14 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         extra_notes.append(f"💚 *Regen trigger!* +{_rg_heal} HP ({d['regen_charges']} left)")
 
     _d_hp_before_attack = d["hp"]
+    # Void Sovereign companion: +10% all stats — simulate with 10% extra DR here
+    _void_sov_dr = 0.10 if "all_stats_10" in _dng_pvp_effects(d) else 0
     dmg_after_def = calc_defense(d, dmg) if dmg > 0 else 0
+    if dmg_after_def > 0 and _void_sov_dr:
+        dmg_after_def = max(0, int(dmg_after_def * (1 - _void_sov_dr)))
+    # Iron Guardian companion: +120 flat DEF absorb per hit
+    if dmg_after_def > 0 and "flat_def_120" in _dng_pvp_effects(d):
+        dmg_after_def = max(0, dmg_after_def - 120)
 
     # Serpent defender: show the snake companion absorption in combat messages
     if dmg > 0 and get_class_line(d) == "serpent":
@@ -11485,6 +11556,50 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         elif pet_status_type == "lifesteal_to_owner" and pet_status_val:
             d["hp"] = min(calc_max_hp(d), d.get("hp", 0) + pet_status_val)
 
+    # ── Dungeon item / companion defender effects ─────────────────────────────
+    _d_dng_fx = _dng_pvp_effects(d)
+    _d_dng_st = _dng_pvp_state(du_id)
+    _a_dng_fx = _dng_pvp_effects(a)
+    _a_dng_st = _dng_pvp_state(au_id)
+
+    # Cryptwalker's Blade: attacker gains 1-hit immunity after a kill
+    if _a_dng_st.get("cryptwalker_shield"):
+        _a_dng_st["cryptwalker_shield"] = False
+        extra_notes.append(f"🗡️ *Cryptwalker's Shield!* {a.get('username','?')} negates this hit!")
+        dmg_after_def = 0
+
+    # Void Crown: 20% chance to fully negate any attack
+    if dmg_after_def > 0 and "negate_20" in _d_dng_fx and random.random() < 0.20:
+        extra_notes.append(f"🕳️ *Void Crown!* The attack dissolves into nothing!")
+        dmg_after_def = 0
+
+    # Abyssal Plate: immune to first 5 attacks per PvP battle
+    if dmg_after_def > 0 and _d_dng_st.get("abyssal_plate_hits", 0) > 0:
+        _d_dng_st["abyssal_plate_hits"] -= 1
+        _rem = _d_dng_st["abyssal_plate_hits"]
+        extra_notes.append(f"🛡️ *Abyssal Plate!* Attack negated! ({_rem} charges left)")
+        dmg_after_def = 0
+
+    # Crystal Golem companion: absorbs first 3 hits, 50% counter
+    if dmg_after_def > 0 and _d_dng_st.get("golem_absorbs", 0) > 0:
+        _d_dng_st["golem_absorbs"] -= 1
+        counter_dmg = max(1, int(dmg_after_def * 0.50))
+        a["hp"] = max(0, a["hp"] - counter_dmg)
+        extra_notes.append(f"💎 *Crystal Golem* absorbs the hit & counters for *{counter_dmg}* dmg! ({_d_dng_st['golem_absorbs']} left)")
+        dmg_after_def = 0
+
+    # Void Sovereign companion: 20% damage negation
+    if dmg_after_def > 0 and "dmg_negate_20" in _d_dng_fx and random.random() < 0.20:
+        extra_notes.append(f"👁️ *Void Sovereign!* 20% damage negated!")
+        dmg_after_def = max(0, int(dmg_after_def * 0.80))
+
+    # Rageborn Gauntlets: attacker +40% ATK when below 40% HP
+    if dmg_after_def > 0 and "rage_atk_40" in _a_dng_fx:
+        _a_hp_pct = a.get("hp", 1) / max(1, calc_max_hp(a))
+        if _a_hp_pct < 0.40:
+            dmg_after_def = int(dmg_after_def * 1.40)
+            extra_notes.append(f"🔴 *Rageborn Gauntlets!* Low HP fury! Damage ×1.4!")
+
     # Shield absorbs damage before real HP
     _d_shield = safe_int(d.get("shield_hp"))
     _shield_absorbed = 0
@@ -11503,6 +11618,15 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     if "flourish" in get_all_passive_keys(d):
         d["flourish_stacks"] = 0
     healed = apply_lifesteal(a, dmg_after_def)
+    # Blood Pact Ring: 10% lifesteal on every hit for attacker
+    if dmg_after_def > 0 and "lifesteal_10" in _a_dng_fx:
+        _bpr_heal = max(1, int(dmg_after_def * 0.10))
+        a["hp"] = min(calc_max_hp(a), a["hp"] + _bpr_heal)
+        extra_notes.append(f"💍 *Blood Pact Ring* drains *+{_bpr_heal} HP*!")
+    # Void Wisp companion: 12% chance to silence attacker when defender is hit
+    if dmg_after_def > 0 and "silence_on_hit_12" in _d_dng_fx and random.random() < 0.12:
+        add_charges(a, "silence_turns", 2)
+        extra_notes.append(f"🌀 *Void Wisp!* {a.get('username','?')} is *Silenced* for 2 turns!")
     # Consume attacker charge-based buffs/debuffs (one charge per attack)
     if safe_int(a.get("battle_cry_str_hits")) > 0:
         a["battle_cry_str_hits"] -= 1
@@ -11537,6 +11661,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         if _pk_d_post == "allure" and random.random() < 0.15:
             add_charges(a, "hex_turns", 2)
             extra_notes.append(f"💫 *Allure!* {a['username']} fascinated (25% less damage for 2 hits)!")
+
+    # Storm Drake companion: 15% chance lightning proc on basic attacks
+    if dmg_after_def > 0 and "lightning_proc_15" in _a_dng_fx and random.random() < 0.15:
+        _lp_dmg = max(1, round(dmg_after_def * 0.40))
+        d["hp"] = max(0, d["hp"] - _lp_dmg)
+        extra_notes.append(f"⚡ *Storm Drake lightning!* Zaps {d.get('username','?')} for *{_lp_dmg}* bonus damage!")
 
     # Burn proc from weapon enchant
     if get_enchant_bonus(a, "burn_proc") and random.random() < 0.10:
@@ -11742,11 +11872,28 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*{skill_tag}{elem_tag}!"
 
     # Class companion auto-proc (all classes get a unique built-in companion)
+    _d_dng_fx_cc = _dng_pvp_effects(d)
+    _a_dng_fx_cc = _dng_pvp_effects(a)
     def _cc_deal(raw):
         actual = calc_defense(d, raw)
         d["hp"] = max(0, d["hp"] - actual)
+        # Blood Pact Ring lifesteal on companion damage
+        if actual > 0 and "lifesteal_10" in _a_dng_fx_cc:
+            a["hp"] = min(calc_max_hp(a), a["hp"] + max(1, int(actual * 0.10)))
         return actual
     def _cc_apply_status(effect, val):
+        # Dungeon item status immunities
+        if effect in ("stun_turns",) and "immune_cc" in _d_dng_fx_cc:
+            return  # Unbroken Crown blocks stun
+        if effect in ("silence_turns",) and ("immune_cc" in _d_dng_fx_cc or "immune_silence" in _d_dng_fx_cc):
+            return  # Unbroken Crown or Blessed Specter blocks silence
+        if effect in ("burn",) and ("immune_dot" in _d_dng_fx_cc or "immune_burn" in _d_dng_fx_cc):
+            return  # Voidheart Pendant or Ember Fairy blocks burn
+        if effect in ("poison_stacks",) and "immune_dot" in _d_dng_fx_cc:
+            return  # Voidheart Pendant blocks poison
+        # Null Regalia: debuffs last 50% shorter
+        if "debuff_half" in _d_dng_fx_cc:
+            val = max(1, val // 2)
         if effect == "burn": add_charges(d, "burn_stacks", val); d["burn_pct"] = 10
         elif effect == "poison_stacks": add_charges(d, "poison_stacks", val)
         elif effect == "distract_turns": add_charges(d, "distract_turns", val)
@@ -11770,6 +11917,11 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         d["defeated_until"] = (datetime.now() + timedelta(minutes=6)).isoformat()
         d["last_defeated_by"] = f"{a['username']} (PvP)"
         _d_was_wanted = safe_int(d.get("is_wanted"))
+        # Clean up per-battle dungeon state for both players
+        _pvp_battle_state.pop(au_id, None); _pvp_battle_state.pop(du_id, None)
+        # Cryptwalker's Blade: killing blow gives attacker 1-hit immunity next turn
+        if "kill_shield" in _dng_pvp_effects(a):
+            _pvp_battle_state.setdefault(au_id, {})["cryptwalker_shield"] = True
         d["kill_streak"] = 0; d["is_wanted"] = 0; d["shield_used"] = 0; d["shield_hp"] = 0; d["shield_core_bonus"] = 0
         d["revenge_target"] = au_id
         d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
@@ -12356,7 +12508,9 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("🚫 Healing blocked!", show_alert=True); return
             inv = sjl(a.get("inventory"), [])
             potion = None; heal_amount = 0
-            for pname, pamt in [("Grand Restorative Flask", 1500),
+            for pname, pamt in [("Ultimate Vitality Draught", 15000),
+                                 ("Supreme Restorative Flask", 5000),
+                                 ("Grand Restorative Flask", 1500),
                                  ("Greater Health Potion", 500),
                                  ("Health Potion", 250)]:
                 if pname in inv:
@@ -12496,6 +12650,9 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         w = get_weather()
         chat_id = _pvp_origin_chat.get(pair) or query.message.chat_id
+        # Initialize dungeon item battle state on first hit
+        if uid not in _pvp_battle_state: _dng_pvp_init(uid, a)
+        if target_id not in _pvp_battle_state: _dng_pvp_init(target_id, d)
         result_text, lvl_msgs, result_type = await _execute_pvp_hit(
             a, d, uid, target_id, w, chat_id, context.bot)
 
@@ -12624,7 +12781,11 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             heal_amount = round(heal_amount * 1.25)
     else:
         # Non-priest  -  requires potion
-        if "Grand Restorative Flask" in inv:
+        if "Ultimate Vitality Draught" in inv:
+            potion = "Ultimate Vitality Draught"; heal_amount = 15000
+        elif "Supreme Restorative Flask" in inv:
+            potion = "Supreme Restorative Flask"; heal_amount = 5000
+        elif "Grand Restorative Flask" in inv:
             potion = "Grand Restorative Flask"; heal_amount = 1500
         elif "Greater Health Potion" in inv:
             potion = "Greater Health Potion"; heal_amount = 500
@@ -19398,6 +19559,51 @@ async def _execute_skill(update, context, p, sk):
     # Apply defense
     if stype not in ("pierce_all","void_nuke","holy_dmg"):
         dmg = calc_defense(d, dmg)
+
+    # ── Dungeon companion/item effects on PvP skills ──────────────────────────
+    _sk_d_fx = _dng_pvp_effects(d)
+    _sk_a_fx = _dng_pvp_effects(p)
+    _sk_d_st = _dng_pvp_state(target_uid)
+    # Iron Guardian: block one skill per fight entirely
+    if dmg > 0 and not _dng_pvp_state(target_uid).get("guardian_block_used") and "block_one_skill" in _sk_d_fx:
+        _dng_pvp_state(target_uid)["guardian_block_used"] = True
+        lines.append(f"🛡️🤖 *Iron Guardian* blocks the skill entirely! (1 use per fight)")
+        dmg = 0
+    # Null Herald: immune to first 2 skills used against you in PvP
+    if dmg > 0 and _sk_d_st.get("herald_blocks", 0) > 0:
+        _sk_d_st["herald_blocks"] -= 1
+        lines.append(f"⚫ *Null Herald* negates the skill! ({_sk_d_st['herald_blocks']} blocks left)")
+        dmg = 0
+    # Shadow Shroud / shadow_sprite: 20% chance to dodge any skill
+    if dmg > 0 and ("skill_dodge_20" in _sk_d_fx) and random.random() < 0.20:
+        lines.append(f"🌑 *{d['username']}* dodges the skill! (Shadow Shroud/Sprite)")
+        dmg = 0
+    # Voidbreaker: attacker skills +25% dmg, ignore 30% of calc_defense reduction
+    if dmg > 0 and "skill_pen_25" in _sk_a_fx:
+        dmg = int(dmg * 1.25)
+        lines.append(f"🌀 *Voidbreaker!* Skill damage pierces +25%!")
+    # Mana Wyrm companion: +30% skill dmg
+    if dmg > 0 and "skill_dmg_30" in _sk_a_fx:
+        dmg = int(dmg * 1.30)
+    # Ember Fairy companion: +10% skill dmg
+    if dmg > 0 and "skill_dmg_10" in _sk_a_fx:
+        dmg = int(dmg * 1.10)
+    # Void Sovereign: 20% chance negate skill
+    if dmg > 0 and "dmg_negate_20" in _sk_d_fx and random.random() < 0.20:
+        lines.append(f"👁️ *Void Sovereign* negates the skill!")
+        dmg = 0
+    # Status immunities on skill application
+    if stype in ("stun", "silence", "root", "freeze") and "immune_cc" in _sk_d_fx:
+        lines.append(f"👑 *Unbroken Crown!* CC effect negated!")
+        dmg = max(0, dmg); d["hp"] = max(0, d["hp"] - dmg)
+        save_player(d); save_player(p)
+        await send_group(update, "\n".join(lines), delay=15); return
+    if stype in ("burn","poison","dot") and "immune_dot" in _sk_d_fx:
+        lines.append(f"💜 *Voidheart Pendant!* DoT effect negated!")
+        dmg = max(0, dmg); d["hp"] = max(0, d["hp"] - dmg)
+        save_player(d); save_player(p)
+        await send_group(update, "\n".join(lines), delay=15); return
+    # ─────────────────────────────────────────────────────────────────────────
 
     d["hp"] = max(0, d["hp"] - dmg)
     lines.append(f"💥 *{dmg} damage* to *{d['username']}*!\n"
@@ -30778,6 +30984,44 @@ async def shop_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
+async def shopbulk_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    # format: shopbulk_{uid}_{tab}_{idx}_{qty}
+    parts = query.data.split("_")
+    if len(parts) < 5:
+        await query.answer(); return
+    try:
+        uid = int(parts[1])
+        tab = parts[2]
+        idx = int(parts[3])
+        qty = int(parts[4])
+    except (ValueError, IndexError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your shop!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    discount = _shop_discount(p)
+    items = get_shop_tab_for_player(tab, p)
+    if idx < 0 or idx >= len(items):
+        await query.answer("Item no longer available.", show_alert=True); return
+    entry = items[idx]
+    unit_price = round(entry["price"] * (1 - discount))
+    total_price = unit_price * qty
+    if p["gold"] < total_price:
+        await query.answer(f"Need {total_price:,}g for {qty}× — you have {p['gold']:,}g.", show_alert=True); return
+    p["gold"] -= total_price
+    for _ in range(qty):
+        add_item(p, entry["item"])
+    save_player(p)
+    await query.answer(f"✅ Bought {qty}× {entry['item']} for {total_price:,}g!")
+    text, markup = _build_shop_view(p, tab, uid, discount)
+    try:
+        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
+
 async def shopreroll_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     parts = query.data.split("_")
@@ -31122,6 +31366,7 @@ def main():
     app.add_handler(CallbackQueryHandler(shop_tab_callback,     pattern="^shoptab_"))
     app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shopbuy_"))
     app.add_handler(CallbackQueryHandler(shop_buy_callback,     pattern="^shop_b_"))  # legacy
+    app.add_handler(CallbackQueryHandler(shopbulk_callback,     pattern="^shopbulk_"))
     app.add_handler(CallbackQueryHandler(shopreroll_callback,   pattern="^shopreroll_"))
     app.add_handler(CallbackQueryHandler(boss_start_callback,   pattern="^bossstart_"))
     app.add_handler(CallbackQueryHandler(enhance_slot_callback, pattern="^enhance_"))
