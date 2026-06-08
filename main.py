@@ -11404,6 +11404,12 @@ def add_exp(p, amount, weather=None):
     _emp_exp_pct = _empire_stat_bonuses(p).get("exp_bonus_pct", 0)
     if _emp_exp_pct > 0:
         amount = round(amount * (1 + _emp_exp_pct))
+    # EXP softcap: kicks in at level 110, steeply reduces all gains past 110
+    _plvl = p["level"]
+    if _plvl >= 110:
+        _steps = (_plvl - 110) // 3
+        _softcap = max(0.001, 0.40 ** _steps)
+        amount = max(1, round(amount * _softcap))
     msgs = []; leveled_up = False
     p["exp"]      += max(0, amount)
     p["total_exp"] = safe_int(p.get("total_exp")) + max(0, amount)
