@@ -182,6 +182,158 @@ def _pvp_pair_key(a, b):
     if (b, a) in _pvp_cards: return (b, a)
     return (a, b)
 
+
+def _class_companion_strike(attacker, deal_dmg_fn, apply_to_defender_fn=None):
+    """
+    Fire the class-specific built-in companion auto-proc on every attack.
+    deal_dmg_fn(raw) -> actual_dealt  (caller handles defense for PvP; direct for enc/boss)
+    apply_to_defender_fn(effect, val) -> apply status to defender (optional, PvP only)
+    Returns list of text lines to append to the combat action message.
+    """
+    line = get_class_line(attacker)
+    pks  = get_all_passive_keys(attacker)
+    path = attacker.get("class_path")
+    lvl  = attacker.get("level", 1)
+    lines = []
+
+    # ── WARRIOR — Blade Wraith 👻 ────────────────────────────────────────────
+    if line == "warrior":
+        raw = round(get_stat(attacker, "STR") * 0.6 + lvl * 3)
+        if "iron_bulwark" in pks or "einherjar_will" in pks: raw = round(raw * 1.4)
+        elif "iron_will" in pks or "celestial_wrath" in pks: raw = round(raw * 1.2)
+        dealt = deal_dmg_fn(raw)
+        lines.append(f"👻 *Blade Wraith* echoes the strike for *{dealt} dmg*!")
+        if path == "A" and random.random() < 0.30 and apply_to_defender_fn:
+            apply_to_defender_fn("burn", 2)
+            lines.append("🔥 Wraith ignites the target! *Burn ×2*")
+        elif path == "B" and random.random() < 0.25 and apply_to_defender_fn:
+            apply_to_defender_fn("def_reflect_hits", 1)
+            lines.append("🛡️ Wraith's echo reinforces your guard!")
+
+    # ── SERPENT — Snake Companion 🐍 ─────────────────────────────────────────
+    elif line == "serpent":
+        raw = round((get_stat(attacker,"STR") + get_stat(attacker,"AGI")) * 0.5 + lvl * 3)
+        if "serpentine_mastery" in pks or "immortal_coils" in pks: raw = round(raw * 1.5)
+        elif "death_venom" in pks or "coiling_stance" in pks: raw = round(raw * 1.25)
+        dealt = deal_dmg_fn(raw)
+        lines.append(f"🐍 *Serpent Companion* strikes for *{dealt} dmg*!")
+        if path == "A" and apply_to_defender_fn:
+            apply_to_defender_fn("poison_stacks", 1)
+        elif path == "B" and random.random() < 0.35 and apply_to_defender_fn:
+            apply_to_defender_fn("distract_turns", 1)
+            lines.append("🐍 *Serpent coils around the target!* Distracted ×1 (30% miss chance)!")
+
+    # ── MAGE — Arcane Familiar 🔮 ────────────────────────────────────────────
+    elif line == "mage":
+        raw = round(get_stat(attacker, "INT") * 0.7 + lvl * 2.5)
+        if "eternal_arcanum" in pks or "void_throne" in pks: raw = round(raw * 1.4)
+        elif "arcane_mind" in pks or "arcane_shield" in pks: raw = round(raw * 1.2)
+        dealt = deal_dmg_fn(raw)
+        lines.append(f"🔮 *Arcane Familiar* fires an arcane bolt for *{dealt} dmg*!")
+        if path == "A" and random.random() < 0.35:
+            bonus = deal_dmg_fn(round(raw * 0.6))
+            lines.append(f"✨ *Double Blast!* Familiar fires again for *{bonus} dmg*!")
+        elif path == "B" and random.random() < 0.20 and apply_to_defender_fn:
+            apply_to_defender_fn("silence_turns", 1)
+            lines.append("🔇 *Arcane Silence!* Target silenced for 1 turn!")
+
+    # ── THIEF — Shadow Clone 🌑 ──────────────────────────────────────────────
+    elif line == "thief":
+        raw = round((get_stat(attacker,"DEX") + get_stat(attacker,"LUK")) * 0.45 + lvl * 2.5)
+        if "final_cut" in pks or "soul_ripper" in pks: raw = round(raw * 1.4)
+        elif "death_whirl" in pks or "adrenaline" in pks: raw = round(raw * 1.2)
+        dealt = deal_dmg_fn(raw)
+        lines.append(f"🌑 *Shadow Clone* lunges from darkness for *{dealt} dmg*!")
+        if path == "A" and random.random() < 0.35 and apply_to_defender_fn:
+            apply_to_defender_fn("distract_turns", 2)
+            lines.append("💨 *Smoke Bomb!* Target distracted ×2 (30% miss chance)!")
+        elif path == "B" and random.random() < 0.30:
+            crit_bonus = deal_dmg_fn(round(raw * 0.8))
+            lines.append(f"⚡ *Shadow Crit!* Clone follows up for *{crit_bonus} dmg*!")
+
+    # ── ARCHER — Trap System 🪤 ──────────────────────────────────────────────
+    elif line == "archer":
+        raw = round(get_stat(attacker, "DEX") * 0.65 + lvl * 3)
+        if "dead_or_alive" in pks or "headshot" in pks: raw = round(raw * 1.4)
+        elif "steady_aim" in pks or "railfinder" in pks: raw = round(raw * 1.2)
+        dealt = deal_dmg_fn(raw)
+        if path == "A" and random.random() < 0.40 and apply_to_defender_fn:
+            lines.append(f"💨 *Smoke Screen!* Target blinded for *{dealt} dmg*!")
+            apply_to_defender_fn("distract_turns", 3)
+        elif path == "B" and random.random() < 0.35 and apply_to_defender_fn:
+            lines.append(f"🪤 *Bear Trap* snaps for *{dealt} dmg*!")
+            apply_to_defender_fn("stun_turns", 1)
+        else:
+            lines.append(f"🪤 *Trap* triggers for *{dealt} dmg*!")
+
+    # ── PRIEST — Guardian Spirit 🕊️ ──────────────────────────────────────────
+    elif line == "priest":
+        raw = round(get_stat(attacker, "WIS") * 0.55 + lvl * 2.5)
+        if "divine_rosary" in pks or "eternal_verdict" in pks: raw = round(raw * 1.4)
+        elif "divine_presence" in pks or "resurrection" in pks: raw = round(raw * 1.2)
+        dealt = deal_dmg_fn(raw)
+        lines.append(f"🕊️ *Guardian Spirit* smites for *{dealt} holy dmg*!")
+        if path == "A":
+            heal = round(calc_max_hp(attacker) * 0.05)
+            attacker["hp"] = min(calc_max_hp(attacker), attacker["hp"] + heal)
+            lines.append(f"💚 Spirit restores *{heal} HP* to you!")
+        elif path == "B" and random.random() < 0.25 and apply_to_defender_fn:
+            apply_to_defender_fn("branded_hits", 2)
+            lines.append("✨ *Holy Brand!* Target branded ×2 (takes +30% dmg)!")
+
+    # ── BOTANIST — Thorned Vine 🌿 ───────────────────────────────────────────
+    elif line == "botanist":
+        raw = round(get_stat(attacker, "WIS") * 0.60 + lvl * 2.5)
+        if "primordial_root" in pks or "root_of_worlds" in pks: raw = round(raw * 1.4)
+        elif "eternal_bloom" in pks or "primal_fury" in pks: raw = round(raw * 1.2)
+        dealt = deal_dmg_fn(raw)
+        lines.append(f"🌿 *Thorned Vine* whips for *{dealt} nature dmg*!")
+        if path == "A" and apply_to_defender_fn:
+            apply_to_defender_fn("bleed_stacks", 1)
+            lines.append("🩸 Vine cuts deep — *Bleed* applied!")
+        elif path == "B":
+            heal = round(dealt * 0.40)
+            attacker["hp"] = min(calc_max_hp(attacker), attacker["hp"] + heal)
+            lines.append(f"🌸 Vine siphons life — *+{heal} HP*!")
+
+    # ── ENCHANTRESS — Cursed Puppet 🎭 ──────────────────────────────────────
+    elif line == "enchantress":
+        raw = round(get_stat(attacker, "INT") * 0.55 + lvl * 2.5)
+        if "dooms_conduit" in pks or "aria_eternal" in pks: raw = round(raw * 1.4)
+        elif "empress_dread" in pks or "misery_aura" in pks: raw = round(raw * 1.2)
+        dealt = deal_dmg_fn(raw)
+        lines.append(f"🎭 *Cursed Puppet* corrupts for *{dealt} dmg*!")
+        if random.random() < 0.40 and apply_to_defender_fn:
+            apply_to_defender_fn("hex_turns", 2)
+            lines.append("💜 *Puppet Hex!* Target hexed ×2 (25% less dmg for 2 hits)!")
+
+    # ── VALKYRIE — Shield Maiden ⚡ ───────────────────────────────────────────
+    elif line == "valkyrie":
+        raw = round((get_stat(attacker,"STR") + get_stat(attacker,"DEF")) * 0.4 + lvl * 3)
+        if "choosers_aegis" in pks or "mjolnirs_rage" in pks: raw = round(raw * 1.4)
+        elif "celestial_wrath" in pks or "iron_bulwark" in pks: raw = round(raw * 1.2)
+        dealt = deal_dmg_fn(raw)
+        lines.append(f"⚡ *Shield Maiden* strikes with thunder for *{dealt} dmg*!")
+        hp_pct = attacker["hp"] / max(1, calc_max_hp(attacker))
+        if hp_pct < 0.40:
+            rally = round(calc_max_hp(attacker) * 0.06)
+            attacker["hp"] = min(calc_max_hp(attacker), attacker["hp"] + rally)
+            lines.append(f"🔱 *Valkyrie's Will!* +{rally} HP — refuse to fall!")
+
+    # ── PHANTOM DANCER — Phantom Echo 💃 ────────────────────────────────────
+    elif line == "phantom_dancer":
+        raw = round((get_stat(attacker,"AGI") + get_stat(attacker,"DEX")) * 0.45 + lvl * 2.5)
+        if "ethereal_sovereign" in pks or "eternal_waltz" in pks: raw = round(raw * 1.4)
+        elif "final_performance" in pks or "flourish" in pks: raw = round(raw * 1.2)
+        dealt = deal_dmg_fn(raw)
+        lines.append(f"💃 *Phantom Echo* dances through for *{dealt} dmg*!")
+        if random.random() < 0.30 and apply_to_defender_fn:
+            apply_to_defender_fn("distract_turns", 2)
+            lines.append("🌀 *Phantom Blur!* Target confused ×2 (30% miss chance)!")
+
+    return lines
+
+
 def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     def _bar(hp, mx, w=14):
         f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
@@ -514,9 +666,25 @@ def exp_for_level(level):
     elif level <= 50: return level * 10000000
     elif level <= 60: return level * 40000000
     elif level <= 70: return level * 150000000
-    elif level <= 80: return level * 500000000
-    elif level <= 90: return level * 1500000000
-    else:             return level * 5000000000
+    # ── POST-70: every 10 levels multiplies requirement by ~4-6× ──
+    elif level <= 80: return level * 800000000
+    elif level <= 90: return level * 4000000000
+    elif level <= 100: return level * 20000000000
+    elif level <= 110: return level * 100000000000
+    elif level <= 120: return level * 500000000000
+    elif level <= 130: return level * 2500000000000
+    elif level <= 140: return level * 12000000000000
+    elif level <= 150: return level * 60000000000000
+    elif level <= 160: return level * 300000000000000
+    elif level <= 170: return level * 1500000000000000
+    elif level <= 180: return level * 7500000000000000
+    elif level <= 190: return level * 35000000000000000
+    elif level <= 200: return level * 150000000000000000
+    elif level <= 210: return level * 700000000000000000
+    elif level <= 220: return level * 3000000000000000000
+    elif level <= 230: return level * 12000000000000000000
+    elif level <= 240: return level * 50000000000000000000
+    else:              return level * 200000000000000000000
 
 def max_hp_for_level(level): return 300 + (level - 1) * 250
 
@@ -618,8 +786,8 @@ CLASS_TREE = {
         "skills":[
             {"tier":4,"unlock":60,"name":"Bulwark",
              "passive":"15% chance to completely block any incoming hit.",
-             "active":"Rally","type":"self_heal_buff",
-             "desc":"Restore 30% of your own HP. Grant all guild members in chat +15% damage for 8 actions.",
+             "active":"Rally","type":"self_heal_buff","heal_pct":0.30,
+             "desc":"Restore 30% of your own max HP. Guild members in chat gain +15% damage for 8 actions.",
              "passive_key":"bulwark"},
         ]
     },
@@ -679,8 +847,8 @@ CLASS_TREE = {
         "skills":[
             {"tier":4,"unlock":60,"name":"Unbreakable",
              "passive":"Cannot be one-shotted  -  always survive at 1 HP (once per fight).",
-             "active":"Rampage","type":"aoe_recent_attackers",
-             "desc":"Hit everyone who attacked you in the last 6 actions. Damage scales +25% per attacker.",
+             "active":"Rampage","type":"aoe_recent_attackers","mult":2.0,"hits":4,
+             "desc":"4-strike rampage at 200% base damage each (800% total). +20% bonus per attacker in PvP.",
              "passive_key":"unbreakable"},
         ]
     },
@@ -760,8 +928,8 @@ CLASS_TREE = {
         "skills":[
             {"tier":4,"unlock":60,"name":"Mana Overload",
              "passive":"15% chance any attack against you triggers a shock  -  attacker takes INT-scaled damage back.",
-             "active":"Supernova","type":"raid_aoe",
-             "desc":"INT x5  -  hits all players currently in an active boss or raid fight.",
+             "active":"Supernova","type":"raid_aoe","mult":5,
+             "desc":"INT×5  -  hits all players currently in an active boss or raid fight. Enemy burns + weakened.",
              "passive_key":"mana_overload"},
         ]
     },
@@ -963,9 +1131,9 @@ CLASS_TREE = {
         "skills":[
             {"tier":4,"unlock":60,"name":"Flurry",
              "passive":"Every attack has 20% chance to hit twice.",
-             "active":"Blade Storm","type":"multihit_crit",
-             "desc":"Hit target 5 times for 60% damage each. Each hit has independent crit chance.",
-             "passive_key":"flurry","hits":5,"mult":0.6},
+             "active":"Blade Storm","type":"multihit",
+             "desc":"Hit target 5 times for 70% damage each. Each hit has independent crit chance.",
+             "passive_key":"flurry","hits":5,"mults":[0.7,0.7,0.7,0.7,0.7]},
         ]
     },
     "specialist": {
@@ -1045,8 +1213,8 @@ CLASS_TREE = {
             {"tier":4,"unlock":60,"name":"Guardian Stance",
              "passive":"If a guild member is attacked you have 20% chance to intercept the hit.",
              "active":"Barrage","type":"random_aoe",
-             "desc":"Unleash a volley — DEX x4 damage. Ignores dodge.",
-             "passive_key":"guardian_stance","mult":4.0,"stat":"DEX"},
+             "desc":"Unleash a volley of arrows — 3-6 shots, each DEX×1.8 damage. Ignores dodge.",
+             "passive_key":"guardian_stance","mult":1.8,"stat":"DEX"},
         ]
     },
     "strider": {
@@ -1679,8 +1847,8 @@ CLASS_TREE = {
         "skills":[
             {"tier":4,"unlock":60,"name":"Storm's Eye",
              "passive":"Every 5th attack is guaranteed crit. Storm count shown in /stats.",
-             "active":"Tempest Fury","type":"aoe_recent_attackers",
-             "desc":"STR x4 to primary + STR x2 split across all recent attackers. All hit players slowed for 1 hit.",
+             "active":"Tempest Fury","type":"aoe_recent_attackers","mult":2.5,"hits":3,
+             "desc":"3-hit lightning sweep at STR×2.5 each (7.5× total). All hit players slowed for 1 hit.",
              "passive_key":"storms_eye"},
         ]
     },
@@ -2081,6 +2249,7 @@ TITLES = {
     "The Blacksmith":    {"type":"crafts","threshold":10},
     "Master Craftsman":         {"type":"crafts","threshold":20},
     "Century Break":         {"type":"level","threshold":100},
+    "Absolute Legend":       {"type":"level","threshold":250},
     # Reinforce / Ascend
     "The Forger":            {"type":"reinforce","threshold":1},
     "Diamond Grinder":       {"type":"reinforce","threshold":50},
@@ -2127,6 +2296,7 @@ TITLE_BONUSES = {
     "The Blacksmith":       {"STR": 6, "DEX": 8},
     "Master Craftsman":     {"all_stats": 8},
     "Century Break":        {"all_stats": 20, "LUK": 15},
+    "Absolute Legend":      {"all_stats": 50, "LUK": 30},
     "The Forger":           {"STR": 5, "DEX": 5},
     "Diamond Grinder":      {"STR": 10, "DEX": 10},
     "The Ascendant":        {"all_stats": 8},
@@ -4263,7 +4433,11 @@ def _enc_process_skill(enc, p, sk):
                    "ultimate_buff", "aoe_heal_dmg", "full_revive", "strip_debuff"}
     if stype in _heal_types or stype.endswith("heal"):
         wis  = get_stat(p, "WIS")
-        heal = max(1, round(wis * sk.get("mult", sk.get("wis_mult", 50))))
+        # Support heal_pct for skills that restore % of max HP
+        if sk.get("heal_pct"):
+            heal = max(1, round(enc["p_max_hp"] * sk["heal_pct"]))
+        else:
+            heal = max(1, round(wis * sk.get("mult", sk.get("wis_mult", 50))))
         # Hexed: reduce healing by 50%
         if enc.pop("p_hexed", False):
             heal = max(1, heal // 2)
@@ -4336,17 +4510,32 @@ def _enc_process_skill(enc, p, sk):
         mults_list = sk.get("mults") or [sk.get("mult", 0.8)] * sk.get("hits", 2)
         dmg  = sum(max(1, round(calc_attack_damage(p, w) * m)) for m in mults_list)
         txt  = f"⚡ *{sk_name}*! {len(mults_list)}-hit combo for *{dmg}* damage!{pet_extra}"
-    elif stype in ("aoe_bleed_multihit", "multihit_crit"):
+    elif stype == "aoe_bleed_multihit":
         hits = sk.get("hits", 4)
         dmg  = sum(max(1, round(base * sk.get("mult", 0.6))) for _ in range(hits))
         enc["e_poisoned"] = True; enc["e_poison_pct"] = 15
         txt  = f"🌀 *{sk_name}*! {hits}-hit combo (*{dmg}* total)! Enemy bleeding (15%/action)!{pet_extra}"
+    elif stype == "multihit_crit":
+        mults_list = sk.get("mults") or [sk.get("mult", 0.7)] * sk.get("hits", 3)
+        crit_hits = 0
+        dmg = 0
+        for m in mults_list:
+            h = max(1, round(calc_attack_damage(p, w) * m))
+            if check_crit(p): h = apply_crit(p, h); crit_hits += 1
+            dmg += h
+        crit_note = f" 💥 *{crit_hits} CRIT{'s' if crit_hits > 1 else ''}!*" if crit_hits else ""
+        txt  = f"⚡ *{sk_name}*! {len(mults_list)}-hit combo for *{dmg}* damage!{crit_note}{pet_extra}"
     elif stype == "execute_multihit":
         hits   = sk.get("hits", 8)
         hp_pct = enc["e_hp"] / max(1, enc["e_max_hp"])
-        mult   = 1.0 if hp_pct <= 0.50 else sk.get("mult", 0.5)
-        dmg    = sum(max(1, round(base * mult)) for _ in range(hits))
-        prefix = "💀 *Execute!* " if hp_pct <= 0.50 else ""
+        _em_stat = sk.get("stat", "AGI")
+        _em_base = get_stat(p, _em_stat)
+        # Low HP execute bonus: normal mult vs boosted mult
+        normal_mult  = sk.get("mult", 0.5)
+        execute_mult = sk.get("execute_mult", normal_mult * 1.5)
+        mult   = execute_mult if hp_pct <= 0.50 else normal_mult
+        dmg    = sum(max(1, round(_em_base * mult)) for _ in range(hits))
+        prefix = "💀 *EXECUTE!* " if hp_pct <= 0.50 else ""
         txt    = f"{prefix}🌀 *{sk_name}*! {hits} hits = *{dmg}* total!{pet_extra}"
     elif stype == "crit_dmg":
         dmg = max(1, round(base * sk.get("mult", 1.8) * 2))
@@ -4488,9 +4677,10 @@ def _enc_process_skill(enc, p, sk):
         txt = f"🌀 *{sk_name}*! {hits}-hit sweep for *{dmg}* total damage!{pet_extra}"
     elif stype == "raid_aoe":
         int_v = get_stat(p, "INT")
-        dmg = max(1, round(int_v * sk.get("mult", 8)))
+        _rm = sk.get("mult", 5)
+        dmg = max(1, round(int_v * _rm))
         enc["e_burning"] = True; enc["e_weakened"] = True
-        txt = f"💥 *{sk_name}*! INT×{sk.get('mult',8)} = *{dmg}* massive damage! Enemy burning + weakened!{pet_extra}"
+        txt = f"💥 *{sk_name}*! INT×{_rm} = *{dmg}* massive damage! Enemy burning + weakened!{pet_extra}"
     elif stype == "execute_nuke":
         hp_pct = enc["e_hp"] / max(1, enc["e_max_hp"])
         if hp_pct <= 0.35:
@@ -4513,9 +4703,11 @@ def _enc_process_skill(enc, p, sk):
         enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + 2
         txt = f"🌿 *{sk_name}*! *{dmg}* damage! Enemy rooted 2 turns!{pet_extra}"
     elif stype == "random_aoe":
-        hits = random.randint(2, 5)
-        dmg = sum(max(1, round(get_stat(p, "DEX") * sk.get("mult", 0.6))) for _ in range(hits))
-        txt = f"🏹 *{sk_name}*! {hits} shots = *{dmg}* total damage!{pet_extra}"
+        hits = random.randint(3, 6)
+        _ra_stat = sk.get("stat", "DEX")
+        _ra_mult = sk.get("mult", 1.0)
+        dmg = sum(max(1, round(get_stat(p, _ra_stat) * _ra_mult)) for _ in range(hits))
+        txt = f"🏹 *{sk_name}*! {hits} shots = *{dmg}* total damage! _(ignores dodge)_{pet_extra}"
     elif stype == "bounty":
         agi = get_stat(p, "AGI"); dex = get_stat(p, "DEX")
         dmg = max(1, round((agi + dex) * sk.get("mult", 2.0)))
@@ -6527,37 +6719,37 @@ async def _dng_on_enemy_killed(uid, bot, p, state):
 
 KEYWORD_TRIGGERS = [
     {"pattern":r"\b(8ball|8ballin|rack|felt|cue|billiards|pool table|corner pocket|break shot|chalk up)\b",
-     "exp":1800,"gold_chance":0.50,"cooldown":30,"key":"billiards"},
-    {"pattern":r"🎱","exp":3000,"gold_chance":0.40,"cooldown":120,"key":"8ball_emoji"},
+     "exp":5000000,"gold_chance":0.50,"cooldown":30,"key":"billiards"},
+    {"pattern":r"🎱","exp":8000000,"gold_chance":0.40,"cooldown":120,"key":"8ball_emoji"},
     {"pattern":r"\b(hello|hi|hey|sup|what'?s up|wassup|yo|heya|hiya|howdy)\b",
-     "exp":900,"gold_chance":0.15,"cooldown":20,"key":"greet"},
+     "exp":2000000,"gold_chance":0.15,"cooldown":20,"key":"greet"},
     {"pattern":r"\b(good morning|gm|good night|gn|good evening|good afternoon)\b",
-     "exp":1200,"gold_chance":0.20,"cooldown":20,"key":"greeting_time"},
+     "exp":3000000,"gold_chance":0.20,"cooldown":20,"key":"greeting_time"},
     {"pattern":r"\b(lol|lmao|lmfao|haha|hahaha|funny|dead|💀|😂|🤣|bruh|bro|fam)\b",
-     "exp":600,"gold_chance":0.08,"cooldown":25,"key":"humor"},
+     "exp":1500000,"gold_chance":0.08,"cooldown":25,"key":"humor"},
     {"pattern":r"\b(omg|oh my god|no way|wtf|wth|damn|dang|sheesh|fr fr|facts|bet)\b",
-     "exp":600,"gold_chance":0.08,"cooldown":25,"key":"reaction"},
+     "exp":1500000,"gold_chance":0.08,"cooldown":25,"key":"reaction"},
     {"pattern":r"\b(thanks|thank you|ty|thx|cheers|appreciated|grateful|respect)\b",
-     "exp":1000,"gold_chance":0.15,"cooldown":30,"key":"gratitude"},
+     "exp":2500000,"gold_chance":0.15,"cooldown":30,"key":"gratitude"},
     {"pattern":r"\b(nice|great|awesome|amazing|sick|fire|goated|legendary|insane|clean)\b",
-     "exp":600,"gold_chance":0.08,"cooldown":25,"key":"hype"},
+     "exp":1500000,"gold_chance":0.08,"cooldown":25,"key":"hype"},
     {"pattern":r"\b(win|won|victory|gg|good game|let'?s go|lets go|dub|clutch|carry)\b",
-     "exp":1000,"gold_chance":0.15,"cooldown":30,"key":"win"},
+     "exp":2500000,"gold_chance":0.15,"cooldown":30,"key":"win"},
     {"pattern":r"\b(grind|grinding|leveling|farm|farming|rank up|ranked)\b",
-     "exp":700,"gold_chance":0.08,"cooldown":45,"key":"grind"},
+     "exp":2000000,"gold_chance":0.08,"cooldown":45,"key":"grind"},
     {"pattern":r"\b(food|eat|eating|hungry|snack|lunch|dinner|breakfast|meal|cook)\b",
-     "exp":600,"gold_chance":0.08,"cooldown":25,"key":"food"},
+     "exp":1500000,"gold_chance":0.08,"cooldown":25,"key":"food"},
     {"pattern":r"\b(work|working|job|office|meeting|shift|hustle)\b",
-     "exp":600,"gold_chance":0.08,"cooldown":30,"key":"work"},
+     "exp":1500000,"gold_chance":0.08,"cooldown":30,"key":"work"},
     {"pattern":r"\b(music|song|track|album|artist|rapper|beat|vibes|playlist|banger)\b",
-     "exp":600,"gold_chance":0.08,"cooldown":30,"key":"music"},
+     "exp":1500000,"gold_chance":0.08,"cooldown":30,"key":"music"},
     {"pattern":r"\b(football|soccer|basketball|tennis|gym|workout|run|running|lift)\b",
-     "exp":600,"gold_chance":0.08,"cooldown":30,"key":"sports"},
+     "exp":1500000,"gold_chance":0.08,"cooldown":30,"key":"sports"},
     {"pattern":r"\b(friend|friends|bro|sis|brother|sister|mate|homie|squad|crew|family)\b",
-     "exp":600,"gold_chance":0.08,"cooldown":25,"key":"social"},
+     "exp":1500000,"gold_chance":0.08,"cooldown":25,"key":"social"},
     {"pattern":r"\b(dragon|magic|spell|quest|wizard|warrior|dungeon|boss|raid|sword|shield|potion|knight)\b",
-     "exp":1000,"gold_chance":0.10,"cooldown":45,"key":"fantasy"},
-    {"pattern":r".","exp":10000,"gold_chance":0.04,"cooldown":8,"key":"passive_trickle"},
+     "exp":2500000,"gold_chance":0.10,"cooldown":45,"key":"fantasy"},
+    {"pattern":r".","exp":3000000,"gold_chance":0.06,"cooldown":20,"key":"passive_trickle"},
 ]
 
 EASTER_EGGS = [
@@ -9834,7 +10026,7 @@ def check_titles(p):
     return new
 
 def add_exp(p, amount, weather=None):
-    if p["level"] >= 100: return [], False
+    if p["level"] >= 250: return [], False
     if weather: amount = round(amount * weather.get("exp_mod", 1.0))
     gid = p.get("guild_id")
     if gid and str(gid) != "None":
@@ -9853,7 +10045,7 @@ def add_exp(p, amount, weather=None):
     msgs = []; leveled_up = False
     p["exp"]      += max(0, amount)
     p["total_exp"] = safe_int(p.get("total_exp")) + max(0, amount)
-    while p["level"] < 100 and p["exp"] >= exp_for_level(p["level"]):
+    while p["level"] < 250 and p["exp"] >= exp_for_level(p["level"]):
         p["exp"] -= exp_for_level(p["level"])
         p["level"] += 1; leveled_up = True
         p["max_hp"]      = max_hp_for_level(p["level"])
@@ -9889,8 +10081,15 @@ def add_exp(p, amount, weather=None):
             _auto_advance_class(p, 60)
         if p["level"] == 100 and p.get("class_path"):
             _auto_advance_class(p, 100)
-            msgs.append("🏆 *LEVEL 100!* You have reached the pinnacle!")
+            msgs.append("🏆 *LEVEL 100!* Final class evolution unlocked! The journey continues to 250...")
             award_title(p, "Century Break")
+        if p["level"] == 150:
+            msgs.append("🌟 *LEVEL 150!* You are among the elite. The peak lies at 250...")
+        if p["level"] == 200:
+            msgs.append("💫 *LEVEL 200!* Legendary status achieved. 50 more levels to the summit!")
+        if p["level"] == 250:
+            msgs.append("👑 *LEVEL 250!* You have reached the absolute pinnacle of power!")
+            award_title(p, "Absolute Legend")
         for t in check_titles(p):
             msgs.append(f"🏅 New title: *{t}*!")
     # Award pet EXP (15% of player EXP)
@@ -9940,11 +10139,11 @@ def give_pet_exp(owner_id, raw_amount):
     return msg
 
 def add_shadow_exp(s, amount):
-    if s["level"] >= 100: return [], False
+    if s["level"] >= 250: return [], False
     msgs = []; leveled_up = False
     s["exp"]      += max(0, amount)
     s["total_exp"] = safe_int(s.get("total_exp")) + max(0, amount)
-    while s["level"] < 100 and s["exp"] >= exp_for_level(s["level"]):
+    while s["level"] < 250 and s["exp"] >= exp_for_level(s["level"]):
         s["exp"] -= exp_for_level(s["level"])
         s["level"] += 1; leveled_up = True
         msgs.append(f"📈 *{s['username']}* reached *Level {s['level']}*!")
@@ -10804,6 +11003,15 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     _d_hp_before_attack = d["hp"]
     dmg_after_def = calc_defense(d, dmg) if dmg > 0 else 0
 
+    # Serpent defender: show the snake companion absorption in combat messages
+    if dmg > 0 and get_class_line(d) == "serpent":
+        _serp_pks_d = get_all_passive_keys(d)
+        _sabsorb = (0.30 if ("immortal_coils" in _serp_pks_d or "coiling_stance" in _serp_pks_d)
+                    else 0.25 if ("armored_scales" in _serp_pks_d or "serpents_resolve" in _serp_pks_d)
+                    else 0.20)
+        _sabsorbed = round(dmg * _sabsorb)
+        extra_notes.append(f"🐍 *Serpent Companion* coils to absorb *{_sabsorbed} dmg*!")
+
     if _ts_active(d, "holy_field_until"):
         wis_dmg = round(safe_stats(d).get("WIS", 5) * 2)
         a["hp"] = max(0, a["hp"] - wis_dmg)
@@ -11079,6 +11287,24 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*{skill_tag}{elem_tag} 😞"
         else:
             action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*{skill_tag}{elem_tag}!"
+
+    # Class companion auto-proc (all classes get a unique built-in companion)
+    def _cc_deal(raw):
+        actual = calc_defense(d, raw)
+        d["hp"] = max(0, d["hp"] - actual)
+        return actual
+    def _cc_apply_status(effect, val):
+        if effect == "burn": add_charges(d, "burn_stacks", val); d["burn_pct"] = 10
+        elif effect == "poison_stacks": add_charges(d, "poison_stacks", val)
+        elif effect == "distract_turns": add_charges(d, "distract_turns", val)
+        elif effect == "stun_turns": add_charges(d, "stun_turns", val)
+        elif effect == "silence_turns": add_charges(d, "silence_turns", val)
+        elif effect == "hex_turns": add_charges(d, "hex_turns", val)
+        elif effect == "branded_hits": add_charges(d, "branded_hits", val)
+        elif effect == "def_reflect_hits": a["def_reflect_hits"] = safe_int(a.get("def_reflect_hits")) + val
+        elif effect == "bleed_stacks": add_charges(d, "bleed_stacks", val)
+    for _cc_line in _class_companion_strike(a, _cc_deal, _cc_apply_status):
+        action += f"\n{_cc_line}"
 
     # kill_heal enchant
     kh = get_enchant_bonus(a, "kill_heal")
@@ -12985,7 +13211,7 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_cls = get_player_class(p)
         current_cls_name = current_cls["name"] if current_cls else "Unknown"
         next_threshold = None
-        for lvl in [30,60,100]:
+        for lvl in [30, 60, 100]:
             if p["level"] < lvl:
                 next_threshold = lvl; break
         if next_threshold:
@@ -12998,9 +13224,8 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update,
                 f"👑 *Path {path}*  -  Current Class: *{current_cls_name}*\n\n"
                 f"📜 Path: {path_names}\n\n"
-                f"You have reached *Level 100*  -  the pinnacle of Path {path}!\n"
-                f"You may optionally reset and start a new class journey.\n"
-                f"Use `/prestige reset` to do so (keeps all stats and skills).", delay=15)
+                f"🏆 Final class form achieved at Level 100!\n"
+                f"Keep leveling — the cap is *Level 250*. Power never stops growing.", delay=15)
         return
 
     # Lv 10 path selection
@@ -13034,29 +13259,8 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("_Tap a button below or use `/prestige A` / `/prestige B` to choose._")
         await send_group(update, "\n".join(lines), delay=60, reply_markup=prestige_markup); return
 
-    if context.args[0].upper() == "RESET" and p["level"] >= 100:
-        # Prestige reset
-        old_skills = sjl(p.get("all_skills"), [])
-        existing_prestige = sjl(p.get("prestige_skills"), [])
-        for sk in old_skills:
-            if sk not in existing_prestige:
-                existing_prestige.append(sk)
-        p["prestige_skills"] = json.dumps(existing_prestige)
-        p["prestige_count"]  = safe_int(p.get("prestige_count")) + 1
-        p["level"] = 1; p["exp"] = 0
-        p["class_id"] = None; p["class_path"] = None
-        p["all_skills"] = json.dumps([])
-        p["max_hp"] = max_hp_for_level(1); p["hp"] = p["max_hp"]
-        p["stat_points"] = safe_int(p.get("stat_points")) + 10
-        award_title(p, "Gone Pro"); save_player(p)
-        asyncio.create_task(announce(context.bot, update.effective_chat.id,
-            f"🌟 *{p['username']}* has PRESTIGED! A new journey begins! 🌟",
-            delay=120))
-        await send_group(update,
-            f"🌟 *PRESTIGE {p['prestige_count']}!*\n\n"
-            f"All previous skills become permanent passives.\n"
-            f"+10 bonus stat points.\n"
-            f"Choose a new class with /class.", delay=30); return
+    if context.args[0].upper() == "RESET":
+        await send_group(update, "⛔ Prestige reset has been removed. Keep leveling toward *Level 250*!", delay=9); return
 
     chosen_path = context.args[0].upper()
     if chosen_path not in ("A","B"):
@@ -13093,7 +13297,7 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🌟 *Path {chosen_path} chosen!* You are now a *{new_cls['name']}*!\n\n"
         f"_{new_cls['desc']}_\n\n"
         f"📜 Your journey: {path_names}\n\n"
-        f"_Your class evolves automatically at Levels 30, 60, and 100._",
+        f"_Your class evolves automatically at Levels 30, 60, and 100. Level cap: 250._",
         delay=30)
 
 # ── ALLOCATE ──────────────────────────────────────────────────────────────────
@@ -14881,10 +15085,19 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
         p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
     save_player(p)
 
+    # Class companion auto-proc in boss fights (all classes)
+    _boss_cc_extra = []
+    def _boss_cc_deal(raw):
+        boss_dict["hp"] = max(0, boss_dict["hp"] - raw)
+        participant["dmg"] += raw
+        return raw
+    for _cc_ln in _class_companion_strike(p, _boss_cc_deal):
+        _boss_cc_extra.append(_cc_ln)
+
     lines = [
         f"⚔️ *{user.first_name}* strikes *{boss_dict['data']['name']}* for *{dmg}!*",
         f"❤️ Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}"
-    ]
+    ] + _boss_cc_extra
 
     # Pet attacks alongside player (with skill proc)
     _boss_pet = get_active_pet_record(user.id)
@@ -20029,7 +20242,7 @@ def _build_skill_tree_pages(p):
     line_emoji   = CLASS_EMOJIS.get(line, "⚔️")
 
     # Tier/level labels
-    TIER_LABELS = {1:"Lv 5", 2:"Prestige (Lv 10)", 3:"Lv 30", 4:"Lv 60", 5:"Lv 100"}
+    TIER_LABELS = {1:"Lv 5", 2:"Lv 10", 3:"Lv 30", 4:"Lv 60", 5:"Lv 100 (Final)"}
 
     def _skill_block(sk, cls_data, path_label, player_path, player_lvl, has_unlocked):
         tier    = sk.get("tier", 1)
@@ -21773,6 +21986,16 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
                     enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
                     pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
+                def _enc_cc_deal(raw):
+                    enc["e_hp"] = max(0, enc["e_hp"] - raw)
+                    return raw
+                def _enc_cc_apply(effect, val):
+                    if effect in ("poison_stacks", "burn"): enc["e_poisoned"] = True
+                    elif effect == "distract_turns": enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + val
+                    elif effect == "stun_turns": enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + val
+                    elif effect == "bleed_stacks": enc["e_bleeding"] = True
+                for _cc_ln in _class_companion_strike(p, _enc_cc_deal, _enc_cc_apply):
+                    pet_extra += f"\n{_cc_ln}"
                 _enc_extras = _enc_crit
                 if get_enchant_bonus(p, "burn_proc") and random.random() < 0.10:
                     enc["e_burning"] = True; _enc_extras += "\n🔥 Your weapon *ignites* the enemy!"
@@ -22069,6 +22292,16 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
                     enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
                     pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
+                def _hunt_cc_deal(raw):
+                    enc["e_hp"] = max(0, enc["e_hp"] - raw)
+                    return raw
+                def _hunt_cc_apply(effect, val):
+                    if effect in ("poison_stacks", "burn"): enc["e_poisoned"] = True
+                    elif effect == "distract_turns": enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + val
+                    elif effect == "stun_turns": enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + val
+                    elif effect == "bleed_stacks": enc["e_bleeding"] = True
+                for _cc_ln in _class_companion_strike(p, _hunt_cc_deal, _hunt_cc_apply):
+                    pet_extra += f"\n{_cc_ln}"
                 _enc_extras = _hunt_crit
                 if get_enchant_bonus(p, "burn_proc") and random.random() < 0.10:
                     enc["e_burning"] = True; _enc_extras += "\n🔥 Your weapon *ignites* the enemy!"
@@ -22944,7 +23177,7 @@ GUIDE_PAGES = [
         "  Path A (Danse Macabre): Combo offense — blade storm, thousand cuts, Macabre Finale\n"
         "  Path B (Ethereal Sovereign): Evasion — phase step, mist form, Ethereal Storm\n"
         "\n"
-        "At Lv 10, use /prestige to choose Path A or B. Class evolves at Lv 30, 60, 100.\n"
+        "At Lv 10, use /prestige to choose Path A or B. Class evolves at Lv 30, 60, 100. Level cap: 250.\n"
         "\n"
         "*Stats:* STR — Physical dmg | INT — Magic dmg | AGI — Dodge | DEX — Crit | WIS — Healing | LUK — Loot"
     ),
@@ -26651,7 +26884,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
                 if next_t:
                     await _show(f"⭐ *Path {path}* — {cur_name}\n\n📜 {path_str}\n\nAdvances at Level *{next_t}*. Keep leveling!")
                 else:
-                    await _show(f"👑 *Path {path}* — {cur_name}\n\n📜 {path_str}\n\nLevel 100 pinnacle! Use `/prestige reset` to restart.")
+                    await _show(f"👑 *Path {path}* — {cur_name}\n\n📜 {path_str}\n\n🏆 Final class form achieved! Level cap is *250* — keep growing!")
             elif p["level"] < 10:
                 await _show(f"⭐ *Prestige*\n\nPath selection unlocks at Level *10*. You're Level {p['level']}.")
             else:
@@ -29209,28 +29442,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                           "streak_50":False,"streak_100":False,"streak_500":False})
         if not cds_s.get("daily_bonus_given"):
             cds_s["daily_bonus_given"] = True
-            shadow_exp += 1500
-            if p: rpg_exp += 1500
+            shadow_exp += 10000000
+            if p: rpg_exp += 10000000
 
         cds_s["daily_messages"] = cds_s.get("daily_messages",0) + 1
         dm = cds_s["daily_messages"]
         if dm >= 50 and not cds_s.get("streak_50"):
-            cds_s["streak_50"] = True; shadow_exp += 4000
-            if p: rpg_exp += 4000
+            cds_s["streak_50"] = True; shadow_exp += 500000000
+            if p: rpg_exp += 500000000
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🔥 *{user.first_name}* hit a *50 message streak!* +4,000 EXP!",
+                f"🔥 *{user.first_name}* hit a *50 message streak!* +500M EXP!",
                 delay=8))
         if dm >= 100 and not cds_s.get("streak_100"):
-            cds_s["streak_100"] = True; shadow_exp += 10000; rpg_gold += 100
-            if p: rpg_exp += 10000
+            cds_s["streak_100"] = True; shadow_exp += 2000000000; rpg_gold += 100
+            if p: rpg_exp += 2000000000
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🔥 *{user.first_name}* hit a *100 message streak!* +10,000 EXP!",
+                f"🔥 *{user.first_name}* hit a *100 message streak!* +2B EXP!",
                 delay=8))
         if dm >= 500 and not cds_s.get("streak_500"):
-            cds_s["streak_500"] = True; shadow_exp += 30000
-            if p: rpg_exp += 30000
+            cds_s["streak_500"] = True; shadow_exp += 10000000000
+            if p: rpg_exp += 10000000000
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🏆 *{user.first_name}* hit a *500 message streak!* +30,000 EXP! 🎱",
+                f"🏆 *{user.first_name}* hit a *500 message streak!* +10B EXP! 🎱",
                 delay=8))
 
     # Apply shadow EXP
@@ -30026,7 +30259,7 @@ async def prestige_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (f"🌟 *Path {path} chosen!* You are now a *{new_cls['name']}*!\n\n"
            f"_{new_cls['desc']}_\n\n"
            f"📜 Your journey: {path_names}\n\n"
-           f"_Your class evolves automatically at Levels 30, 60, and 100._")
+           f"_Your class evolves automatically at Levels 30, 60, and 100. Level cap: 250._")
     try:
         await query.edit_message_text(msg, parse_mode="Markdown")
     except Exception:
