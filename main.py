@@ -2604,6 +2604,15 @@ WEAPONS = {
     "Void Dancer's Star":        {"class":"phantom_dancer","type":"throwing_star","atk":26,"rarity":"epic",     "line":"phantom_dancer"},
     "The Phantom Step":          {"class":"phantom_dancer","type":"throwing_star","atk":42,"rarity":"legendary","line":"phantom_dancer"},
     "Ethereal Sovereign":        {"class":"phantom_dancer","type":"throwing_star","atk":61,"rarity":"mythic",   "line":"phantom_dancer"},
+    # ── CRAFTABLE WEAPONS (class-specific, forge-only) ────────────────────────
+    "Forged Ember Blade":       {"class":"warrior","type":"sword_1h","atk":30,"rarity":"epic",     "line":"warrior","stat_bonus":{"STR":4}},
+    "Forged Glacier Claymore":  {"class":"warrior","type":"sword_2h","atk":32,"rarity":"epic",     "line":"warrior","stat_bonus":{"DEF":4}},
+    "Primordial Blade":         {"class":"warrior","type":"sword_2h","atk":55,"rarity":"legendary","line":"warrior","stat_bonus":{"STR":6,"DEF":4}},
+    "Voidsteel Staff":          {"class":"mage",   "type":"staff",   "atk":30,"rarity":"epic",     "line":"mage",   "stat_bonus":{"INT":5}},
+    "Venom Fang Blade":         {"class":"serpent","type":"sword_1h","atk":30,"rarity":"epic",     "line":"serpent","stat_bonus":{"STR":4,"AGI":3}},
+    "Shadow Edge":              {"class":"thief",  "type":"dagger",  "atk":28,"rarity":"epic",     "line":"thief",  "stat_bonus":{"AGI":4,"LUK":3}},
+    "Forged Holy Cross":        {"class":"priest", "type":"cross",   "atk":26,"rarity":"epic",     "line":"priest", "stat_bonus":{"WIS":5}},
+    "Stormforged Bow":          {"class":"archer", "type":"bow",     "atk":30,"rarity":"epic",     "line":"archer", "stat_bonus":{"DEX":4,"AGI":2}},
 }
 
 ARMORS = {
@@ -2701,6 +2710,14 @@ ARMORS = {
     "Danse Macabre Armor":       {"class":"phantom_dancer","def":31,"rarity":"epic",     "line":"phantom_dancer"},
     "The Phantom Veil":          {"class":"phantom_dancer","def":48,"rarity":"legendary","line":"phantom_dancer"},
     "Ethereal Dancer's Form":    {"class":"phantom_dancer","def":72,"rarity":"mythic",   "line":"phantom_dancer"},
+    # ── CRAFTABLE ARMORS (forge-only) ─────────────────────────────────────────
+    "Ironforged Plate":          {"class":"warrior","def":38,"rarity":"epic",     "line":"warrior","stat_bonus":{"DEF":4}},
+    "Primordial Aegis":          {"class":"warrior","def":62,"rarity":"legendary","line":"warrior","stat_bonus":{"DEF":6,"STR":4}},
+    "Arcane Beastscale Robe":    {"class":"mage",   "def":32,"rarity":"epic",     "line":"mage",   "stat_bonus":{"INT":4}},
+    "Shadow Leatherwork":        {"class":"thief",  "def":30,"rarity":"epic",     "line":"thief",  "stat_bonus":{"AGI":4}},
+    "Venomhide Armor":           {"class":"serpent","def":34,"rarity":"epic",     "line":"serpent","stat_bonus":{"STR":4,"DEF":2}},
+    "Sacred Vestments":          {"class":"priest", "def":30,"rarity":"epic",     "line":"priest", "stat_bonus":{"WIS":5}},
+    "Beastscale Ranger Cloak":   {"class":"archer", "def":28,"rarity":"epic",     "line":"archer", "stat_bonus":{"AGI":4,"DEX":2}},
 }
 
 # Shields: warrior knight path (A) + assassin claws (B, type="claw" uses "atk" not "def")
@@ -2817,6 +2834,17 @@ ACCESSORIES = {
                                 "desc":"+35 WIS, priest skills affect 2 targets at once."},
     "The Void Mark":          {"slot":"amulet","effect":{"INT":35,"spell_double_chance":0.15},"rarity":"legendary",
                                 "desc":"+35 INT, 15% chance spells hit twice."},
+    # ── Craftable Accessories ─────────────────────────────────
+    "Warrior's Battle Ring": {"slot":"ring",   "effect":{"STR":8,"atk":5},           "rarity":"rare",      "desc":"+8 STR, +5 ATK. Forged from battle crests."},
+    "Scholar's Amulet":      {"slot":"amulet", "effect":{"INT":8,"WIS":5},            "rarity":"rare",      "desc":"+8 INT, +5 WIS. An amulet of scholarly power."},
+    "Shadow Signet":         {"slot":"ring",   "effect":{"AGI":8,"LUK":5},            "rarity":"rare",      "desc":"+8 AGI, +5 LUK. Bound with shadow essence."},
+    "Holy Pendant":          {"slot":"amulet", "effect":{"WIS":10,"hp":50},           "rarity":"rare",      "desc":"+10 WIS, +50 HP. Radiates divine light."},
+    "Void Ring":             {"slot":"ring",   "effect":{"INT":10,"atk":8},           "rarity":"epic",      "desc":"+10 INT, +8 ATK. Hums with void energy."},
+    "Nature's Charm":        {"slot":"amulet", "effect":{"all_stats":4,"hp":30},      "rarity":"epic",      "desc":"+4 all stats, +30 HP. Grown from nature seeds."},
+    "Core Crystal Pendant":  {"slot":"amulet", "effect":{"all_stats":6},              "rarity":"epic",      "desc":"+6 all stats. Channels all six elemental cores."},
+    "Iron Commander's Ring": {"slot":"ring",   "effect":{"STR":10,"DEF":8,"hp":100},  "rarity":"legendary", "desc":"+10 STR, +8 DEF, +100 HP. Three iron medals merged."},
+    "Monster Gem Band":      {"slot":"ring",   "effect":{"atk":15,"hp":150},          "rarity":"legendary", "desc":"+15 ATK, +150 HP. Set with monster gem crystals."},
+    "Primal Heart Pendant":  {"slot":"amulet", "effect":{"all_stats":10,"atk":20},    "rarity":"mythic",    "desc":"+10 all stats, +20 ATK. A mythic pendant of primal power."},
     # ── 8-Ball Oracle Items ───────────────────────────────────
     "Cracked 8-Ball":    {"slot":"oracle","effect":{"LUK":5},"rarity":"uncommon",
                           "desc":"A cracked orb still faintly whispering. +5 LUK."},
@@ -3566,14 +3594,473 @@ MASKS = {
     "Face of the Void":         {"def":55, "rarity":"mythic"},
 }
 
-# ── CRAFTING RECIPES ──────────────────────────────────────────────────────────
-RECIPES = {
-    "Iron Compound":  {"mats": {"Iron Shard": 4},                "result": "Steel Knight Sword"},
-    "Scale Plating":  {"mats": {"Iron Shard": 3},                "result": "Soldier's Plating"},
-    "Charm Craft":    {"mats": {"Iron Shard": 4},                "result": "Silver Prayer Beads"},
-    "Enchant Bundle": {"mats": {"Iron Shard": 6},                "result": "Enchanting Scroll"},
-    "Scale Blade":    {"mats": {"Iron Shard": 7},                "result": "Ranger's Marked Bow"},
+# ── EMPIRE SYSTEM ─────────────────────────────────────────────────────────────
+# Buildings: key → data.  stat_bonus is applied per building level.
+# generates: resources produced per hour per building level (capped at 24h away).
+# requires: (building_key, min_level) or None.
+EMPIRE_BUILDINGS = {
+    "homestead": {
+        "name": "Homestead",     "emoji": "🏠",
+        "desc": "Your base of operations. Generates Timber and permanently raises Max HP.",
+        "requires": None,         "max_level": 10,
+        "generates": {"timber": 1.5},
+        "stat_bonus": {"max_hp": 75},
+        "base_cost": {"gold": 150},
+        "flavor": [
+            "Stone walls rise around your plot.",
+            "A proper roof. You sleep better already.",
+            "The hearth burns brighter. Something calls this place home.",
+            "Foundations deepen. This isn't a camp anymore.",
+            "Banners fly. Your name marks this land.",
+        ],
+    },
+    "barracks": {
+        "name": "Barracks",      "emoji": "⚔️",
+        "desc": "Trains fighters. Generates Stone. Permanently raises ATK.",
+        "requires": ("homestead", 2), "max_level": 10,
+        "generates": {"stone": 0.8},
+        "stat_bonus": {"atk_flat": 5},
+        "base_cost": {"gold": 300, "timber": 15},
+        "flavor": [
+            "Soldiers drill from dawn to dusk.",
+            "War drums echo through the yard.",
+            "The training grounds smell of iron and sweat.",
+            "Veterans train recruits. The cycle sharpens all.",
+            "Your fighters are feared. Neighboring warlords take note.",
+        ],
+    },
+    "tavern": {
+        "name": "Tavern",        "emoji": "🍺",
+        "desc": "Hub of rumor and trade. Generates Gold. Permanently raises LUK.",
+        "requires": ("homestead", 3), "max_level": 10,
+        "generates": {"gold": 18},
+        "stat_bonus": {"LUK": 2},
+        "base_cost": {"gold": 400, "timber": 20, "stone": 8},
+        "flavor": [
+            "Travelers stop. Stories spread.",
+            "The tap never runs dry.",
+            "A bard takes up residence. Everyone stays longer.",
+            "Word of your empire draws merchants from afar.",
+            "Fortune favors those who hear the right rumor first.",
+        ],
+    },
+    "library": {
+        "name": "Library",       "emoji": "📚",
+        "desc": "Knowledge compounds. Generates Crystals. Permanently grants +2% EXP per level.",
+        "requires": ("barracks", 2), "max_level": 10,
+        "generates": {"crystal": 0.18},
+        "stat_bonus": {"exp_bonus_pct": 0.02},
+        "base_cost": {"gold": 500, "timber": 25, "stone": 18},
+        "flavor": [
+            "Scribes copy the old texts.",
+            "A second wing opens. Rare tomes arrive.",
+            "Scholars come to study. Some stay.",
+            "The archive grows deeper than the building itself.",
+            "Knowledge here predates the empire. Handle it carefully.",
+        ],
+    },
+    "forge": {
+        "name": "Forge",         "emoji": "⚒️",
+        "desc": "Master craft. Generates Iron Shards. Permanently raises DEF.",
+        "requires": ("barracks", 3), "max_level": 10,
+        "generates": {"iron_shard": 0.35},
+        "stat_bonus": {"DEF": 4},
+        "base_cost": {"gold": 600, "timber": 20, "stone": 28},
+        "flavor": [
+            "Hammer strikes echo through the night.",
+            "Molten iron pours steady. Waste drops to near zero.",
+            "Master smiths apprentice here now.",
+            "Your empire's steel is talked about in distant markets.",
+            "The forge never cools.",
+        ],
+    },
+    "garden": {
+        "name": "Garden",        "emoji": "🌿",
+        "desc": "Nature's bounty. Generates Health Potions. Grants +1% HP regen per turn in PvP per level.",
+        "requires": ("homestead", 5), "max_level": 10,
+        "generates": {"health_potion": 0.12},
+        "stat_bonus": {"pvp_regen_pct": 0.01},
+        "base_cost": {"gold": 700, "timber": 30, "stone": 12, "crystal": 1},
+        "flavor": [
+            "Seeds planted in good soil. Patience.",
+            "Healing herbs bloom in every season.",
+            "The garden breathes on its own now.",
+            "Wildlife returns. Something old recognizes this place.",
+            "The roots run deeper than your walls.",
+        ],
+    },
+    "shrine": {
+        "name": "Void Shrine",   "emoji": "🕳️",
+        "desc": "Channels void energy. Generates Crystals. Permanently raises INT and WIS per level.",
+        "requires": ("library", 3), "max_level": 10,
+        "generates": {"crystal": 0.45},
+        "stat_bonus": {"INT": 3, "WIS": 3},
+        "base_cost": {"gold": 1000, "stone": 40, "crystal": 3},
+        "flavor": [
+            "The foundation cracks with purpose. Something answers.",
+            "Offerings vanish at midnight.",
+            "Void scholars arrive uninvited. Let them stay.",
+            "The shrine hums in frequencies you can't hear but feel.",
+            "Power flows both ways here. Be careful what you ask.",
+        ],
+    },
 }
+
+_EMPIRE_RES_EMOJI = {"timber": "🪵", "stone": "🪨", "crystal": "💎", "gold": "💰",
+                     "iron_shard": "🔩", "health_potion": "🧪"}
+_EMPIRE_MAX_HOURS = 24  # resource accumulation cap
+
+def _get_empire(p):
+    """Return (buildings_dict, resources_dict, last_collect_iso)."""
+    bld = sjl(p.get("empire_buildings"), {})
+    res = sjl(p.get("empire_resources"), {})
+    lc  = p.get("empire_last_collect", datetime.now().isoformat())
+    return bld, res, lc
+
+def _save_empire(p, bld, res, lc=None):
+    p["empire_buildings"]  = json.dumps(bld)
+    p["empire_resources"]  = json.dumps(res)
+    if lc: p["empire_last_collect"] = lc
+
+def _empire_upgrade_cost(bkey, current_level):
+    """Return cost dict to go from current_level → current_level+1."""
+    b = EMPIRE_BUILDINGS[bkey]
+    nxt = current_level + 1
+    cost = {}
+    for res, base in b["base_cost"].items():
+        cost[res] = max(1, round(base * (nxt ** 1.55)))
+    return cost
+
+def _empire_stat_bonuses(p):
+    """Return dict of all stat/effect bonuses from empire buildings."""
+    bld, _, _ = _get_empire(p)
+    bonuses = {}
+    for bkey, lvl in bld.items():
+        if lvl <= 0: continue
+        sb = EMPIRE_BUILDINGS.get(bkey, {}).get("stat_bonus", {})
+        for stat, val in sb.items():
+            bonuses[stat] = bonuses.get(stat, 0) + val * lvl
+    return bonuses
+
+def _empire_collect(p):
+    """Calculate pending resources since last collect, apply to inventory/resources, return notes."""
+    bld, res, lc = _get_empire(p)
+    if not bld:
+        return []
+    try:
+        elapsed_hours = min(_EMPIRE_MAX_HOURS,
+                            (datetime.now() - datetime.fromisoformat(lc)).total_seconds() / 3600)
+    except Exception:
+        elapsed_hours = 0
+    if elapsed_hours < 0.016:  # less than 1 minute
+        return []
+
+    notes = []
+    for bkey, lvl in bld.items():
+        if lvl <= 0: continue
+        gens = EMPIRE_BUILDINGS.get(bkey, {}).get("generates", {})
+        for rtype, rate in gens.items():
+            amt = rate * lvl * elapsed_hours
+            if rtype == "gold":
+                gained = round(amt)
+                if gained > 0:
+                    p["gold"] = p.get("gold", 0) + gained
+                    notes.append(f"{_EMPIRE_RES_EMOJI['gold']} +{gained:,} Gold ({EMPIRE_BUILDINGS[bkey]['name']})")
+            elif rtype == "iron_shard":
+                gained = int(amt)
+                if gained > 0:
+                    for _ in range(gained): add_item(p, "Iron Shard")
+                    notes.append(f"{_EMPIRE_RES_EMOJI['iron_shard']} +{gained} Iron Shard ({EMPIRE_BUILDINGS[bkey]['name']})")
+            elif rtype == "health_potion":
+                gained = int(amt)
+                if gained > 0:
+                    for _ in range(gained): add_item(p, "Health Potion")
+                    notes.append(f"{_EMPIRE_RES_EMOJI['health_potion']} +{gained} Health Potion ({EMPIRE_BUILDINGS[bkey]['name']})")
+            else:
+                # timber / stone / crystal — go into empire_resources
+                res[rtype] = res.get(rtype, 0) + amt
+
+    # Round resource floats
+    for k in res:
+        res[k] = round(res[k], 1)
+
+    _save_empire(p, bld, res, datetime.now().isoformat())
+    return notes
+
+
+def _build_empire_overview(p, uid):
+    """Return (text, markup) for empire overview tab."""
+    bld, res, lc = _get_empire(p)
+    try:
+        elapsed_h = min(_EMPIRE_MAX_HOURS,
+                        (datetime.now() - datetime.fromisoformat(lc)).total_seconds() / 3600)
+    except Exception:
+        elapsed_h = 0
+
+    lines = [f"🏰 *Your Empire* — {p['username']}  (Lv {p['level']})\n"]
+
+    # Buildings
+    if not bld:
+        lines.append("_No buildings yet — use the Build tab to start your empire._")
+    else:
+        for bkey, lvl in bld.items():
+            if lvl <= 0: continue
+            b = EMPIRE_BUILDINGS[bkey]
+            gens_str = "  ".join(
+                f"+{b['generates'][r]*lvl:.1f}/hr {_EMPIRE_RES_EMOJI.get(r,r)}"
+                for r in b["generates"]
+            )
+            lines.append(f"{b['emoji']} *{b['name']}* Lv {lvl}  —  {gens_str}")
+
+    # Resources
+    lines.append("")
+    lines.append("*Stockpile:*")
+    for rtype, emoji in _EMPIRE_RES_EMOJI.items():
+        if rtype in ("gold", "iron_shard", "health_potion"): continue
+        amt = res.get(rtype, 0)
+        if amt > 0 or any(EMPIRE_BUILDINGS.get(b, {}).get("generates", {}).get(rtype) for b in bld if bld.get(b, 0) > 0):
+            lines.append(f"  {emoji} {rtype.capitalize()}: *{amt:.1f}*")
+
+    # Pending
+    if elapsed_h >= 0.25 and bld:
+        lines.append(f"\n⏳ *Pending resources* (~{elapsed_h:.1f}h away) — tap Collect to claim.")
+
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📦 Collect Resources", callback_data=f"empire_collect_{uid}"),
+         InlineKeyboardButton("🏗️ Build / Upgrade",  callback_data=f"empire_tab_{uid}_build")],
+        [InlineKeyboardButton("📊 Stat Bonuses",      callback_data=f"empire_tab_{uid}_stats"),
+         InlineKeyboardButton("❌ Close",              callback_data=f"close_msg_{uid}")],
+    ])
+    return "\n".join(lines), markup
+
+
+def _build_empire_build(p, uid):
+    """Return (text, markup) for build/upgrade tab."""
+    bld, res, _ = _get_empire(p)
+    lines = [f"🏗️ *Build & Upgrade* — {p['username']}\n"]
+    buttons = []
+
+    for bkey, b in EMPIRE_BUILDINGS.items():
+        cur_lvl = bld.get(bkey, 0)
+        if cur_lvl >= b["max_level"]:
+            lines.append(f"{b['emoji']} *{b['name']}* — ✅ MAX (Lv {cur_lvl})")
+            continue
+        nxt = cur_lvl + 1
+        # Check requirement
+        req = b["requires"]
+        if req:
+            req_key, req_lvl = req
+            if bld.get(req_key, 0) < req_lvl:
+                req_name = EMPIRE_BUILDINGS[req_key]["name"]
+                lines.append(f"🔒 {b['emoji']} *{b['name']}* — Requires {req_name} Lv {req_lvl}")
+                continue
+        cost = _empire_upgrade_cost(bkey, cur_lvl)
+        cost_str = "  ".join(
+            f"{_EMPIRE_RES_EMOJI.get(r, r)} {v:,}" for r, v in cost.items()
+        )
+        # Check affordability
+        can_afford = True
+        for r, v in cost.items():
+            have = p.get("gold", 0) if r == "gold" else res.get(r, 0)
+            if have < v: can_afford = False; break
+        action = "Build" if cur_lvl == 0 else f"Upgrade to Lv {nxt}"
+        icon = "✅" if can_afford else "🔒"
+        lines.append(f"{icon} {b['emoji']} *{b['name']}* (Lv {cur_lvl}→{nxt})  —  _{b['desc']}_")
+        lines.append(f"   Cost: {cost_str}")
+        if can_afford:
+            buttons.append([InlineKeyboardButton(
+                f"{b['emoji']} {action}: {b['name']}",
+                callback_data=f"empire_build_{uid}_{bkey}")])
+
+    markup = InlineKeyboardMarkup(buttons + [
+        [InlineKeyboardButton("🏰 Overview", callback_data=f"empire_tab_{uid}_overview"),
+         InlineKeyboardButton("❌ Close",    callback_data=f"close_msg_{uid}")],
+    ])
+    return "\n".join(lines), markup
+
+
+def _build_empire_stats(p, uid):
+    """Return (text, markup) for stat bonus summary tab."""
+    bonuses = _empire_stat_bonuses(p)
+    lines = [f"📊 *Empire Stat Bonuses* — {p['username']}\n"]
+    if not bonuses:
+        lines.append("_No active bonuses yet. Build your empire to unlock them._")
+    else:
+        label_map = {
+            "max_hp": "❤️ Max HP", "atk_flat": "⚔️ ATK",
+            "DEF": "🛡️ DEF", "INT": "🔮 INT", "WIS": "🙏 WIS",
+            "LUK": "🍀 LUK", "exp_bonus_pct": "✨ EXP Bonus",
+            "pvp_regen_pct": "💚 PvP HP Regen/turn",
+        }
+        for stat, val in bonuses.items():
+            label = label_map.get(stat, stat)
+            if stat in ("exp_bonus_pct", "pvp_regen_pct"):
+                lines.append(f"  {label}: *+{val*100:.0f}%*")
+            else:
+                lines.append(f"  {label}: *+{val:,}*")
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🏰 Overview",    callback_data=f"empire_tab_{uid}_overview"),
+        InlineKeyboardButton("🏗️ Build",       callback_data=f"empire_tab_{uid}_build"),
+        InlineKeyboardButton("❌ Close",        callback_data=f"close_msg_{uid}"),
+    ]])
+    return "\n".join(lines), markup
+
+
+async def empire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    # Auto-collect on open
+    notes = _empire_collect(p)
+    save_player(p)
+    text, markup = _build_empire_overview(p, user.id)
+    if notes:
+        text = "📦 *Collected:*\n" + "\n".join(notes) + "\n\n" + text
+    await send_group(update, text[:4096], reply_markup=markup, delay=30)
+
+
+async def empire_tab_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    try: uid = int(parts[2]); tab = parts[3]
+    except (IndexError, ValueError): await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your empire!", show_alert=True); return
+    p = get_player(uid)
+    if not p: await query.answer("Player not found.", show_alert=True); return
+    if tab == "overview":
+        text, markup = _build_empire_overview(p, uid)
+    elif tab == "build":
+        text, markup = _build_empire_build(p, uid)
+    elif tab == "stats":
+        text, markup = _build_empire_stats(p, uid)
+    else:
+        await query.answer(); return
+    try:
+        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+    except Exception: pass
+    await query.answer()
+
+
+async def empire_collect_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    try: uid = int(parts[2])
+    except (IndexError, ValueError): await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your empire!", show_alert=True); return
+    p = get_player(uid)
+    if not p: await query.answer("Player not found.", show_alert=True); return
+    notes = _empire_collect(p)
+    save_player(p)
+    if not notes:
+        await query.answer("Nothing to collect yet — come back later!", show_alert=True); return
+    await query.answer(f"Collected {len(notes)} resource{'s' if len(notes)!=1 else ''}!")
+    text, markup = _build_empire_overview(p, uid)
+    text = "📦 *Collected:*\n" + "\n".join(notes) + "\n\n" + text
+    try:
+        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+    except Exception: pass
+
+
+async def empire_build_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_", 3)
+    try: uid = int(parts[2]); bkey = parts[3]
+    except (IndexError, ValueError): await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your empire!", show_alert=True); return
+    p = get_player(uid)
+    if not p: await query.answer("Player not found.", show_alert=True); return
+    b = EMPIRE_BUILDINGS.get(bkey)
+    if not b: await query.answer("Unknown building.", show_alert=True); return
+    bld, res, lc = _get_empire(p)
+    cur_lvl = bld.get(bkey, 0)
+    if cur_lvl >= b["max_level"]:
+        await query.answer("Already at max level!", show_alert=True); return
+    # Check requirement
+    req = b["requires"]
+    if req:
+        req_key, req_lvl = req
+        if bld.get(req_key, 0) < req_lvl:
+            await query.answer(f"Requires {EMPIRE_BUILDINGS[req_key]['name']} Lv {req_lvl}!", show_alert=True); return
+    cost = _empire_upgrade_cost(bkey, cur_lvl)
+    # Deduct costs
+    for r, v in cost.items():
+        if r == "gold":
+            if p.get("gold", 0) < v:
+                await query.answer(f"Need {v:,}g (have {p.get('gold',0):,}g)!", show_alert=True); return
+            p["gold"] -= v
+        else:
+            if res.get(r, 0) < v:
+                await query.answer(f"Need {v} {r.capitalize()} (have {res.get(r,0):.1f})!", show_alert=True); return
+            res[r] -= v
+    bld[bkey] = cur_lvl + 1
+    nxt = bld[bkey]
+    _save_empire(p, bld, res, lc)
+    p["empire_last_collect"] = datetime.now().isoformat()
+    save_player(p)
+    # Flavor text
+    flavor_idx = min(nxt - 1, len(b["flavor"]) - 1) if b.get("flavor") else -1
+    flavor = b["flavor"][flavor_idx] if flavor_idx >= 0 else ""
+    action = "Built" if cur_lvl == 0 else f"Upgraded to Lv {nxt}"
+    await query.answer(f"{action}: {b['name']}!")
+    text, markup = _build_empire_build(p, uid)
+    text = f"✅ *{action}: {b['emoji']} {b['name']}!*\n_{flavor}_\n\n" + text
+    try:
+        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+    except Exception: pass
+
+
+# ── CRAFTING RECIPES ──────────────────────────────────────────────────────────
+# cat: "weapon" | "armor" | "acc" | "consumable"
+RECIPES = {
+    # ── WEAPONS ───────────────────────────────────────────────────────────────
+    "iron_sword":       {"name":"Iron Compound",        "cat":"weapon",     "mats":{"Iron Shard":4},                                                                "result":"Steel Knight Sword",      "desc":"A reliable warrior blade."},
+    "scale_bow":        {"name":"Scale Blade",          "cat":"weapon",     "mats":{"Iron Shard":7},                                                                "result":"Ranger's Marked Bow",     "desc":"A hunting bow for archers."},
+    "ember_blade":      {"name":"Ember Forge",          "cat":"weapon",     "mats":{"Iron Shard":5, "Monster Core (Fire)":5},                                       "result":"Forged Ember Blade",      "desc":"Warrior blade burning with fire cores."},
+    "glacier_claymore": {"name":"Glacier Forge",        "cat":"weapon",     "mats":{"Iron Shard":5, "Monster Core (Ice)":5},                                        "result":"Forged Glacier Claymore", "desc":"Warrior greatsword forged in ice."},
+    "void_staff":       {"name":"Void Infusion",        "cat":"weapon",     "mats":{"Iron Shard":5, "Monster Core (Void)":5, "Rare Monster Core":1},                "result":"Voidsteel Staff",         "desc":"Staff imbued with void energy."},
+    "venom_blade":      {"name":"Fang Temper",          "cat":"weapon",     "mats":{"Iron Shard":5, "Monster Fang":5},                                              "result":"Venom Fang Blade",        "desc":"Serpent blade sharpened on fangs."},
+    "shadow_edge":      {"name":"Shadow Temper",        "cat":"weapon",     "mats":{"Iron Shard":5, "Shadow Essence":5},                                            "result":"Shadow Edge",             "desc":"Thief blade forged from shadow essence."},
+    "holy_cross":       {"name":"Holy Tempering",       "cat":"weapon",     "mats":{"Iron Shard":5, "Holy Fragment":5},                                             "result":"Forged Holy Cross",       "desc":"Priest's cross blessed with holy fragments."},
+    "storm_bow":        {"name":"Storm String",         "cat":"weapon",     "mats":{"Iron Shard":5, "Monster Core (Lightning)":5},                                  "result":"Stormforged Bow",         "desc":"Archer bow strung with lightning energy."},
+    "primal_blade":     {"name":"Primal Forging",       "cat":"weapon",     "mats":{"Iron Shard":8, "Primal Orb":1, "Rare Monster Core":1},                         "result":"Primordial Blade",        "desc":"Legendary blade forged from a Primal Orb."},
+    # ── ARMOR ─────────────────────────────────────────────────────────────────
+    "iron_plate":       {"name":"Scale Plating",        "cat":"armor",      "mats":{"Iron Shard":3},                                                                "result":"Soldier's Plating",       "desc":"Basic warrior plating."},
+    "ironforged_plate": {"name":"Iron Tempering",       "cat":"armor",      "mats":{"Iron Shard":6, "Monster Scale":4, "Beast Core":1},                             "result":"Ironforged Plate",        "desc":"Heavy plate tempered with monster scales."},
+    "beast_robe":       {"name":"Beast Weave",          "cat":"armor",      "mats":{"Iron Shard":5, "Monster Scale":4, "Beast Core":1},                             "result":"Arcane Beastscale Robe",  "desc":"Mage robe reinforced with beast scales."},
+    "shadow_leather":   {"name":"Shadow Craft",         "cat":"armor",      "mats":{"Iron Shard":5, "Shadow Essence":4, "Monster Core (Shadow)":1},                 "result":"Shadow Leatherwork",      "desc":"Thief armor sewn from shadow essence."},
+    "venomhide":        {"name":"Venomhide Crafting",   "cat":"armor",      "mats":{"Iron Shard":5, "Monster Scale":4, "Monster Fang":2},                           "result":"Venomhide Armor",         "desc":"Serpent armor from venomhide scales."},
+    "sacred_vest":      {"name":"Sacred Weaving",       "cat":"armor",      "mats":{"Iron Shard":5, "Holy Fragment":4, "Beast Core":1},                             "result":"Sacred Vestments",        "desc":"Priest robes woven with holy fragments."},
+    "ranger_cloak":     {"name":"Ranger's Craft",       "cat":"armor",      "mats":{"Iron Shard":5, "Monster Scale":4, "Warrior's Crest":2},                        "result":"Beastscale Ranger Cloak", "desc":"Archer cloak reinforced with monster scales."},
+    "primal_aegis":     {"name":"Primal Armorcraft",    "cat":"armor",      "mats":{"Iron Shard":8, "Primal Orb":1, "Rare Monster Core":1},                         "result":"Primordial Aegis",        "desc":"Legendary plate forged from a Primal Orb."},
+    # ── ACCESSORIES ───────────────────────────────────────────────────────────
+    "charm_craft":      {"name":"Charm Craft",          "cat":"acc",        "mats":{"Iron Shard":4},                                                                "result":"Silver Prayer Beads",     "desc":"Prayer beads for priests."},
+    "battle_ring":      {"name":"Battle Forging",       "cat":"acc",        "mats":{"Warrior's Crest":3, "Iron Shard":2},                                           "result":"Warrior's Battle Ring",   "desc":"A fighter's ring of battle."},
+    "scholar_amulet":   {"name":"Scholar's Craft",      "cat":"acc",        "mats":{"Scholar's Ink":3, "Iron Shard":2},                                             "result":"Scholar's Amulet",        "desc":"An amulet of scholarly power."},
+    "shadow_signet":    {"name":"Shadow Binding",       "cat":"acc",        "mats":{"Shadow Essence":3, "Iron Shard":2},                                            "result":"Shadow Signet",           "desc":"A ring bound with shadow essence."},
+    "holy_pendant":     {"name":"Holy Binding",         "cat":"acc",        "mats":{"Holy Fragment":3, "Iron Shard":2},                                             "result":"Holy Pendant",            "desc":"A pendant radiating divine light."},
+    "void_ring":        {"name":"Void Binding",         "cat":"acc",        "mats":{"Void Shard":3, "Iron Shard":2},                                                "result":"Void Ring",               "desc":"A ring humming with void energy."},
+    "nature_charm":     {"name":"Nature Binding",       "cat":"acc",        "mats":{"Nature Seed":3, "Iron Shard":2},                                               "result":"Nature's Charm",          "desc":"A charm grown from nature seeds."},
+    "core_crystal":     {"name":"Core Convergence",     "cat":"acc",        "mats":{"Monster Core (Fire)":1,"Monster Core (Water)":1,"Monster Core (Earth)":1,"Monster Core (Wind)":1,"Monster Core (Lightning)":1,"Monster Core (Ice)":1}, "result":"Core Crystal Pendant","desc":"Channels all six elemental cores."},
+    "iron_medal_ring":  {"name":"Commander's Craft",    "cat":"acc",        "mats":{"Iron Medal":3, "Iron Shard":5},                                                "result":"Iron Commander's Ring",   "desc":"Forged from three iron medals."},
+    "gem_band":         {"name":"Gem Band Craft",       "cat":"acc",        "mats":{"Monster Gem":2, "Iron Shard":3},                                               "result":"Monster Gem Band",        "desc":"Set with crystallized monster gems."},
+    "primal_heart":     {"name":"Primal Heart Craft",   "cat":"acc",        "mats":{"Primal Orb":1, "Shattered Crown":2, "Rare Monster Core":1},                    "result":"Primal Heart Pendant",    "desc":"A mythic pendant of primal power."},
+    # ── CONSUMABLES ───────────────────────────────────────────────────────────
+    "enchant_bundle":   {"name":"Enchant Bundle",       "cat":"consumable", "mats":{"Iron Shard":6},                                                                "result":"Enchanting Scroll",       "desc":"Craft an enchanting scroll."},
+    "potion_refine":    {"name":"Potion Refining",      "cat":"consumable", "mats":{"Greater Health Potion":3, "Iron Shard":2},                                     "result":"Grand Restorative Flask", "desc":"Refine three potions into a grand flask."},
+    "elite_flask":      {"name":"Elite Flask Brew",     "cat":"consumable", "mats":{"Grand Restorative Flask":2, "Beast Core":1},                                   "result":"Supreme Restorative Flask","desc":"Brew two grand flasks into a supreme flask."},
+    "revival_brew":     {"name":"Revival Brew",         "cat":"consumable", "mats":{"Iron Shard":4, "Monster Gem":2},                                               "result":"Scroll of Revival",       "desc":"Brew a revival scroll from gem essence."},
+}
+
+_FORGE_CAT_LABELS = {
+    "weapon":    "⚔️ Weapons",
+    "armor":     "🛡️ Armor",
+    "acc":       "💍 Accessories",
+    "consumable":"🧪 Consumables",
+}
+_FORGE_CATS = ["weapon", "armor", "acc", "consumable"]
 
 SHOP_POOL = [  # kept for legacy compat
     {"item":"Health Potion","price":300,"desc":"Restores 250 HP."},
@@ -5230,30 +5717,181 @@ SOLO_RAID_TIERS = [
      ]},
 ]
 
-EXPLORE_ZONES = [
-    {"name":"The Ancient Ruins","tier":"Easy","exp":500,"gold":50,
-     "loot_table":[("Health Potion",0.15),("Rusty Shiv",0.10),("Wooden Prayer Beads",0.10),
-                   ("Iron Shard Ring",0.08),("Worn Leather Band",0.08)],
-     "fail_msg":"The road was longer than expected. You return empty-handed."},
-    {"name":"The Back Room","tier":"Medium","exp":900,"gold":100,
-     "loot_table":[("Greater Health Potion",0.10),("Mushroom Tip Blade",0.08),("Iron Broadsword",0.08),
-                   ("Silk Band",0.06),("Bloodstone Band",0.05)],
-     "fail_msg":"The bandits were too many. You barely escaped."},
-    {"name":"The Condemned Hall","tier":"Hard","exp":1500,"gold":200,
-     "loot_table":[("Grand Restorative Flask",0.05),("Scroll of Revival",0.03),("Iron Shard",0.15),
-                   ("Fortune Coin",0.05),("Stone Heart",0.05),("Steel Knight Sword",0.04)],
-     "fail_msg":"The ruins shifted and swallowed the path. You find nothing."},
-    {"name":"The Shadow Den","tier":"Elite","exp":2500,"gold":400,
-     "loot_table":[("Iron Shard",0.30),("Enchanting Scroll",0.15),
-                   ("Warlord's Edge",0.03),("Void Channel Staff",0.03),
-                   ("Twin Strike Ring",0.03),("Runed Heart",0.03)],
-     "fail_msg":"The dragon was awake. You fled with your life."},
-    {"name":"The Corner Pocket","tier":"Legendary","exp":5000,"gold":800,
-     "loot_table":[("Ruinblade",0.01),("The Mind's Eye",0.01),("Shard of the Void",0.01),
-                   ("The Last Stand Locket",0.01),("The Void Mark",0.01),
-                   ("Iron Shard",0.20),("Enchanting Scroll",0.20)],
-     "fail_msg":"The void rejected you. You wake up back at camp, shaken."},
+WORLD_ZONES = [
+    {
+        "key":       "starter_vale",
+        "name":      "Starter Vale",
+        "emoji":     "🌿",
+        "min_level": 1,
+        "tier":      "Easy",
+        "desc":      "A peaceful valley watched over by nature spirits. Ideal for fresh adventurers.",
+        "exp":       600,
+        "gold":      60,
+        "element":   "nature",
+        "env_effect": None,
+        "loot_table":[
+            ("Health Potion",0.25),("Monster Fang",0.30),("Monster Scale",0.20),
+            ("Worn Leather Band",0.10),("Iron Shard Ring",0.08),("Traveler's Coin",0.06),
+            ("Nature Seed",0.15),("Beast Core",0.04),
+        ],
+        "fail_msg":  "The path was rougher than expected. You return empty-handed.",
+    },
+    {
+        "key":       "iron_wastes",
+        "name":      "Iron Wastes",
+        "emoji":     "⚙️",
+        "min_level": 15,
+        "tier":      "Medium",
+        "desc":      "Rusted battlefields littered with soldier remains. Warriors roam in packs.",
+        "exp":       1200,
+        "gold":      120,
+        "element":   None,
+        "env_effect": "hardened",
+        "env_note":  "Iron-tempered fighters here — success scales harder with level.",
+        "loot_table":[
+            ("Iron Shard",0.40),("Greater Health Potion",0.15),("Warrior's Crest",0.25),
+            ("Iron Medal",0.08),("Bloodstone Band",0.06),("Soldier's Plating",0.04),
+            ("Steel Knight Sword",0.03),("Monster Scale",0.15),
+        ],
+        "fail_msg":  "The warlord's garrison was too disciplined. You pull back.",
+    },
+    {
+        "key":       "shadowfen",
+        "name":      "Shadowfen",
+        "emoji":     "🌑",
+        "min_level": 30,
+        "tier":      "Hard",
+        "desc":      "A toxic swamp haunted by rogue hunters. Poison drifts on every breeze.",
+        "exp":       2000,
+        "gold":      220,
+        "element":   "shadow",
+        "env_effect": "poison",
+        "env_note":  "Toxic air — you may return poisoned, but shadow loot is richer here.",
+        "loot_table":[
+            ("Shadow Essence",0.35),("Monster Core (Shadow)",0.15),("Monster Fang",0.30),
+            ("Shadowmark Signet",0.06),("Phantom Loop",0.04),("Iron Shard",0.20),
+            ("Enchanting Scroll",0.08),("Monster Scale",0.15),
+        ],
+        "fail_msg":  "The swamp swallowed the trail. You wade out with nothing.",
+    },
+    {
+        "key":       "arcane_spire",
+        "name":      "Arcane Spire",
+        "emoji":     "🔮",
+        "min_level": 50,
+        "tier":      "Hard",
+        "desc":      "A crumbling magic tower teeming with constructs. Knowledge and danger in equal measure.",
+        "exp":       3200,
+        "gold":      350,
+        "element":   "arcane",
+        "env_effect": "arcane_surge",
+        "env_note":  "Arcane field — +20% EXP from all spell-touched enemies.",
+        "loot_table":[
+            ("Scholar's Ink",0.30),("Monster Core (Fire)",0.15),("Monster Core (Lightning)",0.15),
+            ("Monster Core (Ice)",0.15),("Monster Gem",0.08),("Enchanting Scroll",0.12),
+            ("Iron Shard",0.15),("Mage's Coil",0.04),("The Storm Torc",0.03),
+        ],
+        "fail_msg":  "The constructs overwhelmed your defenses. You barely escape the collapsing tower.",
+    },
+    {
+        "key":       "serpent_depths",
+        "name":      "Serpent Depths",
+        "emoji":     "🐍",
+        "min_level": 70,
+        "tier":      "Elite",
+        "desc":      "Deep caverns ruled by ancient serpent clans. Venom coats every surface.",
+        "exp":       4800,
+        "gold":      520,
+        "element":   "earth",
+        "env_effect": "venom_mist",
+        "env_note":  "Venom mist — poison chance elevated, but fang loot is abundant.",
+        "loot_table":[
+            ("Monster Fang",0.40),("Monster Scale",0.30),("Monster Core (Earth)",0.15),
+            ("Beast Core",0.12),("Warrior's Crest",0.10),("Asp Scale Armor",0.04),
+            ("Fang of the Viper",0.03),("Rare Monster Core",0.04),
+        ],
+        "fail_msg":  "The serpent matriarch drove you back into the tunnels. You emerge shaken.",
+    },
+    {
+        "key":       "holy_sanctum",
+        "name":      "Holy Sanctum",
+        "emoji":     "✨",
+        "min_level": 90,
+        "tier":      "Elite",
+        "desc":      "Sacred temple grounds guarded by divine sentinels. Healing energy fills the air.",
+        "exp":       6500,
+        "gold":      700,
+        "element":   "holy",
+        "env_effect": "divine_aura",
+        "env_note":  "Divine aura — you return healed regardless of outcome.",
+        "loot_table":[
+            ("Holy Fragment",0.35),("Monster Core (Holy)",0.15),("Beast Core",0.12),
+            ("Enchanting Scroll",0.10),("Iron Medal",0.10),("Guardian's Talisman",0.04),
+            ("The Crossed Blades Pendant",0.03),("Rare Monster Core",0.05),
+        ],
+        "fail_msg":  "The sanctum's guardians deemed you unworthy. You are cast out in a flash of light.",
+    },
+    {
+        "key":       "void_rift",
+        "name":      "Void Rift",
+        "emoji":     "🕳️",
+        "min_level": 120,
+        "tier":      "Legendary",
+        "desc":      "A tear in reality where void entities roam freely. Reality bends and shatters.",
+        "exp":       10000,
+        "gold":      1100,
+        "element":   "void",
+        "env_effect": "void_flux",
+        "env_note":  "Void flux — 15% chance to lose gold on return, but void mats guaranteed on success.",
+        "loot_table":[
+            ("Void Shard",0.40),("Monster Core (Void)",0.20),("Rare Monster Core",0.12),
+            ("Monster Gem",0.10),("Enchanting Scroll",0.08),("Iron Medal",0.08),
+            ("Void Circle",0.04),("Eye of the Void",0.04),
+        ],
+        "fail_msg":  "The void collapsed around you. You wake up at the edge of reality, empty-handed.",
+    },
+    {
+        "key":       "primal_expanse",
+        "name":      "Primal Expanse",
+        "emoji":     "🌋",
+        "min_level": 160,
+        "tier":      "Mythic",
+        "desc":      "Ancient volcanic wilderness where primal titans still walk. The air itself is alive.",
+        "exp":       16000,
+        "gold":      1800,
+        "element":   "fire",
+        "env_effect": "primal_fury",
+        "env_note":  "Primal fury — brutal odds, but Primal Orbs only drop here.",
+        "loot_table":[
+            ("Primal Orb",0.08),("Beast Core",0.25),("Monster Gem",0.18),
+            ("Rare Monster Core",0.18),("Shattered Crown",0.10),("Iron Medal",0.12),
+            ("Monster Core (Fire)",0.20),("Monster Core (Earth)",0.15),
+        ],
+        "fail_msg":  "A primal titan crushed your advance. You retreat across burning stone.",
+    },
+    {
+        "key":       "eternal_abyss",
+        "name":      "Eternal Abyss",
+        "emoji":     "💀",
+        "min_level": 200,
+        "tier":      "Mythic",
+        "desc":      "The deepest point of the known world. Only the truly legendary survive here.",
+        "exp":       28000,
+        "gold":      3000,
+        "element":   "void",
+        "env_effect": "abyss_drain",
+        "env_note":  "Abyss drain — costs 200 HP to enter, guaranteed legendary+ loot on success.",
+        "loot_table":[
+            ("Shattered Crown",0.20),("Primal Orb",0.15),("Rare Monster Core",0.25),
+            ("Monster Gem",0.20),("Void Shard",0.20),
+            ("Ring of the Endless",0.04),("The Soul Amulet",0.04),("The Void Mark",0.03),
+        ],
+        "fail_msg":  "The abyss consumed your will. You surface broken, claiming nothing.",
+    },
 ]
+
+# keep EXPLORE_ZONES pointing to WORLD_ZONES for legacy compat
+EXPLORE_ZONES = WORLD_ZONES
 
 SOLO_QUESTS = [
     {"tier":"Easy","text":"You ran a message across town to a wanderer who couldn't leave their post.","exp":30,"gold":5,
@@ -7900,8 +8538,10 @@ def get_stat(p, stat):
     battle_cry_bonus = 80 if stat == "STR" and safe_int(p.get("battle_cry_str_hits")) > 0 else 0
     guild_bonus = safe_int(p.get("guild_stat_bonus", 0)) if stat in ("STR","AGI","INT","WIS","DEX","LUK") else 0
     weapon_bonus = WEAPONS.get(p.get("equipped_weapon") or "", {}).get("stat_bonus", {}).get(stat, 0)
+    empire_sb = _empire_stat_bonuses(p)
+    empire_stat = empire_sb.get(stat, 0) + empire_sb.get("all_stats", 0)
     if stat in ("STR","AGI","INT","WIS","DEX","LUK"):
-        return base + acc + all_s + blessed_bonus + title_bonus + all_title + set_stat + set_all + battle_cry_bonus + guild_bonus + weapon_bonus
+        return base + acc + all_s + blessed_bonus + title_bonus + all_title + set_stat + set_all + battle_cry_bonus + guild_bonus + weapon_bonus + empire_stat
     return base + acc + all_s + blessed_bonus
 
 def calc_max_hp(p):
@@ -7919,7 +8559,8 @@ def calc_max_hp(p):
     str_hp = round(get_stat(p, "STR") * 2)   # secondary: physical constitution
     wis_hp = round(get_stat(p, "WIS") * 3)   # wisdom: mental fortitude / resilience
     retire_hp = safe_int(p.get("pet_retire_hp"))
-    return base + acc_hp + enc_hp + temp + set_hp + def_hp + str_hp + wis_hp + retire_hp
+    empire_hp = _empire_stat_bonuses(p).get("max_hp", 0)
+    return base + acc_hp + enc_hp + temp + set_hp + def_hp + str_hp + wis_hp + retire_hp + empire_hp
 
 TIER_THRESHOLDS = {1: 5, 2: 10, 3: 30, 4: 60, 5: 100}
  
@@ -8073,7 +8714,8 @@ def calc_attack_damage(attacker, weather=None):
     level_bonus = attacker["level"] * 4
 
     retire_atk = safe_int(attacker.get("pet_retire_atk"))
-    raw = base + weapon + perm + acc_atk + stat_bonus + level_bonus + retire_atk
+    empire_atk = _empire_stat_bonuses(attacker).get("atk_flat", 0)
+    raw = base + weapon + perm + acc_atk + stat_bonus + level_bonus + retire_atk + empire_atk
 
     # Weather
     if weather: raw = round(raw * weather.get("dmg_mod", 1.0))
@@ -9913,6 +10555,9 @@ def init_db():
         ("poke_count",            "INTEGER DEFAULT 0"),
         ("slap_count",            "INTEGER DEFAULT 0"),
         ("pat_count",             "INTEGER DEFAULT 0"),
+        ("empire_buildings",      "TEXT DEFAULT NULL"),
+        ("empire_resources",      "TEXT DEFAULT NULL"),
+        ("empire_last_collect",   "TEXT DEFAULT NULL"),
     ]:
         try:
             _v24conn = sqlite3.connect(DB_PATH)
@@ -10552,6 +11197,10 @@ def add_exp(p, amount, weather=None):
     _enc_exp = get_enchant_bonus(p, "exp_bonus")
     if _enc_exp > 0:
         amount = round(amount * (1 + _enc_exp))
+    # Empire Library exp bonus
+    _emp_exp_pct = _empire_stat_bonuses(p).get("exp_bonus_pct", 0)
+    if _emp_exp_pct > 0:
+        amount = round(amount * (1 + _emp_exp_pct))
     msgs = []; leveled_up = False
     p["exp"]      += max(0, amount)
     p["total_exp"] = safe_int(p.get("total_exp")) + max(0, amount)
@@ -11266,6 +11915,11 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         _bs_regen = max(1, round(calc_max_hp(a) * 0.03))
         a["hp"] = min(calc_max_hp(a), a["hp"] + _bs_regen)
         _dot_notes.append(f"👻 *Blessed Specter* mends {a.get('username','?')} — *+{_bs_regen} HP*!")
+    _emp_regen_pct = _empire_stat_bonuses(a).get("pvp_regen_pct", 0)
+    if _emp_regen_pct > 0:
+        _emp_regen = max(1, round(calc_max_hp(a) * _emp_regen_pct))
+        a["hp"] = min(calc_max_hp(a), a["hp"] + _emp_regen)
+        _dot_notes.append(f"🌿 *Garden Blessing* restores {a.get('username','?')} — *+{_emp_regen} HP*!")
     if _dot_notes: _dot_prefix = "\n".join(_dot_notes) + "\n"
 
     # ── Auto-cure: fire top-priority active affliction ────────────────────────
@@ -14095,140 +14749,204 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await reply_to_dm(update, context, msg)
 
 # ── EXPLORE ───────────────────────────────────────────────────────────────────
+def _explore_success_rate(p, zone):
+    """Base success rate scales from 50% at min_level to 88% at min_level+40."""
+    level_over = max(0, p["level"] - zone["min_level"])
+    rate = min(0.88, 0.50 + level_over * 0.0095)
+    # Accessory explore bonus
+    rate = min(0.95, rate + get_accessory_bonus(p, "explore_bonus"))
+    return rate
+
+def _build_world_map(p, uid):
+    """Return (text, markup) for the world map / expedition chooser."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    remaining = 2 - (safe_int(p.get("explore_count_today")) if p.get("explore_date") == today else 0)
+    lvl = p["level"]
+    tier_emoji = {"Easy":"🟢","Medium":"🟡","Hard":"🟠","Elite":"🔴","Legendary":"🟣","Mythic":"💀"}
+
+    lines = [f"🌍 *World Map* — {p['username']} (Lv {lvl})",
+             f"_{remaining} expedition{'s' if remaining!=1 else ''} remaining today. Results in 1 hour._\n"]
+    buttons = []
+    for z in WORLD_ZONES:
+        locked = lvl < z["min_level"]
+        te = tier_emoji.get(z["tier"], "🗺️")
+        if locked:
+            lines.append(f"🔒 {z['emoji']} *{z['name']}* — _Requires Lv {z['min_level']}_")
+            buttons.append([InlineKeyboardButton(
+                f"🔒 {z['emoji']} {z['name']} (Lv {z['min_level']}+)",
+                callback_data=f"explore_locked_{z['min_level']}")])
+        else:
+            sr = int(_explore_success_rate(p, z) * 100)
+            env = f"  ⚠️ {z['env_note']}" if z.get("env_note") else ""
+            lines.append(f"{te} {z['emoji']} *{z['name']}* (Lv {z['min_level']}+) — {sr}% success{env}")
+            buttons.append([InlineKeyboardButton(
+                f"{z['emoji']} {z['name']} ({sr}% success)",
+                callback_data=f"explore_{uid}_{z['name']}")])
+    markup = InlineKeyboardMarkup(buttons + [
+        [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
+    ])
+    return "\n".join(lines), markup
+
+
+async def _run_expedition(bot, chat_id, uid, zone):
+    """Shared expedition delivery logic used by both the cmd and callback paths."""
+    await asyncio.sleep(3600)
+    pp = get_player(uid)
+    if not pp: return
+    w2 = get_weather()
+    success = random.random() < _explore_success_rate(pp, zone)
+    env = zone.get("env_effect")
+    extra_notes = []
+
+    if success:
+        exp  = round(zone["exp"] * w2.get("exp_mod", 1.0) * random.uniform(0.85, 1.15))
+        gold = round(zone["gold"] * random.uniform(0.80, 1.20))
+        _expl_bonus = get_accessory_bonus(pp, "explore_bonus")
+        if _expl_bonus:
+            exp  = round(exp  * (1 + _expl_bonus))
+            gold = round(gold * (1 + _expl_bonus))
+
+        # Environmental modifiers
+        if env == "arcane_surge":
+            exp = round(exp * 1.20)
+            extra_notes.append("🔮 *Arcane Surge!* +20% EXP from the magical field.")
+        if env == "void_flux" and random.random() < 0.15:
+            lost = round(gold * 0.50)
+            gold = max(0, gold - lost)
+            extra_notes.append(f"🕳️ *Void Flux!* The rift consumed {lost} of your gold.")
+        if env == "abyss_drain":
+            pp["hp"] = max(1, pp.get("hp", pp["max_hp"]) - 200)
+            extra_notes.append("💀 *Abyss Drain!* -200 HP to enter the abyss.")
+        if env == "divine_aura":
+            heal = min(calc_max_hp(pp), pp.get("hp", calc_max_hp(pp)) + 300)
+            pp["hp"] = heal
+            extra_notes.append("✨ *Divine Aura!* Restored 300 HP on return.")
+
+        item_found = roll_loot_table(zone.get("loot_table", []))
+        pp["gold"] = pp.get("gold", 0) + gold
+        if item_found: add_item(pp, item_found)
+        lmsgs, leveled = add_exp(pp, exp)
+        save_player(pp)
+
+        rarity = ""
+        if item_found:
+            for _pool in [WEAPONS, ARMORS, ACCESSORIES, CONSUMABLES, ENCOUNTER_LOOT]:
+                if item_found in _pool:
+                    r = _pool[item_found].get("rarity", "")
+                    rarity = RARITY_EMOJI.get(r, "")
+                    break
+
+        msg = (f"🗺️ *{pp['username']}* returns from *{zone['emoji']} {zone['name']}*!\n\n"
+               f"✅ *Expedition successful!*\n"
+               f"✨ +{exp} EXP  |  💰 +{gold} gold")
+        if item_found: msg += f"\n🎒 Found: {rarity} *{item_found}*!"
+        if extra_notes: msg += "\n" + "\n".join(extra_notes)
+        if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
+        if leveled and pp["level"] % 10 == 0:
+            asyncio.create_task(announce(bot, chat_id,
+                f"🎉 *{pp['username']}* reached *Level {pp['level']}* from exploring! 🗺️", delay=60))
+
+        # 5% wild pet encounter
+        if random.random() < 0.05:
+            _zone_elem = zone.get("element")
+            _wild_candidates = [sid for sid, sd in PET_SPECIES.items()
+                                if sd["rarity"] in ("common","uncommon","rare")
+                                and (not _zone_elem or sd.get("element") == _zone_elem)]
+            if not _wild_candidates:
+                _wild_candidates = [sid for sid, sd in PET_SPECIES.items() if sd["rarity"] in ("common","uncommon")]
+            _wild_sid = random.choice(_wild_candidates)
+            _wild_sp  = PET_SPECIES[_wild_sid]
+            _wild_pet_offers[uid] = {"species": _wild_sid, "expires": time.time() + 120}
+            _rar_e = RARITY_EMOJI.get(_wild_sp["rarity"],""); _elem_e = ELEMENT_EMOJI.get(_wild_sp["element"],"")
+            _catch_markup = InlineKeyboardMarkup([[
+                InlineKeyboardButton(f"🥚 Catch {_wild_sp['name']}!", callback_data=f"petcatch_{uid}_{_wild_sid}")
+            ]])
+            try:
+                _cm = await bot.send_message(chat_id,
+                    f"🐾 *A wild {_wild_sp['emoji']} {_wild_sp['name']} appeared during the expedition!*\n"
+                    f"{_rar_e} {_wild_sp['rarity'].capitalize()}  |  {_elem_e} {_wild_sp['element'].capitalize()}\n\n"
+                    f"_{_wild_sp['desc']}_\n\n"
+                    f"⏳ *2 minutes* to catch it!", parse_mode="Markdown", reply_markup=_catch_markup)
+                asyncio.create_task(_auto_delete(bot, chat_id, _cm.message_id, 120))
+            except Exception: pass
+    else:
+        # Environmental poison on failure
+        if env in ("poison", "venom_mist"):
+            add_charges(pp, "poison_stacks", 3)
+            pp["poison_damage"] = 15
+            extra_notes.append("🐍 *Toxic exposure!* You return with poison stacks.")
+        if env == "divine_aura":
+            heal = min(calc_max_hp(pp), pp.get("hp", calc_max_hp(pp)) + 150)
+            pp["hp"] = heal
+            extra_notes.append("✨ *Divine mercy!* +150 HP even in defeat.")
+
+        cons = round(zone["gold"] * 0.08)
+        pp["gold"] = pp.get("gold", 0) + cons
+        save_player(pp)
+        msg = (f"🗺️ *{pp['username']}* returns from *{zone['emoji']} {zone['name']}*.\n\n"
+               f"❌ {zone['fail_msg']}\n"
+               f"💰 Salvaged {cons} gold.")
+        if extra_notes: msg += "\n" + "\n".join(extra_notes)
+    await announce(bot, chat_id, msg, delay=90)
+
+
 async def explore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await reply_to_dm(update, context, "Use /ascend first!"); return
     if is_defeated(p):
         await reply_to_dm(update, context, "💀 Can't explore while defeated!"); return
-    # Check twice-per-day limit
     today = datetime.now().strftime("%Y-%m-%d")
     if p.get("explore_date") == today and safe_int(p.get("explore_count_today")) >= 2:
         await reply_to_dm(update, context, "🗺️ You've explored twice today. Come back tomorrow!"); return
-    # Check if already on expedition
     if user.id in explore_timers and not explore_timers[user.id].done():
         await reply_to_dm(update, context, "🗺️ You're already on an expedition! Results coming soon."); return
 
-    # Pick zone — show buttons if no args
-    if not context.args:
-        if p["level"] <= 5:     unlocked_tiers = {"Easy"}
-        elif p["level"] <= 15:  unlocked_tiers = {"Easy","Medium"}
-        elif p["level"] <= 30:  unlocked_tiers = {"Easy","Medium","Hard"}
-        elif p["level"] <= 60:  unlocked_tiers = {"Easy","Medium","Hard","Elite"}
-        else:                   unlocked_tiers = {"Easy","Medium","Hard","Elite","Legendary"}
-        remaining = 2 - safe_int(p.get("explore_count_today") if p.get("explore_date") == datetime.now().strftime("%Y-%m-%d") else 0)
-        tier_emoji = {"Easy":"🟢","Medium":"🟡","Hard":"🟠","Elite":"🔴","Legendary":"💀"}
-        buttons = []
-        for z in EXPLORE_ZONES:
-            locked = z["tier"] not in unlocked_tiers
-            label = f"{'🔒' if locked else tier_emoji.get(z['tier'],'🗺️')} {z['name']} ({z['tier']})"
-            if not locked:
-                buttons.append([InlineKeyboardButton(label, callback_data=f"explore_{user.id}_{z['name']}")])
-            else:
-                buttons.append([InlineKeyboardButton(label, callback_data=f"explore_locked")])
-        await send_group(update,
-            f"🗺️ *Expedition — Choose a Zone*\n\n"
-            f"_{remaining} expedition{'s' if remaining!=1 else ''} remaining today. Results in 1 hour._",
-            reply_markup=InlineKeyboardMarkup(buttons), delay=30)
-        return
-
+    # Zone arg handling
     if context.args:
         zn = " ".join(context.args).lower()
-        zone = next((z for z in EXPLORE_ZONES if zn in z["name"].lower()), None)
+        zone = next((z for z in WORLD_ZONES if zn in z["name"].lower()), None)
         if not zone:
-            zlist = "\n".join(f"• {z['name']} ({z['tier']})" for z in EXPLORE_ZONES)
-            await send_group(update, f"Unknown zone. Available:\n{zlist}", delay=15); return
+            zlist = "\n".join(f"{z['emoji']} {z['name']} (Lv {z['min_level']}+)" for z in WORLD_ZONES)
+            await send_group(update, f"Unknown zone. Zones:\n{zlist}", delay=15); return
+        if p["level"] < zone["min_level"]:
+            await send_group(update, f"🔒 *{zone['name']}* requires Level {zone['min_level']}.", delay=10); return
+        # Launch expedition directly
+        if p.get("explore_date") != today: p["explore_count_today"] = 0; p["explore_date"] = today
+        p["explore_count_today"] = safe_int(p.get("explore_count_today")) + 1
+        p["last_explore"] = datetime.now().isoformat(); save_player(p)
+        remaining = 2 - safe_int(p.get("explore_count_today"))
+        await send_group(update,
+            f"🗺️ *Expedition Started!*\n\n"
+            f"📍 {zone['emoji']} *{zone['name']}* ({zone['tier']})\n"
+            f"⚠️ _{zone.get('env_note') or zone['desc']}_\n"
+            f"⏱️ Returns in *1 hour*.\n\n"
+            f"_{remaining} expedition{'s' if remaining!=1 else ''} remaining today._", delay=30)
+        task = asyncio.create_task(_run_expedition(update.get_bot(), update.effective_chat.id, user.id, zone))
+        explore_timers[user.id] = task
+        return
 
-    # Update explore count
-    if p.get("explore_date") != today:
-        p["explore_count_today"] = 0
-        p["explore_date"] = today
-    p["explore_count_today"] = safe_int(p.get("explore_count_today")) + 1
-    p["last_explore"] = datetime.now().isoformat()
-    save_player(p)
+    # Default: show map
+    text, markup = _build_world_map(p, user.id)
+    await send_group(update, text, reply_markup=markup, delay=30)
 
-    remaining = 2 - safe_int(p.get("explore_count_today"))
-    await send_group(update,
-        f"🗺️ *Expedition Started!*\n\n"
-        f"📍 Destination: *{zone['name']}* ({zone['tier']})\n"
-        f"⏱️ Returns in *1 hour*.\n"
-        f"🎒 Results posted in the group when you return.\n\n"
-        f"_{remaining} expedition{'s' if remaining != 1 else ''} remaining today._",
-        delay=30)
 
-    chat_id = update.effective_chat.id
-    bot     = update.get_bot()
-
-    async def deliver_result():
-        await asyncio.sleep(3600)  # 1 hour
-        pp = get_player(user.id)
-        if not pp: return
-        w2  = get_weather()
-        success = random.random() < 0.70  # 70% base success
-        if success:
-            exp  = round(zone["exp"] * w2.get("exp_mod",1.0))
-            gold = zone["gold"]
-            pp["gold"] = pp.get("gold",0) + gold
-            item_found = roll_loot_table(zone.get("loot_table",[]))
-            if item_found: add_item(pp, item_found)
-            lmsgs, leveled = add_exp(pp, exp)
-            save_player(pp)
-            rarity = ""
-            if item_found:
-                for pool2 in [WEAPONS,ARMORS,ACCESSORIES,CONSUMABLES]:
-                    if item_found in pool2:
-                        r = pool2[item_found].get("rarity","")
-                        rarity = RARITY_EMOJI.get(r,"")
-                        break
-            msg = (f"🗺️ *{pp['username']}* returns from *{zone['name']}*!\n\n"
-                   f"✅ Expedition successful!\n"
-                   f"✨ +{exp} EXP | 💰 +{gold} Gold")
-            if item_found: msg += f"\n🎒 Found: {rarity} *{item_found}*!"
-            if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
-            if leveled and pp["level"] % 10 == 0:
-                asyncio.create_task(announce(bot, chat_id,
-                    f"🎉 *{pp['username']}* reached *Level {pp['level']}* from exploring! 🗺️",
-                    delay=60))
-            # 5% chance: wild pet encounter
-            if random.random() < 0.05:
-                _zone_elem = zone.get("element", None)
-                _wild_candidates = [sid for sid, sd in PET_SPECIES.items()
-                                    if sd["rarity"] in ("common","uncommon","rare")
-                                    and (not _zone_elem or sd.get("element") == _zone_elem)]
-                if not _wild_candidates:
-                    _wild_candidates = [sid for sid, sd in PET_SPECIES.items() if sd["rarity"] in ("common","uncommon")]
-                _wild_sid = random.choice(_wild_candidates)
-                _wild_sp  = PET_SPECIES[_wild_sid]
-                _wild_pet_offers[user.id] = {"species": _wild_sid, "expires": time.time() + 120}
-                _rar_e = RARITY_EMOJI.get(_wild_sp["rarity"],""); _elem_e = ELEMENT_EMOJI.get(_wild_sp["element"],"")
-                _catch_markup = InlineKeyboardMarkup([[
-                    InlineKeyboardButton(f"🥚 Catch {_wild_sp['name']}!", callback_data=f"petcatch_{user.id}_{_wild_sid}")
-                ]])
-                try:
-                    _cm = await bot.send_message(chat_id,
-                        f"🐾 *A wild {_wild_sp['emoji']} {_wild_sp['name']} appeared during the expedition!*\n"
-                        f"{_rar_e} {_wild_sp['rarity'].capitalize()}  |  {_elem_e} {_wild_sp['element'].capitalize()}\n\n"
-                        f"_{_wild_sp['desc']}_\n\n"
-                        f"⏳ *2 minutes* to catch it!", parse_mode="Markdown", reply_markup=_catch_markup)
-                    asyncio.create_task(_auto_delete(bot, chat_id, _cm.message_id, 120))
-                except Exception: pass
-        else:
-            cons = random.randint(5,20)
-            pp["gold"] = pp.get("gold",0) + cons; save_player(pp)
-            msg = (f"🗺️ *{pp['username']}* returns from *{zone['name']}*.\n\n"
-                   f"❌ {zone['fail_msg']}\n"
-                   f"💰 Salvaged {cons} gold on the way back.")
-        await announce(bot, chat_id, msg, delay=90)
-
-    task = asyncio.create_task(deliver_result())
-    explore_timers[user.id] = task
+async def map_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show world map (read-only if in cooldown, interactive otherwise)."""
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    text, markup = _build_world_map(p, user.id)
+    await send_group(update, text, reply_markup=markup, delay=30)
 
 
 async def explore_zone_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle zone selection button for /explore."""
+    """Handle zone selection button from /explore or /map."""
     query = update.callback_query
-    if query.data == "explore_locked":
-        await query.answer("Zone locked — level up to unlock!", show_alert=True); return
+    if query.data.startswith("explore_locked"):
+        parts = query.data.split("_")
+        lvl_req = parts[-1] if len(parts) > 2 else "?"
+        await query.answer(f"Zone locked — reach Level {lvl_req} to unlock!", show_alert=True); return
     parts = query.data.split("_", 2)
     try: uid = int(parts[1]); zone_name = parts[2]
     except (IndexError, ValueError): await query.answer(); return
@@ -14242,58 +14960,29 @@ async def explore_zone_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("You've explored twice today. Come back tomorrow!", show_alert=True); return
     if uid in explore_timers and not explore_timers[uid].done():
         await query.answer("You're already on an expedition!", show_alert=True); return
-    zone = next((z for z in EXPLORE_ZONES if z["name"] == zone_name), None)
+    zone = next((z for z in WORLD_ZONES if z["name"] == zone_name), None)
     if not zone: await query.answer("Zone not found.", show_alert=True); return
+    if p["level"] < zone["min_level"]:
+        await query.answer(f"Requires Level {zone['min_level']}!", show_alert=True); return
     if p.get("explore_date") != today:
         p["explore_count_today"] = 0; p["explore_date"] = today
     p["explore_count_today"] = safe_int(p.get("explore_count_today")) + 1
     p["last_explore"] = datetime.now().isoformat()
     save_player(p)
     remaining = 2 - safe_int(p.get("explore_count_today"))
-    await query.answer(f"Expedition started! Returns in 1 hour.")
-    await query.edit_message_text(
-        f"🗺️ *Expedition Started!*\n\n"
-        f"📍 Destination: *{zone['name']}* ({zone['tier']})\n"
-        f"⏱️ Returns in *1 hour*.\n"
-        f"🎒 Results posted in the group when you return.\n\n"
-        f"_{remaining} expedition{'s' if remaining!=1 else ''} remaining today._",
-        parse_mode="Markdown")
-    chat_id = query.message.chat_id
-    bot = context.bot
-
-    async def deliver_result():
-        await asyncio.sleep(3600)
-        p2 = get_player(uid)
-        if not p2: return
-        success = random.random() < 0.75
-        loot_item = None
-        if success:
-            for item_name_r, chance in zone["loot_table"]:
-                if random.random() < chance:
-                    loot_item = item_name_r; break
-        gold_r = round(zone["gold"] * random.uniform(0.7, 1.3)) if success else 0
-        exp_r  = round(zone["exp"]  * random.uniform(0.7, 1.3)) if success else round(zone["exp"] * 0.1)
-        _expl_bonus = get_accessory_bonus(p2, "explore_bonus")
-        if success and _expl_bonus:
-            gold_r = round(gold_r * (1 + _expl_bonus))
-            exp_r  = round(exp_r  * (1 + _expl_bonus))
-        if success:
-            msg = (f"🗺️ *{p2['username']}* returns from *{zone['name']}*.\n\n"
-                   f"💰 +{gold_r} gold | ✨ +{exp_r} EXP"
-                   + (f"\n🎒 Found: *{loot_item}*!" if loot_item else ""))
-            p2["gold"] = p2.get("gold", 0) + gold_r
-            if loot_item: add_item(p2, loot_item)
-            add_exp(p2, exp_r); save_player(p2)
-        else:
-            cons = round(zone["gold"] * 0.1)
-            p2["gold"] = p2.get("gold", 0) + cons
-            msg = (f"🗺️ *{p2['username']}* returns from *{zone['name']}*.\n\n"
-                   f"❌ {zone['fail_msg']}\n"
-                   f"💰 Salvaged {cons} gold on the way back.")
-            save_player(p2)
-        await announce(bot, chat_id, msg, delay=90)
-
-    task = asyncio.create_task(deliver_result())
+    sr = int(_explore_success_rate(p, zone) * 100)
+    await query.answer(f"Expedition started! ~{sr}% success. Returns in 1 hour.")
+    try:
+        await query.edit_message_text(
+            f"🗺️ *Expedition Started!*\n\n"
+            f"📍 {zone['emoji']} *{zone['name']}* ({zone['tier']})\n"
+            f"🎯 Success chance: *{sr}%*\n"
+            f"⚠️ _{zone.get('env_note') or zone['desc']}_\n"
+            f"⏱️ Returns in *1 hour*.\n\n"
+            f"_{remaining} expedition{'s' if remaining!=1 else ''} remaining today._",
+            parse_mode="Markdown")
+    except Exception: pass
+    task = asyncio.create_task(_run_expedition(context.bot, query.message.chat_id, uid, zone))
     explore_timers[uid] = task
 
 
@@ -20064,95 +20753,118 @@ async def claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"\n_Streak: {streak} day{'s' if streak != 1 else ''} — claim again tomorrow to keep it going!_")
     await send_group(update, "\n".join(lines), delay=25)
 
+def _build_forge_view(p, uid, cat="weapon", craft_msg=""):
+    """Build forge menu text + markup for the given category tab."""
+    inv_ctr = Counter(sjl(p.get("inventory"), []))
+    cat_recipes = {k: v for k, v in RECIPES.items() if v.get("cat") == cat}
+
+    # Tab row
+    tab_row = [InlineKeyboardButton(
+        ("▸ " if c == cat else "") + _FORGE_CAT_LABELS[c],
+        callback_data=f"forgecat_{uid}_{c}"
+    ) for c in _FORGE_CATS]
+
+    label = _FORGE_CAT_LABELS.get(cat, cat)
+    lines = [f"⚗️ *The Forge*   |   {label}"]
+    if craft_msg:
+        lines.append(f"\n{craft_msg}")
+    lines.append("")
+
+    craft_buttons = []
+    for rkey, rec in cat_recipes.items():
+        mats_str = ", ".join(f"{v}× {k}" for k, v in rec["mats"].items())
+        have_all = all(inv_ctr.get(k, 0) >= v for k, v in rec["mats"].items())
+        icon = "✅" if have_all else "🔒"
+        lines.append(f"{icon} *{rec['name']}* → *{rec['result']}*")
+        lines.append(f"   _{rec['desc']}_")
+        lines.append(f"   Needs: {mats_str}")
+        if have_all:
+            craft_buttons.append([InlineKeyboardButton(
+                f"⚗️ Craft: {rec['name']}", callback_data=f"forgedo_{uid}_{rkey}")])
+
+    if not cat_recipes:
+        lines.append("_No recipes in this category yet._")
+    elif not craft_buttons:
+        lines.append("\n_Collect materials to unlock craft buttons._")
+
+    markup = InlineKeyboardMarkup([[*tab_row]] + craft_buttons + [
+        [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
+    ])
+    return "\n".join(lines), markup
+
+
 async def forge_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-
-    inv = sjl(p.get("inventory"), [])
-    inv_ctr = Counter(inv)
-
-    # Typed craft path still works
-    if context.args:
-        recipe_name = " ".join(context.args)
-        matched = next((k for k in RECIPES if k.lower() == recipe_name.lower()), None)
-        if not matched:
-            await send_group(update, f"❌ Unknown recipe *{recipe_name}*. Use /forge to see available recipes.", delay=12); return
-        recipe = RECIPES[matched]
-        for mat, qty in recipe["mats"].items():
-            if inv_ctr.get(mat, 0) < qty:
-                await send_group(update,
-                    f"❌ Need {qty}x *{mat}* (have {inv_ctr.get(mat, 0)}).", delay=12); return
-        for mat, qty in recipe["mats"].items():
-            for _ in range(qty): inv.remove(mat)
-        result_item = recipe["result"]
-        inv.append(result_item)
-        p["inventory"] = json.dumps(inv)
-        p["crafts_done"] = safe_int(p.get("crafts_done")) + 1
-        check_titles(p); save_player(p)
-        await send_group(update,
-            f"⚗️ *Crafted!*\n\n*{matched}* → 🎉 *{result_item}*\n"
-            f"Added to your inventory!", delay=20)
-        return
-
-    # Button menu
-    lines = ["⚗️ *The Forge — Crafting*\n"]
-    buttons = []
-    uid = user.id
-    for recipe_name, recipe in RECIPES.items():
-        mats_str = ", ".join(f"{v}x {k}" for k, v in recipe["mats"].items())
-        can_craft = all(inv_ctr.get(k, 0) >= v for k, v in recipe["mats"].items())
-        status = "✅" if can_craft else "🔒"
-        lines.append(f"{status} *{recipe_name}* → *{recipe['result']}*")
-        lines.append(f"   Requires: {mats_str}")
-        if can_craft:
-            buttons.append([InlineKeyboardButton(
-                f"⚗️ Craft: {recipe_name}", callback_data=f"forge_{uid}_{recipe_name}")])
-    if not buttons:
-        lines.append("\n_No recipes available — collect materials to craft._")
-    markup = InlineKeyboardMarkup(buttons) if buttons else None
-    await send_group(update, "\n".join(lines), reply_markup=markup, delay=30)
+    text, markup = _build_forge_view(p, user.id)
+    await send_group(update, text, reply_markup=markup, delay=30)
 
 
-async def forge_craft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def forge_cat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Switch forge category tab."""
     query = update.callback_query
-    parts = query.data.split("_", 2)
-    try: uid = int(parts[1]); recipe_name = parts[2]
+    parts = query.data.split("_")
+    try: uid = int(parts[1]); cat = parts[2]
     except (IndexError, ValueError): await query.answer(); return
     if query.from_user.id != uid:
         await query.answer("This isn't your forge!", show_alert=True); return
     p = get_player(uid)
     if not p: await query.answer("Player not found.", show_alert=True); return
+    text, markup = _build_forge_view(p, uid, cat)
+    try:
+        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
+    await query.answer()
+
+
+async def forge_craft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle both new forgedo_ and legacy forge_ craft callbacks."""
+    query = update.callback_query
+    data = query.data
+    # New format: forgedo_{uid}_{rkey}
+    # Legacy format: forge_{uid}_{recipe_name}
+    if data.startswith("forgedo_"):
+        parts = data.split("_", 2)
+        try: uid = int(parts[1]); rkey = parts[2]
+        except (IndexError, ValueError): await query.answer(); return
+        rec = RECIPES.get(rkey)
+    else:
+        parts = data.split("_", 2)
+        try: uid = int(parts[1]); recipe_name = parts[2]
+        except (IndexError, ValueError): await query.answer(); return
+        # Legacy: match by old "name" field or by key
+        rkey = next((k for k, v in RECIPES.items() if v.get("name","") == recipe_name or k == recipe_name), None)
+        rec = RECIPES.get(rkey) if rkey else None
+
+    if query.from_user.id != uid:
+        await query.answer("This isn't your forge!", show_alert=True); return
+    p = get_player(uid)
+    if not p: await query.answer("Player not found.", show_alert=True); return
+    if not rec: await query.answer("Recipe not found.", show_alert=True); return
+
     inv = sjl(p.get("inventory"), [])
     inv_ctr = Counter(inv)
-    matched = next((k for k in RECIPES if k == recipe_name), None)
-    if not matched: await query.answer("Recipe not found.", show_alert=True); return
-    recipe = RECIPES[matched]
-    for mat, qty in recipe["mats"].items():
+    for mat, qty in rec["mats"].items():
         if inv_ctr.get(mat, 0) < qty:
-            await query.answer(f"Need {qty}x {mat} (have {inv_ctr.get(mat,0)}).", show_alert=True); return
-    for mat, qty in recipe["mats"].items():
+            await query.answer(f"Need {qty}× {mat} (have {inv_ctr.get(mat,0)}).", show_alert=True); return
+
+    for mat, qty in rec["mats"].items():
         for _ in range(qty): inv.remove(mat)
-    result_item = recipe["result"]
+    result_item = rec["result"]
     inv.append(result_item)
-    p["inventory"] = json.dumps(inv); p["crafts_done"] = safe_int(p.get("crafts_done")) + 1
+    p["inventory"] = json.dumps(inv)
+    p["crafts_done"] = safe_int(p.get("crafts_done")) + 1
     check_titles(p); save_player(p)
-    # Rebuild menu with updated materials
-    inv_ctr2 = Counter(inv)
-    lines = ["⚗️ *The Forge — Crafting*\n", f"✅ Crafted *{matched}* → 🎉 *{result_item}*!\n"]
-    buttons = []
-    for rn, rec in RECIPES.items():
-        mats_str = ", ".join(f"{v}x {k}" for k, v in rec["mats"].items())
-        can_craft = all(inv_ctr2.get(k, 0) >= v for k, v in rec["mats"].items())
-        status = "✅" if can_craft else "🔒"
-        lines.append(f"{status} *{rn}* → *{rec['result']}*")
-        lines.append(f"   Requires: {mats_str}")
-        if can_craft:
-            buttons.append([InlineKeyboardButton(f"⚗️ Craft: {rn}", callback_data=f"forge_{uid}_{rn}")])
+
     await query.answer(f"Crafted {result_item}!")
-    await query.edit_message_text("\n".join(lines),
-        reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
-        parse_mode="Markdown")
+    cat = rec.get("cat", "weapon")
+    text, markup = _build_forge_view(p, uid, cat, craft_msg=f"✅ Crafted *{rec['name']}* → 🎉 *{result_item}*!")
+    try:
+        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
 
 _PERMA_GOLD_COST   = 100
 _PERMA_SHARD_COST  = 5
@@ -23836,7 +24548,7 @@ GUIDE_PAGES = [
         "  Path A (Danse Macabre): Combo offense — blade storm, thousand cuts, Macabre Finale\n"
         "  Path B (Ethereal Sovereign): Evasion — phase step, mist form, Ethereal Storm\n"
         "\n"
-        "At Lv 10, use /prestige to choose Path A or B. Class evolves at Lv 30, 60, 100. Level cap: 250.\n"
+        "At Lv 10, choose Path A or B with /class. Class evolves at Lv 30, 60, 100. Level cap: 250.\n"
         "\n"
         "*Stats:* STR — Physical dmg | INT — Magic dmg | AGI — Dodge | DEX — Crit | WIS — Healing | LUK — Loot"
     ),
@@ -23852,9 +24564,10 @@ GUIDE_PAGES = [
         "/daily  -  Gold + EXP reward  (24 hours)\n"
         "/train  -  EXP gain with class bonus  (30 min)\n"
         "/quest  -  EXP + gold + possible loot  (1 hour)\n"
-        "/explore  -  Best loot drops, big EXP  (1hr, 2x per day)\n"
+        "/explore  -  World map expedition. Choose a zone, results in 1 hour, 2x per day. Higher zones = better loot + more EXP.\n"
+        "/map  -  View the full world map with all 9 zones and your success % per zone.\n"
         "/pool  -  Roll for EXP, gold, and items  (8 seconds)\n"
-        "/dungeon  -  Real-time 6-floor dungeon. 10 rooms per floor, live enemy attacks, boss on every floor. Extract to keep loot — die and lose it all.\n"
+        "/dungeon  -  Turn-based JRPG dungeon. 4 difficulty modes (Easy/Hard/Extreme/Hell). 4–10 floors, telegraphed enemy moves, MP skills, boss phase transitions. Extract to keep loot — die and lose it all.\n"
         "\n"
         "💡 /pool is your main source of rare weapons and accessories. The rarer the roll (epic, legendary), the better the potential drop. Keep rolling.\n"
         "\n"
@@ -23941,9 +24654,9 @@ GUIDE_PAGES = [
         "\n"
         "*Consumable Items*\n"
         "Use /use to open your consumables and tap to use an item.\n"
-        "• Health Potion — +100 HP\n"
-        "• Greater Health Potion — +200 HP\n"
-        "• Grand Restorative Flask — +500 HP\n"
+        "• Health Potion — +250 HP  |  Greater Health Potion — +500 HP\n"
+        "• Grand Restorative Flask — +1,500 HP  |  Supreme Restorative Flask — +5,000 HP\n"
+        "• Ultimate Vitality Draught — +15,000 HP  _(for high-HP classes like Serpent)_\n"
         "• Scroll of Revival — Full self-revive from defeat (5 min invincibility after)\n"
         "• Iron Shard — Used for /enhance and /forge\n"
         "• Enchanting Scroll — Used for /enchant\n"
@@ -23955,8 +24668,11 @@ GUIDE_PAGES = [
         "*Daily Claim*\n"
         "/claim — Daily reward with streak bonuses: Iron Shards (Day 3+), Iron Shards (Day 7+), Enchanting Scrolls (Day 14+).\n"
         "\n"
-        "*Crafting*\n"
-        "/forge — View recipes and craft items from Iron Shards.\n"
+        "*Crafting — /forge*\n"
+        "4 tabbed categories: ⚔️ Weapons  |  🛡️ Armor  |  💍 Accessories  |  🧪 Consumables\n"
+        "30+ recipes using zone drops (Monster Fang, Shadow Essence, Holy Fragment, Void Shard, Primal Orb, etc.).\n"
+        "Craftable-only epic/legendary gear exists that cannot be found any other way.\n"
+        "✅ = you have the mats. 🔒 = missing materials. Craft buttons appear only when ready.\n"
         "\n"
         "*Trading*\n"
         "/trade  -  Reply to a player to open the trade menu. Pick an item from buttons, then pick a price (or gift for free). They type /accept to complete it.\n"
@@ -23974,7 +24690,7 @@ GUIDE_PAGES = [
         "🎱 *8Ball World  -  Commands: Core* (6/14)\n"
         "\n"
         "*⚡ Command Hubs*\n"
-        "/empire  -  Master hub — one place to open every system\n"
+        "/empire  -  Master hub + idle building system (collect resources, upgrade buildings, earn passive stat bonuses)\n"
         "/combat  -  Combat hub (attacks, raids, dungeons, CP)\n"
         "/activities  -  Daily activities, challenges, and character\n"
         "/gearhub  -  Equipment, upgrades, and economy\n"
@@ -23997,9 +24713,10 @@ GUIDE_PAGES = [
         "/daily  -  Daily gold + EXP (24hr)\n"
         "/train  -  EXP training (30min)\n"
         "/quest  -  EXP + gold + loot (1hr)\n"
-        "/explore  -  Big drops, big EXP (1hr, 2x/day)\n"
+        "/explore  -  World map expedition (1hr, 2x/day)\n"
+        "/map  -  View world map + success % per zone\n"
         "/pool  -  Roll for EXP, gold, items (8s)\n"
-        "/dungeon  -  Real-time 6-floor dungeon (10 rooms/floor, boss every floor)\n"
+        "/dungeon  -  JRPG turn-based dungeon (4 difficulty modes)\n"
         "/encounter  -  Battle NPC / Hunt monster / Enter Dungeon\n"
         "\n"
         "*Combat*\n"
@@ -24024,7 +24741,7 @@ GUIDE_PAGES = [
         "/title  -  View and equip your earned titles\n"
         "/objectives  -  View daily objectives\n"
         "/sell [rarity]  -  Bulk sell by rarity\n"
-        "/forge  -  Craft items from materials\n"
+        "/forge  -  Craft items from zone materials (4 tabs, 30+ recipes)\n"
         "/claim  -  Daily streak reward (gold + materials)\n"
         "/trade  -  Reply to player to open trade menu\n"
         "/shop  -  Tabbed shop (class labels on gear)\n"
@@ -24374,9 +25091,47 @@ GUIDE_PAGES = [
         "\n"
         "🏚️ _Every floor is darker than the last. Extract wisely._"
     ),
+    # Page 15 - Empire & Idle System
+    (
+        "🎱 *8Ball World  -  Empire & Idle System* (15/15)\n"
+        "\n"
+        "*/empire* — Your idle command center. Resources generate while you're offline and are collected when you return.\n"
+        "\n"
+        "*How it works*\n"
+        "Build and upgrade structures on the Build tab. Each building generates resources every hour (capped at 24h accumulation). When you open /empire or come back after being away, the bot auto-collects everything and shows what you earned in your return DM.\n"
+        "\n"
+        "*Buildings*\n"
+        "🏠 *Homestead* _(base building, max Lv 10)_ — Generates 🪵 Timber per hour. Unlocks all other buildings. Grants +75 Max HP per level.\n"
+        "⚔️ *Barracks* _(requires Homestead Lv 2)_ — Generates 🪨 Stone. Grants +5 flat ATK per level.\n"
+        "🍺 *Tavern* _(requires Homestead Lv 3)_ — Generates 💰 Gold passively. Grants +2 LUK per level.\n"
+        "📚 *Library* _(requires Barracks Lv 2)_ — Generates 💎 Crystal. Grants +2% EXP per level from all sources.\n"
+        "🔨 *Forge* _(requires Barracks Lv 3)_ — Generates 🔩 Iron Shards. Grants +4 DEF per level.\n"
+        "🌿 *Garden* _(requires Homestead Lv 5)_ — Generates 🧪 Health Potions. Grants passive HP regen each PvP turn per level.\n"
+        "⛩️ *Shrine* _(requires Library Lv 3)_ — Generates 💎 Crystal at high rate. Grants +3 INT +3 WIS per level.\n"
+        "\n"
+        "*Resources*\n"
+        "🪵 Timber, 🪨 Stone, 💎 Crystal — Empire building materials. Used to upgrade structures.\n"
+        "💰 Gold — Goes straight to your wallet.\n"
+        "🔩 Iron Shards — Added to your inventory for /enhance and /forge.\n"
+        "🧪 Health Potions — Added to your inventory for use in combat.\n"
+        "\n"
+        "*Upgrade costs*\n"
+        "Each upgrade costs gold + resources. Cost scales with level (~level^1.55). Higher-level buildings need Stone and Crystal in addition to gold.\n"
+        "\n"
+        "*Stat bonuses*\n"
+        "Every building level grants a permanent passive bonus — Max HP, ATK, DEF, INT, WIS, LUK, EXP gain, or PvP regen. View your current bonuses on the 📊 Stat Bonuses tab.\n"
+        "\n"
+        "*Tips*\n"
+        "• Build Homestead first — it's the prerequisite for everything.\n"
+        "• Library and Shrine stack EXP bonuses with guild and enchant bonuses.\n"
+        "• Garden is the only passive PvP HP regen in the game — very strong in long fights.\n"
+        "• Resources cap at 24h — log in at least once a day to avoid waste.\n"
+        "\n"
+        "🏰 _Your empire grows whether you're here or not._"
+    ),
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands: Core", "Commands: Social", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders", "The Dungeon"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands: Core", "Commands: Social", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders", "The Dungeon", "Empire & Idle"]
 
 async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
     total = len(GUIDE_PAGES)
@@ -27708,13 +28463,99 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data  = query.data
     parts = data.split("_")
 
+    hub = parts[1] if len(parts) > 1 else ""
+
+    # ── Empire building sub-commands (uid is parts[2], not parts[-1]) ──
+    if hub == "tab":
+        try: req_uid = int(parts[2])
+        except (IndexError, ValueError): req_uid = 0
+        if uid != req_uid:
+            await query.answer("Not your menu.", show_alert=True); return
+        await query.answer()
+        tabname = parts[3] if len(parts) > 3 else "overview"
+        p = get_player(uid)
+        if not p: return
+        if tabname == "overview":
+            text, markup = _build_empire_overview(p, uid)
+        elif tabname == "build":
+            text, markup = _build_empire_build(p, uid)
+        elif tabname == "stats":
+            text, markup = _build_empire_stats(p, uid)
+        else:
+            return
+        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        except Exception: pass
+        return
+
+    if hub == "collect":
+        try: req_uid = int(parts[2])
+        except (IndexError, ValueError): req_uid = 0
+        if uid != req_uid:
+            await query.answer("Not your menu.", show_alert=True); return
+        p = get_player(uid)
+        if not p: return
+        notes = _empire_collect(p)
+        save_player(p)
+        if notes:
+            await query.answer("\n".join(notes[:3]), show_alert=True)
+        else:
+            await query.answer("Nothing to collect yet — buildings generate resources over time.", show_alert=True)
+        text, markup = _build_empire_overview(p, uid)
+        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        except Exception: pass
+        return
+
+    if hub == "build":
+        try: req_uid = int(parts[2])
+        except (IndexError, ValueError): req_uid = 0
+        if uid != req_uid:
+            await query.answer("Not your menu.", show_alert=True); return
+        bkey = parts[3] if len(parts) > 3 else ""
+        p = get_player(uid)
+        if not p: return
+        b = EMPIRE_BUILDINGS.get(bkey)
+        if not b:
+            await query.answer("Unknown building.", show_alert=True); return
+        bld, res, lc = _get_empire(p)
+        cur_lvl = bld.get(bkey, 0)
+        if cur_lvl >= b["max_level"]:
+            await query.answer("Already at max level!", show_alert=True); return
+        req = b.get("requires")
+        if req:
+            req_key, req_lvl = req
+            if bld.get(req_key, 0) < req_lvl:
+                req_name = EMPIRE_BUILDINGS[req_key]["name"]
+                await query.answer(f"Requires {req_name} Lv {req_lvl}!", show_alert=True); return
+        cost = _empire_upgrade_cost(bkey, cur_lvl)
+        for rtype, amt in cost.items():
+            if rtype == "gold":
+                if p.get("gold", 0) < amt:
+                    await query.answer(f"Need {amt:,} gold!", show_alert=True); return
+            else:
+                if res.get(rtype, 0) < amt:
+                    emoji = _EMPIRE_RES_EMOJI.get(rtype, rtype)
+                    await query.answer(f"Need {amt:,} {emoji} {rtype}!", show_alert=True); return
+        for rtype, amt in cost.items():
+            if rtype == "gold":
+                p["gold"] = p.get("gold", 0) - int(amt)
+            else:
+                res[rtype] = max(0, res.get(rtype, 0) - amt)
+        bld[bkey] = cur_lvl + 1
+        _save_empire(p, bld, res, lc)
+        save_player(p)
+        await query.answer(f"{b['name']} upgraded to Lv {cur_lvl + 1}! 🏗️", show_alert=True)
+        text, markup = _build_empire_build(p, uid)
+        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        except Exception: pass
+        return
+
+    # ── Hub navigation (uid is parts[-1]) ──
     try: req_uid = int(parts[-1])
     except (IndexError, ValueError): req_uid = 0
     if uid != req_uid:
         await query.answer("Not your menu.", show_alert=True); return
     await query.answer()
 
-    hub = parts[1] if len(parts) > 1 else ""
     p   = get_player(uid)
     if not p: return
 
@@ -29816,16 +30657,22 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
         if s:
             add_shadow_exp(s, idle_exp)
             save_shadow(s)
+        empire_notes = []
         if p and not is_defeated(p):
             add_exp(p, idle_exp)
+            empire_notes = _empire_collect(p)
             save_player(p)
+        emp_line = ""
+        if empire_notes:
+            emp_line = "\n\n🏰 *Empire produced:*\n" + "\n".join(f"  {n}" for n in empire_notes[:6])
         try:
             await bot.send_message(
                 uid,
                 f"🎱 *Welcome back!*\n\n"
                 f"You were away for *{away_str}*.\n"
                 f"💫 Idle reward: *+{idle_exp:,} EXP*\n"
-                f"_(Scales with your level — the higher your level, the more you earn)_",
+                f"_(Scales with your level — the higher your level, the more you earn)_"
+                f"{emp_line}",
                 parse_mode="Markdown")
         except Exception:
             pass
@@ -31198,6 +32045,7 @@ def main():
     app.add_handler(CommandHandler("train",     train_cmd))
     app.add_handler(CommandHandler("quest",     quest_cmd))
     app.add_handler(CommandHandler("explore",   explore_cmd))
+    app.add_handler(CommandHandler("map",       map_cmd))
     app.add_handler(CommandHandler("pool",      pool_cmd))
     app.add_handler(CommandHandler("hustle",    hustle_cmd))
 
@@ -31394,6 +32242,8 @@ def main():
     app.add_handler(CallbackQueryHandler(sell_rarity_callback,  pattern="^sellr_"))
     app.add_handler(CallbackQueryHandler(sell_browse_callback,  pattern="^sellbrowse_"))
     app.add_handler(CallbackQueryHandler(sell_offclass_callback, pattern="^selloffc_"))
+    app.add_handler(CallbackQueryHandler(forge_cat_callback,      pattern="^forgecat_"))
+    app.add_handler(CallbackQueryHandler(forge_craft_callback,    pattern="^forgedo_"))
     app.add_handler(CallbackQueryHandler(forge_craft_callback,    pattern="^forge_"))
     app.add_handler(CallbackQueryHandler(perma_upgrade_callback,  pattern="^perma_upgrade_"))
     app.add_handler(CallbackQueryHandler(explore_zone_callback, pattern="^explore_"))
