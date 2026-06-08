@@ -576,6 +576,66 @@ async def send_group(update: Update, text: str, parse_mode="Markdown",
             update.get_bot(), chat_id, new_msg.message_id, delay))
     return new_msg
 
+_PVP_FIGHT_LINES = [
+    "⚔️ *{a}* and *{d}* are throwing hands!",
+    "🥊 *{a}* just challenged *{d}* — it's going down!",
+    "🎱 *{a}* squared up on *{d}*. Let's see how this plays out.",
+    "💥 *{a}* vs *{d}* — someone's getting dropped.",
+    "⚔️ *{a}* picked a fight with *{d}*. Bold move.",
+    "🔥 *{a}* came looking for smoke — *{d}* has it.",
+    "🎯 *{a}* locked in on *{d}*. It's on.",
+    "⚡ *{a}* just swung on *{d}* — nobody saw that coming.",
+    "🗡️ Blades out — *{a}* vs *{d}*!",
+    "😤 *{a}* decided *{d}*'s day needed ruining.",
+]
+
+_PVP_WIN_LINES = [
+    ("default", "💀 *{a}* has defeated *{d}*! Another one bites the dust."),
+    ("default", "⚔️ *{a}* sent *{d}* to the floor. Brutal."),
+    ("default", "🎱 *{a}* just wiped the table with *{d}*."),
+    ("default", "💥 *{a}* dismantled *{d}* — it wasn't even close."),
+    ("default", "😤 *{a}* made an example out of *{d}*. Respect."),
+    ("default", "🔥 *{a}* lit *{d}* up. Walk it off."),
+    ("default", "🗡️ *{d}* ran into the wrong one today. *{a}* wins."),
+    ("default", "☠️ *{d}* is down. *{a}* standing tall."),
+    ("default", "🎯 *{a}* didn't miss. *{d}* is done."),
+    ("default", "💀 *{d}* caught these hands. *{a}* moves on."),
+    ("streak", "🔥 *{a}* with the *{streak}-kill streak*, just added *{d}* to the list. Who's next?"),
+    ("streak", "🏆 *{a}* is on a rampage — *{streak} kills deep* and *{d}* couldn't stop it."),
+    ("streak", "⚡ *{streak} in a row* for *{a}*. *{d}* was the latest victim."),
+    ("wanted", "🔴 *{a}* is WANTED and still won — took down *{d}*. The heat means nothing."),
+    ("wanted", "🔴 Every hunter wants *{a}*, but *{d}* just found out why that's a bad idea."),
+    ("revenge", "💜 *{a}* got their revenge on *{d}*. That score's settled."),
+    ("lowlevel", "😅 *{a}* (Lv {alvl}) just clapped *{d}* (Lv {dlvl}). That's an upset."),
+    ("highlevel", "👑 *{a}* (Lv {alvl}) crushed *{d}*. Hardly a surprise, but still."),
+]
+
+def _pvp_fight_start_line(a_name: str, d_name: str) -> str:
+    return random.choice(_PVP_FIGHT_LINES).format(a=a_name, d=d_name)
+
+def _pvp_win_line(a: dict, d: dict) -> str:
+    a_name = a["username"]; d_name = d["username"]
+    streak = safe_int(a.get("kill_streak"))
+    is_wanted = safe_int(a.get("is_wanted"))
+    is_revenge = safe_int(d.get("revenge_target")) == safe_int(a.get("user_id"))
+    lvl_diff = a.get("level", 1) - d.get("level", 1)
+
+    pool = [t for t in _PVP_WIN_LINES if t[0] == "default"]
+    if streak >= 3:
+        pool += [t for t in _PVP_WIN_LINES if t[0] == "streak"]
+    if is_wanted:
+        pool += [t for t in _PVP_WIN_LINES if t[0] == "wanted"]
+    if is_revenge:
+        pool += [t for t in _PVP_WIN_LINES if t[0] == "revenge"]
+    if lvl_diff <= -10:
+        pool += [t for t in _PVP_WIN_LINES if t[0] == "lowlevel"]
+    elif lvl_diff >= 20:
+        pool += [t for t in _PVP_WIN_LINES if t[0] == "highlevel"]
+
+    _, tmpl = random.choice(pool)
+    return tmpl.format(a=a_name, d=d_name, streak=streak,
+                       alvl=a.get("level", "?"), dlvl=d.get("level", "?"))
+
 async def announce(bot, chat_id: int, text: str,
                    parse_mode="Markdown", permanent=False, delay=9):
     try:
@@ -12243,6 +12303,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
             _defeat_timer_ks = time_until(d.get("defeated_until")) or "6m"
             action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_ks}*."
+            asyncio.create_task(announce(bot, chat_id, _pvp_win_line(a, d), delay=5))
             if leveled and a["level"] % 10 == 0:
                 asyncio.create_task(announce(bot, chat_id,
                     f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
@@ -12844,6 +12905,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             asyncio.create_task(announce(bot, chat_id,
                 f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
         lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
+        asyncio.create_task(announce(bot, chat_id, _pvp_win_line(a, d), delay=5))
         if cls_a and cls_a.get("passive_key") == "conqueror":
             restore = round(a["max_hp"] * 0.20)
             a["hp"] = min(a["max_hp"], a["hp"] + restore)
@@ -13151,6 +13213,8 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         fresh_d = get_player(target_uid) or d
         _cb_unlock(uid)
         await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_uid, start_txt, context.bot)
+        asyncio.create_task(announce(context.bot, query.message.chat_id,
+            _pvp_fight_start_line(a["username"], d["username"]), delay=25))
     finally:
         _cb_unlock(uid)  # idempotent
 
@@ -13333,6 +13397,8 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fresh_a = get_player(au.id) or a
     fresh_d = get_player(du_id) or d
     await _pvp_notify_both(pair, fresh_a, fresh_d, au.id, du_id, start_txt, bot)
+    asyncio.create_task(announce(bot, chat_id,
+        _pvp_fight_start_line(a["username"], d["username"]), delay=25))
 
 
 # ── PVP CARD CALLBACK ─────────────────────────────────────────────────────────
