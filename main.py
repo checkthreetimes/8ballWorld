@@ -13276,7 +13276,13 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_defeated(a):
         await send_group(update, _defeated_msg(a), delay=15); return
 
-    chat_id = update.effective_chat.id
+    # If command is sent from DM, use the player's known group chat for announcements
+    _raw_chat_id = update.effective_chat.id
+    if update.effective_chat.type == "private":
+        _s_au = get_shadow(au.id)
+        chat_id = (_s_au.get("home_group") if _s_au else None) or _megaphone_state.get("group") or _raw_chat_id
+    else:
+        chat_id = _raw_chat_id
 
     # PvP: invincibility blocks attacking
     if is_invincible(a):
@@ -13579,7 +13585,11 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Can't attack your own guild member!", show_alert=True); return
 
         w = get_weather()
-        chat_id = _pvp_origin_chat.get(pair) or query.message.chat_id
+        _s_atk = get_shadow(uid)
+        chat_id = (_pvp_origin_chat.get(pair)
+                   or (_s_atk.get("home_group") if _s_atk else None)
+                   or _megaphone_state.get("group")
+                   or query.message.chat_id)
         # Initialize dungeon item battle state on first hit
         if uid not in _pvp_battle_state: _dng_pvp_init(uid, a)
         if target_id not in _pvp_battle_state: _dng_pvp_init(target_id, d)
@@ -19286,7 +19296,12 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Override send_result for PvP: log to battle log and update DM fight cards
         _pvp_pair_k = _pvp_pair_key(uid, target_uid)
         # Register group chat origin (needed for kill announcements / _execute_pvp_hit)
-        _pvp_origin_chat.setdefault(_pvp_pair_k, query.message.chat_id)
+        if _pvp_pair_k not in _pvp_origin_chat:
+            _s_sk = get_shadow(uid)
+            _pvp_origin_chat[_pvp_pair_k] = (
+                (_s_sk.get("home_group") if _s_sk else None)
+                or _megaphone_state.get("group")
+                or query.message.chat_id)
         # Only alert defender and clear stale card if no card is currently active for them
         _is_new_fight = _pvp_dm_last_msg.get(target_uid) is None
         if _is_new_fight:
@@ -19298,6 +19313,8 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     parse_mode="Markdown")
             except Exception:
                 pass
+            asyncio.create_task(announce(context.bot, _pvp_origin_chat[_pvp_pair_k],
+                _pvp_fight_start_line(p["username"], tp["username"]), permanent=True))
         async def send_result(text):  # noqa: F811
             _pvp_log_append(_pvp_pair_k, text[:4096])
             p_upd  = get_player(uid) or p
