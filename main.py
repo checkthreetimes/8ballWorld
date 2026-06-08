@@ -141,6 +141,8 @@ pending_marriages       = {}   # proposer_id -> {target_id, chat_id, expires}
 pending_alliance_inv    = {}   # inviter_id  -> {target_id, alliance_id, expires}
 pending_guild_inv       = {}   # inviter_id  -> {target_id, guild_id, expires}
 pending_holdhands  = {}   # proposer_id -> {target_id, chat_id, expires}
+active_world_bosses = {}  # chat_id -> world boss dict
+_boss_attack_cd     = {}  # uid -> last attack timestamp
 active_encounters  = {}   # user_id -> encounter state
 _enc_sessions      = {}   # uid -> {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]}
 _dng_timers        = {}   # user_id -> asyncio.Task (real-time combat ticker)
@@ -6013,6 +6015,21 @@ RANDOM_EVENTS = [
      "msg":"🔮 *An old trophy was found behind the wall.*\nFirst to /pray gets something from it."},
     {"key":"cursed","freq":"rare",
      "msg":"⚰️ *A losing player put something bad into the table on their way out.*\nSomeone's been marked. Use /purge to lift it."},
+    {"key":"world_boss","freq":"rare",
+     "msg":""},  # placeholder; world boss uses its own spawn logic
+]
+
+WORLD_BOSSES = [
+    {"name":"The Void Titan",    "emoji":"🌀","atk":2800,"exp":800000,"gold":50000,
+     "loot_table":[("Voidbreaker","legendary"),("Abyssal Plate","legendary"),("Grand Mana Crystal",0.8)]},
+    {"name":"Dread Warlord",     "emoji":"⚔️","atk":2400,"exp":600000,"gold":40000,
+     "loot_table":[("Ruinblade","legendary"),("Dragonscale Plate","legendary"),("Supreme Health Potion",0.9)]},
+    {"name":"The Plague Herald", "emoji":"☣️","atk":2600,"exp":700000,"gold":45000,
+     "loot_table":[("Staff of Unending Night","legendary"),("Death's Whisper","legendary"),("Grand Mana Crystal",0.8)]},
+    {"name":"Shadow Sovereign",  "emoji":"🌑","atk":3000,"exp":900000,"gold":55000,
+     "loot_table":[("Eternal Arcanum","legendary"),("The Final Cut","legendary"),("Scroll of Revival",0.9)]},
+    {"name":"Ragnarok Titan",    "emoji":"⚡","atk":2700,"exp":750000,"gold":48000,
+     "loot_table":[("Mjolnir's Rage","legendary"),("Valhalla's Thunder","legendary"),("Supreme Health Potion",0.9)]},
 ]
 
 GUILD_PERKS = {
@@ -16494,6 +16511,389 @@ def _build_sr_markup(uid):
         [InlineKeyboardButton("🩺 Heal",   callback_data=f"sr_act_{uid}_heal"),
          InlineKeyboardButton("🏃 Flee",   callback_data=f"sr_act_{uid}_flee")],
     ])
+
+# ── WORLD BOSS SYSTEM ─────────────────────────────────────────────────────────
+
+def _world_boss_card(boss):
+    """Return markdown HP card for the world boss."""
+    hp = max(0, boss["hp"])
+    max_hp = boss["max_hp"]
+    bar_len = 20
+    filled = round(bar_len * hp / max_hp) if max_hp > 0 else 0
+    bar = "█" * filled + "░" * (bar_len - filled)
+    pct = round(100 * hp / max_hp) if max_hp > 0 else 0
+    phase_tag = " 🔥 *ENRAGED!*" if boss["phase"] == 2 else ""
+    lines = [
+        f"{boss['emoji']} *{boss['name']}*{phase_tag}",
+        f"`[{bar}]` {pct}%",
+        f"HP: *{hp:,}* / {max_hp:,}",
+        "",
+    ]
+    fighters = boss.get("fighters", {})
+    evaded = boss.get("evaded", set())
+    defeated_set = boss.get("defeated", set())
+    if fighters:
+        sorted_f = sorted(fighters.items(), key=lambda x: x[1], reverse=True)[:5]
+        lines.append("⚔️ *Fighters:*")
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+        for i, (fuid, dmg) in enumerate(sorted_f):
+            try:
+                row = _db().execute("SELECT username FROM shadow_profiles WHERE user_id=?", (fuid,)).fetchone()
+                name = row["username"] if row else f"Player {fuid}"
+            except Exception:
+                name = f"Player {fuid}"
+            fp = get_player(fuid)
+            if fp:
+                fp_hp = safe_int(fp.get("hp")); fp_mhp = calc_max_hp(fp)
+                hp_str = f" ❤️{fp_hp}/{fp_mhp}"
+            else:
+                hp_str = ""
+            status = " 💀" if fuid in defeated_set else (" 🏃" if fuid in evaded else "")
+            lines.append(f"{medals[i]} {name}{hp_str} — {dmg:,} dmg{status}")
+        lines.append("")
+    lines.append("⚔️ /bossattack  |  🏃 /bossevade to step out")
+    return "\n".join(lines)
+
+
+async def _spawn_world_boss(chat_id, bot):
+    """Spawn a world boss in the given chat."""
+    # Query recently active ascended players
+    two_hrs_ago = (datetime.now() - timedelta(hours=2)).isoformat()
+    try:
+        conn = _db()
+        rows = conn.execute(
+            "SELECT user_id, username FROM shadow_profiles "
+            "WHERE ascended=1 AND home_group=? AND last_seen>=? LIMIT 6",
+            (chat_id, two_hrs_ago)
+        ).fetchall()
+    except Exception:
+        rows = []
+
+    active_players = [(r["user_id"], r["username"]) for r in rows]
+    num_active = len(active_players)
+
+    # Scale HP
+    base_hp = 500_000
+    extra_hp = num_active * 150_000
+    boss_hp = max(500_000, min(3_000_000, base_hp + extra_hp))
+
+    bdef = random.choice(WORLD_BOSSES)
+    boss = {
+        "name": bdef["name"],
+        "emoji": bdef["emoji"],
+        "hp": boss_hp,
+        "max_hp": boss_hp,
+        "atk": bdef["atk"],
+        "phase": 1,
+        "fighters": {},
+        "hit_count": 0,
+        "last_card_msg_id": None,
+        "spawned_at": datetime.now().isoformat(),
+        "loot_table": bdef["loot_table"],
+        "exp_reward": bdef["exp"],
+        "gold_reward": bdef["gold"],
+    }
+    active_world_bosses[chat_id] = boss
+
+    ping_names = " ".join(f"*{name}*" for _, name in active_players) if active_players else "brave warriors"
+    spawn_text = (
+        f"🚨 *A WORLD BOSS HAS APPEARED!* 🚨\n\n"
+        f"{bdef['emoji']} *{bdef['name']}* erupts from the void with "
+        f"*{boss_hp:,} HP*, hungry for destruction!\n\n"
+        f"📣 Calling: {ping_names}\n\n"
+        f"Use /bossattack to fight! You have *20 minutes* before it escapes."
+    )
+    try:
+        await bot.send_message(chat_id=chat_id, text=spawn_text, parse_mode="Markdown")
+    except Exception:
+        pass
+
+    # Post initial HP card
+    try:
+        card_msg = await bot.send_message(
+            chat_id=chat_id, text=_world_boss_card(boss), parse_mode="Markdown"
+        )
+        boss["last_card_msg_id"] = card_msg.message_id
+    except Exception:
+        pass
+
+    # Schedule escape check in 20 minutes
+    async def _escape_check():
+        await asyncio.sleep(1200)
+        if chat_id in active_world_bosses and active_world_bosses[chat_id] is boss:
+            await _world_boss_escape(chat_id, boss, bot)
+
+    t = asyncio.create_task(_escape_check())
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+
+
+async def _refresh_boss_card(chat_id, boss, bot):
+    """Delete old boss card and post a new one."""
+    old_id = boss.get("last_card_msg_id")
+    if old_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=old_id)
+        except Exception:
+            pass
+    try:
+        card_msg = await bot.send_message(
+            chat_id=chat_id, text=_world_boss_card(boss), parse_mode="Markdown"
+        )
+        boss["last_card_msg_id"] = card_msg.message_id
+    except Exception:
+        pass
+
+
+async def _finish_world_boss(chat_id, boss, bot):
+    """Called when boss HP reaches 0 — distribute rewards."""
+    active_world_bosses.pop(chat_id, None)
+
+    fighters = boss.get("fighters", {})
+    if not fighters:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"{boss['emoji']} *{boss['name']}* was defeated... but nobody fought it?",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        return
+
+    total_dmg = sum(fighters.values())
+    sorted_f = sorted(fighters.items(), key=lambda x: x[1], reverse=True)
+
+    exp_total = boss["exp_reward"]
+    gold_total = boss["gold_reward"]
+
+    influence_bonuses = [500, 300, 150]
+    lines = [f"💀 *{boss['name']} has been slain!*\n"]
+
+    for rank, (uid, dmg) in enumerate(sorted_f):
+        p = get_player(uid)
+        if not p:
+            continue
+        share = dmg / total_dmg if total_dmg > 0 else 0
+        p_exp = round(exp_total * share)
+        p_gold = round(gold_total * share)
+        p["gold"] = safe_int(p.get("gold", 0)) + p_gold
+        add_exp(p, p_exp)
+
+        # Influence bonus for top 3
+        if rank < 3:
+            inf_bonus = influence_bonuses[rank]
+            p["influence"] = safe_int(p.get("influence", 0)) + inf_bonus
+
+        # Guaranteed rare+ loot for top contributor
+        if rank == 0:
+            loot_entry = random.choice(boss["loot_table"])
+            item_name = loot_entry[0] if isinstance(loot_entry, (list, tuple)) else loot_entry
+            grant_loot_item(p, item_name)
+            lines.append(f"🥇 *{p.get('name','???')}* — {dmg:,} dmg · +{p_exp:,} EXP · +{p_gold:,}g · 🎁 *{item_name}*")
+        elif rank == 1:
+            lines.append(f"🥈 *{p.get('name','???')}* — {dmg:,} dmg · +{p_exp:,} EXP · +{p_gold:,}g")
+        elif rank == 2:
+            lines.append(f"🥉 *{p.get('name','???')}* — {dmg:,} dmg · +{p_exp:,} EXP · +{p_gold:,}g")
+        else:
+            lines.append(f"⚔️ *{p.get('name','???')}* — {dmg:,} dmg · +{p_exp:,} EXP · +{p_gold:,}g")
+
+        save_player(p)
+
+    try:
+        await bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+async def _world_boss_escape(chat_id, boss, bot):
+    """Called when boss escapes after 20 minutes without being killed."""
+    active_world_bosses.pop(chat_id, None)
+    fighters = boss.get("fighters", {})
+
+    consolation_exp = 20_000
+    lines = [f"{boss['emoji']} *{boss['name']}* slips back into the void... it escaped!\n"]
+    for uid, dmg in fighters.items():
+        p = get_player(uid)
+        if not p:
+            continue
+        add_exp(p, consolation_exp)
+        save_player(p)
+        lines.append(f"• *{p.get('name','???')}* — +{consolation_exp:,} EXP (consolation)")
+
+    try:
+        await bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+async def cmd_bossattack(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Player attacks the active world boss."""
+    if not update.message or not update.effective_user:
+        return
+    chat_id = update.effective_chat.id
+    uid = update.effective_user.id
+
+    if chat_id not in active_world_bosses:
+        await update.message.reply_text("⚠️ No world boss is active right now.", parse_mode="Markdown")
+        return
+
+    boss = active_world_bosses[chat_id]
+
+    # Per-user 3-second cooldown
+    now_ts = time.time()
+    last_hit = _boss_attack_cd.get(uid, 0)
+    if now_ts - last_hit < 3:
+        remaining = round(3 - (now_ts - last_hit), 1)
+        await update.message.reply_text(f"⏳ Cooldown! Wait {remaining}s.", parse_mode="Markdown")
+        return
+    _boss_attack_cd[uid] = now_ts
+
+    p = get_player(uid)
+    if not p:
+        await update.message.reply_text("❌ You need to be ascended to fight the boss!", parse_mode="Markdown")
+        return
+    if is_defeated(p):
+        await update.message.reply_text("💀 You are currently defeated and cannot fight.", parse_mode="Markdown")
+        return
+    if not p.get("ascended"):
+        await update.message.reply_text("❌ Only ascended players can fight world bosses.", parse_mode="Markdown")
+        return
+
+    # Calculate damage — identical pipeline to /attack in PvP
+    weather = get_weather()
+    dmg = calc_attack_damage(p, weather)
+
+    # Crits
+    crit_note = ""
+    if check_crit(p):
+        dmg = apply_crit(p, dmg); crit_note = " 💥*CRIT!*"
+
+    # Weapon on-hit proc (30% chance — adds bonus dmg)
+    oh_note = ""
+    weap_oh = WEAPONS.get(p.get("equipped_weapon") or "", {}).get("on_hit")
+    if weap_oh and random.random() < 0.30:
+        _oh_eff = weap_oh.get("effect"); _oh_val = weap_oh.get("val", 0)
+        if _oh_eff == "double_hit":
+            _bonus = max(1, round(dmg * _oh_val)); dmg += _bonus; oh_note = f" ⚡*+{_bonus}!*"
+        elif _oh_eff in ("poison","burn","exposed","lifesteal"):
+            _bonus = max(1, round(dmg * 0.25)); dmg += _bonus; oh_note = f" ✨*+{_bonus}!*"
+
+    # Class proc — add bonus damage instead of mutating a defender
+    _proc_note = ""
+    _cls = get_player_class(p)
+    if _cls:
+        _line = _cls.get("line"); _path = p.get("class_path","A")
+        _proc_chance = get_proc_chance(0.15, p)
+        if random.random() < _proc_chance:
+            if _line == "warrior" and _path == "B":
+                _xd = max(1, round(dmg * 0.60)); dmg += _xd; _proc_note = f"\n⚔️ *Double Strike!* +{_xd}!"
+            elif _line in ("mage","warrior") and _path == "A":
+                _xd = max(1, round(dmg * 0.20)); dmg += _xd; _proc_note = f"\n🔥 *Arcane Strike!* +{_xd}!"
+            elif _line in ("thief","serpent","botanist"):
+                _xd = max(1, round(dmg * 0.25)); dmg += _xd; _proc_note = f"\n☠️ *Venom Lash!* +{_xd}!"
+            elif _line == "archer" and _path == "B":
+                _xd = max(1, round(dmg * 1.50)); dmg += _xd; _proc_note = f"\n🎯 *Headshot!* +{_xd}!"
+            elif _line in ("valkyrie","phantom_dancer","enchantress","priest"):
+                _xd = max(1, round(dmg * 0.30)); dmg += _xd; _proc_note = f"\n✨ *Divine Surge!* +{_xd}!"
+
+    # Pet auto-attack
+    _pet_note = ""
+    _active_pet = get_active_pet_record(uid)
+    if _active_pet:
+        _pet_atk = get_pet_atk_bonus(_active_pet)
+        if _pet_atk > 0:
+            _psp = PET_SPECIES.get(_active_pet.get("species"), {})
+            dmg += _pet_atk
+            _pet_note = f"\n{_psp.get('emoji','🐾')} *{_active_pet.get('nickname') or _psp.get('name','Pet')}* strikes for *{_pet_atk}*!"
+
+    dmg = max(1, dmg)
+    boss["hp"] = max(0, boss["hp"] - dmg)
+    boss["fighters"][uid] = boss["fighters"].get(uid, 0) + dmg
+    boss["hit_count"] += 1
+
+    # Phase transition
+    phase_msg = ""
+    if boss["phase"] == 1 and boss["hp"] <= boss["max_hp"] // 2:
+        boss["phase"] = 2
+        phase_msg = f"\n🔥 *{boss['name']} ENRAGES!* Phase 2 — counterattack rate surges!"
+
+    # Acknowledgement
+    player_name = p.get("username") or update.effective_user.first_name
+    hit_text = f"⚔️ *{player_name}* strikes *{boss['name']}* for *{dmg:,}* damage!{crit_note}{oh_note}{phase_msg}{_proc_note}{_pet_note}"
+    try:
+        hit_msg = await context.bot.send_message(chat_id=chat_id, text=hit_text, parse_mode="Markdown")
+        asyncio.create_task(_auto_delete(context.bot, chat_id, hit_msg.message_id, 8))
+    except Exception:
+        pass
+
+    # Boss counterattack — only targets active (non-defeated, non-evaded) fighters
+    if boss["hp"] > 0:
+        _evaded = boss.setdefault("evaded", set())
+        _defeated_b = boss.setdefault("defeated", set())
+        _valid_targets = [u for u in boss["fighters"] if u not in _evaded and u not in _defeated_b]
+        ca_chance = 0.70 if boss["phase"] == 2 else 0.40
+        if _valid_targets and random.random() < ca_chance:
+            target_uid = random.choice(_valid_targets)
+            target_p = get_player(target_uid)
+            if target_p:
+                raw_atk = boss["atk"]
+                if boss["phase"] == 2:
+                    raw_atk = round(raw_atk * 1.5)
+                actual_dmg = calc_defense(target_p, raw_atk)
+                target_p["hp"] = max(0, safe_int(target_p.get("hp", 0)) - actual_dmg)
+                target_name = target_p.get("username") or f"Player {target_uid}"
+                ca_text = f"💥 *{boss['name']}* turns on *{target_name}* and deals *{actual_dmg:,}* damage!"
+                # Check if this kills the player
+                if target_p["hp"] <= 0:
+                    target_p["hp"] = 0
+                    target_p["defeated_until"] = (datetime.now() + timedelta(minutes=10)).isoformat()
+                    target_p["last_defeated_by"] = boss["name"]
+                    target_p["losses"] = target_p.get("losses", 0) + 1
+                    target_p["kill_streak"] = 0
+                    _defeated_b.add(target_uid)
+                    ca_text += f"\n☠️ *{target_name}* has been struck down! (defeated 10m) — reward share locked in."
+                save_player(target_p)
+                try:
+                    ca_msg = await context.bot.send_message(chat_id=chat_id, text=ca_text, parse_mode="Markdown")
+                    asyncio.create_task(_auto_delete(context.bot, chat_id, ca_msg.message_id, 15))
+                except Exception:
+                    pass
+
+    # Refresh card every 5 hits or on kill
+    if boss["hp"] <= 0 or boss["hit_count"] % 5 == 0:
+        await _refresh_boss_card(chat_id, boss, context.bot)
+
+    # Check kill
+    if boss["hp"] <= 0:
+        await _finish_world_boss(chat_id, boss, context.bot)
+
+
+async def cmd_bossevade(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step out of the world boss fight — locks in reward share, stops counterattacks."""
+    if not update.message or not update.effective_user: return
+    chat_id = update.effective_chat.id
+    uid = update.effective_user.id
+    if chat_id not in active_world_bosses:
+        await update.message.reply_text("⚠️ No world boss is active.", parse_mode="Markdown"); return
+    boss = active_world_bosses[chat_id]
+    if uid not in boss.get("fighters", {}):
+        await update.message.reply_text("You haven't joined the fight yet!", parse_mode="Markdown"); return
+    evaded = boss.setdefault("evaded", set())
+    defeated_b = boss.setdefault("defeated", set())
+    if uid in evaded:
+        await update.message.reply_text("🏃 You've already stepped out.", parse_mode="Markdown"); return
+    if uid in defeated_b:
+        await update.message.reply_text("💀 You're already defeated.", parse_mode="Markdown"); return
+    evaded.add(uid)
+    dmg = boss["fighters"].get(uid, 0)
+    p = get_player(uid)
+    name = (p.get("username") if p else None) or update.effective_user.first_name
+    await update.message.reply_text(
+        f"🏃 *{name}* evades and steps back from the fight!\n"
+        f"Reward share locked in at *{dmg:,}* damage dealt. The boss can no longer target you.",
+        parse_mode="Markdown")
+
 
 async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -31051,26 +31451,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if roll < 0.70:   freq = "common"
         elif roll < 0.90: freq = "uncommon"
         else:             freq = "rare"
-        pool = [e for e in RANDOM_EVENTS if e["freq"]==freq]
-        if pool:
-            event = random.choice(pool).copy()
-            active_events[chat_id] = event
+        # For rare events: 50% chance to spawn a world boss instead
+        if freq == "rare" and chat_id not in active_world_bosses and random.random() < 0.50:
             last_event_times[chat_id] = datetime.now()
-            if event["key"] == "legendary_merchant":
-                from datetime import timedelta
-                legend_shop_expiry[chat_id] = datetime.now() + timedelta(minutes=event.get("duration_min", 10))
-            msg = await update.message.reply_text(event["msg"], parse_mode="Markdown")
-            # Store drake message id for reply detection
-            if event["key"] == "drake":
-                active_drakes[chat_id] = {
-                    "msg_id": msg.message_id,
-                    "hp": event["enemy_hp"],
-                    "max_hp": event["enemy_hp"],
-                    "fighters": {},
-                    "loot_table": event.get("loot_table",[]),
-                    "exp_reward": event["exp_reward"],
-                }
-                active_events.pop(chat_id, None)
+            t = asyncio.create_task(_spawn_world_boss(chat_id, context.bot))
+            _bg_tasks.add(t); t.add_done_callback(_bg_tasks.discard)
+        else:
+            pool = [e for e in RANDOM_EVENTS if e["freq"]==freq and e["key"] != "world_boss"]
+            if pool:
+                event = random.choice(pool).copy()
+                active_events[chat_id] = event
+                last_event_times[chat_id] = datetime.now()
+                if event["key"] == "legendary_merchant":
+                    from datetime import timedelta
+                    legend_shop_expiry[chat_id] = datetime.now() + timedelta(minutes=event.get("duration_min", 10))
+                msg = await update.message.reply_text(event["msg"], parse_mode="Markdown")
+                # Store drake message id for reply detection
+                if event["key"] == "drake":
+                    active_drakes[chat_id] = {
+                        "msg_id": msg.message_id,
+                        "hp": event["enemy_hp"],
+                        "max_hp": event["enemy_hp"],
+                        "fighters": {},
+                        "loot_table": event.get("loot_table",[]),
+                        "exp_reward": event["exp_reward"],
+                    }
+                    active_events.pop(chat_id, None)
 
     # Shadow profile
     s = get_or_create_shadow(user.id, user.first_name)
@@ -31208,11 +31614,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if shadow_exp > 0 and not defeated_no_exp:
         lmsgs, did_level = add_shadow_exp(s, shadow_exp)
         save_shadow(s)
-        if did_level and s["level"] % 10 == 0:
+        if did_level:
+            tier = get_tier(s["level"])
             hint = ""
             if not s.get("ascended") and s["level"] >= 5:
-                hint = "\n_Type /ascend in a private chat to enter the RPG!_"
-            tier = get_tier(s["level"])
+                hint = "\n_💡 Type /ascend in a private chat to enter the RPG!_"
+            # Announce every level-up, not just multiples of 10
             asyncio.create_task(announce(context.bot, chat_id,
                 f"{tier['emoji']} *{s['username']}* reached *Level {s['level']}*!{hint}",
                 delay=60))
@@ -32385,11 +32792,13 @@ def main():
     app.add_handler(CommandHandler("gbank",          gbank_cmd))
 
     # Events
-    app.add_handler(CommandHandler("greet",     greet_event))
-    app.add_handler(CommandHandler("fight",     fight_event))
-    app.add_handler(CommandHandler("shoot",     shoot_event))
-    app.add_handler(CommandHandler("claim",     claim_cmd))
-    app.add_handler(CommandHandler("pray",      pray_event))
+    app.add_handler(CommandHandler("greet",       greet_event))
+    app.add_handler(CommandHandler("fight",       fight_event))
+    app.add_handler(CommandHandler("shoot",       shoot_event))
+    app.add_handler(CommandHandler("claim",       claim_cmd))
+    app.add_handler(CommandHandler("pray",        pray_event))
+    app.add_handler(CommandHandler("bossattack",  cmd_bossattack))
+    app.add_handler(CommandHandler("bossevade",   cmd_bossevade))
 
     # Admin
     app.add_handler(CommandHandler("wipe",      wipe_cmd))
