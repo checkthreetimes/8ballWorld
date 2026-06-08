@@ -355,15 +355,19 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     o_shield = safe_int(opp_p.get("shield_hp"))
     v_sh_str = f"  🛡️{v_shield}" if v_shield > 0 else ""
     o_sh_str = f"  🛡️{o_shield}" if o_shield > 0 else ""
+    v_mp = safe_int(viewer_p.get("mp")); v_mxmp = safe_int(viewer_p.get("max_mp")) or calc_max_mp(viewer_p)
+    o_mp = safe_int(opp_p.get("mp"));   o_mxmp = safe_int(opp_p.get("max_mp")) or calc_max_mp(opp_p)
     lines = [
         f"👤 *{vn}*  Lv{v_lvl}",
         f"`{_bar(v_hp, v_mx)}`  {v_pct}%{v_sh_str}",
+        f"💙 {v_mp}/{v_mxmp} MP",
     ]
     if v_status:
         lines.append(f"↳ {v_status}")
     lines.append("──────────────────")
     lines.append(f"👾 *{on}*  Lv{o_lvl}")
     lines.append(f"`{_bar(o_hp, o_mx)}`  {o_pct}%{o_sh_str}")
+    lines.append(f"💙 {o_mp}/{o_mxmp} MP")
     if o_status:
         lines.append(f"↳ {o_status}")
     return "\n".join(lines)
@@ -2266,46 +2270,46 @@ TITLES = {
 }
 
 TITLE_BONUSES = {
-    "Adventurer":           {"all_stats": 1},
-    "On the Come Up":       {"all_stats": 2},
-    "Seasoned Stroke":      {"STR": 3, "AGI": 3},
-    "Pocket King":          {"STR": 5, "DEF": 5},
-    "Table Legend":         {"all_stats": 5},
-    "Never Scratches":      {"AGI": 8, "LUK": 5},
-    "Gone Pro":             {"all_stats": 8},
-    "Never Off the Table":  {"STR": 6, "WIS": 6},
-    "The Undefeated":       {"STR": 8, "DEF": 6},
-    "The Closer":           {"STR": 5, "LUK": 8},
-    "Ghost at the Table":   {"AGI": 10, "LUK": 6},
-    "Road Player":          {"all_stats": 6},
-    "Dungeon Crawler":      {"STR": 4, "DEX": 4, "LUK": 4},
-    "Treasure Hunter":      {"LUK": 12},
-    "The Healer":           {"WIS": 8},
-    "Table Guardian":       {"DEF": 10, "WIS": 5},
-    "1-Ball Slayer":        {"STR": 5},
-    "3-Ball Slayer":        {"STR": 8},
-    "5-Ball Slayer":        {"STR": 10, "AGI": 5},
-    "7-Ball Slayer":        {"STR": 12, "DEF": 8},
-    "8-Ball Champion":      {"all_stats": 10},
-    "Blackball Slayer":     {"all_stats": 15, "LUK": 10},
-    "Railfinder":           {"DEX": 12, "AGI": 8},
-    "The Angle Reader":     {"INT": 12, "DEX": 8},
-    "The Called Shot":      {"all_stats": 12},
-    "Guild Founder":        {"WIS": 6, "all_stats": 3},
-    "Break Leader":         {"STR": 8, "WIS": 6},
-    "Tip Maker":            {"DEX": 6, "LUK": 6},
-    "The Blacksmith":       {"STR": 6, "DEX": 8},
-    "Master Craftsman":     {"all_stats": 8},
-    "Century Break":        {"all_stats": 20, "LUK": 15},
-    "Absolute Legend":      {"all_stats": 50, "LUK": 30},
-    "The Forger":           {"STR": 5, "DEX": 5},
-    "Diamond Grinder":      {"STR": 10, "DEX": 10},
-    "The Ascendant":        {"all_stats": 8},
-    "Three Star General":   {"all_stats": 15},
-    "Objective Rookie":     {"LUK": 6, "all_stats": 3},
-    "Objective Master":     {"all_stats": 10, "LUK": 8},
-    "Full Set":             {"all_stats": 5},
-    "Beloved":              {"WIS": 5, "LUK": 5},
+    "Adventurer":           {"all_stats": 3},
+    "On the Come Up":       {"all_stats": 5},
+    "Seasoned Stroke":      {"STR": 8, "AGI": 8},
+    "Pocket King":          {"STR": 12, "DEF": 12, "max_hp": 200},
+    "Table Legend":         {"all_stats": 12},
+    "Never Scratches":      {"AGI": 18, "LUK": 12},
+    "Gone Pro":             {"all_stats": 18},
+    "Never Off the Table":  {"STR": 15, "WIS": 15, "max_hp": 300},
+    "The Undefeated":       {"STR": 20, "DEF": 15, "max_hp": 400},
+    "The Closer":           {"STR": 12, "LUK": 20},
+    "Ghost at the Table":   {"AGI": 25, "LUK": 15},
+    "Road Player":          {"all_stats": 15},
+    "Dungeon Crawler":      {"STR": 10, "DEX": 10, "LUK": 10, "max_hp": 250},
+    "Treasure Hunter":      {"LUK": 30},
+    "The Healer":           {"WIS": 20, "max_hp": 500},
+    "Table Guardian":       {"DEF": 25, "WIS": 15, "max_hp": 600},
+    "1-Ball Slayer":        {"STR": 12},
+    "3-Ball Slayer":        {"STR": 18},
+    "5-Ball Slayer":        {"STR": 22, "AGI": 12},
+    "7-Ball Slayer":        {"STR": 28, "DEF": 18, "max_hp": 400},
+    "8-Ball Champion":      {"all_stats": 22, "max_hp": 500},
+    "Blackball Slayer":     {"all_stats": 35, "LUK": 25, "max_hp": 800},
+    "Railfinder":           {"DEX": 28, "AGI": 20},
+    "The Angle Reader":     {"INT": 28, "DEX": 20},
+    "The Called Shot":      {"all_stats": 28, "max_hp": 600},
+    "Guild Founder":        {"WIS": 15, "all_stats": 8},
+    "Break Leader":         {"STR": 20, "WIS": 15, "max_hp": 300},
+    "Tip Maker":            {"DEX": 15, "LUK": 15},
+    "The Blacksmith":       {"STR": 15, "DEX": 20},
+    "Master Craftsman":     {"all_stats": 18, "max_hp": 400},
+    "Century Break":        {"all_stats": 45, "LUK": 35, "max_hp": 1000},
+    "Absolute Legend":      {"all_stats": 100, "LUK": 60, "max_hp": 3000},
+    "The Forger":           {"STR": 12, "DEX": 12},
+    "Diamond Grinder":      {"STR": 25, "DEX": 25, "max_hp": 500},
+    "The Ascendant":        {"all_stats": 18, "max_hp": 400},
+    "Three Star General":   {"all_stats": 32, "max_hp": 700},
+    "Objective Rookie":     {"LUK": 15, "all_stats": 8},
+    "Objective Master":     {"all_stats": 22, "LUK": 18, "max_hp": 400},
+    "Full Set":             {"all_stats": 12, "max_hp": 300},
+    "Beloved":              {"WIS": 12, "LUK": 12, "max_hp": 250},
 }
 
 # ── ITEM SETS ─────────────────────────────────────────────────────────────────
@@ -2613,6 +2617,47 @@ WEAPONS = {
     "Shadow Edge":              {"class":"thief",  "type":"dagger",  "atk":28,"rarity":"epic",     "line":"thief",  "stat_bonus":{"AGI":4,"LUK":3}},
     "Forged Holy Cross":        {"class":"priest", "type":"cross",   "atk":26,"rarity":"epic",     "line":"priest", "stat_bonus":{"WIS":5}},
     "Stormforged Bow":          {"class":"archer", "type":"bow",     "atk":30,"rarity":"epic",     "line":"archer", "stat_bonus":{"DEX":4,"AGI":2}},
+    # ── PROC WEAPONS — rare drops with on-hit effects ─────────────────────────
+    # Warrior
+    "Bloodthirst Blade":        {"class":"warrior","type":"sword_1h","atk":22,"rarity":"rare",     "line":"warrior","on_hit":{"effect":"lifesteal","val":0.20}},
+    "Tremor Greatsword":        {"class":"warrior","type":"sword_2h","atk":35,"rarity":"epic",     "line":"warrior","on_hit":{"effect":"double_hit","val":0.50}},
+    "Soulfire Cleaver":         {"class":"warrior","type":"sword_2h","atk":50,"rarity":"legendary","line":"warrior","on_hit":{"effect":"burn","val":3},"stat_bonus":{"STR":5}},
+    # Mage
+    "Frostbite Wand":           {"class":"mage",   "type":"wand",   "atk":20,"rarity":"rare",     "line":"mage",   "on_hit":{"effect":"poison","val":2},"stat_bonus":{"INT":4}},
+    "Soulrend Staff":           {"class":"mage",   "type":"staff",  "atk":33,"rarity":"epic",     "line":"mage",   "on_hit":{"effect":"lifesteal","val":0.25},"stat_bonus":{"INT":5}},
+    "Abyss Conduit":            {"class":"mage",   "type":"staff",  "atk":48,"rarity":"legendary","line":"mage",   "on_hit":{"effect":"double_hit","val":0.65},"stat_bonus":{"INT":7,"WIS":4}},
+    # Thief
+    "Viper's Tongue":           {"class":"thief",  "type":"dagger", "atk":22,"rarity":"rare",     "line":"thief",  "on_hit":{"effect":"poison","val":3},"stat_bonus":{"AGI":3}},
+    "Backstabber":              {"class":"thief",  "type":"dagger", "atk":35,"rarity":"epic",     "line":"thief",  "on_hit":{"effect":"double_hit","val":0.55},"stat_bonus":{"AGI":4,"LUK":3}},
+    "The Final Betrayal":       {"class":"thief",  "type":"dagger", "atk":50,"rarity":"legendary","line":"thief",  "on_hit":{"effect":"exposed","val":3},"stat_bonus":{"AGI":6,"LUK":5}},
+    # Archer
+    "Venomshot Bow":            {"class":"archer", "type":"bow",    "atk":21,"rarity":"rare",     "line":"archer", "on_hit":{"effect":"poison","val":2},"stat_bonus":{"DEX":3}},
+    "Windshear Crossbow":       {"class":"archer", "type":"crossbow","atk":34,"rarity":"epic",    "line":"archer", "on_hit":{"effect":"double_hit","val":0.50},"stat_bonus":{"DEX":4,"AGI":3}},
+    "Stormcaller's Bow":        {"class":"archer", "type":"bow",    "atk":48,"rarity":"legendary","line":"archer", "on_hit":{"effect":"burn","val":2},"stat_bonus":{"DEX":6,"AGI":4}},
+    # Priest
+    "Condemner's Cross":        {"class":"priest", "type":"cross",  "atk":20,"rarity":"rare",     "line":"priest", "on_hit":{"effect":"burn","val":2},"stat_bonus":{"WIS":4}},
+    "Radiant Rosary":           {"class":"priest", "type":"rosary", "atk":30,"rarity":"epic",     "line":"priest", "on_hit":{"effect":"lifesteal","val":0.20},"stat_bonus":{"WIS":5,"INT":3}},
+    "The Wrath of Saints":      {"class":"priest", "type":"cross",  "atk":46,"rarity":"legendary","line":"priest", "on_hit":{"effect":"double_hit","val":0.60},"stat_bonus":{"WIS":7,"INT":4}},
+    # Serpent
+    "Dripping Fang":            {"class":"serpent","type":"sword_1h","atk":22,"rarity":"rare",    "line":"serpent","on_hit":{"effect":"poison","val":4},"stat_bonus":{"AGI":3}},
+    "Constrictor Blade":        {"class":"serpent","type":"sword_2h","atk":36,"rarity":"epic",    "line":"serpent","on_hit":{"effect":"exposed","val":2},"stat_bonus":{"STR":4,"DEF":3}},
+    "Ouroboros Reborn":         {"class":"serpent","type":"sword_2h","atk":52,"rarity":"legendary","line":"serpent","on_hit":{"effect":"lifesteal","val":0.30},"stat_bonus":{"STR":6,"AGI":4}},
+    # Valkyrie
+    "Thunderstrike Blade":      {"class":"valkyrie","type":"sword_1h","atk":22,"rarity":"rare",   "line":"valkyrie","on_hit":{"effect":"burn","val":2},"stat_bonus":{"STR":3}},
+    "Mjolnir's Echo":           {"class":"valkyrie","type":"sword_2h","atk":36,"rarity":"epic",   "line":"valkyrie","on_hit":{"effect":"double_hit","val":0.55},"stat_bonus":{"STR":4,"DEF":3}},
+    "Ragnarok's Edge":          {"class":"valkyrie","type":"sword_2h","atk":52,"rarity":"legendary","line":"valkyrie","on_hit":{"effect":"burn","val":4},"stat_bonus":{"STR":6,"WIS":4}},
+    # Phantom Dancer
+    "Whisper Blade":            {"class":"phantom_dancer","type":"dagger","atk":22,"rarity":"rare",    "line":"phantom_dancer","on_hit":{"effect":"exposed","val":2},"stat_bonus":{"AGI":3}},
+    "Spectral Cutter":          {"class":"phantom_dancer","type":"dagger","atk":35,"rarity":"epic",    "line":"phantom_dancer","on_hit":{"effect":"double_hit","val":0.60},"stat_bonus":{"AGI":5,"LUK":3}},
+    "The Phantom Requiem":      {"class":"phantom_dancer","type":"throwing_star","atk":50,"rarity":"legendary","line":"phantom_dancer","on_hit":{"effect":"poison","val":3},"stat_bonus":{"AGI":6,"DEX":4}},
+    # Botanist
+    "Thornwhip Rod":            {"class":"botanist","type":"wand",  "atk":20,"rarity":"rare",     "line":"botanist","on_hit":{"effect":"poison","val":3},"stat_bonus":{"INT":3}},
+    "Spore Staff":              {"class":"botanist","type":"staff", "atk":33,"rarity":"epic",     "line":"botanist","on_hit":{"effect":"poison","val":4},"stat_bonus":{"INT":4,"WIS":3}},
+    "The World Tree Staff":     {"class":"botanist","type":"staff", "atk":48,"rarity":"legendary","line":"botanist","on_hit":{"effect":"lifesteal","val":0.25},"stat_bonus":{"INT":6,"WIS":5}},
+    # Enchantress
+    "Binding Hex Wand":         {"class":"enchantress","type":"wand",  "atk":20,"rarity":"rare",  "line":"enchantress","on_hit":{"effect":"exposed","val":2},"stat_bonus":{"INT":3}},
+    "Doomweaver Staff":         {"class":"enchantress","type":"staff", "atk":33,"rarity":"epic",  "line":"enchantress","on_hit":{"effect":"burn","val":3},"stat_bonus":{"INT":5,"WIS":3}},
+    "The Eternal Curse":        {"class":"enchantress","type":"staff", "atk":48,"rarity":"legendary","line":"enchantress","on_hit":{"effect":"double_hit","val":0.60},"stat_bonus":{"INT":7,"LUK":4}},
 }
 
 ARMORS = {
@@ -3515,6 +3560,11 @@ CONSUMABLES = {
     "Grand Restorative Flask":    {"desc":"Restores 1500 HP.",  "sell":450},
     "Supreme Restorative Flask":  {"desc":"Restores 5000 HP.",  "sell":1200},
     "Ultimate Vitality Draught":  {"desc":"Restores 15000 HP.", "sell":3500},
+    # MP
+    "MP Tonic":          {"desc":"Restores 30 MP.", "sell":100},
+    "Minor MP Tonic":    {"desc":"Restores 30 MP.", "sell":4500},
+    "Major MP Elixir":   {"desc":"Restores 80 MP.", "sell":12000},
+    "Grand Mana Crystal":{"desc":"Fully restores all MP.", "sell":35000},
     # Revive
     "Scroll of Revival":      {"desc":"Revive a defeated player.","sell":750},
     # Skill items
@@ -4068,6 +4118,9 @@ _SHOP_STATIC_TABS = {
         {"item":"Grand Restorative Flask",    "price":1800,  "desc":"Restores 1500 HP.",  "bulk":True},
         {"item":"Supreme Restorative Flask",  "price":4500,  "desc":"Restores 5000 HP.",  "bulk":True},
         {"item":"Ultimate Vitality Draught",  "price":12000, "desc":"Restores 15000 HP.", "bulk":True},
+        {"item":"Minor MP Tonic",             "price":18000, "desc":"Restores 30 MP.",    "bulk":True},
+        {"item":"Major MP Elixir",            "price":45000, "desc":"Restores 80 MP.",    "bulk":True},
+        {"item":"Grand Mana Crystal",         "price":120000,"desc":"Fully restores all MP.", "bulk":True},
         {"item":"Scroll of Revival",          "price":2500,  "desc":"Revive a defeated player."},
     ],
     "mat": [
@@ -4763,8 +4816,9 @@ def _encounter_battle_card(enc):
     p_s = "  " + " ".join(p_status) if p_status else ""
     pet_info = enc.get("pet_info")
     pet_str = f"  🐾 {pet_info['name']} +{pet_info['atk']}" if pet_info else ""
+    p_mp = enc.get("p_mp", 0); p_mxmp = enc.get("p_max_mp", 10)
     lines.append(f"👤 *{p_name}*{p_s}")
-    lines.append(f"`{p_bar}`  {p_hp}/{p_mhp} HP{pet_str}")
+    lines.append(f"`{p_bar}`  {p_hp}/{p_mhp} HP  💙{p_mp}/{p_mxmp} MP{pet_str}")
     # Battle log
     action_log = enc.get("action_log", [])
     if action_log:
@@ -4777,12 +4831,24 @@ def _encounter_battle_card(enc):
 def _encounter_battle_markup(enc, p=None):
     uid  = enc["uid"]
     mode = enc["mode"]
+    p_mp = enc.get("p_mp", 0)
     rows = []
     rows.append([
         InlineKeyboardButton("⚔️ Attack", callback_data=f"enc_atk_{uid}"),
         InlineKeyboardButton("🛡️ Guard",  callback_data=f"enc_guard_{uid}"),
         InlineKeyboardButton("🧪 Potion", callback_data=f"enc_heal_{uid}"),
     ])
+    # Skill buttons with MP cost indicator
+    if p:
+        _p_skills = get_combat_skills(p)
+        for _i, _sk in enumerate(_p_skills):
+            _cost = _dng_skill_mp_cost(_sk)
+            _can  = p_mp >= _cost
+            _icon = "✅" if _can else "❌"
+            if _can:
+                rows.append([InlineKeyboardButton(
+                    f"{_icon} {_sk.get('name','Skill')} ({_cost}MP)",
+                    callback_data=f"enc_skl_{uid}_{_i}")])
     if mode == "hunt":
         bottom = []
         if enc["e_hp"] / max(1, enc["e_max_hp"]) <= 0.5:
@@ -4914,6 +4980,10 @@ def _enc_process_skill(enc, p, sk):
     stype   = sk.get("type", "damage")
     w       = get_weather()
     base    = calc_attack_damage(p, w)
+    # MP cost — deduct from enc state and sync to player
+    _sk_cost = _dng_skill_mp_cost(sk)
+    enc["p_mp"] = max(0, enc.get("p_mp", 0) - _sk_cost)
+    p["mp"]     = enc["p_mp"]
 
     # ── Healing / support skills ─────────────────────────────────────────────
     _heal_types = {"self_heal", "self_heal_buff", "group_heal", "revive_heal",
@@ -6987,9 +7057,19 @@ def _dng_cancel_ticker(uid):
     if task and not task.done():
         task.cancel()
 
+_MAGIC_LINES = ("mage", "priest", "botanist", "enchantress")
+
+def calc_max_mp(p):
+    """Universal max MP. Magic classes get INT bonus on top of WIS base."""
+    if not p: return 10
+    wis = get_stat(p, "WIS")
+    base = max(10, 20 + int(wis * 1.5))
+    if get_class_line(p) in _MAGIC_LINES:
+        base += int(get_stat(p, "INT") * 1.2)
+    return base
+
 def _dng_calc_max_mp(p):
-    wis = get_stat(p, "WIS") if p else 0
-    return max(10, 20 + int(wis * 1.5))
+    return calc_max_mp(p)
 
 def _dng_tick_player_dots(state):
     lines = []
@@ -7018,10 +7098,10 @@ def _dng_tick_player_dots(state):
         heal = max(1, int(state["p_max_hp"] * 0.03))
         state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + heal)
         lines.append(f"🌿 Shrine Regen *+{heal}*")
-    # MP regen each turn
-    mp_regen = 3
+    # MP regen each turn — magic classes get 5, others get 3 (dungeon is more forgiving than PvP)
+    mp_regen = 5 if state.get("p_class_line") in _MAGIC_LINES else 3
     if state.get("floor_buff") == "mp_surge":
-        mp_regen = 5
+        mp_regen += 3
     state["p_mp"] = min(state.get("p_max_mp", 10), state.get("p_mp", 0) + mp_regen)
     return lines
 
@@ -7516,6 +7596,7 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "phase": "room",
             "p_hp": p_hp, "p_max_hp": p_max_hp,
             "p_mp": p_max_mp, "p_max_mp": p_max_mp,
+            "p_class_line": get_class_line(p),
             "p_name": p.get("username","You"),
             "floors": floors, "themes": theme_pool,
             "s_gold": 0, "s_exp": 0, "s_items": [],
@@ -7837,6 +7918,24 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif cls_line == "serpent" and cls_path == "A" and random.random() < 0.15:
             e["poisoned"] = True; e["poison_turns"] = 5; proc_txt = "\n🐍 *Poison Strike!* ☠️"
         e["hp"] = max(0, e["hp"] - dmg)
+        # Weapon on_hit proc in encounters
+        _enc_oh = WEAPONS.get(p.get("equipped_weapon") or "", {}).get("on_hit")
+        if _enc_oh and random.random() < 0.30:
+            _eff = _enc_oh.get("effect"); _val = _enc_oh.get("val", 0)
+            if _eff == "double_hit":
+                _oh_dmg = max(1, round(dmg * _val)); e["hp"] = max(0, e["hp"] - _oh_dmg)
+                proc_txt += f"\n⚡ *Double Strike!* +{_oh_dmg}!"
+            elif _eff == "poison":
+                e["poisoned"] = True; e["poison_turns"] = max(safe_int(e.get("poison_turns",0)), int(_val))
+                proc_txt += f"\n☠️ *Venom Proc!* Poison ×{int(_val)}!"
+            elif _eff == "burn":
+                e["burning"] = True; e["burn_turns"] = max(safe_int(e.get("burn_turns",0)), int(_val))
+                proc_txt += f"\n🔥 *Ignite!* Burn ×{int(_val)}!"
+            elif _eff == "lifesteal":
+                _steal = max(1, round(dmg * _val)); state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + _steal)
+                proc_txt += f"\n💜 *Lifesteal!* +{_steal} HP!"
+            elif _eff == "exposed":
+                proc_txt += f"\n🗡️ *Rend!* Next hits deal +15% dmg!"
         action = f"⚔️ You strike *{e['name']}* for *{dmg}*!{crit_txt}{proc_txt}"
         if state.get("floor_buff") == "double_strike" and random.random() < 0.25:
             dmg2 = calc_attack_damage(p, w)
@@ -8548,7 +8647,8 @@ def calc_max_hp(p):
     wis_hp = round(get_stat(p, "WIS") * 3)   # wisdom: mental fortitude / resilience
     retire_hp = safe_int(p.get("pet_retire_hp"))
     empire_hp = _empire_stat_bonuses(p).get("max_hp", 0)
-    return base + acc_hp + enc_hp + temp + set_hp + def_hp + str_hp + wis_hp + retire_hp + empire_hp
+    title_hp  = TITLE_BONUSES.get(p.get("active_title", ""), {}).get("max_hp", 0)
+    return base + acc_hp + enc_hp + temp + set_hp + def_hp + str_hp + wis_hp + retire_hp + empire_hp + title_hp
 
 TIER_THRESHOLDS = {1: 5, 2: 10, 3: 30, 4: 60, 5: 100}
  
@@ -8566,6 +8666,39 @@ def get_proc_chance(base_pct, p):
     tier = get_class_tier(p)
     return base_pct + (tier * 0.03)
  
+def _apply_weapon_on_hit(attacker, defender, dmg):
+    """Check equipped weapon's on_hit effect. Returns (triggered, msg, extra_dmg)."""
+    weap = WEAPONS.get(attacker.get("equipped_weapon") or "", {})
+    oh = weap.get("on_hit")
+    if not oh: return False, "", 0
+    effect = oh.get("effect"); val = oh.get("val", 0)
+    if random.random() >= 0.30: return False, "", 0  # 30% proc chance for all on_hit weapons
+    if effect == "double_hit":
+        extra = max(1, round(dmg * val))
+        extra = calc_defense(defender, extra)
+        defender["hp"] = max(0, defender["hp"] - extra)
+        return True, f"⚡ *Double Strike!* Weapon lashes out again for *{extra}* dmg!", extra
+    elif effect == "poison":
+        stacks = int(val)
+        add_charges(defender, "poison_stacks", stacks)
+        defender["poison_pct"] = max(safe_int(defender.get("poison_pct", 0)), 25)
+        return True, f"☠️ *Venom Proc!* Poison ×{stacks} seeps in — 25% max HP/action!", 0
+    elif effect == "burn":
+        stacks = int(val)
+        add_charges(defender, "burn_stacks", stacks)
+        defender["burn_pct"] = 10
+        return True, f"🔥 *Ignite!* Weapon scorches — Burn ×{stacks} (10% max HP/action)!", 0
+    elif effect == "lifesteal":
+        steal = max(1, round(dmg * val))
+        attacker["hp"] = min(calc_max_hp(attacker), attacker["hp"] + steal)
+        return True, f"💜 *Lifesteal!* Drained *{steal}* HP from the wound!", 0
+    elif effect == "exposed":
+        hits = int(val)
+        add_charges(defender, "exposed_hits", hits)
+        return True, f"🗡️ *Rend!* Exposed ×{hits} — +15% dmg taken for {hits} hits!", 0
+    return False, "", 0
+
+
 def calc_proc_effect(attacker, defender, dmg):
     """
     Roll for class-specific proc on normal /attack.
@@ -8992,6 +9125,7 @@ def apply_pvp_death(p, killer_name="the enemy", cause="PvP", killer_id=None):
     exp_loss = round(p.get("exp", 0) * 0.10)
     p["exp"]             = max(0, p.get("exp", 0) - exp_loss)
     p["hp"]              = 0
+    p["mp"]              = 0  # drain MP on death; restored on revive
     p["losses"]          = p.get("losses", 0) + 1
     p["defeated_until"]  = (datetime.now() + timedelta(minutes=6)).isoformat()
     p["last_defeated_by"] = f"{killer_name} ({cause})"
@@ -10546,6 +10680,8 @@ def init_db():
         ("empire_buildings",      "TEXT DEFAULT NULL"),
         ("empire_resources",      "TEXT DEFAULT NULL"),
         ("empire_last_collect",   "TEXT DEFAULT NULL"),
+        ("mp",                    "INTEGER DEFAULT 0"),
+        ("max_mp",                "INTEGER DEFAULT 0"),
     ]:
         try:
             _v24conn = sqlite3.connect(DB_PATH)
@@ -10903,6 +11039,22 @@ _ITEM_RENAME = {
 }
 
 def save_player(p):
+    # Sync max_mp
+    _true_max_mp = calc_max_mp(p)
+    p["max_mp"] = _true_max_mp
+    if not safe_int(p.get("mp")):
+        p["mp"] = _true_max_mp  # first-time: start full
+    else:
+        p["mp"] = max(0, min(_true_max_mp, safe_int(p.get("mp"))))
+    # Always sync max_hp to the true computed value so DB stays accurate
+    _true_max = calc_max_hp(p)
+    if p.get("max_hp") != _true_max:
+        _delta = _true_max - p.get("max_hp", 0)
+        p["max_hp"] = _true_max
+        # Keep current HP in bounds but don't inflate it if player hasn't healed
+        if _delta > 0:
+            pass  # don't auto-fill HP on bonus gain; player has to heal up
+        p["hp"] = max(0, min(_true_max, safe_int(p.get("hp"))))
     # Normalize old item names → new RPG names on every save
     inv = sjl(p.get("inventory"), [])
     inv = [_ITEM_RENAME.get(i, i) for i in inv]
@@ -10972,6 +11124,7 @@ def save_player(p):
         "regen_charges","regen_amt","heal_blocked_turns","revive_blocked_turns",
         "poison_pct","bleed_pct","burn_pct",
         "empire_buildings","empire_resources","empire_last_collect",
+        "mp","max_mp",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
@@ -11128,7 +11281,7 @@ def sync_levels(p, s):
     if s["level"] > p["level"]:
         diff = s["level"] - p["level"]
         p["level"] = s["level"]
-        p["max_hp"] = max_hp_for_level(p["level"])
+        p["max_hp"] = calc_max_hp(p)
         if p["hp"] > p["max_hp"]: p["hp"] = p["max_hp"]
         p["stat_points"] = safe_int(p.get("stat_points")) + diff * 3
         changed = True
@@ -11196,7 +11349,7 @@ def add_exp(p, amount, weather=None):
     while p["level"] < 250 and p["exp"] >= exp_for_level(p["level"]):
         p["exp"] -= exp_for_level(p["level"])
         p["level"] += 1; leveled_up = True
-        p["max_hp"]      = max_hp_for_level(p["level"])
+        p["max_hp"]      = calc_max_hp(p)
         p["hp"]          = p["max_hp"]
         points_per_level = 6 if p["level"] > 20 else 3
         p["stat_points"] = safe_int(p.get("stat_points")) + points_per_level
@@ -11331,6 +11484,12 @@ def add_item(p, item_name):
     inv.append(item_name)
     p["inventory"] = json.dumps(inv)
 
+def grant_loot_item(p, item_name):
+    """Add item to inventory and apply drop bonuses. Returns display string like 'Sword +3 ✨(Flaming)'."""
+    add_item(p, item_name)
+    suffix = apply_drop_bonuses(p, item_name)
+    return f"{item_name}{suffix}"
+
 def get_random_item_by_rarity(rarity):
     """Get a random item of a given rarity from all item pools."""
     pool = []
@@ -11355,6 +11514,47 @@ def roll_loot_table(loot_table, p=None, boss=False):
         if random.random() < adjusted:
             return item_name
     return None
+
+# Rarity → pre-enhancement level range and pre-enchant chance
+_DROP_BONUS_TABLE = {
+    "rare":      {"enh": (0, 2), "ench_chance": 0.15},
+    "epic":      {"enh": (1, 4), "ench_chance": 0.35},
+    "legendary": {"enh": (3, 7), "ench_chance": 0.65},
+    "mythic":    {"enh": (5, 10),"ench_chance": 0.90},
+}
+_DROP_ENCHANTS = [
+    {"id":"flaming",  "desc":"15% burn on hit","type":"burn_proc","val":15},
+    {"id":"venomous", "desc":"15% poison on hit","type":"poison_proc","val":15},
+    {"id":"razor",    "desc":"+flat damage","type":"flat_dmg","val":8},
+    {"id":"warding",  "desc":"+max HP","type":"max_hp","val":120},
+    {"id":"swift",    "desc":"+AGI","type":"AGI","val":6},
+    {"id":"resolute", "desc":"+DEF","type":"DEF","val":8},
+    {"id":"arcane",   "desc":"+INT","type":"INT","val":6},
+]
+
+def apply_drop_bonuses(p, item_name):
+    """Apply pre-enhancement and/or pre-enchant to a freshly dropped gear piece.
+    Returns a string suffix describing what was applied, or ''."""
+    _all_gear = {**WEAPONS, **ARMORS, **SHIELDS, **ACCESSORIES, **HATS, **GLOVES, **BOOTS, **MASKS}
+    gear = _all_gear.get(item_name)
+    if not gear: return ""
+    rarity = gear.get("rarity", "common")
+    bonus_cfg = _DROP_BONUS_TABLE.get(rarity)
+    if not bonus_cfg: return ""
+    suffix = ""
+    # Pre-enhancement
+    enh_min, enh_max = bonus_cfg["enh"]
+    if enh_max > 0 and random.random() < 0.40:
+        level = random.randint(enh_min, enh_max)
+        if level > 0:
+            set_enhancement(p, item_name, level)
+            suffix += f" +{level}"
+    # Pre-enchant
+    if random.random() < bonus_cfg["ench_chance"]:
+        ench = random.choice(_DROP_ENCHANTS)
+        set_enchant(p, item_name, ench)
+        suffix += f" ✨({ench['id'].title()})"
+    return suffix
 
 def update_recent_attackers(defender, attacker_id):
     now = datetime.now()
@@ -11843,14 +12043,18 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
     # Class combat skills inline — 2 per row
     p_skills = get_combat_skills(player_p)
     all_sk_by_name = {sk.get("name"): i for i, sk in enumerate(all_skills)}
+    p_mp = safe_int(player_p.get("mp"))
     skill_btns = []
     for sk in p_skills:
         idx = all_sk_by_name.get(sk.get("name"), -1)
         if idx >= 0:
-            skill_btns.append(InlineKeyboardButton(
-                sk.get("name", "Skill"),
-                callback_data=f"skillpick_{player_uid}_{idx}_{opp_uid}"
-            ))
+            cost = _dng_skill_mp_cost(sk)
+            can = p_mp >= cost
+            label = f"{'✅' if can else '❌'} {sk.get('name','Skill')} ({cost}MP)"
+            if can:
+                skill_btns.append(InlineKeyboardButton(
+                    label, callback_data=f"skillpick_{player_uid}_{idx}_{opp_uid}"
+                ))
     for i in range(0, len(skill_btns), 2):
         rows.append(skill_btns[i:i+2])
     return InlineKeyboardMarkup(rows)
@@ -11910,6 +12114,11 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         a["hp"] = min(calc_max_hp(a), a["hp"] + _emp_regen)
         _dot_notes.append(f"🌿 *Garden Blessing* restores {a.get('username','?')} — *+{_emp_regen} HP*!")
     if _dot_notes: _dot_prefix = "\n".join(_dot_notes) + "\n"
+    # MP regen per turn — magic classes only (others restore on revive or potion)
+    for _mp_p in (a, d):
+        if get_class_line(_mp_p) in _MAGIC_LINES:
+            _mp_max = safe_int(_mp_p.get("max_mp")) or calc_max_mp(_mp_p)
+            _mp_p["mp"] = min(_mp_max, safe_int(_mp_p.get("mp", 0)) + 5)
 
     # ── Auto-cure: fire top-priority active affliction ────────────────────────
     _cure_prio = sjl(a.get("cure_priority"), []) or _DEFAULT_CURE_PRIORITY
@@ -12473,12 +12682,14 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     update_recent_attackers(d, au_id)
     proc_fired, proc_msg, proc_extra = calc_proc_effect(a, d, dmg_after_def)
+    oh_fired, oh_msg, oh_extra = _apply_weapon_on_hit(a, d, dmg_after_def)
 
     _display_dmg = _dmg_before_shield if _shield_absorbed else dmg_after_def
     action = f"⚔️ *{a['username']}* → *{d['username']}* for *{_display_dmg} dmg*{crit_note}{revenge_bonus_note}{reflect_note}"
     if extra_notes: action += "\n" + "\n".join(extra_notes)
     if healed:      action += f" | 🦸 +{healed} HP"
     if proc_fired:  action += f"\n{proc_msg}"
+    if oh_fired:    action += f"\n{oh_msg}"
 
     active_pet = get_active_pet_record(au_id)
     if active_pet:
@@ -13463,6 +13674,8 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         t["invincible_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
         t["hp"] = round(real_max_t * 0.70)
         t["shield_used"] = 0; t["shield_hp"] = 0; t["shield_core_bonus"] = 0
+        # Restore MP on revive for all classes
+        t["mp"] = safe_int(t.get("max_mp")) or calc_max_mp(t)
 
     h["heals_given"] = h.get("heals_given",0) + 1
     _heal_was_useful = t["hp"] > _pre_heal_hp  # only XP if HP actually increased
@@ -13677,6 +13890,7 @@ def _build_stats_pages(p, viewing_name=None):
     page1_lines += [
         "",
         f"❤️ HP: {p['hp']}/{real_max}",
+        f"💙 MP: {safe_int(p.get('mp'))}/{calc_max_mp(p)}",
         shield_line,
         f"✨ EXP `[{_exp_bar_str}]`",
         "",
@@ -13705,6 +13919,7 @@ def _build_stats_pages(p, viewing_name=None):
         f"🧙 {cls_name}",
         "",
         f"❤️ Max HP: {real_max}",
+        f"💙 Max MP: {calc_max_mp(p)}",
         f"STR: {eff['STR']}",
         f"AGI: {eff['AGI']}",
         f"INT: {eff['INT']}",
@@ -14701,7 +14916,7 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not pool: pool = SOLO_QUESTS
     q = random.choice(pool)
     item_found = roll_loot_table(q.get("loot_table",[]))
-    if item_found: add_item(p, item_found)
+    item_display = grant_loot_item(p, item_found) if item_found else None
     luk_val = get_stat(p, "LUK")
     gold_bonus_pct = luk_val * 0.002 + get_accessory_bonus(p, "gold_bonus") + get_enchant_bonus(p, "gold_bonus")
     gold = round(q["gold"] * (1 + gold_bonus_pct))
@@ -14728,7 +14943,7 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 r = pool2[item_found].get("rarity","")
                 rarity = RARITY_EMOJI.get(r,"")
                 break
-        msg += f"\n🎒 Found: {rarity} *{item_found}*!"
+        msg += f"\n🎒 Found: {rarity} *{item_display}*!"
     if new_t: msg += f"\n🏅 New title: *{new_t[0]}*!"
     if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
     if leveled and p["level"] % 10 == 0:
@@ -14813,7 +15028,8 @@ async def _run_expedition(bot, chat_id, uid, zone):
 
         item_found = roll_loot_table(zone.get("loot_table", []))
         pp["gold"] = pp.get("gold", 0) + gold
-        if item_found: add_item(pp, item_found)
+        if item_found: item_display = grant_loot_item(pp, item_found)
+        else: item_display = None
         lmsgs, leveled = add_exp(pp, exp)
         save_player(pp)
 
@@ -14828,7 +15044,7 @@ async def _run_expedition(bot, chat_id, uid, zone):
         msg = (f"🗺️ *{pp['username']}* returns from *{zone['emoji']} {zone['name']}*!\n\n"
                f"✅ *Expedition successful!*\n"
                f"✨ +{exp} EXP  |  💰 +{gold} gold")
-        if item_found: msg += f"\n🎒 Found: {rarity} *{item_found}*!"
+        if item_found: msg += f"\n🎒 Found: {rarity} *{item_display}*!"
         if extra_notes: msg += "\n" + "\n".join(extra_notes)
         if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
         if leveled and pp["level"] % 10 == 0:
@@ -15541,13 +15757,24 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(f"{item_name} not in your bag!", show_alert=True); return
     inv.remove(item_name); p["inventory"] = json.dumps(inv)
     msg = f"✅ Used *{item_name}*. "
-    if item_name in ("Health Potion", "Greater Health Potion", "Grand Restorative Flask"):
+    if item_name in ("Health Potion", "Greater Health Potion", "Grand Restorative Flask",
+                     "Supreme Restorative Flask", "Ultimate Vitality Draught"):
         if is_defeated(p):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
             await query.answer("You're defeated — potions won't help!", show_alert=True); return
-        hp_gain = {"Health Potion": 250, "Greater Health Potion": 500, "Grand Restorative Flask": 1500}.get(item_name, 1000)
+        hp_gain = {"Health Potion": 250, "Greater Health Potion": 500, "Grand Restorative Flask": 1500,
+                   "Supreme Restorative Flask": 5000, "Ultimate Vitality Draught": 15000}.get(item_name, 250)
         p["hp"] = min(calc_max_hp(p), p["hp"] + hp_gain)
         msg += f"❤️ +{hp_gain} HP ({p['hp']}/{calc_max_hp(p)})"
+    elif item_name in ("MP Tonic", "Minor MP Tonic", "Major MP Elixir", "Grand Mana Crystal"):
+        _mp_gain = {"MP Tonic": 30, "Minor MP Tonic": 30, "Major MP Elixir": 80}.get(item_name)
+        _mp_max = safe_int(p.get("max_mp")) or calc_max_mp(p)
+        if _mp_gain:
+            p["mp"] = min(_mp_max, safe_int(p.get("mp", 0)) + _mp_gain)
+        else:  # Grand Mana Crystal — full restore
+            p["mp"] = _mp_max
+            _mp_gain = _mp_max
+        msg += f"💙 +{_mp_gain} MP ({p['mp']}/{_mp_max})"
     elif item_name == "Scroll of Revival":
         if not is_defeated(p):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
@@ -15556,6 +15783,7 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
             await query.answer("You've been condemned — can't be revived!", show_alert=True); return
         p["defeated_until"] = None; p["hp"] = round(calc_max_hp(p) * 0.70)
+        p["mp"] = safe_int(p.get("max_mp")) or calc_max_mp(p)
         p["shield_used"] = 0; p["shield_hp"] = 0; p["shield_core_bonus"] = 0
         set_status(p, "invincible_until", 300)
         msg += f"💚 Revived at {p['hp']} HP (70%)! 5m invincibility granted."
@@ -18401,11 +18629,11 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
                     loot = roll_loot_table(tier.get("loot_table", []), p)
                     if loot:
-                        add_item(p, loot)
+                        loot_display = grant_loot_item(p, loot)
                         r = ""
                         for pool in [WEAPONS, ARMORS, ACCESSORIES]:
                             if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity",""),""); break
-                        out.append(f"🎒 Found: {r} *{loot}*!")
+                        out.append(f"🎒 Found: {r} *{loot_display}*!")
                     w2 = get_weather()
                     add_exp(p, exp_reward, w2)
                     out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{exp_reward:,} EXP | +{gold_reward}g")
@@ -18566,13 +18794,13 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pp["gold"] = pp.get("gold", 0) + data["gold"]
                 loot = roll_loot_table(data.get("loot_table", []), boss=True)
                 if loot:
-                    add_item(pp, loot)
+                    loot_display = grant_loot_item(pp, loot)
                     r = ""
                     for pool in [WEAPONS, ARMORS, ACCESSORIES]:
                         if loot in pool:
                             r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), "")
                             break
-                    lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
+                    lines.append(f"🎒 *{pp['username']}* found: {r} *{loot_display}*!")
                 if award_title(pp, data["title"]):
                     lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
                 lmsgs, leveled = add_exp(pp, data["exp"], w2)
@@ -18789,11 +19017,11 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                         p["gold"] = p.get("gold", 0) + _g; add_exp(p, _e)
                     loot = roll_loot_table(tier.get("loot_table", []), p)
                     if loot:
-                        add_item(p, loot)
+                        loot_display = grant_loot_item(p, loot)
                         r = ""
                         for pool in [WEAPONS, ARMORS, ACCESSORIES]:
                             if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity",""), ""); break
-                        out.append(f"🎒 Found: {r} *{loot}*!")
+                        out.append(f"🎒 Found: {r} *{loot_display}*!")
                     add_exp(p, exp_reward, w)
                     out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{exp_reward:,} EXP | +{gold_reward}g")
         else:
@@ -18899,10 +19127,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 pp["gold"] = pp.get("gold", 0) + data["gold"]
                 loot = roll_loot_table(data.get("loot_table", []), boss=True)
                 if loot:
-                    add_item(pp, loot); r = ""
+                    loot_display = grant_loot_item(pp, loot); r = ""
                     for pool in [WEAPONS, ARMORS, ACCESSORIES]:
                         if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), ""); break
-                    out.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
+                    out.append(f"🎒 *{pp['username']}* found: {r} *{loot_display}*!")
                 if award_title(pp, data["title"]):
                     out.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
                 add_exp(pp, data["exp"], w_sk); save_player(pp)
@@ -18961,6 +19189,13 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             if safe_int(p.get("entangle_turns")) > 0:
                 p["entangle_turns"] -= 1; save_player(p)
                 await send_result(f"🌿 You are *Entangled* — can't act this turn!"); return
+        # MP cost check for PvP
+        _sk_mp_cost = _dng_skill_mp_cost(sk)
+        _p_mp_now = safe_int(p.get("mp", 0))
+        if _p_mp_now < _sk_mp_cost:
+            await query.answer(f"❌ Not enough MP! Need {_sk_mp_cost}, have {_p_mp_now}.", show_alert=True)
+            return
+        p["mp"] = max(0, _p_mp_now - _sk_mp_cost)
         # Acquire per-player lock to prevent concurrent skill+attack races
         if not _cb_lock(uid):
             await query.answer("Still processing — try again!", show_alert=True)
@@ -22828,8 +23063,9 @@ async def _start_encounter_battle(query, uid, p):
     npc = _pick_random_npc(p_level)
     n_level = _enc_npc_level(npc, p_level)
     n_hp, n_atk, reward_mult, num_gear, num_pots, gear_rarities = _enc_level_stats(n_level, p_level)
-    p_mhp = safe_int(p.get("max_hp")) or calc_max_hp(p)
+    p_mhp = calc_max_hp(p)
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
+    p_max_mp = calc_max_mp(p); p_mp = max(0, min(p_max_mp, safe_int(p.get("mp")) or p_max_mp))
     cls_name = CLASS_TREE.get(npc[1], {}).get("name", npc[1].replace("_"," ").title())
     # Load pet info for enc
     _enc_pet = get_active_pet_record(uid)
@@ -22848,7 +23084,7 @@ async def _start_encounter_battle(query, uid, p):
         }
     enc = {
         "uid": uid, "mode": "battle", "p_name": p.get("username", "You"),
-        "p_hp": p_hp, "p_max_hp": p_mhp,
+        "p_hp": p_hp, "p_max_hp": p_mhp, "p_mp": p_mp, "p_max_mp": p_max_mp,
         "e_name": npc[0], "e_class": npc[1],
         "e_hp": n_hp, "e_max_hp": n_hp, "e_atk": n_atk, "e_level": n_level,
         "e_gold_range": npc[6], "e_exp_range": npc[7], "e_loot_key": npc[8],
@@ -22875,7 +23111,7 @@ async def _start_encounter_hunt(query, uid, p):
     monster = _pick_random_monster(p_level)
     m_level = _enc_monster_level(monster, p_level)
     m_hp, m_atk, reward_mult, num_gear, num_pots, gear_rarities = _enc_level_stats(m_level, p_level)
-    p_mhp = safe_int(p.get("max_hp")) or calc_max_hp(p)
+    p_mhp = calc_max_hp(p)
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     elem_e = ELEMENT_EMOJI.get(monster[2], "")
     # Load pet info for enc
@@ -22895,7 +23131,7 @@ async def _start_encounter_hunt(query, uid, p):
         }
     enc = {
         "uid": uid, "mode": "hunt", "p_name": p.get("username", "You"),
-        "p_hp": p_hp, "p_max_hp": p_mhp,
+        "p_hp": p_hp, "p_max_hp": p_mhp, "p_mp": p_mp, "p_max_mp": p_max_mp,
         "e_name": monster[1], "e_key": monster[0], "element": monster[2],
         "e_hp": m_hp, "e_max_hp": m_hp, "e_atk": m_atk, "e_level": m_level,
         "e_catch_rate": monster[6],
@@ -23249,6 +23485,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Helper: end encounter (win/lose/flee)
     async def _end_encounter(result_text, gave_rewards=False):
         active_encounters.pop(uid, None)
+        # Sync MP from encounter state back to player
+        p["mp"] = enc.get("p_mp", safe_int(p.get("mp", 0)))
         # Clear any turn-based combat debuffs so they don't bleed into the next session
         for _cf in ("heal_blocked_turns", "revive_blocked_turns", "silence_turns", "hex_turns",
                     "stun_turns", "freeze_turns", "entangle_turns", "distract_turns"):
@@ -23329,6 +23567,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if _p_blocked:
             action_txt = "⚡ You're stunned and lose your turn!"
         elif data == f"enc_atk_{uid}":
+            # MP regen per turn — magic classes only
+            if get_class_line(p) in _MAGIC_LINES:
+                enc["p_mp"] = min(enc.get("p_max_mp", 10), enc.get("p_mp", 0) + 5)
             _enc_w = get_weather()
             dmg    = calc_attack_damage(p, _enc_w)
             if enc.pop("p_weakened", False): dmg = max(1, int(dmg * 0.65))
@@ -23394,6 +23635,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 if enc.get("skill_heal_uses", 0) >= 3:
                     await query.answer("🚫 Heal limit reached (3/3)! Healing skills exhausted.", show_alert=True)
                     return
+            _sk_mp_cost = _dng_skill_mp_cost(sk)
+            if enc.get("p_mp", 0) < _sk_mp_cost:
+                await query.answer(f"❌ Not enough MP! Need {_sk_mp_cost}, have {enc.get('p_mp',0)}.", show_alert=True); return
             action_txt, _sk_dmg, _is_support = _enc_process_skill(enc, p, sk)
             if _is_support:
                 enc["skill_heal_uses"] = enc.get("skill_heal_uses", 0) + 1
