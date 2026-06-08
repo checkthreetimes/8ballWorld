@@ -10971,6 +10971,7 @@ def save_player(p):
         "ward_charges","shield_charges","exposed_hits","marked_hits","branded_hits",
         "regen_charges","regen_amt","heal_blocked_turns","revive_blocked_turns",
         "poison_pct","bleed_pct","burn_pct",
+        "empire_buildings","empire_resources","empire_last_collect",
     ]
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
