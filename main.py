@@ -141,8 +141,6 @@ pending_marriages       = {}   # proposer_id -> {target_id, chat_id, expires}
 pending_alliance_inv    = {}   # inviter_id  -> {target_id, alliance_id, expires}
 pending_guild_inv       = {}   # inviter_id  -> {target_id, guild_id, expires}
 pending_holdhands  = {}   # proposer_id -> {target_id, chat_id, expires}
-active_world_bosses = {}  # chat_id -> world boss dict
-_boss_attack_cd     = {}  # uid -> last attack timestamp
 active_encounters  = {}   # user_id -> encounter state
 _enc_sessions      = {}   # uid -> {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]}
 _dng_timers        = {}   # user_id -> asyncio.Task (real-time combat ticker)
@@ -154,6 +152,7 @@ _pvp_player_cards  = {}   # uid -> (chat_id, message_id) — each player's own b
 _pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
 _pvp_battle_state  = {}   # uid -> per-battle dungeon item charge state
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
+_picker_origin_chat = {}  # uid -> group chat_id where /attack picker was opened
 _PVP_ACTION_CD     = 1.5  # seconds between PvP card button presses (not used for gate — kept for reference)
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
 _megaphone_state   = {"group": None}  # last known group chat ID for /megaphone DMs
@@ -589,7 +588,7 @@ _PVP_FIGHT_LINES = [
     "😤 *{a}* decided *{d}*'s day needed ruining.",
 ]
 
-_PVP_WIN_LINES = [
+_PVP_WIN_POOL = [
     ("default", "💀 *{a}* has defeated *{d}*! Another one bites the dust."),
     ("default", "⚔️ *{a}* sent *{d}* to the floor. Brutal."),
     ("default", "🎱 *{a}* just wiped the table with *{d}*."),
@@ -600,12 +599,20 @@ _PVP_WIN_LINES = [
     ("default", "☠️ *{d}* is down. *{a}* standing tall."),
     ("default", "🎯 *{a}* didn't miss. *{d}* is done."),
     ("default", "💀 *{d}* caught these hands. *{a}* moves on."),
-    ("streak", "🔥 *{a}* with the *{streak}-kill streak*, just added *{d}* to the list. Who's next?"),
+    ("default", "😂 *{d}* just got their ass beat by *{a}*. Embarrassing."),
+    ("default", "💀 *{a}* said 'and I'm serious' and beat the brakes off *{d}*."),
+    ("default", "🪑 *{d}* needs a chair. *{a}* just sat them down."),
+    ("default", "😭 *{d}* is cooked. *{a}* didn't even break a sweat."),
+    ("default", "😬 *{d}* picked the wrong one. *{a}* did not hold back."),
+    ("default", "☠️ *{a}* just ended *{d}*'s whole career. Yikes."),
+    ("default", "💀 Pour one out for *{d}*. *{a}* showed absolutely no mercy."),
+    ("default", "🤣 *{d}* is going to need a moment. *{a}* handled that."),
+    ("streak", "🔥 *{a}* is on a *{streak}-kill streak* — just added *{d}* to the list. Who's next?"),
     ("streak", "🏆 *{a}* is on a rampage — *{streak} kills deep* and *{d}* couldn't stop it."),
     ("streak", "⚡ *{streak} in a row* for *{a}*. *{d}* was the latest victim."),
     ("wanted", "🔴 *{a}* is WANTED and still won — took down *{d}*. The heat means nothing."),
     ("wanted", "🔴 Every hunter wants *{a}*, but *{d}* just found out why that's a bad idea."),
-    ("revenge", "💜 *{a}* got their revenge on *{d}*. That score's settled."),
+    ("revenge", "💜 *{a}* got their revenge on *{d}*. That score is settled."),
     ("lowlevel", "😅 *{a}* (Lv {alvl}) just clapped *{d}* (Lv {dlvl}). That's an upset."),
     ("highlevel", "👑 *{a}* (Lv {alvl}) crushed *{d}*. Hardly a surprise, but still."),
 ]
@@ -614,24 +621,22 @@ def _pvp_fight_start_line(a_name: str, d_name: str) -> str:
     return random.choice(_PVP_FIGHT_LINES).format(a=a_name, d=d_name)
 
 def _pvp_win_line(a: dict, d: dict) -> str:
-    a_name = a["username"]; d_name = d["username"]
-    streak = safe_int(a.get("kill_streak"))
-    is_wanted = safe_int(a.get("is_wanted"))
+    a_name = a.get("username", "?"); d_name = d.get("username", "?")
+    streak  = safe_int(a.get("kill_streak"))
+    is_wanted  = safe_int(a.get("is_wanted"))
     is_revenge = safe_int(d.get("revenge_target")) == safe_int(a.get("user_id"))
-    lvl_diff = a.get("level", 1) - d.get("level", 1)
-
-    pool = [t for t in _PVP_WIN_LINES if t[0] == "default"]
+    lvl_diff   = a.get("level", 1) - d.get("level", 1)
+    pool = [t for t in _PVP_WIN_POOL if t[0] == "default"]
     if streak >= 3:
-        pool += [t for t in _PVP_WIN_LINES if t[0] == "streak"]
+        pool += [t for t in _PVP_WIN_POOL if t[0] == "streak"]
     if is_wanted:
-        pool += [t for t in _PVP_WIN_LINES if t[0] == "wanted"]
+        pool += [t for t in _PVP_WIN_POOL if t[0] == "wanted"]
     if is_revenge:
-        pool += [t for t in _PVP_WIN_LINES if t[0] == "revenge"]
+        pool += [t for t in _PVP_WIN_POOL if t[0] == "revenge"]
     if lvl_diff <= -10:
-        pool += [t for t in _PVP_WIN_LINES if t[0] == "lowlevel"]
+        pool += [t for t in _PVP_WIN_POOL if t[0] == "lowlevel"]
     elif lvl_diff >= 20:
-        pool += [t for t in _PVP_WIN_LINES if t[0] == "highlevel"]
-
+        pool += [t for t in _PVP_WIN_POOL if t[0] == "highlevel"]
     _, tmpl = random.choice(pool)
     return tmpl.format(a=a_name, d=d_name, streak=streak,
                        alvl=a.get("level", "?"), dlvl=d.get("level", "?"))
@@ -6075,21 +6080,6 @@ RANDOM_EVENTS = [
      "msg":"🔮 *An old trophy was found behind the wall.*\nFirst to /pray gets something from it."},
     {"key":"cursed","freq":"rare",
      "msg":"⚰️ *A losing player put something bad into the table on their way out.*\nSomeone's been marked. Use /purge to lift it."},
-    {"key":"world_boss","freq":"rare",
-     "msg":""},  # placeholder; world boss uses its own spawn logic
-]
-
-WORLD_BOSSES = [
-    {"name":"The Void Titan",    "emoji":"🌀","atk":2800,"exp":800000,"gold":50000,
-     "loot_table":[("Voidbreaker","legendary"),("Abyssal Plate","legendary"),("Grand Mana Crystal",0.8)]},
-    {"name":"Dread Warlord",     "emoji":"⚔️","atk":2400,"exp":600000,"gold":40000,
-     "loot_table":[("Ruinblade","legendary"),("Dragonscale Plate","legendary"),("Supreme Health Potion",0.9)]},
-    {"name":"The Plague Herald", "emoji":"☣️","atk":2600,"exp":700000,"gold":45000,
-     "loot_table":[("Staff of Unending Night","legendary"),("Death's Whisper","legendary"),("Grand Mana Crystal",0.8)]},
-    {"name":"Shadow Sovereign",  "emoji":"🌑","atk":3000,"exp":900000,"gold":55000,
-     "loot_table":[("Eternal Arcanum","legendary"),("The Final Cut","legendary"),("Scroll of Revival",0.9)]},
-    {"name":"Ragnarok Titan",    "emoji":"⚡","atk":2700,"exp":750000,"gold":48000,
-     "loot_table":[("Mjolnir's Rage","legendary"),("Valhalla's Thunder","legendary"),("Supreme Health Potion",0.9)]},
 ]
 
 GUILD_PERKS = {
@@ -11420,14 +11410,6 @@ def add_exp(p, amount, weather=None):
     _emp_exp_pct = _empire_stat_bonuses(p).get("exp_bonus_pct", 0)
     if _emp_exp_pct > 0:
         amount = round(amount * (1 + _emp_exp_pct))
-    # High-level EXP softcap: sharply diminishing returns past level 100.
-    # Every 5 levels above 100 cuts effective EXP by ~40%. Past 120 it becomes
-    # extremely slow — intentional, as encounters scale proportionally otherwise.
-    _lvl = p["level"]
-    if _lvl >= 100:
-        _steps = (_lvl - 100) // 5        # 0 at 100, 1 at 105, 4 at 120, 8 at 140 …
-        _softcap = max(0.005, 0.60 ** _steps)
-        amount = max(1, round(amount * _softcap))
     msgs = []; leveled_up = False
     p["exp"]      += max(0, amount)
     p["total_exp"] = safe_int(p.get("total_exp")) + max(0, amount)
@@ -12303,7 +12285,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
             _defeat_timer_ks = time_until(d.get("defeated_until")) or "6m"
             action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_ks}*."
-            asyncio.create_task(announce(bot, chat_id, _pvp_win_line(a, d), delay=5))
+            asyncio.create_task(announce(bot, chat_id, _pvp_win_line(a, d), permanent=True))
             if leveled and a["level"] % 10 == 0:
                 asyncio.create_task(announce(bot, chat_id,
                     f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
@@ -12905,7 +12887,6 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             asyncio.create_task(announce(bot, chat_id,
                 f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
         lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
-        asyncio.create_task(announce(bot, chat_id, _pvp_win_line(a, d), delay=5))
         if cls_a and cls_a.get("passive_key") == "conqueror":
             restore = round(a["max_hp"] * 0.20)
             a["hp"] = min(a["max_hp"], a["hp"] + restore)
@@ -12931,6 +12912,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             a["gold"] = a.get("gold", 0) + mfd_bonus
         _defeat_timer_pvp = time_until(d.get("defeated_until")) or "6m"
         action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_pvp}*."
+        asyncio.create_task(announce(bot, chat_id, _pvp_win_line(a, d), permanent=True))
         if leveled and a["level"] % 10 == 0:
             asyncio.create_task(announce(bot, chat_id,
                 f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
@@ -13196,8 +13178,10 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         pair = _pvp_pair_key(uid, target_uid)
         _pvp_cards.setdefault(pair, {})
-        _pvp_origin_chat[pair] = query.message.chat_id
-        _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": query.message.chat_id}
+        # Use the group chat where /attack was originally issued
+        _grp_chat = _picker_origin_chat.pop(uid, None) or query.message.chat_id
+        _pvp_origin_chat[pair] = _grp_chat
+        _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": _grp_chat}
 
         # Alert the defender — clear any old card so Telegram sends a fresh push notification
         _pvp_dm_last_msg.pop(target_uid, None)
@@ -13213,8 +13197,8 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         fresh_d = get_player(target_uid) or d
         _cb_unlock(uid)
         await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_uid, start_txt, context.bot)
-        asyncio.create_task(announce(context.bot, query.message.chat_id,
-            _pvp_fight_start_line(a["username"], d["username"]), delay=25))
+        asyncio.create_task(announce(context.bot, _grp_chat,
+            _pvp_fight_start_line(a["username"], d["username"]), permanent=True))
     finally:
         _cb_unlock(uid)  # idempotent
 
@@ -13335,6 +13319,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not players:
             await send_group(update, "⚔️ No players available to attack right now.", delay=9); return
         markup = _build_target_picker_markup(au.id, a.get("guild_id"), 0, "atk")
+        _picker_origin_chat[au.id] = chat_id  # remember group so picker callback can send there
         await send_group(update,
             f"⚔️ *Choose a target* ({total} available)",
             permanent=True, reply_markup=markup)
@@ -13398,7 +13383,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fresh_d = get_player(du_id) or d
     await _pvp_notify_both(pair, fresh_a, fresh_d, au.id, du_id, start_txt, bot)
     asyncio.create_task(announce(bot, chat_id,
-        _pvp_fight_start_line(a["username"], d["username"]), delay=25))
+        _pvp_fight_start_line(a["username"], d["username"]), permanent=True))
 
 
 # ── PVP CARD CALLBACK ─────────────────────────────────────────────────────────
@@ -16585,389 +16570,6 @@ def _build_sr_markup(uid):
         [InlineKeyboardButton("🩺 Heal",   callback_data=f"sr_act_{uid}_heal"),
          InlineKeyboardButton("🏃 Flee",   callback_data=f"sr_act_{uid}_flee")],
     ])
-
-# ── WORLD BOSS SYSTEM ─────────────────────────────────────────────────────────
-
-def _world_boss_card(boss):
-    """Return markdown HP card for the world boss."""
-    hp = max(0, boss["hp"])
-    max_hp = boss["max_hp"]
-    bar_len = 20
-    filled = round(bar_len * hp / max_hp) if max_hp > 0 else 0
-    bar = "█" * filled + "░" * (bar_len - filled)
-    pct = round(100 * hp / max_hp) if max_hp > 0 else 0
-    phase_tag = " 🔥 *ENRAGED!*" if boss["phase"] == 2 else ""
-    lines = [
-        f"{boss['emoji']} *{boss['name']}*{phase_tag}",
-        f"`[{bar}]` {pct}%",
-        f"HP: *{hp:,}* / {max_hp:,}",
-        "",
-    ]
-    fighters = boss.get("fighters", {})
-    evaded = boss.get("evaded", set())
-    defeated_set = boss.get("defeated", set())
-    if fighters:
-        sorted_f = sorted(fighters.items(), key=lambda x: x[1], reverse=True)[:5]
-        lines.append("⚔️ *Fighters:*")
-        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-        for i, (fuid, dmg) in enumerate(sorted_f):
-            try:
-                row = _db().execute("SELECT username FROM shadow_profiles WHERE user_id=?", (fuid,)).fetchone()
-                name = row["username"] if row else f"Player {fuid}"
-            except Exception:
-                name = f"Player {fuid}"
-            fp = get_player(fuid)
-            if fp:
-                fp_hp = safe_int(fp.get("hp")); fp_mhp = calc_max_hp(fp)
-                hp_str = f" ❤️{fp_hp}/{fp_mhp}"
-            else:
-                hp_str = ""
-            status = " 💀" if fuid in defeated_set else (" 🏃" if fuid in evaded else "")
-            lines.append(f"{medals[i]} {name}{hp_str} — {dmg:,} dmg{status}")
-        lines.append("")
-    lines.append("⚔️ /bossattack  |  🏃 /bossevade to step out")
-    return "\n".join(lines)
-
-
-async def _spawn_world_boss(chat_id, bot):
-    """Spawn a world boss in the given chat."""
-    # Query recently active ascended players
-    two_hrs_ago = (datetime.now() - timedelta(hours=2)).isoformat()
-    try:
-        conn = _db()
-        rows = conn.execute(
-            "SELECT user_id, username FROM shadow_profiles "
-            "WHERE ascended=1 AND home_group=? AND last_seen>=? LIMIT 6",
-            (chat_id, two_hrs_ago)
-        ).fetchall()
-    except Exception:
-        rows = []
-
-    active_players = [(r["user_id"], r["username"]) for r in rows]
-    num_active = len(active_players)
-
-    # Scale HP
-    base_hp = 500_000
-    extra_hp = num_active * 150_000
-    boss_hp = max(500_000, min(3_000_000, base_hp + extra_hp))
-
-    bdef = random.choice(WORLD_BOSSES)
-    boss = {
-        "name": bdef["name"],
-        "emoji": bdef["emoji"],
-        "hp": boss_hp,
-        "max_hp": boss_hp,
-        "atk": bdef["atk"],
-        "phase": 1,
-        "fighters": {},
-        "hit_count": 0,
-        "last_card_msg_id": None,
-        "spawned_at": datetime.now().isoformat(),
-        "loot_table": bdef["loot_table"],
-        "exp_reward": bdef["exp"],
-        "gold_reward": bdef["gold"],
-    }
-    active_world_bosses[chat_id] = boss
-
-    ping_names = " ".join(f"*{name}*" for _, name in active_players) if active_players else "brave warriors"
-    spawn_text = (
-        f"🚨 *A WORLD BOSS HAS APPEARED!* 🚨\n\n"
-        f"{bdef['emoji']} *{bdef['name']}* erupts from the void with "
-        f"*{boss_hp:,} HP*, hungry for destruction!\n\n"
-        f"📣 Calling: {ping_names}\n\n"
-        f"Use /bossattack to fight! You have *20 minutes* before it escapes."
-    )
-    try:
-        await bot.send_message(chat_id=chat_id, text=spawn_text, parse_mode="Markdown")
-    except Exception:
-        pass
-
-    # Post initial HP card
-    try:
-        card_msg = await bot.send_message(
-            chat_id=chat_id, text=_world_boss_card(boss), parse_mode="Markdown"
-        )
-        boss["last_card_msg_id"] = card_msg.message_id
-    except Exception:
-        pass
-
-    # Schedule escape check in 20 minutes
-    async def _escape_check():
-        await asyncio.sleep(1200)
-        if chat_id in active_world_bosses and active_world_bosses[chat_id] is boss:
-            await _world_boss_escape(chat_id, boss, bot)
-
-    t = asyncio.create_task(_escape_check())
-    _bg_tasks.add(t)
-    t.add_done_callback(_bg_tasks.discard)
-
-
-async def _refresh_boss_card(chat_id, boss, bot):
-    """Delete old boss card and post a new one."""
-    old_id = boss.get("last_card_msg_id")
-    if old_id:
-        try:
-            await bot.delete_message(chat_id=chat_id, message_id=old_id)
-        except Exception:
-            pass
-    try:
-        card_msg = await bot.send_message(
-            chat_id=chat_id, text=_world_boss_card(boss), parse_mode="Markdown"
-        )
-        boss["last_card_msg_id"] = card_msg.message_id
-    except Exception:
-        pass
-
-
-async def _finish_world_boss(chat_id, boss, bot):
-    """Called when boss HP reaches 0 — distribute rewards."""
-    active_world_bosses.pop(chat_id, None)
-
-    fighters = boss.get("fighters", {})
-    if not fighters:
-        try:
-            await bot.send_message(
-                chat_id=chat_id,
-                text=f"{boss['emoji']} *{boss['name']}* was defeated... but nobody fought it?",
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
-        return
-
-    total_dmg = sum(fighters.values())
-    sorted_f = sorted(fighters.items(), key=lambda x: x[1], reverse=True)
-
-    exp_total = boss["exp_reward"]
-    gold_total = boss["gold_reward"]
-
-    influence_bonuses = [500, 300, 150]
-    lines = [f"💀 *{boss['name']} has been slain!*\n"]
-
-    for rank, (uid, dmg) in enumerate(sorted_f):
-        p = get_player(uid)
-        if not p:
-            continue
-        share = dmg / total_dmg if total_dmg > 0 else 0
-        p_exp = round(exp_total * share)
-        p_gold = round(gold_total * share)
-        p["gold"] = safe_int(p.get("gold", 0)) + p_gold
-        add_exp(p, p_exp)
-
-        # Influence bonus for top 3
-        if rank < 3:
-            inf_bonus = influence_bonuses[rank]
-            p["influence"] = safe_int(p.get("influence", 0)) + inf_bonus
-
-        # Guaranteed rare+ loot for top contributor
-        if rank == 0:
-            loot_entry = random.choice(boss["loot_table"])
-            item_name = loot_entry[0] if isinstance(loot_entry, (list, tuple)) else loot_entry
-            grant_loot_item(p, item_name)
-            lines.append(f"🥇 *{p.get('name','???')}* — {dmg:,} dmg · +{p_exp:,} EXP · +{p_gold:,}g · 🎁 *{item_name}*")
-        elif rank == 1:
-            lines.append(f"🥈 *{p.get('name','???')}* — {dmg:,} dmg · +{p_exp:,} EXP · +{p_gold:,}g")
-        elif rank == 2:
-            lines.append(f"🥉 *{p.get('name','???')}* — {dmg:,} dmg · +{p_exp:,} EXP · +{p_gold:,}g")
-        else:
-            lines.append(f"⚔️ *{p.get('name','???')}* — {dmg:,} dmg · +{p_exp:,} EXP · +{p_gold:,}g")
-
-        save_player(p)
-
-    try:
-        await bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown")
-    except Exception:
-        pass
-
-
-async def _world_boss_escape(chat_id, boss, bot):
-    """Called when boss escapes after 20 minutes without being killed."""
-    active_world_bosses.pop(chat_id, None)
-    fighters = boss.get("fighters", {})
-
-    consolation_exp = 20_000
-    lines = [f"{boss['emoji']} *{boss['name']}* slips back into the void... it escaped!\n"]
-    for uid, dmg in fighters.items():
-        p = get_player(uid)
-        if not p:
-            continue
-        add_exp(p, consolation_exp)
-        save_player(p)
-        lines.append(f"• *{p.get('name','???')}* — +{consolation_exp:,} EXP (consolation)")
-
-    try:
-        await bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown")
-    except Exception:
-        pass
-
-
-async def cmd_bossattack(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Player attacks the active world boss."""
-    if not update.message or not update.effective_user:
-        return
-    chat_id = update.effective_chat.id
-    uid = update.effective_user.id
-
-    if chat_id not in active_world_bosses:
-        await update.message.reply_text("⚠️ No world boss is active right now.", parse_mode="Markdown")
-        return
-
-    boss = active_world_bosses[chat_id]
-
-    # Per-user 3-second cooldown
-    now_ts = time.time()
-    last_hit = _boss_attack_cd.get(uid, 0)
-    if now_ts - last_hit < 3:
-        remaining = round(3 - (now_ts - last_hit), 1)
-        await update.message.reply_text(f"⏳ Cooldown! Wait {remaining}s.", parse_mode="Markdown")
-        return
-    _boss_attack_cd[uid] = now_ts
-
-    p = get_player(uid)
-    if not p:
-        await update.message.reply_text("❌ You need to be ascended to fight the boss!", parse_mode="Markdown")
-        return
-    if is_defeated(p):
-        await update.message.reply_text("💀 You are currently defeated and cannot fight.", parse_mode="Markdown")
-        return
-    if not p.get("ascended"):
-        await update.message.reply_text("❌ Only ascended players can fight world bosses.", parse_mode="Markdown")
-        return
-
-    # Calculate damage — identical pipeline to /attack in PvP
-    weather = get_weather()
-    dmg = calc_attack_damage(p, weather)
-
-    # Crits
-    crit_note = ""
-    if check_crit(p):
-        dmg = apply_crit(p, dmg); crit_note = " 💥*CRIT!*"
-
-    # Weapon on-hit proc (30% chance — adds bonus dmg)
-    oh_note = ""
-    weap_oh = WEAPONS.get(p.get("equipped_weapon") or "", {}).get("on_hit")
-    if weap_oh and random.random() < 0.30:
-        _oh_eff = weap_oh.get("effect"); _oh_val = weap_oh.get("val", 0)
-        if _oh_eff == "double_hit":
-            _bonus = max(1, round(dmg * _oh_val)); dmg += _bonus; oh_note = f" ⚡*+{_bonus}!*"
-        elif _oh_eff in ("poison","burn","exposed","lifesteal"):
-            _bonus = max(1, round(dmg * 0.25)); dmg += _bonus; oh_note = f" ✨*+{_bonus}!*"
-
-    # Class proc — add bonus damage instead of mutating a defender
-    _proc_note = ""
-    _cls = get_player_class(p)
-    if _cls:
-        _line = _cls.get("line"); _path = p.get("class_path","A")
-        _proc_chance = get_proc_chance(0.15, p)
-        if random.random() < _proc_chance:
-            if _line == "warrior" and _path == "B":
-                _xd = max(1, round(dmg * 0.60)); dmg += _xd; _proc_note = f"\n⚔️ *Double Strike!* +{_xd}!"
-            elif _line in ("mage","warrior") and _path == "A":
-                _xd = max(1, round(dmg * 0.20)); dmg += _xd; _proc_note = f"\n🔥 *Arcane Strike!* +{_xd}!"
-            elif _line in ("thief","serpent","botanist"):
-                _xd = max(1, round(dmg * 0.25)); dmg += _xd; _proc_note = f"\n☠️ *Venom Lash!* +{_xd}!"
-            elif _line == "archer" and _path == "B":
-                _xd = max(1, round(dmg * 1.50)); dmg += _xd; _proc_note = f"\n🎯 *Headshot!* +{_xd}!"
-            elif _line in ("valkyrie","phantom_dancer","enchantress","priest"):
-                _xd = max(1, round(dmg * 0.30)); dmg += _xd; _proc_note = f"\n✨ *Divine Surge!* +{_xd}!"
-
-    # Pet auto-attack
-    _pet_note = ""
-    _active_pet = get_active_pet_record(uid)
-    if _active_pet:
-        _pet_atk = get_pet_atk_bonus(_active_pet)
-        if _pet_atk > 0:
-            _psp = PET_SPECIES.get(_active_pet.get("species"), {})
-            dmg += _pet_atk
-            _pet_note = f"\n{_psp.get('emoji','🐾')} *{_active_pet.get('nickname') or _psp.get('name','Pet')}* strikes for *{_pet_atk}*!"
-
-    dmg = max(1, dmg)
-    boss["hp"] = max(0, boss["hp"] - dmg)
-    boss["fighters"][uid] = boss["fighters"].get(uid, 0) + dmg
-    boss["hit_count"] += 1
-
-    # Phase transition
-    phase_msg = ""
-    if boss["phase"] == 1 and boss["hp"] <= boss["max_hp"] // 2:
-        boss["phase"] = 2
-        phase_msg = f"\n🔥 *{boss['name']} ENRAGES!* Phase 2 — counterattack rate surges!"
-
-    # Acknowledgement
-    player_name = p.get("username") or update.effective_user.first_name
-    hit_text = f"⚔️ *{player_name}* strikes *{boss['name']}* for *{dmg:,}* damage!{crit_note}{oh_note}{phase_msg}{_proc_note}{_pet_note}"
-    try:
-        hit_msg = await context.bot.send_message(chat_id=chat_id, text=hit_text, parse_mode="Markdown")
-        asyncio.create_task(_auto_delete(context.bot, chat_id, hit_msg.message_id, 8))
-    except Exception:
-        pass
-
-    # Boss counterattack — only targets active (non-defeated, non-evaded) fighters
-    if boss["hp"] > 0:
-        _evaded = boss.setdefault("evaded", set())
-        _defeated_b = boss.setdefault("defeated", set())
-        _valid_targets = [u for u in boss["fighters"] if u not in _evaded and u not in _defeated_b]
-        ca_chance = 0.70 if boss["phase"] == 2 else 0.40
-        if _valid_targets and random.random() < ca_chance:
-            target_uid = random.choice(_valid_targets)
-            target_p = get_player(target_uid)
-            if target_p:
-                raw_atk = boss["atk"]
-                if boss["phase"] == 2:
-                    raw_atk = round(raw_atk * 1.5)
-                actual_dmg = calc_defense(target_p, raw_atk)
-                target_p["hp"] = max(0, safe_int(target_p.get("hp", 0)) - actual_dmg)
-                target_name = target_p.get("username") or f"Player {target_uid}"
-                ca_text = f"💥 *{boss['name']}* turns on *{target_name}* and deals *{actual_dmg:,}* damage!"
-                # Check if this kills the player
-                if target_p["hp"] <= 0:
-                    target_p["hp"] = 0
-                    target_p["defeated_until"] = (datetime.now() + timedelta(minutes=10)).isoformat()
-                    target_p["last_defeated_by"] = boss["name"]
-                    target_p["losses"] = target_p.get("losses", 0) + 1
-                    target_p["kill_streak"] = 0
-                    _defeated_b.add(target_uid)
-                    ca_text += f"\n☠️ *{target_name}* has been struck down! (defeated 10m) — reward share locked in."
-                save_player(target_p)
-                try:
-                    ca_msg = await context.bot.send_message(chat_id=chat_id, text=ca_text, parse_mode="Markdown")
-                    asyncio.create_task(_auto_delete(context.bot, chat_id, ca_msg.message_id, 15))
-                except Exception:
-                    pass
-
-    # Refresh card every 5 hits or on kill
-    if boss["hp"] <= 0 or boss["hit_count"] % 5 == 0:
-        await _refresh_boss_card(chat_id, boss, context.bot)
-
-    # Check kill
-    if boss["hp"] <= 0:
-        await _finish_world_boss(chat_id, boss, context.bot)
-
-
-async def cmd_bossevade(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Step out of the world boss fight — locks in reward share, stops counterattacks."""
-    if not update.message or not update.effective_user: return
-    chat_id = update.effective_chat.id
-    uid = update.effective_user.id
-    if chat_id not in active_world_bosses:
-        await update.message.reply_text("⚠️ No world boss is active.", parse_mode="Markdown"); return
-    boss = active_world_bosses[chat_id]
-    if uid not in boss.get("fighters", {}):
-        await update.message.reply_text("You haven't joined the fight yet!", parse_mode="Markdown"); return
-    evaded = boss.setdefault("evaded", set())
-    defeated_b = boss.setdefault("defeated", set())
-    if uid in evaded:
-        await update.message.reply_text("🏃 You've already stepped out.", parse_mode="Markdown"); return
-    if uid in defeated_b:
-        await update.message.reply_text("💀 You're already defeated.", parse_mode="Markdown"); return
-    evaded.add(uid)
-    dmg = boss["fighters"].get(uid, 0)
-    p = get_player(uid)
-    name = (p.get("username") if p else None) or update.effective_user.first_name
-    await update.message.reply_text(
-        f"🏃 *{name}* evades and steps back from the fight!\n"
-        f"Reward share locked in at *{dmg:,}* damage dealt. The boss can no longer target you.",
-        parse_mode="Markdown")
-
 
 async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -25196,7 +24798,7 @@ async def rankwins_cmd(update, context):
 GUIDE_PAGES = [
     # Page 1 - Getting Started
     (
-        "🎱 *8Ball World  -  Getting Started* (1/15)\n"
+        "🎱 *8Ball World  -  Getting Started* (1/14)\n"
         "\n"
         "Welcome to 8Ball World  -  a fantasy RPG built inside Telegram.\n"
         "\n"
@@ -25211,206 +24813,190 @@ GUIDE_PAGES = [
         "3. Pick a class at Level 5 with /class\n"
         "4. Equip gear and start fighting at Level 3+\n"
         "\n"
-        "💡 Chatting in the group earns passive EXP. Your Shadow and RPG levels stay in sync. Every level-up is announced in chat, and at Level 5+ you'll see a reminder to /ascend.\n"
-        "\n"
-        "*Level Cap: 250.*\n"
-        "Levels 1–100 are relatively achievable. Past 100 EXP gains reduce sharply. Past 120 it becomes a long-term grind. Past 130 you're in elite territory. Reaching 250 awards the *Absolute Legend* title."
+        "💡 Chatting in the group earns passive EXP. Your Shadow and RPG levels stay in sync. Level-up announcements broadcast at every 10th level."
     ),
     # Page 2 - Character Building
     (
-        "🎱 *8Ball World  -  Building Your Character* (2/15)\n"
+        "🎱 *8Ball World  -  Building Your Character* (2/14)\n"
         "\n"
-        "Use /class at Level 5 to pick your class. Browse with arrows to read each class's full skill list before committing.\n"
+        "Use /class at Level 5 to pick your starting class. Browse with arrows to see each class's Path A and Path B.\n"
         "\n"
-        "⚔️ *Warrior* — STR. Tank/bruiser. High HP, absorbs hits.\n"
-        "  Path A (Paladin): Holy tank — shields, group buffs, divine strikes\n"
+        "⚔️ *Warrior* — STR. Tank/bruiser. Absorbs hits, dominates the battlefield.\n"
+        "  Path A (Paladin): Holy tank — shields, group buffs, divine nukes\n"
         "  Path B (Warlord): Pure damage — Triple Strike, Rampage, Decimation\n"
         "\n"
-        "🔮 *Mage* — INT. Spells, AOE, and crowd control. *Magic class — passive MP regen.*\n"
-        "  Path A (Sage): Pure magic — Chain Lightning, Meteor, Absolute Zero\n"
-        "  Path B (Void Mage): Dark arts — Hexes, soul drain, void collapse\n"
+        "🔮 *Mage* — INT. Powerful spells and crowd control.\n"
+        "  Path A (Sage): Pure magic — Chain Lightning, Meteor AOE, Absolute Zero\n"
+        "  Path B (Void Mage): Dark arts — Hexes, drain, void collapse\n"
         "\n"
-        "🔪 *Thief* — LUK/AGI. Crits, evasion, gold finds.\n"
+        "🔪 *Thief* — LUK/AGI. Crits, evasion, gold generation.\n"
         "  Path A (Wraith): Ghost — stealth, phantom strike, undetectable dodge\n"
         "  Path B (Specialist): Assassination — poison, bleeds, execute\n"
         "\n"
-        "🏹 *Archer* — DEX. Precision shooting and bounty hunting.\n"
+        "🏹 *Archer* — DEX. Precision and bounty hunting.\n"
         "  Path A (Strider): Ranger — steady aim, nature bond, arrow storm\n"
-        "  Path B (Deadeye): Bounty Hunter — contracts, headshots, escalating damage\n"
+        "  Path B (Deadeye): Bounty — contracts, 1-hour kills, escalating damage\n"
         "\n"
-        "📿 *Priest* — WIS. The only class that can revive defeated players. *Magic class — passive MP regen.*\n"
+        "📿 *Priest* — WIS. The only class that can revive players.\n"
         "  Path A (Saint): Holy healer — group heals, mass resurrection, EXP aura\n"
-        "  Path B (Zealot): Dark cleric — condemn (marks targets unrevivable), curse stacking\n"
+        "  Path B (Zealot): Dark cleric — condemn (unrevivable), curse stacking\n"
         "\n"
-        "🌸 *Botanist* — WIS. Nature magic, poisons, and heals. *Magic class — passive MP regen.*\n"
-        "  Path A (Wildflower Empress): Support — bloom heals, petal veil, Garden of Eden\n"
-        "  Path B (Nature's Chosen): Offense — thorn aura, toxic bloom, Wrath of the Wild\n"
+        "🌸 *Botanist* — WIS. Nature magic, healing, and deadly poisons.\n"
+        "  Path A (Wildflower Empress): Healing/support — bloom heals, petal veil, Garden of Eden\n"
+        "  Path B (Nature's Chosen): Offense/poison — thorn aura, toxic bloom, Wrath of the Wild\n"
         "\n"
-        "💜 *Enchantress* — INT. Charms, hexes, debuffs, and party buffs. *Magic class — passive MP regen.*\n"
+        "💜 *Enchantress* — INT. Charms, hexes, and party buffs.\n"
         "  Path A (Dread Empress): Curse stacking — hexmark, doom curse, mass debuffs\n"
-        "  Path B (Grand Muse): Support — war song, ancient aria, Magnum Opus\n"
+        "  Path B (Grand Muse): Party support — war song, ancient aria, Magnum Opus\n"
         "\n"
-        "⚡ *Valkyrie* — STR. Norse warrior-healer hybrid. Hard-hitting with defensive tools.\n"
+        "⚡ *Valkyrie* — STR. Norse warrior-healer hybrid.\n"
         "  Path A (Iron Valkyrie): Defense — block, runic ward, Bifrost Descent\n"
         "  Path B (Divine Tempest): Lightning offense — storm crits, chain lightning, Valhalla's Thunder\n"
         "\n"
-        "🌀 *Phantom Dancer* — AGI. Evasion, combos, ghost-step.\n"
+        "🌀 *Phantom Dancer* — AGI. Evasion, combos, and ghost-step.\n"
         "  Path A (Danse Macabre): Combo offense — blade storm, thousand cuts, Macabre Finale\n"
         "  Path B (Ethereal Sovereign): Evasion — phase step, mist form, Ethereal Storm\n"
         "\n"
-        "🐍 *Serpent* — STR/AGI. Venom, control, and survival. Unique self-revive mechanics.\n"
-        "  Path A (Cobra): Venom/precision — fang strikes, neurotoxin, Venom of the Ancients\n"
-        "  Path B (King Serpent): Tank/control — crushing coils, coiling stance, Ouroboros\n"
+        "At Lv 10, choose Path A or B with /class. Class evolves at Lv 30, 60, 100. Level cap: 250.\n"
         "\n"
-        "At Lv 10, choose Path A or B. Class evolves at Lv 30, 60, 100. Level cap: 250.\n"
-        "\n"
-        "*Stats:* STR — Physical dmg | INT — Magic dmg | AGI — Dodge | DEX — Crit | WIS — Healing/HP | LUK — Loot\n"
-        "Use /allocate [stat] [amount] to spend stat points. Use /resetstats to refund all."
+        "*Stats:* STR — Physical dmg | INT — Magic dmg | AGI — Dodge | DEX — Crit | WIS — Healing | LUK — Loot"
     ),
     # Page 3 - Daily Activities
     (
-        "🎱 *8Ball World  -  Daily Activities* (3/15)\n"
+        "🎱 *8Ball World  -  Daily Activities* (3/14)\n"
         "\n"
-        "The fastest way to grow is to run all your activities every time you're online.\n"
-        "💡 */hustle* — runs every ready cooldown at once. Use it every session.\n"
-        "💡 */activities* — button hub for all daily activities, challenges, and character commands.\n"
+        "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
+        "💡 */activities* — Open the Activities Hub for a button menu covering every daily activity, challenge, and character command.\n"
         "\n"
-        "*Activity cooldowns:*\n"
-        "/claim — Daily streak reward. Consecutive days unlock bonus Iron Shards and Enchanting Scrolls. _(24 hours)_\n"
-        "/daily — Gold + EXP bonus. _(24 hours)_\n"
-        "/train — EXP training with class multiplier. _(30 min)_\n"
-        "/quest — Sends you on a mission. Returns EXP + gold + possible loot drop. _(1 hour)_\n"
-        "/explore — World map expedition. Choose a zone; results delivered in 1 hour via DM. 2x per day. Higher zones = better loot + more EXP. Use /map to see all zones and your success % at each.\n"
-        "/pool — Quick roll for EXP, gold, and possible gear. Your main source of rare drops. _(8 seconds)_\n"
-        "/dungeon — Full JRPG dungeon run. 4 difficulty modes, 4–10 floors, real-time combat timer, MP skills, boss phases. Extract to keep loot — die and lose everything.\n"
-        "/encounter — Quick fight vs an NPC, Hunt a wild monster, or enter the Dungeon.\n"
+        "*Activities and their cooldowns:*\n"
+        "/claim  -  Daily streak reward. Gold + bonus materials every day. Streak builds over consecutive days (24 hours)\n"
+        "/daily  -  Gold + EXP reward  (24 hours)\n"
+        "/train  -  EXP gain with class bonus  (30 min)\n"
+        "/quest  -  EXP + gold + possible loot  (1 hour)\n"
+        "/explore  -  World map expedition. Choose a zone, results in 1 hour, 2x per day. Higher zones = better loot + more EXP.\n"
+        "/map  -  View the full world map with all 9 zones and your success % per zone.\n"
+        "/pool  -  Roll for EXP, gold, and items  (8 seconds)\n"
+        "/dungeon  -  Turn-based JRPG dungeon. 4 difficulty modes (Easy/Hard/Extreme/Hell). 4–10 floors, telegraphed enemy moves, MP skills, boss phase transitions. Extract to keep loot — die and lose it all.\n"
         "\n"
-        "💡 *Idle Rewards* — After 1+ hour away, your accumulated gold + EXP + possible item drop arrives as a *private DM*. Check your DMs when you come back.\n"
+        "💡 /pool is your main source of rare weapons and accessories. The rarer the roll (epic, legendary), the better the potential drop. Keep rolling.\n"
+        "\n"
+        "💡 /hustle runs all ready cooldowns at once — daily, train, quest, pool, claim, and explore. Use it every time you're in the group.\n"
+        "\n"
+        "💡 *Idle Rewards* — When you come back after being away for an hour or more, the bot sends your return gold + EXP + possible item drop as a *private DM* so the group stays clean.\n"
         "\n"
         "*Random Events*\n"
-        "Events fire automatically as the group chats (roughly every 100 messages, 30-minute minimum gap).\n"
-        "Common: Travelers (/greet), Bandits (/fight), Ghosts (/shoot), Gold caches (/claim)\n"
-        "Uncommon: Merchant discounts (/greet), Rivals (/fight), Drake raids (/bossattack), Storm events\n"
-        "Rare: Legendary Craftsman (/shoplegend, 10 min only), Shrines (/pray), Cursed tables (/purge)\n"
-        "\n"
-        "*World Boss Events* 🔥\n"
-        "The rarest events — a massive boss spawns and calls out the most recently active players by name.\n"
-        "Use /bossattack to deal damage. The boss uses your full combat power (stats, weapon procs, crits, pet ATK, class procs — exactly like PvP).\n"
-        "The boss fights back — it will counterattack random fighters and deal real HP damage. At 50% HP it enters *Phase 2* and becomes much more aggressive.\n"
-        "Use /bossevade to step out safely — your reward share is locked in, the boss stops targeting you.\n"
-        "Rewards split by damage dealt. Top contributor gets a guaranteed legendary drop. Boss must be defeated within 20 minutes or it escapes."
+        "As the group chats, random events appear automatically — travelers with tips, bandits to fight, merchants with discounts, legendary craftsmen, hidden caches, and more.\n"
+        "Common events: /greet, /fight, /shoot, /claim\n"
+        "Rare events: /pray, /purge, /shoplegend\n"
+        "Group raids: *Drake* events let everyone /strike for shared loot based on damage dealt."
     ),
-    # Page 4 - Combat
+    # Page 4 - Combat & Raids
     (
-        "🎱 *8Ball World  -  Combat* (4/15)\n"
+        "🎱 *8Ball World  -  Combat & Raids* (4/14)\n"
         "\n"
-        "*PvP — Player vs Player*\n"
-        "Reply to any player's message and use /attack to fight them. Or use /attack with no target for a live player picker. Winners steal gold and EXP. Losers are defeated for 6m and lose 10% EXP.\n"
+        "*PvP  -  Player vs Player*\n"
+        "Reply to any player's message and use /attack to fight them. Or use /attack with no target to open a live player picker and choose who to hit. Winners steal gold and EXP. Losers are defeated for 6m and lose 10% EXP.\n"
         "\n"
         "*Battle Cards*\n"
-        "When you land a hit, a battle card appears with buttons for the defender:\n"
-        "⚔️ Retaliate — strike back | ✨ Skills — open skill menu\n"
-        "💊 Heal — use a potion | 🛡️ Defend — raise your shield\n"
-        "The card auto-deletes 20s after the last action.\n"
+        "When you land a hit, a battle card appears in chat with buttons for the defender:\n"
+        "⚔️ Retaliate — strike back  |  ✨ Skills — open your skill menu\n"
+        "💊 Heal — use a potion (or Priest self-heal)  |  🛡️ Defend — raise your shield\n"
+        "The card auto-deletes 20 seconds after the last button press.\n"
         "\n"
-        "*MP — Mana Points*\n"
-        "Every player has MP. Skills cost MP to use (3–12 MP depending on skill tier).\n"
-        "🔮 *Magic classes* (Mage, Priest, Botanist, Enchantress): regenerate +5 MP per combat turn passively.\n"
-        "⚔️ *Other classes*: MP only restores on revive or by using an MP potion. Use it wisely.\n"
-        "MP potions are in /shop under Potions: Minor MP Tonic (30 MP), Major MP Elixir (80 MP), Grand Mana Crystal (full restore).\n"
-        "Your current MP shows in /stats and on every battle card.\n"
-        "\n"
-        "*Skills*\n"
-        "/skill with no target opens a target picker — tap a player, then choose your skill. The menu stays open for chained attacks on the same target. Skills with insufficient MP show ❌ and can't be selected.\n"
-        "\n"
-        "*Proc Weapons*\n"
-        "Rare, Epic, and Legendary weapons can have on-hit effects that trigger at 30% chance per attack:\n"
-        "⚡ Double Strike — a second blow at 50–65% dmg | ☠️ Venom — applies poison stacks\n"
-        "🔥 Ignite — applies burn stacks | 💜 Lifesteal — drains HP from damage dealt\n"
-        "🗡️ Rend — exposes armor (+15% dmg taken for next 2–3 hits)\n"
-        "These fire in PvP, encounters, dungeons, and world boss fights.\n"
+        "*Skills in PvP*\n"
+        "/skill with no target opens a target picker — tap a player, then choose your skill. The skill menu stays open so you can keep attacking the same target.\n"
         "\n"
         "*Shield — /defend*\n"
-        "Charge your shield before you're hit. It absorbs incoming damage before HP. Depleted shields reset on death/revival.\n"
-        "Use /defend core (with a Monster Core in your inventory) to permanently raise max shield capacity.\n"
+        "Use /defend before you're hit to charge up your shield. The shield absorbs incoming damage before your HP takes a hit. Once it's depleted it's gone for that life — it resets on death and revival.\n"
+        "Use /defend core (with a Monster Core in your inventory) to permanently increase your shield's max capacity.\n"
         "\n"
-        "*Killstreaks & Wanted*\n"
-        "Each kill without dying extends your streak (shown in /who with 🔥). 5+ kills in one day marks you 🔴 WANTED.\n"
+        "*Killstreaks*\n"
+        "Every consecutive kill without dying extends your streak (shown in /who with 🔥). Streaks reset on death.\n"
         "\n"
         "*Revenge*\n"
-        "Being killed grants a 24h revenge window. Attacking your killer deals +15% bonus damage (one-time).\n"
+        "When you're killed, you gain a 24-hour revenge window. Attacking your killer deals +15% bonus damage (one-time).\n"
+        "\n"
+        "*Wanted*\n"
+        "Kill 5+ players in a single day and you become 🔴 WANTED — visible on /who and /war. High-risk, high-reward.\n"
         "\n"
         "*/who Icons*\n"
-        "❤️ Healthy (>50%) | 🟡 Injured (25–50%) | 🔴 Critical (<25%) | 💀 Defeated (6m)\n"
-        "🛡️ Invincible (5m after revival — immune but can't initiate PvP)\n"
-        "🔥 Kill streak | 🔴 WANTED | 💰 Active bounty\n"
+        "❤️ Healthy (above 50% HP)  |  🟡 Injured (25–50%)  |  🔴 Critical (below 25%)\n"
+        "💀 Defeated — out for 6m, cannot be attacked\n"
+        "🛡️ Invincible — immune to all damage AND cannot initiate PvP (from revival items or Priest skills)\n"
+        "🔥×N Kill streak  |  🔴 WANTED — 5+ kills today  |  💰 Active bounty on this player\n"
+        "\n"
+        "*Boss Fights*\n"
+        "Use /boss to start a group boss encounter (button menu). /attack and /skill redirect to the boss automatically while it's active.\n"
+        "\n"
+        "*Raids*\n"
+        "/raid  -  Create a party (up to 4 players). Others type /raid to join. Use /raidstart when ready.\n"
+        "Turn-based: each player has 25 seconds to /attack or /skill before it auto-advances.\n"
+        "/soloraid  -  Private raid scaled to your level. Great for solo farming.\n"
         "\n"
         "*Defeat & Revival*\n"
-        "HP hits 0 → defeated 6m, lose 10% EXP, MP drains to 0. To recover:\n"
+        "When your HP hits 0 you are defeated for 6m and lose 10% EXP. Options to recover:\n"
         "• Wait it out (6m)\n"
-        "• Use *Scroll of Revival* (/use) → full HP + MP + 5 min invincibility\n"
-        "• Ask a Priest to /heal you → free revive\n"
-        "• Serpent class has a unique passive self-revive at high levels\n"
+        "• Use *Scroll of Revival* from your inventory (/use) — grants 5 min invincibility after\n"
+        "• Ask a Priest to /heal you  -  they revive for free\n"
+        "• 📿 Chalkers can also /heal themselves with no reply to self-revive\n"
         "\n"
         "*Offline Protection*\n"
-        "Inactive 1+ hour → can't be attacked, removed from /attack picker. Any command reactivates you.\n"
+        "Players who have been inactive for 1+ hour cannot be attacked or appear in the /attack picker. Using any command keeps you marked as active.\n"
         "\n"
         "*Pets in Combat*\n"
-        "Your active pet auto-attacks alongside every /attack, /skill, and boss strike. On defense it may trigger its defensive ability (intercept, counter, poison, stun, lifesteal, or shield — unlocks at pet Lv 10)."
+        "Your active pet auto-attacks with you. If attacked, it may trigger its defensive ability (intercept, counter, poison, stun, lifesteal, or shield). Defensive abilities unlock at pet Level 10."
     ),
     # Page 5 - Gear & Economy
     (
-        "🎱 *8Ball World  -  Gear & Economy* (5/15)\n"
+        "🎱 *8Ball World  -  Gear & Economy* (5/14)\n"
         "\n"
         "💡 */gearhub* — One hub for all gear commands: equipment, upgrades, and economy (3 pages).\n"
         "\n"
         "*Gear Slots*\n"
         "⚔️ Weapon, 🛡️ Armor, 🔰 Shield, 💍 Accessory, 🎩 Hat, 🧤 Gloves, 👢 Boots, 🎭 Mask.\n"
         "Use /equip to browse your bag and tap to equip. Use /unequip to remove gear.\n"
-        "Hats, Gloves, Boots, and Masks are pure DEF items — equip all four to stack serious defense.\n"
-        "/enhance  -  Upgrade gear with Iron Shards (+1 to +10 max, fails possible at high levels).\n"
-        "/enchant  -  Add random enchants via Enchanting Scrolls (up to 3 per item).\n"
-        "/reinforce  -  Sacrifice a duplicate to permanently raise base stats (max 20 stacks).\n"
+        "Hats, Gloves, Boots, and Masks are pure DEF items — equip all four to stack serious defense. All can be enhanced, enchanted, and reinforced.\n"
+        "/enhance  -  Upgrade gear with Iron Shards. Tap the slot button. +1 to +10 max. Fails are possible at high levels.\n"
+        "/enchant  -  Add random enchants via Enchanting Scrolls (up to 3 per item). Tap slot to enchant.\n"
+        "/reinforce  -  Sacrifice a duplicate to permanently raise its base stats (+1 DEF per reinforce, max 20). Tap to select.\n"
         "/reinforce ascend  -  After 20 reinforces, Ascend the item to ★ tier (+5 flat bonus, resets to 0/20). Up to ★★★.\n"
         "\n"
-        "*Proc Weapons*\n"
-        "Rare, Epic, and Legendary weapons may have on-hit effects — a special trigger at 30% chance per attack.\n"
-        "⚡ *Double Strike* — lashes out again for 50–65% of the original hit\n"
-        "☠️ *Venom* — stacks poison damage over time\n"
-        "🔥 *Ignite* — stacks burn damage over time\n"
-        "💜 *Lifesteal* — recovers HP equal to 18–22% of damage dealt\n"
-        "🗡️ *Rend* — exposes armor (+15% damage taken for the next 2–3 hits)\n"
-        "Proc weapons are class-locked (like all gear). Look for them in /pool, dungeon loot, and world boss drops.\n"
-        "\n"
-        "*Pre-Enchanted Drops*\n"
-        "Rare+ gear can drop from encounters, dungeons, and world bosses already upgraded and enchanted.\n"
-        "An Epic sword might arrive as *Voidblade +3 ✨(Flaming)* — already enhanced to +3 and enchanted with Flaming.\n"
-        "Rarity determines how enhanced and enchanted the item can arrive: Rare (0–2+), Epic (1–4+), Legendary (3–7+), Mythic (5–10+).\n"
+        "*Consumable Items*\n"
+        "Use /use to open your consumables and tap to use an item.\n"
+        "• Health Potion — +250 HP  |  Greater Health Potion — +500 HP\n"
+        "• Grand Restorative Flask — +1,500 HP  |  Supreme Restorative Flask — +5,000 HP\n"
+        "• Ultimate Vitality Draught — +15,000 HP  _(for high-HP classes like Serpent)_\n"
+        "• Scroll of Revival — Full self-revive from defeat (5 min invincibility after)\n"
+        "• Iron Shard — Used for /enhance and /forge\n"
+        "• Enchanting Scroll — Used for /enchant\n"
+        "• Monster Core (Element) — Permanent stat boost. Get them by catching in Hunt mode.\n"
         "\n"
         "*Titles*\n"
-        "/title — Equip a title earned through achievements. Titles show on your /stats and grant significant stat bonuses.\n"
-        "Higher-tier titles grant +Max HP (hundreds to thousands), all-stat boosts, and LUK bonuses.\n"
+        "/title — View your earned titles and tap to equip one. Titles show on your /stats and some grant stat bonuses.\n"
         "\n"
         "*Daily Claim*\n"
-        "/claim — Daily reward with streak bonuses: Iron Shards (Day 3+), Enchanting Scrolls (Day 14+).\n"
+        "/claim — Daily reward with streak bonuses: Iron Shards (Day 3+), Iron Shards (Day 7+), Enchanting Scrolls (Day 14+).\n"
         "\n"
         "*Crafting — /forge*\n"
         "4 tabbed categories: ⚔️ Weapons  |  🛡️ Armor  |  💍 Accessories  |  🧪 Consumables\n"
-        "30+ recipes using zone drops. Craftable-only epic/legendary gear cannot be found any other way.\n"
-        "✅ = you have the mats. 🔒 = missing materials.\n"
+        "30+ recipes using zone drops (Monster Fang, Shadow Essence, Holy Fragment, Void Shard, Primal Orb, etc.).\n"
+        "Craftable-only epic/legendary gear exists that cannot be found any other way.\n"
+        "✅ = you have the mats. 🔒 = missing materials. Craft buttons appear only when ready.\n"
+        "\n"
+        "*Trading*\n"
+        "/trade  -  Reply to a player to open the trade menu. Pick an item from buttons, then pick a price (or gift for free). They type /accept to complete it.\n"
         "\n"
         "*Economy*\n"
         "/inventory — Browse your bag by category. Tap 💰 Sell buttons to sell items directly.\n"
-        "/shop  -  Tabbed shop (10 categories). Guild members get a discount at guild level 7+.\n"
-        "/shoplegend  -  Legendary Craftsman's shop (event-only, 10 min window). Legendary and mythic gear.\n"
-        "/trade  -  Reply to a player, pick an item, set a price (or gift free). They type /accept to complete it.\n"
+        "/shop  -  Tabbed shop with 10 categories: 🧪 Potions, ⚔️ Weapons, 🛡️ Armor, 🔰 Shields, 💍 Accessories, 🎩 Hats, 🧤 Gloves, 👢 Boots, 🎭 Masks, 📦 Materials. Gear items show which class they're for. Guild members get a discount at guild level 7+.\n"
+        "/shoplegend  -  Legendary Craftsman's shop. Only available for 10m when the rare event fires. Stocks legendary and mythic gear from all categories.\n"
         "\n"
         "*Set Bonuses*\n"
         "Equip matching legendary pieces to unlock set bonuses shown in /stats Gear page."
     ),
     # Page 6 - Command Reference (Core)
     (
-        "🎱 *8Ball World  -  Commands: Core* (6/15)\n"
+        "🎱 *8Ball World  -  Commands: Core* (6/14)\n"
         "\n"
         "*⚡ Command Hubs*\n"
         "/empire  -  Master hub + idle building system (collect resources, upgrade buildings, earn passive stat bonuses)\n"
@@ -25449,8 +25035,6 @@ GUIDE_PAGES = [
         "/defend core  -  Use a Monster Core to increase shield max capacity\n"
         "/heal  -  Heal yourself or reply to heal ally\n"
         "/boss  -  Start a group boss (button menu)\n"
-        "/bossattack  -  Attack the active world boss (during World Boss events)\n"
-        "/bossevade  -  Step out of a world boss fight safely — reward share locked in\n"
         "/raid  -  Create or join a raid party\n"
         "/raidstart  -  Start the raid\n"
         "/raidparty  -  View current party\n"
@@ -25482,7 +25066,7 @@ GUIDE_PAGES = [
     ),
     # Page 7 - Command Reference (Social)
     (
-        "🎱 *8Ball World  -  Commands: Social* (7/15)\n"
+        "🎱 *8Ball World  -  Commands: Social* (7/14)\n"
         "\n"
         "*Guilds & Orders*\n"
         "/guild  -  Social hub — your guild + secret order together\n"
@@ -25534,7 +25118,7 @@ GUIDE_PAGES = [
     ),
     # Page 7 - Guilds & Advanced
     (
-        "🎱 *8Ball World  -  Guilds & Advanced Systems* (8/15)\n"
+        "🎱 *8Ball World  -  Guilds & Advanced Systems* (8/14)\n"
         "\n"
         "*Social Hub*\n"
         "/guild — Opens your combined Social Standing card showing your Guild and Secret Order in one view. Use this as your main social dashboard.\n"
@@ -25578,7 +25162,7 @@ GUIDE_PAGES = [
     ),
     # Page 8 - Pets
     (
-        "🎱 *8Ball World  -  Pets & Pet Hub* (9/15)\n"
+        "🎱 *8Ball World  -  Pets & Pet Hub* (9/14)\n"
         "\n"
         "*Central Hub: /pethub*\n"
         "Access every pet feature from one place. All actions, info, and management in a single menu.\n"
@@ -25630,7 +25214,7 @@ GUIDE_PAGES = [
     ),
     # Page 9 - Marriage & Social
     (
-        "🎱 *8Ball World  -  Marriage & Social* (10/15)\n"
+        "🎱 *8Ball World  -  Marriage & Social* (10/14)\n"
         "\n"
         "*Getting Married*\n"
         "Reply to any player's message and type /marry to propose.\n"
@@ -25676,7 +25260,7 @@ GUIDE_PAGES = [
 
     # Page 10 - Encounters & Monsters
     (
-        "🎱 *8Ball World  -  Encounters & Monsters* (11/15)\n"
+        "🎱 *8Ball World  -  Encounters & Monsters* (11/14)\n"
         "\n"
         "Use /encounter to begin. Choose *Battle*, *Hunt*, or *Dungeon*.\n"
         "\n"
@@ -25711,7 +25295,7 @@ GUIDE_PAGES = [
     ),
     # Page 11 - Influence & Fame
     (
-        "🎱 *8Ball World  -  Influence & Fame* (12/15)\n"
+        "🎱 *8Ball World  -  Influence & Fame* (12/14)\n"
         "\n"
         "Influence is a silent measure of your standing in the order. It grows through kindness, shrinks through cruelty, and tells the world exactly how you carry yourself.\n"
         "\n"
@@ -25723,7 +25307,6 @@ GUIDE_PAGES = [
         "• Replying 'thank you' / 'thanks' → +1\n"
         "• Replying 'welcome' / 'np' → +1\n"
         "• Kill a boss → +3\n"
-        "• Deal damage in a World Boss event → +5 (top contributor → +15)\n"
         "• Win arena match → +5\n"
         "• Complete a secret quest → +10 to +50\n"
         "• Positive /oracle reading → +5\n"
@@ -25747,7 +25330,7 @@ GUIDE_PAGES = [
     ),
     # Page 12 - Secret Orders
     (
-        "🎱 *8Ball World  -  Secret Orders* (13/15)\n"
+        "🎱 *8Ball World  -  Secret Orders* (13/14)\n"
         "\n"
         "Orders are cross-guild alliances of up to 30 members — a tier above Guilds. They span multiple guilds, operate in the shadows, share an influence pool, and unlock perks that grow over time.\n"
         "\n"
@@ -25782,45 +25365,38 @@ GUIDE_PAGES = [
         "🎱 _The ball knows. The order watches. Act accordingly._"
     ),
     (
-        "🎱 *8Ball World  -  The Dungeon* (14/15)\n"
+        "🎱 *8Ball World  -  The Dungeon* (14/14)\n"
         "\n"
         "Access via `/dungeon` or `/encounter` → 🏚️ *Dungeon*\n"
         "\n"
         "*How it works:*\n"
-        "Up to 4 difficulty modes. 4–10 floors, 10 rooms each. Combat is *real-time* — enemies attack on a live timer. Fight through every room, beat the floor boss, then descend. *Extract* any time to bank rewards. *Die* and you lose everything from that run.\n"
+        "6 floors. 10 rooms each. Combat is *real-time* — the enemy attacks on a timer whether you act or not. Fight through every room, beat the boss, descend. *Extract* at any time to bank your rewards. *Die* and you lose everything from that run.\n"
         "\n"
         "*Room Types:*\n"
         "👹 Monster — fight for gold & EXP\n"
         "💀 Miniboss — tougher monster, bigger reward\n"
         "🔴 Boss — defeat to clear the floor (guaranteed on room 10)\n"
         "💰 Treasure — free gold + possible item drop\n"
-        "🛖 Rest — recover HP (and MP for magic classes)\n"
+        "🛖 Rest — recover HP\n"
         "🧙 NPC — encounter a dungeon wanderer (varies per floor)\n"
         "💥 Trap — stat check to avoid; AGI/WIS reduces damage\n"
         "\n"
         "*Combat Buttons:*\n"
         "⚔️ Attack | 🛡️ Guard (−40% dmg for 1 hit) | ✨ Skill | 🧪 Potion | 🏃 Flee\n"
-        "Enemy attacks every 1–3 seconds. Guard before the next hit lands.\n"
-        "\n"
-        "*MP in Dungeons*\n"
-        "Skills cost MP (3–12 MP per skill). You enter with your current MP from the overworld.\n"
-        "🔮 Magic classes (Mage, Priest, Botanist, Enchantress) regenerate +5 MP per combat turn.\n"
-        "⚔️ Other classes: MP does not regenerate — use Grand Mana Crystals (purchased in /shop) or Minor/Major MP potions.\n"
-        "Rest rooms restore HP and give magic classes an MP top-up.\n"
+        "Enemy attacks every 1–3 seconds on a live timer. Guard before the next hit lands.\n"
         "\n"
         "*Loot scales with floor depth:*\n"
-        "Floor 1–2: Common/Uncommon  •  Floor 3–4: Rare/Epic\n"
-        "Floor 5–6: Epic/Legendary  •  Boss: 30% chance at Mythic drop\n"
-        "Rare+ drops can arrive pre-enhanced and pre-enchanted (e.g. *Iron Blade +4 ✨(Warding)*).\n"
+        "Floor 1–2: Common/Uncommon gear  •  Floor 3–4: Rare/Epic\n"
+        "Floor 5–6: Epic/Legendary  •  Boss: 30% chance at a Mythic drop\n"
         "\n"
         "*Party Bonus:*\n"
-        "Party members earn +25% EXP when you beat a dungeon room.\n"
+        "Party members earn +25% EXP when you beat a dungeon room. Run dungeons with your party for a shared grind.\n"
         "\n"
         "*Tips:*\n"
         "• Guard the tick before a skill fires — skills hit 1.6–2.2× harder\n"
-        "• Proc weapons fire in dungeon combat — lifesteal weapons are especially strong here\n"
-        "• Extract early if HP is low and you have good loot already\n"
+        "• Extract early if you get good loot and your HP is low\n"
         "• Floor 6 minibosses are the toughest non-boss enemies in the game\n"
+        "• Each boss has a unique intro — read it to know what you're facing\n"
         "\n"
         "🏚️ _Every floor is darker than the last. Extract wisely._"
     ),
@@ -25834,13 +25410,13 @@ GUIDE_PAGES = [
         "Build and upgrade structures on the Build tab. Each building generates resources every hour (capped at 24h accumulation). When you open /empire or come back after being away, the bot auto-collects everything and shows what you earned in your return DM.\n"
         "\n"
         "*Buildings*\n"
-        "🏠 *Homestead* _(base building, max Lv 10)_ — Generates 🪵 Timber per hour. Unlocks all other buildings. Grants *+600 Max HP* per level (up to +6,000 at Lv 10).\n"
-        "⚔️ *Barracks* _(requires Homestead Lv 2)_ — Generates 🪨 Stone. Grants *+50 flat ATK* per level (up to +500).\n"
-        "🍺 *Tavern* _(requires Homestead Lv 3)_ — Generates 💰 Gold passively. Grants *+15 LUK* per level (up to +150).\n"
-        "📚 *Library* _(requires Barracks Lv 2)_ — Generates 💎 Crystal. Grants *+8% EXP* per level from all sources (up to +80%).\n"
-        "⚒️ *Forge* _(requires Barracks Lv 3)_ — Generates 🔩 Iron Shards. Grants *+35 DEF* per level (up to +350).\n"
-        "🌿 *Garden* _(requires Homestead Lv 5)_ — Generates 🧪 Health Potions. Grants *+4% HP regen* per PvP turn per level (up to +40%).\n"
-        "🕳️ *Void Shrine* _(requires Library Lv 3)_ — Generates 💎 Crystal at high rate. Grants *+20 INT +20 WIS* per level (up to +200 each).\n"
+        "🏠 *Homestead* _(base building, max Lv 10)_ — Generates 🪵 Timber per hour. Unlocks all other buildings. Grants +75 Max HP per level.\n"
+        "⚔️ *Barracks* _(requires Homestead Lv 2)_ — Generates 🪨 Stone. Grants +5 flat ATK per level.\n"
+        "🍺 *Tavern* _(requires Homestead Lv 3)_ — Generates 💰 Gold passively. Grants +2 LUK per level.\n"
+        "📚 *Library* _(requires Barracks Lv 2)_ — Generates 💎 Crystal. Grants +2% EXP per level from all sources.\n"
+        "🔨 *Forge* _(requires Barracks Lv 3)_ — Generates 🔩 Iron Shards. Grants +4 DEF per level.\n"
+        "🌿 *Garden* _(requires Homestead Lv 5)_ — Generates 🧪 Health Potions. Grants passive HP regen each PvP turn per level.\n"
+        "⛩️ *Shrine* _(requires Library Lv 3)_ — Generates 💎 Crystal at high rate. Grants +3 INT +3 WIS per level.\n"
         "\n"
         "*Resources*\n"
         "🪵 Timber, 🪨 Stone, 💎 Crystal — Empire building materials. Used to upgrade structures.\n"
@@ -25855,11 +25431,10 @@ GUIDE_PAGES = [
         "Every building level grants a permanent passive bonus — Max HP, ATK, DEF, INT, WIS, LUK, EXP gain, or PvP regen. View your current bonuses on the 📊 Stat Bonuses tab.\n"
         "\n"
         "*Tips*\n"
-        "• Build Homestead first — it's the prerequisite for everything else.\n"
-        "• Homestead Lv 10 gives +6,000 Max HP — the single biggest HP source in the game.\n"
-        "• Library + Shrine stack EXP bonuses on top of guild and enchant bonuses.\n"
-        "• Garden is the only passive PvP HP regen in the game — very strong in drawn-out fights.\n"
-        "• Resources cap at 24h — log in at least daily to avoid waste.\n"
+        "• Build Homestead first — it's the prerequisite for everything.\n"
+        "• Library and Shrine stack EXP bonuses with guild and enchant bonuses.\n"
+        "• Garden is the only passive PvP HP regen in the game — very strong in long fights.\n"
+        "• Resources cap at 24h — log in at least once a day to avoid waste.\n"
         "\n"
         "🏰 _Your empire grows whether you're here or not._"
     ),
@@ -31552,32 +31127,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if roll < 0.70:   freq = "common"
         elif roll < 0.90: freq = "uncommon"
         else:             freq = "rare"
-        # For rare events: 50% chance to spawn a world boss instead
-        if freq == "rare" and chat_id not in active_world_bosses and random.random() < 0.50:
+        pool = [e for e in RANDOM_EVENTS if e["freq"]==freq]
+        if pool:
+            event = random.choice(pool).copy()
+            active_events[chat_id] = event
             last_event_times[chat_id] = datetime.now()
-            t = asyncio.create_task(_spawn_world_boss(chat_id, context.bot))
-            _bg_tasks.add(t); t.add_done_callback(_bg_tasks.discard)
-        else:
-            pool = [e for e in RANDOM_EVENTS if e["freq"]==freq and e["key"] != "world_boss"]
-            if pool:
-                event = random.choice(pool).copy()
-                active_events[chat_id] = event
-                last_event_times[chat_id] = datetime.now()
-                if event["key"] == "legendary_merchant":
-                    from datetime import timedelta
-                    legend_shop_expiry[chat_id] = datetime.now() + timedelta(minutes=event.get("duration_min", 10))
-                msg = await update.message.reply_text(event["msg"], parse_mode="Markdown")
-                # Store drake message id for reply detection
-                if event["key"] == "drake":
-                    active_drakes[chat_id] = {
-                        "msg_id": msg.message_id,
-                        "hp": event["enemy_hp"],
-                        "max_hp": event["enemy_hp"],
-                        "fighters": {},
-                        "loot_table": event.get("loot_table",[]),
-                        "exp_reward": event["exp_reward"],
-                    }
-                    active_events.pop(chat_id, None)
+            if event["key"] == "legendary_merchant":
+                from datetime import timedelta
+                legend_shop_expiry[chat_id] = datetime.now() + timedelta(minutes=event.get("duration_min", 10))
+            msg = await update.message.reply_text(event["msg"], parse_mode="Markdown")
+            # Store drake message id for reply detection
+            if event["key"] == "drake":
+                active_drakes[chat_id] = {
+                    "msg_id": msg.message_id,
+                    "hp": event["enemy_hp"],
+                    "max_hp": event["enemy_hp"],
+                    "fighters": {},
+                    "loot_table": event.get("loot_table",[]),
+                    "exp_reward": event["exp_reward"],
+                }
+                active_events.pop(chat_id, None)
 
     # Shadow profile
     s = get_or_create_shadow(user.id, user.first_name)
@@ -32893,13 +32462,11 @@ def main():
     app.add_handler(CommandHandler("gbank",          gbank_cmd))
 
     # Events
-    app.add_handler(CommandHandler("greet",       greet_event))
-    app.add_handler(CommandHandler("fight",       fight_event))
-    app.add_handler(CommandHandler("shoot",       shoot_event))
-    app.add_handler(CommandHandler("claim",       claim_cmd))
-    app.add_handler(CommandHandler("pray",        pray_event))
-    app.add_handler(CommandHandler("bossattack",  cmd_bossattack))
-    app.add_handler(CommandHandler("bossevade",   cmd_bossevade))
+    app.add_handler(CommandHandler("greet",     greet_event))
+    app.add_handler(CommandHandler("fight",     fight_event))
+    app.add_handler(CommandHandler("shoot",     shoot_event))
+    app.add_handler(CommandHandler("claim",     claim_cmd))
+    app.add_handler(CommandHandler("pray",      pray_event))
 
     # Admin
     app.add_handler(CommandHandler("wipe",      wipe_cmd))
