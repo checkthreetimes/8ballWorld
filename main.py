@@ -3829,7 +3829,8 @@ def _build_empire_overview(p, uid):
         [InlineKeyboardButton("📦 Collect Resources", callback_data=f"empire_collect_{uid}"),
          InlineKeyboardButton("🏗️ Build / Upgrade",  callback_data=f"empire_tab_{uid}_build")],
         [InlineKeyboardButton("📊 Stat Bonuses",      callback_data=f"empire_tab_{uid}_stats"),
-         InlineKeyboardButton("❌ Close",              callback_data=f"close_msg_{uid}")],
+         InlineKeyboardButton("🗺️ Hubs",              callback_data=f"empire_home_{uid}")],
+        [InlineKeyboardButton("❌ Close",              callback_data=f"close_msg_{uid}")],
     ])
     return "\n".join(lines), markup
 
@@ -3904,19 +3905,6 @@ def _build_empire_stats(p, uid):
         InlineKeyboardButton("❌ Close",        callback_data=f"close_msg_{uid}"),
     ]])
     return "\n".join(lines), markup
-
-
-async def empire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user; p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    # Auto-collect on open
-    notes = _empire_collect(p)
-    save_player(p)
-    text, markup = _build_empire_overview(p, user.id)
-    if notes:
-        text = "📦 *Collected:*\n" + "\n".join(notes) + "\n\n" + text
-    await send_group(update, text[:4096], reply_markup=markup, delay=30)
 
 
 async def empire_tab_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -28440,21 +28428,19 @@ def _empire_markup(uid: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 async def empire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    p = get_player(user.id)
+    user = update.effective_user; p = get_player(user.id)
     try: await update.message.delete()
     except: pass
     if not p:
-        await send_group(update, "Use /ascend first to join!", delay=9); return
-    text = (
-        f"🎱 *{p['username']}'s Empire*\n\n"
-        f"_Your master command center. One button for every hub._\n\n"
-        f"⚔️ Combat  |  🌍 Activities\n"
-        f"⚙️ Gear  |  💬 Social  |  🐾 Pet Hub"
-    )
+        await send_group(update, "Use /ascend first!", delay=9); return
+    notes = _empire_collect(p)
+    save_player(p)
+    text, markup = _build_empire_overview(p, user.id)
+    if notes:
+        text = "📦 *Collected:*\n" + "\n".join(notes) + "\n\n" + text
     msg = await context.bot.send_message(
-        chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
-        reply_markup=_empire_markup(user.id))
+        chat_id=update.effective_chat.id, text=text[:4096], parse_mode="Markdown",
+        reply_markup=markup)
     asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, 120))
 
 async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
