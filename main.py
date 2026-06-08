@@ -577,22 +577,17 @@ async def send_group(update: Update, text: str, parse_mode="Markdown",
 
 _PVP_FIGHT_LINES = [
     "⚔️ *{a}* and *{d}* are throwing hands!",
-    "🥊 *{a}* just challenged *{d}* — it's going down!",
+    "🥊 *{a}* just challenged *{d}*, it's going down!",
     "🎱 *{a}* squared up on *{d}*. Let's see how this plays out.",
-    "💥 *{a}* vs *{d}* — someone's getting dropped.",
+    "💥 *{a}* vs *{d}*, someone's getting dropped.",
     "⚔️ *{a}* picked a fight with *{d}*. Bold move.",
-    "🔥 *{a}* came looking for smoke — *{d}* has it.",
-    "🎯 *{a}* locked in on *{d}*. It's on.",
-    "⚡ *{a}* just swung on *{d}* — nobody saw that coming.",
-    "🗡️ Blades out — *{a}* vs *{d}*!",
-    "😤 *{a}* decided *{d}*'s day needed ruining.",
 ]
 
 _PVP_WIN_POOL = [
     ("default", "💀 *{a}* has defeated *{d}*! Another one bites the dust."),
     ("default", "⚔️ *{a}* sent *{d}* to the floor. Brutal."),
     ("default", "🎱 *{a}* just wiped the table with *{d}*."),
-    ("default", "💥 *{a}* dismantled *{d}* — it wasn't even close."),
+    ("default", "💥 *{a}* dismantled *{d}*. It wasn't even close."),
     ("default", "😤 *{a}* made an example out of *{d}*. Respect."),
     ("default", "🔥 *{a}* lit *{d}* up. Walk it off."),
     ("default", "🗡️ *{d}* ran into the wrong one today. *{a}* wins."),
@@ -607,10 +602,10 @@ _PVP_WIN_POOL = [
     ("default", "☠️ *{a}* just ended *{d}*'s whole career. Yikes."),
     ("default", "💀 Pour one out for *{d}*. *{a}* showed absolutely no mercy."),
     ("default", "🤣 *{d}* is going to need a moment. *{a}* handled that."),
-    ("streak", "🔥 *{a}* is on a *{streak}-kill streak* — just added *{d}* to the list. Who's next?"),
-    ("streak", "🏆 *{a}* is on a rampage — *{streak} kills deep* and *{d}* couldn't stop it."),
+    ("streak", "🔥 *{a}* is on a *{streak}-kill streak*, just added *{d}* to the list. Who's next?"),
+    ("streak", "🏆 *{a}* is on a rampage. *{streak} kills deep* and *{d}* couldn't stop it."),
     ("streak", "⚡ *{streak} in a row* for *{a}*. *{d}* was the latest victim."),
-    ("wanted", "🔴 *{a}* is WANTED and still won — took down *{d}*. The heat means nothing."),
+    ("wanted", "🔴 *{a}* is WANTED and still won. Took down *{d}*. The heat means nothing."),
     ("wanted", "🔴 Every hunter wants *{a}*, but *{d}* just found out why that's a bad idea."),
     ("revenge", "💜 *{a}* got their revenge on *{d}*. That score is settled."),
     ("lowlevel", "😅 *{a}* (Lv {alvl}) just clapped *{d}* (Lv {dlvl}). That's an upset."),
@@ -19316,12 +19311,19 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 pass
             asyncio.create_task(announce(context.bot, _pvp_origin_chat[_pvp_pair_k],
                 _pvp_fight_start_line(p["username"], tp["username"]), permanent=True))
+        _sk_grp = _pvp_origin_chat.get(_pvp_pair_k) or _megaphone_state.get("group") or query.message.chat_id
         async def send_result(text):  # noqa: F811
             _pvp_log_append(_pvp_pair_k, text[:4096])
             p_upd  = get_player(uid) or p
             tp_upd = get_player(target_uid) or tp
-            _cb_unlock(uid)
-            await _pvp_notify_both(_pvp_pair_k, p_upd, tp_upd, uid, target_uid, text[:4096], context.bot)
+            _tp_upd = tp_upd or tp
+            if is_defeated(_tp_upd):
+                asyncio.create_task(announce(context.bot, _sk_grp, _pvp_win_line(p_upd or p, _tp_upd), permanent=True))
+                _cb_unlock(uid)
+                await _finalize_pvp(_pvp_pair_k, text[:4096], context.bot)
+            else:
+                _cb_unlock(uid)
+                await _pvp_notify_both(_pvp_pair_k, p_upd, tp_upd, uid, target_uid, text[:4096], context.bot)
         base = calc_attack_damage(p, w)
         out = [f"⚡ *{p['username']}* uses *{sk['name']}*!"]
         # ── Self / group skills — execute on caster, no target needed ──
@@ -19935,11 +19937,13 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         _sk_result_text = "\n".join(out)
         _sk_pair = _pvp_pair_key(uid, target_uid)
         if _sk_killed:
-            _bc = await check_and_claim_bounty(context.bot, p, tp, chat_id)
+            _sk_grp_chat = _pvp_origin_chat.get(_sk_pair) or _megaphone_state.get("group") or chat_id
+            _bc = await check_and_claim_bounty(context.bot, p, tp, _sk_grp_chat)
             if _bc:
                 out.append(f"🎯 *Bounty claimed!* +{_bc}g")
             _sk_result_text = "\n".join(out)
             _pvp_log_append(_sk_pair, _sk_result_text)
+            asyncio.create_task(announce(context.bot, _sk_grp_chat, _pvp_win_line(p, tp), permanent=True))
             _cb_unlock(uid)
             await _finalize_pvp(_sk_pair, _sk_result_text, context.bot)
         else:
