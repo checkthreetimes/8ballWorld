@@ -12707,8 +12707,9 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             d["hp"] = 1
             set_status(d, "serpent_revive_used", 3600)
             extra_notes.append(f"🐍 *Immortal Coils!* {d['username']} refuses to fall — survives at 1 HP! (1h cooldown)")
-        # coiling_stance: -10% damage taken when below 50% HP
-        if "coiling_stance" in get_all_passive_keys(d) and safe_int(d.get("hp", 0)) / max(1, calc_max_hp(d)) < 0.50:
+        # coiling_stance: -10% damage taken when below 50% HP (only while alive)
+        if ("coiling_stance" in get_all_passive_keys(d) and d["hp"] > 0
+                and safe_int(d.get("hp", 0)) / max(1, calc_max_hp(d)) < 0.50):
             _cs_reduce = round(dmg_after_def * 0.10)
             d["hp"] = min(calc_max_hp(d), d["hp"] + _cs_reduce)
             extra_notes.append(f"🐍 *Coiling Stance!* {d['username']} resists — {_cs_reduce} damage absorbed!")
