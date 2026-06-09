@@ -635,6 +635,62 @@ def safe_int(v, d=0):
     try: return int(v or d)
     except: return d
 
+_PVP_FIGHT_LINES = [
+    "⚔️ *{a}* and *{d}* are throwing hands!",
+    "🥊 *{a}* just challenged *{d}*, it's going down!",
+    "🎱 *{a}* squared up on *{d}*. Let's see how this plays out.",
+    "💥 *{a}* vs *{d}*, someone's getting dropped.",
+    "⚔️ *{a}* picked a fight with *{d}*. Bold move.",
+]
+
+_PVP_WIN_POOL = [
+    ("default", "💀 *{a}* has defeated *{d}*! Another one bites the dust."),
+    ("default", "⚔️ *{a}* sent *{d}* to the floor. Brutal."),
+    ("default", "🎱 *{a}* just wiped the table with *{d}*."),
+    ("default", "💥 *{a}* dismantled *{d}*. It wasn't even close."),
+    ("default", "😤 *{a}* made an example out of *{d}*. Respect."),
+    ("default", "🔥 *{a}* lit *{d}* up. Walk it off."),
+    ("default", "🗡️ *{d}* ran into the wrong one today. *{a}* wins."),
+    ("default", "☠️ *{d}* is down. *{a}* standing tall."),
+    ("default", "🎯 *{a}* didn't miss. *{d}* is done."),
+    ("default", "💀 *{d}* caught these hands. *{a}* moves on."),
+    ("default", "😂 *{d}* just got their ass beat by *{a}*. Embarrassing."),
+    ("default", "💀 *{a}* said 'and I'm serious' and beat the brakes off *{d}*."),
+    ("default", "🪑 *{d}* needs a chair. *{a}* just sat them down."),
+    ("default", "😭 *{d}* is cooked. *{a}* didn't even break a sweat."),
+    ("default", "😬 *{d}* picked the wrong one. *{a}* did not hold back."),
+    ("default", "☠️ *{a}* just ended *{d}*'s whole career. Yikes."),
+    ("default", "💀 Pour one out for *{d}*. *{a}* showed absolutely no mercy."),
+    ("default", "🤣 *{d}* is going to need a moment. *{a}* handled that."),
+    ("streak", "🔥 *{a}* is on a *{streak}-kill streak*, just added *{d}* to the list. Who's next?"),
+    ("streak", "🏆 *{a}* is on a rampage. *{streak} kills deep* and *{d}* couldn't stop it."),
+    ("streak", "⚡ *{streak} in a row* for *{a}*. *{d}* was the latest victim."),
+    ("wanted", "🔴 *{a}* is WANTED and still won. Took down *{d}*. The heat means nothing."),
+    ("wanted", "🔴 Every hunter wants *{a}*, but *{d}* just found out why that's a bad idea."),
+    ("revenge", "💜 *{a}* got their revenge on *{d}*. That score is settled."),
+    ("lowlevel", "😅 *{a}* (Lv {alvl}) just clapped *{d}* (Lv {dlvl}). That's an upset."),
+    ("highlevel", "👑 *{a}* (Lv {alvl}) crushed *{d}*. Hardly a surprise, but still."),
+]
+
+def _pvp_fight_start_line(a_name: str, d_name: str) -> str:
+    return random.choice(_PVP_FIGHT_LINES).format(a=a_name, d=d_name)
+
+def _pvp_win_line(a: dict, d: dict) -> str:
+    a_name = a.get("username", "?"); d_name = d.get("username", "?")
+    streak     = safe_int(a.get("kill_streak"))
+    is_wanted  = safe_int(a.get("is_wanted"))
+    is_revenge = safe_int(d.get("revenge_target")) == safe_int(a.get("user_id"))
+    lvl_diff   = a.get("level", 1) - d.get("level", 1)
+    pool = [t for t in _PVP_WIN_POOL if t[0] == "default"]
+    if streak >= 3:  pool += [t for t in _PVP_WIN_POOL if t[0] == "streak"]
+    if is_wanted:    pool += [t for t in _PVP_WIN_POOL if t[0] == "wanted"]
+    if is_revenge:   pool += [t for t in _PVP_WIN_POOL if t[0] == "revenge"]
+    if lvl_diff <= -10: pool += [t for t in _PVP_WIN_POOL if t[0] == "lowlevel"]
+    elif lvl_diff >= 20: pool += [t for t in _PVP_WIN_POOL if t[0] == "highlevel"]
+    _, template = random.choice(pool)
+    return template.format(a=a_name, d=d_name, streak=streak,
+                           alvl=a.get("level", 1), dlvl=d.get("level", 1))
+
 def resolve_item_ci(typed, collection):
     """Return the canonical item name from collection that matches typed (case-insensitive), or None."""
     typed_l = typed.strip().lower()
@@ -3764,7 +3820,7 @@ def _get_empire(p):
     """Return (buildings_dict, resources_dict, last_collect_iso)."""
     bld = sjl(p.get("empire_buildings"), {})
     res = sjl(p.get("empire_resources"), {})
-    lc  = p.get("empire_last_collect", datetime.now().isoformat())
+    lc  = p.get("empire_last_collect") or datetime.now().isoformat()
     return bld, res, lc
 
 def _save_empire(p, bld, res, lc=None):
@@ -3829,6 +3885,8 @@ def _empire_collect(p):
             else:
                 # timber / stone / crystal — go into empire_resources
                 res[rtype] = res.get(rtype, 0) + amt
+                if amt >= 0.1:
+                    notes.append(f"{_EMPIRE_RES_EMOJI.get(rtype, '📦')} +{amt:.1f} {rtype.capitalize()} ({EMPIRE_BUILDINGS[bkey]['name']})")
 
     # Round resource floats
     for k in res:
@@ -4036,7 +4094,6 @@ async def empire_build_callback(update: Update, context: ContextTypes.DEFAULT_TY
     bld[bkey] = cur_lvl + 1
     nxt = bld[bkey]
     _save_empire(p, bld, res, lc)
-    p["empire_last_collect"] = datetime.now().isoformat()
     save_player(p)
     # Flavor text
     flavor_idx = min(nxt - 1, len(b["flavor"]) - 1) if b.get("flavor") else -1
@@ -11343,6 +11400,12 @@ def add_exp(p, amount, weather=None):
     _emp_exp_pct = _empire_stat_bonuses(p).get("exp_bonus_pct", 0)
     if _emp_exp_pct > 0:
         amount = round(amount * (1 + _emp_exp_pct))
+    # EXP softcap: kicks in at level 110, steeply reduces all gains past 110
+    _plvl = p["level"]
+    if _plvl >= 110:
+        _steps = (_plvl - 110) // 3
+        _softcap = max(0.001, 0.40 ** _steps)
+        amount = max(1, round(amount * _softcap))
     msgs = []; leveled_up = False
     p["exp"]      += max(0, amount)
     p["total_exp"] = safe_int(p.get("total_exp")) + max(0, amount)
@@ -13109,8 +13172,9 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         pair = _pvp_pair_key(uid, target_uid)
         _pvp_cards.setdefault(pair, {})
-        _pvp_origin_chat[pair] = query.message.chat_id
-        _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": query.message.chat_id}
+        _pk_grp = _resolve_pvp_group_chat(uid, query.message.chat_id)
+        _pvp_origin_chat[pair] = _pk_grp
+        _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": _pk_grp}
 
         # Alert the defender — clear any old card so Telegram sends a fresh push notification
         _pvp_dm_last_msg.pop(target_uid, None)
@@ -13120,6 +13184,7 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
                 text=f"⚔️ *{a['username']}* is attacking you!", parse_mode="Markdown")
         except Exception:
             pass
+        asyncio.create_task(announce(context.bot, _pk_grp, _pvp_fight_start_line(a["username"], d["username"]), permanent=True))
         start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
         _pvp_log_append(pair, start_txt)
         fresh_a = get_player(uid) or a
@@ -13195,6 +13260,20 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
 
 
 # ── ATTACK ────────────────────────────────────────────────────────────────────
+def _resolve_pvp_group_chat(uid: int, dm_chat_id: int) -> int:
+    """Return the best known group chat ID for PvP announcements.
+    Checks shadow home_group → megaphone state → DB scan → falls back to dm_chat_id."""
+    s = get_shadow(uid)
+    grp = (s.get("home_group") if s else None) or _megaphone_state.get("group")
+    if not grp:
+        try:
+            _c = _db().cursor()
+            _c.execute("SELECT home_group FROM shadow_profiles WHERE home_group IS NOT NULL ORDER BY last_seen DESC LIMIT 1")
+            row = _c.fetchone()
+            if row: grp = row[0]
+        except Exception:
+            pass
+    return grp or dm_chat_id
 async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     au = update.effective_user
     a  = get_player(au.id)
@@ -13294,7 +13373,8 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot  = update.get_bot()
     pair = _pvp_pair_key(au.id, du_id)
     _pvp_cards.setdefault(pair, {})
-    _pvp_origin_chat[pair] = chat_id
+    _grp_chat = _resolve_pvp_group_chat(au.id, chat_id)
+    _pvp_origin_chat[pair] = _grp_chat
     # Alert the defender — clear old card so Telegram sends a fresh push notification
     _pvp_dm_last_msg.pop(du_id, None)
     _pvp_log_msg.pop(du_id, None)
@@ -13303,6 +13383,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"⚔️ *{a['username']}* is attacking you!", parse_mode="Markdown")
     except Exception:
         pass
+    asyncio.create_task(announce(bot, _grp_chat, _pvp_fight_start_line(a["username"], d["username"]), permanent=True))
     start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
     _pvp_log_append(pair, start_txt)
     fresh_a = get_player(au.id) or a
@@ -13473,6 +13554,9 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 check_titles(a); check_titles(d)
                 save_player(a); save_player(d)
                 _fire(check_and_claim_bounty(context.bot, a, d, _pvp_origin_chat.get(pair, uid)))
+                _fin_grp = _pvp_origin_chat.get(pair) or query.message.chat_id
+                _fin_a = get_player(uid) or a; _fin_d = get_player(target_id) or d
+                asyncio.create_task(announce(context.bot, _fin_grp, _pvp_win_line(_fin_a, _fin_d), permanent=True))
                 _cb_unlock(uid)
                 await _finalize_pvp(pair, kill_msg, context.bot)
             else:
@@ -13513,6 +13597,9 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _pvp_log_append(pair, result_text)
 
         if result_type == "defeat":
+            _win_grp = _pvp_origin_chat.get(pair) or query.message.chat_id
+            _win_a = get_player(uid) or a; _win_d = get_player(target_id) or d
+            asyncio.create_task(announce(context.bot, _win_grp, _pvp_win_line(_win_a, _win_d), permanent=True))
             _cb_unlock(uid)
             await _finalize_pvp(pair, result_text, context.bot)
             return
@@ -19209,8 +19296,10 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_player(p)
         # Override send_result for PvP: log to battle log and update DM fight cards
         _pvp_pair_k = _pvp_pair_key(uid, target_uid)
-        # Register group chat origin (needed for kill announcements / _execute_pvp_hit)
-        _pvp_origin_chat.setdefault(_pvp_pair_k, query.message.chat_id)
+        # Register group chat origin with DM fallback
+        if _pvp_pair_k not in _pvp_origin_chat:
+            _pvp_origin_chat[_pvp_pair_k] = _resolve_pvp_group_chat(uid, query.message.chat_id)
+        _sk_grp = _pvp_origin_chat.get(_pvp_pair_k) or _megaphone_state.get("group") or query.message.chat_id
         # Only alert defender and clear stale card if no card is currently active for them
         _is_new_fight = _pvp_dm_last_msg.get(target_uid) is None
         if _is_new_fight:
@@ -19226,8 +19315,13 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             _pvp_log_append(_pvp_pair_k, text[:4096])
             p_upd  = get_player(uid) or p
             tp_upd = get_player(target_uid) or tp
-            _cb_unlock(uid)
-            await _pvp_notify_both(_pvp_pair_k, p_upd, tp_upd, uid, target_uid, text[:4096], context.bot)
+            if is_defeated(tp_upd):
+                asyncio.create_task(announce(context.bot, _sk_grp, _pvp_win_line(p_upd, tp_upd), permanent=True))
+                _cb_unlock(uid)
+                await _finalize_pvp(_pvp_pair_k, text[:4096], context.bot)
+            else:
+                _cb_unlock(uid)
+                await _pvp_notify_both(_pvp_pair_k, p_upd, tp_upd, uid, target_uid, text[:4096], context.bot)
         base = calc_attack_damage(p, w)
         out = [f"⚡ *{p['username']}* uses *{sk['name']}*!"]
         # ── Self / group skills — execute on caster, no target needed ──
