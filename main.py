@@ -214,8 +214,8 @@ def _class_companion_strike(attacker, deal_dmg_fn, apply_to_defender_fn=None):
     # ── SERPENT — Snake Companion 🐍 ─────────────────────────────────────────
     elif line == "serpent":
         raw = round((get_stat(attacker,"STR") + get_stat(attacker,"AGI")) * 0.5 + lvl * 3)
-        if "serpentine_mastery" in pks or "immortal_coils" in pks: raw = round(raw * 1.5)
-        elif "death_venom" in pks or "coiling_stance" in pks: raw = round(raw * 1.25)
+        if "serpentine_mastery" in pks or "immortal_coils" in pks: raw = round(raw * 1.2)
+        elif "death_venom" in pks or "coiling_stance" in pks: raw = round(raw * 1.1)
         dealt = deal_dmg_fn(raw)
         lines.append(f"🐍 *Serpent Companion* strikes for *{dealt} dmg*!")
         if path == "A" and apply_to_defender_fn:
@@ -489,6 +489,24 @@ async def _finalize_pvp(pair, result_text, bot):
                 pass
         await asyncio.gather(_fin_card(_f_au, _f_a, _f_d), _fin_card(_f_du, _f_d, _f_a))
         await _pvp_update_log(pair, _f_au, _f_du, result_text, bot)
+        # Clear all combat status effects for both players so they don't bleed into the next fight
+        _status_fields = (
+            "poison_stacks","poison_pct","poison_damage",
+            "burn_stacks","burn_pct","burn_damage",
+            "bleed_stacks","bleed_pct","bleed_damage",
+            "ward_charges","shield_charges","exposed_hits","marked_hits","branded_hits","weakened_hits",
+            "vanish_turns","regen_charges","regen_amt",
+            "heal_blocked_turns","revive_blocked_turns","silence_turns","hex_turns",
+            "stun_turns","freeze_turns","entangle_turns","distract_turns",
+        )
+        for _sp in (_f_a, _f_d):
+            if _sp:
+                for _sf in _status_fields:
+                    _sp[_sf] = 0
+                save_player(_sp)
+        # Clear per-fight item state (Abyssal Plate, Crystal Golem, Cryptwalker, etc.)
+        for _uid in pair:
+            _pvp_battle_state.pop(_uid, None)
     for _uid in pair:
         _pvp_dm_last_msg.pop(_uid, None)
         _pvp_log_msg.pop(_uid, None)
@@ -634,62 +652,6 @@ def safe_cds(p):    return sjl(p.get("passive_cooldowns"), {})
 def safe_int(v, d=0):
     try: return int(v or d)
     except: return d
-
-_PVP_FIGHT_LINES = [
-    "⚔️ *{a}* and *{d}* are throwing hands!",
-    "🥊 *{a}* just challenged *{d}*, it's going down!",
-    "🎱 *{a}* squared up on *{d}*. Let's see how this plays out.",
-    "💥 *{a}* vs *{d}*, someone's getting dropped.",
-    "⚔️ *{a}* picked a fight with *{d}*. Bold move.",
-]
-
-_PVP_WIN_POOL = [
-    ("default", "💀 *{a}* has defeated *{d}*! Another one bites the dust."),
-    ("default", "⚔️ *{a}* sent *{d}* to the floor. Brutal."),
-    ("default", "🎱 *{a}* just wiped the table with *{d}*."),
-    ("default", "💥 *{a}* dismantled *{d}*. It wasn't even close."),
-    ("default", "😤 *{a}* made an example out of *{d}*. Respect."),
-    ("default", "🔥 *{a}* lit *{d}* up. Walk it off."),
-    ("default", "🗡️ *{d}* ran into the wrong one today. *{a}* wins."),
-    ("default", "☠️ *{d}* is down. *{a}* standing tall."),
-    ("default", "🎯 *{a}* didn't miss. *{d}* is done."),
-    ("default", "💀 *{d}* caught these hands. *{a}* moves on."),
-    ("default", "😂 *{d}* just got their ass beat by *{a}*. Embarrassing."),
-    ("default", "💀 *{a}* said 'and I'm serious' and beat the brakes off *{d}*."),
-    ("default", "🪑 *{d}* needs a chair. *{a}* just sat them down."),
-    ("default", "😭 *{d}* is cooked. *{a}* didn't even break a sweat."),
-    ("default", "😬 *{d}* picked the wrong one. *{a}* did not hold back."),
-    ("default", "☠️ *{a}* just ended *{d}*'s whole career. Yikes."),
-    ("default", "💀 Pour one out for *{d}*. *{a}* showed absolutely no mercy."),
-    ("default", "🤣 *{d}* is going to need a moment. *{a}* handled that."),
-    ("streak", "🔥 *{a}* is on a *{streak}-kill streak*, just added *{d}* to the list. Who's next?"),
-    ("streak", "🏆 *{a}* is on a rampage. *{streak} kills deep* and *{d}* couldn't stop it."),
-    ("streak", "⚡ *{streak} in a row* for *{a}*. *{d}* was the latest victim."),
-    ("wanted", "🔴 *{a}* is WANTED and still won. Took down *{d}*. The heat means nothing."),
-    ("wanted", "🔴 Every hunter wants *{a}*, but *{d}* just found out why that's a bad idea."),
-    ("revenge", "💜 *{a}* got their revenge on *{d}*. That score is settled."),
-    ("lowlevel", "😅 *{a}* (Lv {alvl}) just clapped *{d}* (Lv {dlvl}). That's an upset."),
-    ("highlevel", "👑 *{a}* (Lv {alvl}) crushed *{d}*. Hardly a surprise, but still."),
-]
-
-def _pvp_fight_start_line(a_name: str, d_name: str) -> str:
-    return random.choice(_PVP_FIGHT_LINES).format(a=a_name, d=d_name)
-
-def _pvp_win_line(a: dict, d: dict) -> str:
-    a_name = a.get("username", "?"); d_name = d.get("username", "?")
-    streak     = safe_int(a.get("kill_streak"))
-    is_wanted  = safe_int(a.get("is_wanted"))
-    is_revenge = safe_int(d.get("revenge_target")) == safe_int(a.get("user_id"))
-    lvl_diff   = a.get("level", 1) - d.get("level", 1)
-    pool = [t for t in _PVP_WIN_POOL if t[0] == "default"]
-    if streak >= 3:  pool += [t for t in _PVP_WIN_POOL if t[0] == "streak"]
-    if is_wanted:    pool += [t for t in _PVP_WIN_POOL if t[0] == "wanted"]
-    if is_revenge:   pool += [t for t in _PVP_WIN_POOL if t[0] == "revenge"]
-    if lvl_diff <= -10: pool += [t for t in _PVP_WIN_POOL if t[0] == "lowlevel"]
-    elif lvl_diff >= 20: pool += [t for t in _PVP_WIN_POOL if t[0] == "highlevel"]
-    _, template = random.choice(pool)
-    return template.format(a=a_name, d=d_name, streak=streak,
-                           alvl=a.get("level", 1), dlvl=d.get("level", 1))
 
 def resolve_item_ci(typed, collection):
     """Return the canonical item name from collection that matches typed (case-insensitive), or None."""
@@ -3820,7 +3782,7 @@ def _get_empire(p):
     """Return (buildings_dict, resources_dict, last_collect_iso)."""
     bld = sjl(p.get("empire_buildings"), {})
     res = sjl(p.get("empire_resources"), {})
-    lc  = p.get("empire_last_collect") or datetime.now().isoformat()
+    lc  = p.get("empire_last_collect", datetime.now().isoformat())
     return bld, res, lc
 
 def _save_empire(p, bld, res, lc=None):
@@ -3885,8 +3847,6 @@ def _empire_collect(p):
             else:
                 # timber / stone / crystal — go into empire_resources
                 res[rtype] = res.get(rtype, 0) + amt
-                if amt >= 0.1:
-                    notes.append(f"{_EMPIRE_RES_EMOJI.get(rtype, '📦')} +{amt:.1f} {rtype.capitalize()} ({EMPIRE_BUILDINGS[bkey]['name']})")
 
     # Round resource floats
     for k in res:
@@ -4094,6 +4054,7 @@ async def empire_build_callback(update: Update, context: ContextTypes.DEFAULT_TY
     bld[bkey] = cur_lvl + 1
     nxt = bld[bkey]
     _save_empire(p, bld, res, lc)
+    p["empire_last_collect"] = datetime.now().isoformat()
     save_player(p)
     # Flavor text
     flavor_idx = min(nxt - 1, len(b["flavor"]) - 1) if b.get("flavor") else -1
@@ -11400,12 +11361,6 @@ def add_exp(p, amount, weather=None):
     _emp_exp_pct = _empire_stat_bonuses(p).get("exp_bonus_pct", 0)
     if _emp_exp_pct > 0:
         amount = round(amount * (1 + _emp_exp_pct))
-    # EXP softcap: kicks in at level 110, steeply reduces all gains past 110
-    _plvl = p["level"]
-    if _plvl >= 110:
-        _steps = (_plvl - 110) // 3
-        _softcap = max(0.001, 0.40 ** _steps)
-        amount = max(1, round(amount * _softcap))
     msgs = []; leveled_up = False
     p["exp"]      += max(0, amount)
     p["total_exp"] = safe_int(p.get("total_exp")) + max(0, amount)
@@ -11954,9 +11909,7 @@ async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                          "level":rlvl,"total_exp":rtex,"type":"rpg","class_id":row["class_id"]}
 
     all_entries = list(seen.values())
-    rpg_entries = sorted([e for e in all_entries if e["type"]=="rpg"], key=lambda x: x["total_exp"], reverse=True)
-    shd_entries = sorted([e for e in all_entries if e["type"]=="shadow"], key=lambda x: x["total_exp"], reverse=True)
-    ranked = rpg_entries + shd_entries
+    ranked = sorted(all_entries, key=lambda x: (x["level"], x["total_exp"]), reverse=True)
 
     total  = len(ranked)
 
@@ -12034,9 +11987,7 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                          "level":rlvl,"total_exp":rtex,"type":"rpg","class_id":row["class_id"]}
 
     all_entries = list(seen.values())
-    rpg_entries = sorted([e for e in all_entries if e["type"]=="rpg"], key=lambda x: x["total_exp"], reverse=True)
-    shd_entries = sorted([e for e in all_entries if e["type"]=="shadow"], key=lambda x: x["total_exp"], reverse=True)
-    ranked = rpg_entries + shd_entries
+    ranked = sorted(all_entries, key=lambda x: (x["level"], x["total_exp"]), reverse=True)
 
     PAGE_SIZE = 10
     total = len(ranked)
@@ -12051,7 +12002,7 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cls = CLASS_TREE.get(e.get("class_id") or "", {}).get("name", "No Class") if e["type"]=="rpg" else "Shadow"
         return f"{prefix} *{e['username']}* - Lv {e['level']} - {cls}"
 
-    lines = [f"🏆 *Guild Rankings  -  Page {page}*\n"]
+    lines = [f"🏆 *Rankings  -  Page {page}*\n"]
     for i, e in enumerate(page_entries):
         lines.append(fmt(i, e))
 
@@ -12445,9 +12396,10 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     # Serpent defender: show the snake companion absorption in combat messages
     if dmg > 0 and get_class_line(d) == "serpent":
         _serp_pks_d = get_all_passive_keys(d)
-        _sabsorb = (0.30 if ("immortal_coils" in _serp_pks_d or "coiling_stance" in _serp_pks_d)
-                    else 0.25 if ("armored_scales" in _serp_pks_d or "serpents_resolve" in _serp_pks_d)
-                    else 0.20)
+        _sabsorb = (0.15 if "immortal_coils" in _serp_pks_d
+                    else 0.22 if "coiling_stance" in _serp_pks_d
+                    else 0.18 if ("armored_scales" in _serp_pks_d or "serpents_resolve" in _serp_pks_d)
+                    else 0.15)
         _sabsorbed = round(dmg * _sabsorb)
         extra_notes.append(f"🐍 *Serpent Companion* coils to absorb *{_sabsorbed} dmg*!")
 
@@ -12677,12 +12629,6 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             _sr_bonus = round(dmg_after_def * 0.20)
             dmg_after_def += _sr_bonus; d["hp"] = max(0, d["hp"] - _sr_bonus)
             extra_notes.append(f"🐍 *Serpent's Resolve!* Low HP fuels the strike! +{_sr_bonus} dmg!")
-        if pk_a in ("serpentine_mastery","immortal_coils") and d["hp"] <= 0:
-            _kill_pct = 0.30 if pk_a == "serpentine_mastery" else 0.25
-            _sk_heal = round(calc_max_hp(a) * _kill_pct)
-            a["hp"] = min(calc_max_hp(a), a["hp"] + _sk_heal)
-            extra_notes.append(f"🐍 *{pk_a.replace('_',' ').title()}!* Kill heals {a['username']} for {_sk_heal} HP!")
-
     # ── Serpent defender passives ─────────────────────────────────────────────
     if cls_d and dmg_after_def > 0:
         _pk_d_serp = cls_d.get("passive_key", "")
@@ -12702,11 +12648,20 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             d["hp"] = 1
             set_status(d, "serpent_revive_used", 3600)
             extra_notes.append(f"🐍 *Immortal Coils!* {d['username']} refuses to fall — survives at 1 HP! (1h cooldown)")
-        # coiling_stance: -10% damage taken when below 50% HP
-        if "coiling_stance" in get_all_passive_keys(d) and safe_int(d.get("hp", 0)) / max(1, calc_max_hp(d)) < 0.50:
+        # coiling_stance: -10% damage taken when below 50% HP (only when actual damage was dealt)
+        if "coiling_stance" in get_all_passive_keys(d) and dmg_after_def > 0 and safe_int(d.get("hp", 0)) / max(1, calc_max_hp(d)) < 0.50:
             _cs_reduce = round(dmg_after_def * 0.10)
             d["hp"] = min(calc_max_hp(d), d["hp"] + _cs_reduce)
             extra_notes.append(f"🐍 *Coiling Stance!* {d['username']} resists — {_cs_reduce} damage absorbed!")
+
+    # Serpent attacker kill-heal: fires AFTER defender survival passives so it only procs on a true kill
+    if cls_a and d["hp"] <= 0:
+        _pk_a_serp = cls_a.get("passive_key", "")
+        if _pk_a_serp in ("serpentine_mastery", "immortal_coils"):
+            _kill_pct = 0.15 if _pk_a_serp == "immortal_coils" else 0.20
+            _sk_heal = round(calc_max_hp(a) * _kill_pct)
+            a["hp"] = min(calc_max_hp(a), a["hp"] + _sk_heal)
+            extra_notes.append(f"🐍 *{_pk_a_serp.replace('_',' ').title()}!* Kill heals {a['username']} for {_sk_heal} HP!")
 
     # mana_overload_reflect fires regardless of attacker class
     if d.get("mana_overload_reflect"):
@@ -13172,9 +13127,8 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         pair = _pvp_pair_key(uid, target_uid)
         _pvp_cards.setdefault(pair, {})
-        _pk_grp = _resolve_pvp_group_chat(uid, query.message.chat_id)
-        _pvp_origin_chat[pair] = _pk_grp
-        _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": _pk_grp}
+        _pvp_origin_chat[pair] = query.message.chat_id
+        _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": query.message.chat_id}
 
         # Alert the defender — clear any old card so Telegram sends a fresh push notification
         _pvp_dm_last_msg.pop(target_uid, None)
@@ -13184,7 +13138,6 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
                 text=f"⚔️ *{a['username']}* is attacking you!", parse_mode="Markdown")
         except Exception:
             pass
-        asyncio.create_task(announce(context.bot, _pk_grp, _pvp_fight_start_line(a["username"], d["username"]), permanent=True))
         start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
         _pvp_log_append(pair, start_txt)
         fresh_a = get_player(uid) or a
@@ -13260,20 +13213,6 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
 
 
 # ── ATTACK ────────────────────────────────────────────────────────────────────
-def _resolve_pvp_group_chat(uid: int, dm_chat_id: int) -> int:
-    """Return the best known group chat ID for PvP announcements.
-    Checks shadow home_group → megaphone state → DB scan → falls back to dm_chat_id."""
-    s = get_shadow(uid)
-    grp = (s.get("home_group") if s else None) or _megaphone_state.get("group")
-    if not grp:
-        try:
-            _c = _db().cursor()
-            _c.execute("SELECT home_group FROM shadow_profiles WHERE home_group IS NOT NULL ORDER BY last_seen DESC LIMIT 1")
-            row = _c.fetchone()
-            if row: grp = row[0]
-        except Exception:
-            pass
-    return grp or dm_chat_id
 async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     au = update.effective_user
     a  = get_player(au.id)
@@ -13373,8 +13312,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot  = update.get_bot()
     pair = _pvp_pair_key(au.id, du_id)
     _pvp_cards.setdefault(pair, {})
-    _grp_chat = _resolve_pvp_group_chat(au.id, chat_id)
-    _pvp_origin_chat[pair] = _grp_chat
+    _pvp_origin_chat[pair] = chat_id
     # Alert the defender — clear old card so Telegram sends a fresh push notification
     _pvp_dm_last_msg.pop(du_id, None)
     _pvp_log_msg.pop(du_id, None)
@@ -13383,7 +13321,6 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"⚔️ *{a['username']}* is attacking you!", parse_mode="Markdown")
     except Exception:
         pass
-    asyncio.create_task(announce(bot, _grp_chat, _pvp_fight_start_line(a["username"], d["username"]), permanent=True))
     start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
     _pvp_log_append(pair, start_txt)
     fresh_a = get_player(au.id) or a
@@ -13409,6 +13346,10 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("These aren't your buttons!", show_alert=True); return
 
     pair = _pvp_pair_key(uid, target_id)
+
+    if pair not in _pvp_cards:
+        await query.answer("This fight has already ended.", show_alert=True)
+        return
 
     if not _cb_lock(uid):
         return
@@ -13554,9 +13495,6 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 check_titles(a); check_titles(d)
                 save_player(a); save_player(d)
                 _fire(check_and_claim_bounty(context.bot, a, d, _pvp_origin_chat.get(pair, uid)))
-                _fin_grp = _pvp_origin_chat.get(pair) or query.message.chat_id
-                _fin_a = get_player(uid) or a; _fin_d = get_player(target_id) or d
-                asyncio.create_task(announce(context.bot, _fin_grp, _pvp_win_line(_fin_a, _fin_d), permanent=True))
                 _cb_unlock(uid)
                 await _finalize_pvp(pair, kill_msg, context.bot)
             else:
@@ -13597,9 +13535,6 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _pvp_log_append(pair, result_text)
 
         if result_type == "defeat":
-            _win_grp = _pvp_origin_chat.get(pair) or query.message.chat_id
-            _win_a = get_player(uid) or a; _win_d = get_player(target_id) or d
-            asyncio.create_task(announce(context.bot, _win_grp, _pvp_win_line(_win_a, _win_d), permanent=True))
             _cb_unlock(uid)
             await _finalize_pvp(pair, result_text, context.bot)
             return
@@ -19296,10 +19231,8 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_player(p)
         # Override send_result for PvP: log to battle log and update DM fight cards
         _pvp_pair_k = _pvp_pair_key(uid, target_uid)
-        # Register group chat origin with DM fallback
-        if _pvp_pair_k not in _pvp_origin_chat:
-            _pvp_origin_chat[_pvp_pair_k] = _resolve_pvp_group_chat(uid, query.message.chat_id)
-        _sk_grp = _pvp_origin_chat.get(_pvp_pair_k) or _megaphone_state.get("group") or query.message.chat_id
+        # Register group chat origin (needed for kill announcements / _execute_pvp_hit)
+        _pvp_origin_chat.setdefault(_pvp_pair_k, query.message.chat_id)
         # Only alert defender and clear stale card if no card is currently active for them
         _is_new_fight = _pvp_dm_last_msg.get(target_uid) is None
         if _is_new_fight:
@@ -19315,13 +19248,8 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             _pvp_log_append(_pvp_pair_k, text[:4096])
             p_upd  = get_player(uid) or p
             tp_upd = get_player(target_uid) or tp
-            if is_defeated(tp_upd):
-                asyncio.create_task(announce(context.bot, _sk_grp, _pvp_win_line(p_upd, tp_upd), permanent=True))
-                _cb_unlock(uid)
-                await _finalize_pvp(_pvp_pair_k, text[:4096], context.bot)
-            else:
-                _cb_unlock(uid)
-                await _pvp_notify_both(_pvp_pair_k, p_upd, tp_upd, uid, target_uid, text[:4096], context.bot)
+            _cb_unlock(uid)
+            await _pvp_notify_both(_pvp_pair_k, p_upd, tp_upd, uid, target_uid, text[:4096], context.bot)
         base = calc_attack_damage(p, w)
         out = [f"⚡ *{p['username']}* uses *{sk['name']}*!"]
         # ── Self / group skills — execute on caster, no target needed ──
@@ -23207,6 +23135,8 @@ async def _start_encounter_hunt(query, uid, p):
     m_hp, m_atk, reward_mult, num_gear, num_pots, gear_rarities = _enc_level_stats(m_level, p_level)
     p_mhp = calc_max_hp(p)
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
+    p_max_mp = calc_max_mp(p)
+    p_mp = max(0, min(p_max_mp, safe_int(p.get("mp")) or p_max_mp))
     elem_e = ELEMENT_EMOJI.get(monster[2], "")
     # Load pet info for enc
     _enc_pet = get_active_pet_record(uid)
@@ -23348,13 +23278,24 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if uid in active_dungeons:
                 await query.answer("Already in a dungeon! Use the dungeon buttons to continue.", show_alert=True); return
             chat_id = query.message.chat_id
-            floors = [_dng_gen_floor(f + 1) for f in range(_DNG_FLOORS)]
+            _dng_cfg = DNG_DIFF.get("hard", DNG_DIFF[next(iter(DNG_DIFF))])
+            _dng_num_floors = _dng_cfg.get("floors", 6)
+            floors = [_dng_gen_floor(f + 1) for f in range(_dng_num_floors)]
+            _dng_p_max_mp = calc_max_mp(p)
             state = {
                 "uid": uid, "floor": 1, "room": 1, "phase": "room",
+                "diff": "hard",
                 "p_hp": min(safe_int(p.get("hp", 1)) or calc_max_hp(p), calc_max_hp(p)),
                 "p_max_hp": calc_max_hp(p),
+                "p_mp": max(0, min(_dng_p_max_mp, safe_int(p.get("mp")) or _dng_p_max_mp)),
+                "p_max_mp": _dng_p_max_mp,
+                "p_class_line": get_class_line(p),
                 "p_name": p.get("username", "You"),
                 "floors": floors,
+                "themes": [],
+                "floor_buff": None,
+                "exclusive_earned": False,
+                "companion_earned": False,
                 "s_gold": 0, "s_exp": 0, "s_items": [],
                 "chat_id": chat_id, "msg_id": None,
                 "combat_log": [], "enemy": None,
@@ -23769,11 +23710,18 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             elif "Greater Health Potion" in _inv:   _potion, _heal = "Greater Health Potion", 500
             elif "Health Potion" in _inv:           _potion, _heal = "Health Potion", 250
             if not _potion:
+                _nopot_npc = _enc_npc_attack(enc, p)
+                _nopot_dot = _apply_dot_tick(enc)
+                if _nopot_dot: _nopot_npc += f"\n_{_nopot_dot}_"
                 enc.setdefault("action_log", []).append("🧪 No potions in your bag!")
+                enc.setdefault("action_log", []).append(_nopot_npc)
                 if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
+                if enc["p_hp"] <= 0:
+                    await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*")
+                    return
                 try:
                     await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
-                                                  reply_markup=_encounter_battle_markup(enc))
+                                                  reply_markup=_encounter_battle_markup(enc, p))
                 except Exception: pass
                 return
             _inv.remove(_potion); p["inventory"] = json.dumps(_inv); save_player(p)
@@ -23940,36 +23888,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if enc["e_hp"] <= 0:
             enc.setdefault("action_log",[]).append(action_txt)
             enc.setdefault("action_log",[]).append(npc_act)
-            _kh2 = get_enchant_bonus(p, "kill_heal")
-            if _kh2: enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _kh2)
-            e_level2 = enc.get("e_level", 1)
-            gold_r2  = enc.get("e_gold_range", (5, 15))
-            gold2    = (random.randint(*gold_r2) if isinstance(gold_r2, tuple) else random.randint(5, 30)) * 4 + e_level2 * 20
-            exp_r2   = enc.get("e_exp_range", (20, 50))
-            exp2     = exp_for_level(max(1, e_level2)) // 8 + (random.randint(*exp_r2) if isinstance(exp_r2, tuple) else random.randint(20, 50)) * 50
-            gold2    = round(gold2 * enc.get("reward_mult", 1.0))
-            exp2     = round(exp2  * enc.get("reward_mult", 1.0))
-            add_exp(p, exp2)
-            p["gold"] = safe_int(p.get("gold", 0)) + gold2
-            asyncio.create_task(_party_exp_bonus(context.bot, uid, exp2, f"*{enc['e_name']}*"))
-            _gear_all2 = {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**HATS,**GLOVES,**BOOTS,**MASKS}
-            _dot_gear = []
-            for _dgi in range(enc.get("num_gear", 2)):
-                _drar = random.choice(enc.get("gear_rarities", ["uncommon","rare"]))
-                _dgp  = [n for n,d in _gear_all2.items() if d.get("rarity") == _drar]
-                if not _dgp: _dgp = [n for n,d in _gear_all2.items() if d.get("rarity") in ("rare","epic")]
-                if _dgp: _dot_gear.append(random.choice(_dgp)); add_item(p, _dot_gear[-1])
-            _dot_extra = None
-            if random.random() < 0.70:
-                _dot_extra = random.choice(["Fortune Coin","Enchanting Scroll","Pet Snack","Iron Shard","Fortune Coin"])
-                add_item(p, _dot_extra)
-            _sess2 = _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})
-            _sess2["gold"] = _sess2.get("gold",0) + gold2; _sess2["exp"] = _sess2.get("exp",0) + exp2
-            _dot_loot = "".join(f"\n🎁 *{g}*" for g in _dot_gear)
-            if _dot_extra: _dot_loot += f"\n✨ *{_dot_extra}*"
-            await _end_encounter(
-                f"☠️ *{enc['e_name']}* was finished off by status effects!\n✅ *Victory!*\n"
-                f"💰 +{gold2:,} gold | ⭐ +{exp2:,} EXP{_dot_loot}")
+            _dot_e_lvl = enc.get("e_level", 1)
+            _dot_gold = round((_dot_e_lvl * 20 + random.randint(5, 15) * 4) * enc.get("reward_mult", 1.0))
+            _dot_exp  = round((exp_for_level(max(1, _dot_e_lvl)) // 8) * enc.get("reward_mult", 1.0))
+            add_exp(p, _dot_exp); p["gold"] = safe_int(p.get("gold", 0)) + _dot_gold; save_player(p)
+            await _end_encounter(f"☠️ *{enc['e_name']}* was defeated by status effects!\n✅ *Victory!*\n💰 +{_dot_gold:,} gold | ⭐ +{_dot_exp:,} EXP")
             return
         # Check player dead
         if enc["p_hp"] <= 0:
@@ -24001,6 +23924,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if _ph_blocked:
             action_txt = "⚡ You're stunned and lose your turn!"
         elif data == f"enc_atk_{uid}":
+            # MP regen per turn — magic classes only
+            if get_class_line(p) in _MAGIC_LINES:
+                enc["p_mp"] = min(enc.get("p_max_mp", 10), enc.get("p_mp", 0) + 5)
             _hunt_w = get_weather()
             dmg     = calc_attack_damage(p, _hunt_w)
             if enc.pop("p_weakened", False): dmg = max(1, int(dmg * 0.65))
@@ -24104,11 +24030,18 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             elif "Greater Health Potion" in _inv:   _potion, _heal = "Greater Health Potion", 500
             elif "Health Potion" in _inv:           _potion, _heal = "Health Potion", 250
             if not _potion:
+                _nopot_mon = _enc_monster_attack(enc)
+                _nopot_dot = _apply_dot_tick(enc)
+                if _nopot_dot: _nopot_mon += f"\n_{_nopot_dot}_"
                 enc.setdefault("action_log", []).append("🧪 No potions in your bag!")
+                enc.setdefault("action_log", []).append(_nopot_mon)
                 if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
+                if enc["p_hp"] <= 0:
+                    await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!")
+                    return
                 try:
                     await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
-                                                  reply_markup=_encounter_battle_markup(enc))
+                                                  reply_markup=_encounter_battle_markup(enc, p))
                 except Exception: pass
                 return
             _inv.remove(_potion); p["inventory"] = json.dumps(_inv); save_player(p)
@@ -24248,7 +24181,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if enc["e_hp"] <= 0:
             _kh = get_enchant_bonus(p, "kill_heal")
             if _kh: enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _kh)
-            exp_gain  = exp_for_level(max(1, enc["e_level"])) // 20
+            exp_gain  = exp_for_level(max(1, enc["e_level"])) // 8
             gold_gain = enc["e_level"] * 28
             hp_pct = enc["p_hp"] / max(1, enc["p_max_hp"])
             close_bonus = ""
@@ -24317,33 +24250,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if enc["e_hp"] <= 0:
             enc.setdefault("action_log",[]).append(action_txt)
             enc.setdefault("action_log",[]).append(mon_act)
-            _kh3 = get_enchant_bonus(p, "kill_heal")
-            if _kh3: enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _kh3)
-            _dot_exp3  = round(exp_for_level(max(1, enc["e_level"])) // 20 * enc.get("reward_mult", 1.0))
-            _dot_gold3 = round(enc["e_level"] * 28 * enc.get("reward_mult", 1.0))
-            add_exp(p, _dot_exp3)
-            p["gold"] = safe_int(p.get("gold", 0)) + _dot_gold3
-            asyncio.create_task(_party_exp_bonus(context.bot, uid, _dot_exp3, f"*{enc['e_name']}*"))
-            _gear_all3 = {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**HATS,**GLOVES,**BOOTS,**MASKS}
-            _dot_gear3 = []
-            for _dgi3 in range(enc.get("num_gear", 2)):
-                _drar3 = random.choice(enc.get("gear_rarities", ["uncommon","rare"]))
-                _dgp3  = [n for n,d in _gear_all3.items() if d.get("rarity") == _drar3]
-                if not _dgp3: _dgp3 = [n for n,d in _gear_all3.items() if d.get("rarity") in ("rare","epic")]
-                if _dgp3: _dot_gear3.append(random.choice(_dgp3)); add_item(p, _dot_gear3[-1])
-            elem3 = enc.get("element","")
-            _elem_mats3 = {"fire":["Enchanting Scroll","Grand Restorative Flask"],"water":["Fortune Coin","Greater Health Potion"],
-                           "earth":["Fortune Coin","Pet Snack"],"wind":["Enchanting Scroll","Fortune Coin"],
-                           "lightning":["Enchanting Scroll","Grand Restorative Flask"],"shadow":["Scroll of Revival","Fortune Coin"],
-                           "holy":["Scroll of Revival","Grand Restorative Flask"],"void":["Scroll of Revival","Enchanting Scroll"]}
-            _dot_loot3 = random.choice(_elem_mats3.get(elem3, ["Fortune Coin","Greater Health Potion"]))
-            add_item(p, _dot_loot3)
-            _sess3 = _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})
-            _sess3["gold"] = _sess3.get("gold",0) + _dot_gold3; _sess3["exp"] = _sess3.get("exp",0) + _dot_exp3
-            _dot_ltxt3 = "".join(f"\n🎁 *{g}*" for g in _dot_gear3) + f"\n✨ *{_dot_loot3}*"
-            await _end_encounter(
-                f"☠️ *{enc['e_name']}* was finished off by status effects!\n✅ *Victory!*\n"
-                f"💰 +{_dot_gold3:,} gold | ⭐ +{_dot_exp3:,} EXP{_dot_ltxt3}")
+            _hdot_e_lvl = enc.get("e_level", 1)
+            _hdot_gold = round((_hdot_e_lvl * 28) * enc.get("reward_mult", 1.0))
+            _hdot_exp  = round((exp_for_level(max(1, _hdot_e_lvl)) // 8) * enc.get("reward_mult", 1.0))
+            add_exp(p, _hdot_exp); p["gold"] = safe_int(p.get("gold", 0)) + _hdot_gold; save_player(p)
+            await _end_encounter(f"☠️ *{enc['e_name']}* was defeated by status effects!\n✅ *Victory!*\n💰 +{_hdot_gold:,} gold | ⭐ +{_hdot_exp:,} EXP")
             return
         if enc["p_hp"] <= 0:
             await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!")
