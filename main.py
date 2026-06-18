@@ -499,10 +499,23 @@ async def _finalize_pvp(pair, result_text, bot):
             "heal_blocked_turns","revive_blocked_turns","silence_turns","hex_turns",
             "stun_turns","freeze_turns","entangle_turns","distract_turns",
         )
+        # Legacy timestamp-based status effects (separate mechanism from the turn/stack
+        # fields above) — these must also be cleared or they bleed into the next PvP fight.
+        # defeated_until/invincible_until are intentionally excluded: those represent
+        # post-fight cooldown/grace states, not in-combat buffs.
+        _status_until_fields = (
+            "ward_until","holy_field_until","hexed_until","blessed_until","weakened_until",
+            "distracted_until","entangled_until","frozen_until","stunned_until","vanish_until",
+            "bleed_until","poison_until","burn_until","exposed_until","branded_until","marked_until",
+            "silenced_until","healing_blocked_until","revival_blocked_until","temp_hp_until",
+            "def_reflect_until","cursed_until",
+        )
         for _sp in (_f_a, _f_d):
             if _sp:
                 for _sf in _status_fields:
                     _sp[_sf] = 0
+                for _suf in _status_until_fields:
+                    _sp[_suf] = None
                 save_player(_sp)
         # Clear per-fight item state (Abyssal Plate, Crystal Golem, Cryptwalker, etc.)
         for _uid in pair:
@@ -23117,6 +23130,24 @@ async def party_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── ENCOUNTER SYSTEM ──────────────────────────────────────────────────────────
+def _enc_set(uid, enc):
+    """Store an encounter session with timestamps, so stale sessions can be detected."""
+    enc.setdefault("started_at", datetime.now().isoformat())
+    enc["last_action"] = datetime.now().isoformat()
+    active_encounters[uid] = enc
+
+def _enc_is_stale(uid, max_minutes=30):
+    state = active_encounters.get(uid)
+    if not state:
+        return False
+    ts = state.get("last_action") or state.get("started_at")
+    if not ts:
+        return True
+    try:
+        return (datetime.now() - datetime.fromisoformat(ts)).total_seconds() > max_minutes * 60
+    except Exception:
+        return True
+
 async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     p = get_player(user.id)
@@ -23126,7 +23157,11 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, _defeated_msg(p), delay=15); return
     uid = user.id
     if uid in active_encounters:
-        await send_group(update, "⚠️ You're already in an encounter! Use the buttons to continue.", delay=10); return
+        if _enc_is_stale(uid):
+            active_encounters.pop(uid, None)
+            _enc_sessions.pop(uid, None)
+        else:
+            await send_group(update, "⚠️ You're already in an encounter! Use the buttons to continue.", delay=10); return
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⚔️ Battle — fight an NPC", callback_data=f"enc_mode_{uid}_battle")],
         [InlineKeyboardButton("🌿 Hunt — fight wild monsters", callback_data=f"enc_mode_{uid}_hunt")],
@@ -23183,7 +23218,7 @@ async def _start_encounter_battle(query, uid, p):
         "reward_mult": reward_mult, "num_gear": num_gear,
         "num_pots": num_pots, "gear_rarities": gear_rarities,
     }
-    active_encounters[uid] = enc
+    _enc_set(uid, enc)
     _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = "battle"
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
@@ -23232,7 +23267,7 @@ async def _start_encounter_hunt(query, uid, p):
         "reward_mult": reward_mult, "num_gear": num_gear,
         "num_pots": num_pots, "gear_rarities": gear_rarities,
     }
-    active_encounters[uid] = enc
+    _enc_set(uid, enc)
     _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = "hunt"
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
@@ -23245,7 +23280,7 @@ async def _start_encounter_treasure(query, uid, p, mode="battle"):
         "chest_tier": tier,
         "action_log": [],
     }
-    active_encounters[uid] = enc
+    _enc_set(uid, enc)
     _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = mode
     await query.edit_message_text(_treasure_card(enc), parse_mode="Markdown",
                                   reply_markup=_treasure_markup(enc))
@@ -23257,7 +23292,7 @@ async def _start_encounter_event(query, uid, p, mode="battle"):
         "event_type": etype,
         "action_log": [],
     }
-    active_encounters[uid] = enc
+    _enc_set(uid, enc)
     _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = mode
     await query.edit_message_text(_event_card(enc), parse_mode="Markdown",
                                   reply_markup=_event_markup(enc))
@@ -23328,6 +23363,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # don't conflict with subsequent query.answer(show_alert=True) calls.
     data  = query.data
     uid   = update.effective_user.id
+    if uid in active_encounters:
+        active_encounters[uid]["last_action"] = datetime.now().isoformat()
 
     # ── mode select ─────────────────────────────────────────────────────────
     if data.startswith("enc_mode_"):
@@ -23336,7 +23373,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.answer("Not your encounter!", show_alert=True); return
         p = get_player(uid)
         if not p: await query.answer(); return
-        if uid in active_encounters:
+        if uid in active_encounters and not _enc_is_stale(uid):
             await query.answer("Already in an encounter!", show_alert=True); return
         await query.answer()
         if mode == "battle":
@@ -30987,13 +31024,21 @@ async def fixbounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── IDLE REWARD SYSTEM ────────────────────────────────────────────────────────
 def _calc_idle_exp(idle_secs: float, player_level: int = 1) -> int:
-    """Compound EXP for being offline. 0 if < 30 min. Scales with level, no hard time cap."""
+    """EXP for being offline. 0 if < 30 min. Grows EXPONENTIALLY with idle time for the
+    first 10 hours (so checking back after a few hours feels meaningfully better than
+    checking back after 30 min), then tapers to a slow linear rate beyond that to avoid
+    rewarding multi-day AFK abandonment disproportionately."""
     if idle_secs < 1800:
         return 0
     idle_hours = idle_secs / 3600
-    # Hourly rate scales with level; power < 1 gives diminishing returns over time
-    rate = 300 + player_level * 40
-    exp = int(rate * (idle_hours ** 0.65))
+    base_rate = 300 + player_level * 40
+    growth = 1.22
+    capped_h = min(idle_hours, 10)
+    # Geometric-sum style exponential ramp over the capped window
+    exp_exponential = base_rate * (growth ** capped_h - 1) / (growth - 1) / 5
+    overflow_h = max(0, idle_hours - 10)
+    exp_overflow = base_rate * overflow_h * 0.15
+    exp = int(exp_exponential + exp_overflow)
     return max(50, exp)
 
 async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
@@ -32335,8 +32380,123 @@ async def allocate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
+# ── RANDOM WORLD EVENTS (ambient DMs throughout the day) ──────────────────────
+async def _send_ambush_event(bot, uid, p):
+    """Spawns a tough, fully-interactive battle encounter directly in the player's DM,
+    using the same combat UI as /encounter, but harder and with extreme rewards."""
+    if uid in active_encounters or uid in active_dungeons:
+        return  # don't stomp an existing session
+    p_level = p.get("level", 1)
+    npc = _pick_random_npc(p_level)
+    # Ambush enemies are meaningfully tougher than a normal encounter
+    n_level = min(p_level + random.randint(8, 15), p_level + max(8, p_level // 3))
+    n_hp, n_atk, reward_mult, num_gear, num_pots, gear_rarities = _enc_level_stats(n_level, p_level)
+    n_hp  = round(n_hp * random.uniform(1.5, 1.9))
+    n_atk = round(n_atk * random.uniform(1.3, 1.6))
+    reward_mult = round(reward_mult * random.uniform(3.0, 4.5), 2)  # extreme EXP/gold on a win
+    p_mhp = calc_max_hp(p)
+    p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
+    p_max_mp = calc_max_mp(p); p_mp = max(0, min(p_max_mp, safe_int(p.get("mp")) or p_max_mp))
+    cls_name = CLASS_TREE.get(npc[1], {}).get("name", npc[1].replace("_", " ").title())
+    _amb_pet = get_active_pet_record(uid)
+    _pet_info = None
+    if _amb_pet and not _pet_is_on_adventure(_amb_pet):
+        _sp = PET_SPECIES.get(_amb_pet.get("species"), {})
+        _, _bond_label = _get_bond_tier(_amb_pet.get("bond_score", 0))
+        _pet_info = {
+            "pet_id": _amb_pet["pet_id"],
+            "name": _amb_pet.get("nickname") or _sp.get("name", "Pet"),
+            "level": _amb_pet.get("level", 1),
+            "atk": get_pet_atk_bonus(_amb_pet),
+            "bond_label": _bond_label,
+            "species": _amb_pet.get("species"),
+            "def_ability": _sp.get("def_ability"),
+        }
+    enc = {
+        "uid": uid, "mode": "battle", "p_name": p.get("username", "You"),
+        "p_hp": p_hp, "p_max_hp": p_mhp, "p_mp": p_mp, "p_max_mp": p_max_mp,
+        "e_name": npc[0], "e_class": npc[1],
+        "e_hp": n_hp, "e_max_hp": n_hp, "e_atk": n_atk, "e_level": n_level,
+        "e_gold_range": npc[6], "e_exp_range": npc[7], "e_loot_key": npc[8],
+        "action_log": [f"⚠️ *{npc[0]}* [{cls_name}] Lv.{n_level} ambushes you from the shadows!"],
+        "pet_info": _pet_info,
+        "pet_ability_used": False,
+        "reward_mult": reward_mult, "num_gear": num_gear,
+        "num_pots": num_pots, "gear_rarities": gear_rarities,
+        "is_ambush": True,
+    }
+    _enc_set(uid, enc)
+    _enc_sessions.setdefault(uid, {"gold": 0, "exp": 0, "wins": 0, "losses": 0, "items": []})["mode"] = "battle"
+    card = ("🚨 *AMBUSH!* A dangerous foe blocks your path — beat it for extreme rewards!\n\n"
+            + _encounter_battle_card(enc))
+    markup = _encounter_battle_markup(enc, p)
+    try:
+        await bot.send_message(uid, card, parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        active_encounters.pop(uid, None)
+        _enc_sessions.pop(uid, None)
+
+async def _send_random_dm_event(bot, uid, p):
+    kind = random.choices(["chest", "quest", "ambush"], weights=[40, 35, 25])[0]
+    try:
+        if kind == "chest":
+            gold = random.randint(80, 260) + p.get("level", 1) * 4
+            p["gold"] = safe_int(p.get("gold")) + gold
+            save_player(p)
+            await bot.send_message(uid,
+                f"🎁 *A mysterious chest appears in your path!*\nYou find *{gold:,} gold*.",
+                parse_mode="Markdown")
+        elif kind == "quest":
+            exp = random.randint(60, 220) + p.get("level", 1) * 6
+            add_exp(p, exp)
+            save_player(p)
+            await bot.send_message(uid,
+                f"📜 *A traveling merchant rewards you for a good deed!*\n+*{exp:,} EXP*",
+                parse_mode="Markdown")
+        else:  # ambush — tough, interactive fight with extreme rewards on a win
+            await _send_ambush_event(bot, uid, p)
+    except Exception:
+        pass
+
+async def _fire_random_world_events(bot):
+    try:
+        c = _db().cursor()
+        cutoff = (datetime.now() - timedelta(days=2)).isoformat()
+        c.execute("SELECT user_id FROM shadow_profiles WHERE last_seen >= ?", (cutoff,))
+        candidates = [r[0] for r in c.fetchall()]
+    except Exception:
+        return
+    if not candidates:
+        return
+    random.shuffle(candidates)
+    picks = candidates[: max(1, len(candidates) // 5)]  # ~20% of recently-active players per cycle
+    for uid in picks:
+        if random.random() > 0.35:  # not every pick actually gets an event
+            continue
+        try:
+            if is_banned(uid):
+                continue
+            p = get_player(uid)
+            if not p or is_defeated(p):
+                continue
+            await _send_random_dm_event(bot, uid, p)
+            await asyncio.sleep(0.3)  # spread sends out to avoid flood limits
+        except Exception:
+            continue
+
+async def _random_world_event_loop(bot):
+    """Runs forever in the background: every 45-90 min, sprinkles ambient
+    chest/quest/ambush DMs to a slice of recently-active players."""
+    while True:
+        try:
+            await asyncio.sleep(random.randint(2700, 5400))
+            await _fire_random_world_events(bot)
+        except Exception:
+            pass
+
 async def _post_init(application):
     """On startup: DM admin if bot version changed."""
+    asyncio.create_task(_random_world_event_loop(application.bot))
     version_file = "/data/bot_version.txt"
     try:
         with open(version_file) as f:
