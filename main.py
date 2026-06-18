@@ -7025,12 +7025,20 @@ def _dng_floor_done_markup(uid, floor, diff="hard"):
 async def _dng_edit(uid, bot, text, markup=None):
     state = active_dungeons.get(uid)
     if not state: return
+    state["last_action"] = datetime.now().isoformat()
     try:
         await bot.edit_message_text(
             chat_id=state["chat_id"], message_id=state["msg_id"],
             text=text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception:
-        pass
+        # Edit failed (message too old, deleted, etc.) — send a fresh message
+        try:
+            new_msg = await bot.send_message(
+                chat_id=state["chat_id"], text=text[:4096],
+                parse_mode="Markdown", reply_markup=markup)
+            state["msg_id"] = new_msg.message_id
+        except Exception:
+            pass
 
 async def _dng_award_and_extract(uid, bot, p, state, narr_key="extract"):
     add_exp(p, state.get("s_exp", 0))
@@ -7552,7 +7560,19 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, _defeated_msg(p), delay=10); return
     uid = user.id
     if uid in active_dungeons:
-        await send_group(update, "⚠️ You're already in a dungeon! Use the buttons to continue.", delay=10); return
+        # Stale lockout guard: if the dungeon entry has no recent activity (>30 min), clear it
+        _dng_state = active_dungeons[uid]
+        _dng_ts = _dng_state.get("started_at") or _dng_state.get("last_action")
+        _dng_stale = True
+        if _dng_ts:
+            try:
+                _dng_stale = (datetime.now() - datetime.fromisoformat(_dng_ts)).total_seconds() > 1800
+            except Exception:
+                pass
+        if _dng_stale:
+            active_dungeons.pop(uid, None)
+        else:
+            await send_group(update, "⚠️ You're already in a dungeon! Use the buttons to continue.", delay=10); return
     p_level = p.get("level", 1)
     rows = []
     for dk, dc in DNG_DIFF.items():
@@ -7625,6 +7645,8 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "enemy": None,
             "floor_modifier": None,
             "floor_buff": None,
+            "started_at": datetime.now().isoformat(),
+            "last_action": datetime.now().isoformat(),
         }
         active_dungeons[uid] = state
         theme = theme_pool[0] if theme_pool else DNG_THEMES[0]
@@ -12862,8 +12884,9 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             a["gold"] = a.get("gold", 0) + mfd_bonus
         _defeat_timer_pvp = time_until(d.get("defeated_until")) or "6m"
         action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_pvp}*."
-        if leveled and a["level"] % 10 == 0:
-            asyncio.create_task(announce(bot, chat_id,
+        if leveled:
+            _lvl_grp = _pvp_origin_chat.get((au_id, du_id)) or _pvp_origin_chat.get((du_id, au_id)) or chat_id
+            asyncio.create_task(announce(bot, _lvl_grp,
                 f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
 
     if d["hp"] > 0:
@@ -13126,9 +13149,11 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
             pass
 
         pair = _pvp_pair_key(uid, target_uid)
+        _is_new_battle_pk = pair not in _pvp_origin_chat
+        _pk_grp = _resolve_pvp_group_chat(uid, query.message.chat_id)
         _pvp_cards.setdefault(pair, {})
-        _pvp_origin_chat[pair] = query.message.chat_id
-        _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": query.message.chat_id}
+        _pvp_origin_chat[pair] = _pk_grp
+        _target_pickers[uid] = {"last_pick": datetime.now().isoformat(), "chat_id": _pk_grp}
 
         # Alert the defender — clear any old card so Telegram sends a fresh push notification
         _pvp_dm_last_msg.pop(target_uid, None)
@@ -13138,6 +13163,8 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
                 text=f"⚔️ *{a['username']}* is attacking you!", parse_mode="Markdown")
         except Exception:
             pass
+        if _is_new_battle_pk:
+            asyncio.create_task(announce(context.bot, _pk_grp, _pvp_fight_start_line(a["username"], d["username"]), permanent=True))
         start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
         _pvp_log_append(pair, start_txt)
         fresh_a = get_player(uid) or a
@@ -13211,6 +13238,32 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
     except Exception:
         pass
 
+
+# ── PVP ANNOUNCEMENT HELPERS ──────────────────────────────────────────────────
+_PVP_FIGHT_LINES = [
+    "⚔️ *{a}* and *{d}* are throwing hands!",
+    "🥊 *{a}* just challenged *{d}*, it's going down!",
+    "🎱 *{a}* squared up on *{d}*. Let's see how this plays out.",
+    "💥 *{a}* vs *{d}*, someone's getting dropped.",
+    "⚔️ *{a}* picked a fight with *{d}*. Bold move.",
+]
+
+def _pvp_fight_start_line(a_name: str, d_name: str) -> str:
+    return random.choice(_PVP_FIGHT_LINES).format(a=a_name, d=d_name)
+
+def _resolve_pvp_group_chat(uid: int, fallback: int) -> int:
+    """Best-effort group chat ID for PvP announcements, even when called from DM."""
+    s = get_shadow(uid)
+    grp = (s.get("home_group") if s else None) or _megaphone_state.get("group")
+    if not grp:
+        try:
+            _c = _db().cursor()
+            _c.execute("SELECT home_group FROM shadow_profiles WHERE home_group IS NOT NULL ORDER BY last_seen DESC LIMIT 1")
+            row = _c.fetchone()
+            if row: grp = row[0]
+        except Exception:
+            pass
+    return grp or fallback
 
 # ── ATTACK ────────────────────────────────────────────────────────────────────
 async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -13311,8 +13364,10 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     bot  = update.get_bot()
     pair = _pvp_pair_key(au.id, du_id)
+    _is_new_battle = pair not in _pvp_origin_chat
+    _grp_chat = _resolve_pvp_group_chat(au.id, chat_id)
     _pvp_cards.setdefault(pair, {})
-    _pvp_origin_chat[pair] = chat_id
+    _pvp_origin_chat[pair] = _grp_chat
     # Alert the defender — clear old card so Telegram sends a fresh push notification
     _pvp_dm_last_msg.pop(du_id, None)
     _pvp_log_msg.pop(du_id, None)
@@ -13321,6 +13376,8 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"⚔️ *{a['username']}* is attacking you!", parse_mode="Markdown")
     except Exception:
         pass
+    if _is_new_battle:
+        asyncio.create_task(announce(bot, _grp_chat, _pvp_fight_start_line(a["username"], d["username"]), permanent=True))
     start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
     _pvp_log_append(pair, start_txt)
     fresh_a = get_player(au.id) or a
@@ -13495,6 +13552,11 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 check_titles(a); check_titles(d)
                 save_player(a); save_player(d)
                 _fire(check_and_claim_bounty(context.bot, a, d, _pvp_origin_chat.get(pair, uid)))
+                _fin_grp = _pvp_origin_chat.get(pair) or _megaphone_state.get("group") or uid
+                _fin_a = get_player(uid) or a; _fin_d = get_player(target_id) or d
+                _win_announce_text = (f"💀 *{_fin_a.get('username','?')}* defeated *{_fin_d.get('username','?')}*! "
+                                      f"(Lv {_fin_a.get('level',1)} vs Lv {_fin_d.get('level',1)})")
+                asyncio.create_task(announce(context.bot, _fin_grp, _win_announce_text, permanent=True))
                 _cb_unlock(uid)
                 await _finalize_pvp(pair, kill_msg, context.bot)
             else:
@@ -13535,6 +13597,11 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _pvp_log_append(pair, result_text)
 
         if result_type == "defeat":
+            _atk_grp = _pvp_origin_chat.get(pair) or _megaphone_state.get("group") or uid
+            _win_a = get_player(uid) or a; _win_d = get_player(target_id) or d
+            _atk_win_txt = (f"💀 *{_win_a.get('username','?')}* defeated *{_win_d.get('username','?')}*! "
+                            f"(Lv {_win_a.get('level',1)} vs Lv {_win_d.get('level',1)})")
+            asyncio.create_task(announce(context.bot, _atk_grp, _atk_win_txt, permanent=True))
             _cb_unlock(uid)
             await _finalize_pvp(pair, result_text, context.bot)
             return
@@ -23300,6 +23367,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "chat_id": chat_id, "msg_id": None,
                 "combat_log": [], "enemy": None,
                 "floor_modifier": None,
+                "started_at": datetime.now().isoformat(),
+                "last_action": datetime.now().isoformat(),
             }
             active_dungeons[uid] = state
             narr = _dng_roll_narration("floor_entry")
