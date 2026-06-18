@@ -3795,7 +3795,10 @@ def _get_empire(p):
     """Return (buildings_dict, resources_dict, last_collect_iso)."""
     bld = sjl(p.get("empire_buildings"), {})
     res = sjl(p.get("empire_resources"), {})
-    lc  = p.get("empire_last_collect", datetime.now().isoformat())
+    # NOTE: p.get(key, default) only falls back when the key is absent — but the
+    # DB column always exists (NULL until first set), so a bare .get(...) here
+    # silently returns None and breaks every elapsed-time calculation downstream.
+    lc  = p.get("empire_last_collect") or datetime.now().isoformat()
     return bld, res, lc
 
 def _save_empire(p, bld, res, lc=None):
@@ -16916,7 +16919,7 @@ async def _dispatch_secret_quest(uid: int, bot):
     p = get_player(uid)
     if not p: return
     if p.get("active_quest"): return
-    if time.time() - p.get("last_quest_ts", 0) < 28800: return
+    if time.time() - (p.get("last_quest_ts") or 0) < 28800: return
     phrase, exp_r, inf_r = random.choice(_CHAT_QUEST_TPL)
     quest = {"type":"chat","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
     p["active_quest"] = json.dumps(quest); p["last_quest_ts"] = int(time.time()); save_player(p)
@@ -31052,31 +31055,38 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
         p = get_player(uid)
         plvl = p["level"] if p else 1
         idle_exp = _calc_idle_exp(idle_secs, plvl)
-        if idle_exp <= 0:
+        # Empire resources accrue on their own schedule (per-building hourly rates),
+        # independent of the idle-EXP threshold — collect them even on short returns.
+        empire_notes = []
+        if p and not is_defeated(p):
+            empire_notes = _empire_collect(p)
+        if idle_exp <= 0 and not empire_notes:
             return
         _idle_last_awarded[uid] = now_ts
         ih = idle_secs / 3600
         away_str = (f"{int(ih)}h {int((idle_secs % 3600) / 60)}m"
                     if ih >= 1 else f"{int(idle_secs / 60)}m")
-        s = get_shadow(uid)
-        if s:
-            add_shadow_exp(s, idle_exp)
-            save_shadow(s)
-        empire_notes = []
-        if p and not is_defeated(p):
-            add_exp(p, idle_exp)
-            empire_notes = _empire_collect(p)
+        if idle_exp > 0:
+            s = get_shadow(uid)
+            if s:
+                add_shadow_exp(s, idle_exp)
+                save_shadow(s)
+            if p and not is_defeated(p):
+                add_exp(p, idle_exp)
+        if p:
             save_player(p)
         emp_line = ""
         if empire_notes:
             emp_line = "\n\n🏰 *Empire produced:*\n" + "\n".join(f"  {n}" for n in empire_notes[:6])
+        exp_line = (f"💫 Idle reward: *+{idle_exp:,} EXP*\n"
+                    f"_(Scales with your level — the higher your level, the more you earn)_"
+                    if idle_exp > 0 else "")
         try:
             await bot.send_message(
                 uid,
                 f"🎱 *Welcome back!*\n\n"
                 f"You were away for *{away_str}*.\n"
-                f"💫 Idle reward: *+{idle_exp:,} EXP*\n"
-                f"_(Scales with your level — the higher your level, the more you earn)_"
+                f"{exp_line}"
                 f"{emp_line}",
                 parse_mode="Markdown")
         except Exception:
@@ -31259,9 +31269,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(user.id) if s.get("ascended") else None
     asyncio.create_task(check_pet_notifications(p, context.bot))
 
-    # Idle reward — fire before updating last_seen, group context only
+    # Idle reward — fire before updating last_seen. Not gated to group context:
+    # last_seen advances in DMs too, so DM-only players must be able to collect.
     _prev_seen = s.get("last_seen")
-    if _prev_seen and _is_group:
+    if _prev_seen:
         asyncio.create_task(_try_idle_reward(user.id, context.bot, _prev_seen))
 
     # Update last_seen regardless of context so DM-only players build and consume the timer
@@ -32798,7 +32809,7 @@ def main():
             _lc = sqlite3.connect(DB_PATH); _lc.row_factory = sqlite3.Row
             _row = _lc.execute(
                 "SELECT last_seen FROM shadow_profiles WHERE user_id=?", (u.id,)).fetchone()
-            if _row and _row["last_seen"] and _is_grp:
+            if _row and _row["last_seen"]:
                 asyncio.create_task(_try_idle_reward(u.id, context.bot, _row["last_seen"]))
             if _is_grp:
                 _megaphone_state["group"] = update.effective_chat.id
