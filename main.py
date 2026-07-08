@@ -5551,8 +5551,8 @@ def _enc_monster_attack(enc):
     mv = MONSTER_MOVES.get(move_key, {"name":"Attack","dmg_mult":1.0,"effect":None})
     dmg_mult = mv.get("dmg_mult", 1.0)
     if dmg_mult == 0.0:
-        _apply_move_effect(enc, move_key)
-        return f"*{enc['e_name']}* used *{mv['name']}*!{_apply_move_effect(enc, move_key) if mv.get('effect') in ('fear','heal_self') else ''}"
+        eff = _apply_move_effect(enc, move_key) if mv.get("effect") else ""
+        return f"*{enc['e_name']}* used *{mv['name']}*!{eff}"
     raw = int(enc["e_atk"] * dmg_mult * random.uniform(0.85, 1.15))
     # Fighter in squad? use squad fighter's def
     fighter = enc.get("active_fighter")
@@ -12390,6 +12390,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             extra_notes.append(f"⚖️ *Judgement!* {d['username']} retaliates for *{wis_dmg} holy dmg*!")
 
     reflect = apply_reflect(d, a, dmg)
+    if reflect:
+        extra_notes.append(f"🌵 *Thorns!* Reflects *{reflect} dmg* back to {a['username']}!")
 
     if cls_d and cls_d.get("line") == "priest" and d.get("class_path") == "A":
         ward_chance = get_proc_chance(0.15, d)
@@ -20581,10 +20583,10 @@ async def _execute_skill(update, context, p, sk):
     # ── Dungeon companion/item effects on PvP skills ──────────────────────────
     _sk_d_fx = _dng_pvp_effects(d)
     _sk_a_fx = _dng_pvp_effects(p)
-    _sk_d_st = _dng_pvp_state(target_uid)
+    _sk_d_st = _dng_pvp_state(du.id)
     # Iron Guardian: block one skill per fight entirely
-    if dmg > 0 and not _dng_pvp_state(target_uid).get("guardian_block_used") and "block_one_skill" in _sk_d_fx:
-        _dng_pvp_state(target_uid)["guardian_block_used"] = True
+    if dmg > 0 and not _dng_pvp_state(du.id).get("guardian_block_used") and "block_one_skill" in _sk_d_fx:
+        _dng_pvp_state(du.id)["guardian_block_used"] = True
         lines.append(f"🛡️🤖 *Iron Guardian* blocks the skill entirely! (1 use per fight)")
         dmg = 0
     # Null Herald: immune to first 2 skills used against you in PvP
