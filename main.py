@@ -454,7 +454,8 @@ async def _finalize_pvp(pair, result_text, bot):
     _pvp_battle_logs.pop(pair, None)
     _pvp_cur_page.pop(pair, None)
     _pvp_origin_chat.pop(pair, None)
-    _pvp_card_tasks.pop(pair, None)
+    _cancel_card_timer(pair)  # cancel, don't just drop — or the pending
+                              # auto-delete later removes the final result card
     if len(pair) == 2:
         _f_au, _f_du = pair
         _f_a = get_player(_f_au)
@@ -542,7 +543,8 @@ def _cancel_card_timer(pair):
 
 # ── RATE LIMITER ──────────────────────────────────────────────────────────────
 _cmd_timestamps    = {}   # user_id -> [float timestamps]
-_processing_users  = set()  # user_ids currently inside a state-changing callback
+_processing_users  = {}  # user_id -> lock acquire time; users inside a state-changing callback
+_CB_LOCK_STALE_SECS = 30  # a leaked lock (unhandled exception) self-heals after this long
 
 def _rate_ok(uid: int, max_cmds: int = 8, window: float = 6.0) -> bool:
     """Return True if the user is within the rate limit, False if they're spamming."""
@@ -557,14 +559,19 @@ def _rate_ok(uid: int, max_cmds: int = 8, window: float = 6.0) -> bool:
     return True
 
 def _cb_lock(uid: int) -> bool:
-    """Acquire a processing lock for a callback. Returns False if already held."""
-    if uid in _processing_users:
+    """Acquire a processing lock for a callback. Returns False if already held.
+    Locks older than _CB_LOCK_STALE_SECS are treated as leaked (an exception
+    skipped the unlock) and are re-acquirable, so a player can never be
+    frozen out of buttons until restart."""
+    now = time.time()
+    ts = _processing_users.get(uid)
+    if ts is not None and now - ts < _CB_LOCK_STALE_SECS:
         return False
-    _processing_users.add(uid)
+    _processing_users[uid] = now
     return True
 
 def _cb_unlock(uid: int):
-    _processing_users.discard(uid)
+    _processing_users.pop(uid, None)
 
 # ── SEND HELPERS ──────────────────────────────────────────────────────────────
 async def _auto_delete(bot, chat_id, msg_id, delay):
@@ -721,6 +728,30 @@ def exp_for_level(level):
     elif level <= 230: return level * 12000000000000000000
     elif level <= 240: return level * 50000000000000000000
     else:              return level * 200000000000000000000
+
+def exp_share(level, pct):
+    """EXP equal to `pct` (0.10 = 10%) of the EXP required for `level`.
+    Keeps every reward meaningful at any level instead of a flat number
+    that is huge at level 1 and irrelevant at level 50."""
+    return max(1, round(exp_for_level(max(1, min(250, safe_int(level, 1)))) * pct))
+
+def _scaled_raid_exp(level, flat):
+    """Solo-raid completion: legacy flat tier values (280..8000) map to
+    15%-30% of the player's current level requirement."""
+    pct = 0.15 + 0.15 * min(1.0, flat / 8000)
+    return exp_share(level, pct)
+
+def _scaled_boss_exp(level, flat):
+    """Group-boss kill share: legacy flat boss values (1600..40000) map to
+    6%-35% of each participant's current level requirement."""
+    pct = min(0.35, 0.05 + 0.10 * (flat / 16000))
+    return exp_share(level, pct)
+
+def _scaled_shot_exp(level, shot_exp):
+    """Pool-shot EXP (3s cooldown, spammable): table values (18..4000) map to
+    ~0.005%-1% of a level, so rare shots feel great without shots out-earning
+    real activities."""
+    return exp_share(level, min(0.01, shot_exp / 4000 * 0.01))
 
 def max_hp_for_level(level): return 300 + (level - 1) * 250
 
@@ -2829,7 +2860,7 @@ ACCESSORIES = {
     "Worn Leather Band":    {"slot":"ring","effect":{"hp":10},"rarity":"common",
                                 "desc":"+10 max HP."},
     "Brass Ring":              {"slot":"ring","effect":{"any_stat":3},"rarity":"common",
-                                "desc":"+3 to one stat of your choice on equip."},
+                                "desc":"+3 to your class's primary stat."},
     "Scout's Pendant":             {"slot":"amulet","effect":{"hp":5},"rarity":"common",
                                 "desc":"+5 max HP."},
     "Traveler's Coin":       {"slot":"amulet","effect":{"all_stats":2},"rarity":"common",
@@ -2840,7 +2871,7 @@ ACCESSORIES = {
     "Rune Ring":           {"slot":"ring","effect":{"WIS":6},"rarity":"uncommon",
                                 "desc":"+6 WIS."},
     "Obsidian Stud":       {"slot":"ring","effect":{"any_stat":6},"rarity":"uncommon",
-                                "desc":"+6 STR or +6 INT (choose on equip)."},
+                                "desc":"+6 to your class's primary stat."},
     "Bloodstone Band":     {"slot":"ring","effect":{"hp":8,"STR":3},"rarity":"uncommon",
                                 "desc":"+8 HP, +3 STR."},
     "Shadowmark Signet":   {"slot":"ring","effect":{"atk":4,"gold_bonus":0.05},"rarity":"uncommon",
@@ -5551,8 +5582,8 @@ def _enc_monster_attack(enc):
     mv = MONSTER_MOVES.get(move_key, {"name":"Attack","dmg_mult":1.0,"effect":None})
     dmg_mult = mv.get("dmg_mult", 1.0)
     if dmg_mult == 0.0:
-        _apply_move_effect(enc, move_key)
-        return f"*{enc['e_name']}* used *{mv['name']}*!{_apply_move_effect(enc, move_key) if mv.get('effect') in ('fear','heal_self') else ''}"
+        eff = _apply_move_effect(enc, move_key) if mv.get("effect") else ""
+        return f"*{enc['e_name']}* used *{mv['name']}*!{eff}"
     raw = int(enc["e_atk"] * dmg_mult * random.uniform(0.85, 1.15))
     # Fighter in squad? use squad fighter's def
     fighter = enc.get("active_fighter")
@@ -5690,7 +5721,7 @@ RAID_TIERS = [
      "loot_table":[
          ("Steel Knight Sword",0.35),("Crystal Core Wand",0.30),("Warlock's Dread Staff",0.25),
          ("Bloodstone Band",0.25),("Shadowmark Signet",0.20),("Hunter's Fang",0.18),
-         ("Crystal Bead Necklace",0.18),("Iron Scale Vest",0.15),("Shadow Leather Coat",0.12),
+         ("Crystal Bead Necklace",0.18),("Iron Chain Mail",0.15),("Shadow Leathers",0.12),
          ("Iron Shard",0.25),("Fortune Coin",0.10),("Hawk Eye Medallion",0.08),
          ("Enchanting Scroll",0.10),
          ("Templar's Helm",0.15),("Void Cowl",0.15),
@@ -5721,7 +5752,7 @@ RAID_TIERS = [
                      {"name":"Doom Cluster","hp":6000,"dmg_min":180,"dmg_max":260}],
      "exp_reward":8000,"gold_reward":2000,
      "loot_table":[
-         ("Ruinblade",0.12),("The Mind's Eye",0.10),("Runed Finger",0.15),
+         ("Ruinblade",0.12),("The Mind's Eye",0.10),("Rune Ring",0.15),
          ("Twin Strike Ring",0.18),("Eye of the Void",0.16),("Void Circle",0.14),
          ("War Knuckle",0.14),("Cleric's Band",0.12),("Runed Heart",0.14),
          ("The Shadow Whisper",0.12),("Guardian's Talisman",0.10),
@@ -5796,7 +5827,7 @@ SOLO_RAID_TIERS = [
      ],
      "exp_reward":3400,"gold_reward":1200,
      "loot_table":[
-         ("Runed Finger",0.14),("Twin Strike Ring",0.16),("Eye of the Void",0.14),
+         ("Rune Ring",0.14),("Twin Strike Ring",0.16),("Eye of the Void",0.14),
          ("Void Circle",0.12),("War Knuckle",0.12),("Cleric's Band",0.10),
          ("Runed Heart",0.12),("The Shadow Whisper",0.10),("Guardian's Talisman",0.09),
          ("Shard of the Void",0.05),("Ring of the Endless",0.04),("The Warlord's Ring",0.03),
@@ -6823,7 +6854,7 @@ def _dng_pvp_effects(p):
     for item_name, item_data in DNG_EXCLUSIVE_ITEMS.items():
         if item_name in inv:
             fx.add(item_data["effect"])
-    for comp_key in p.get("dng_companions", []):
+    for comp_key in sjl(p.get("dng_companions"), []):
         comp = DNG_COMPANIONS.get(comp_key, {})
         for eff in comp.get("pvp_effects", []):
             fx.add(eff)
@@ -6835,13 +6866,17 @@ def _dng_pvp_init(uid, p):
     state = {}
     if "Abyssal Plate" in inv:
         state["abyssal_plate_hits"] = 5
-    if "crystal_golem" in p.get("dng_companions", []):
+    _comps = sjl(p.get("dng_companions"), [])
+    if "crystal_golem" in _comps:
         state["golem_absorbs"] = 3
         state["golem_block_used"] = False
-    if "null_herald" in p.get("dng_companions", []):
+    if "null_herald" in _comps:
         state["herald_blocks"] = 2
-    if "iron_guardian" in p.get("dng_companions", []):
+    if "iron_guardian" in _comps:
         state["guardian_block_used"] = False
+    # The Last Stand Locket: revive once per combat at 20% HP
+    if get_accessory_bonus(p, "revive_once"):
+        state["last_stand_available"] = True
     if "Cryptwalker's Blade" in inv:
         state["cryptwalker_shield"] = False
     _pvp_battle_state[uid] = state
@@ -7066,9 +7101,10 @@ async def _dng_award_and_extract(uid, bot, p, state, narr_key="extract"):
         add_item(p, exc_name)
     comp_key = state.get("companion_earned")
     if comp_key and comp_key in DNG_COMPANIONS:
-        p.setdefault("dng_companions", [])
-        if comp_key not in p["dng_companions"]:
-            p["dng_companions"].append(comp_key)
+        _comps = sjl(p.get("dng_companions"), [])
+        if comp_key not in _comps:
+            _comps.append(comp_key)
+        p["dng_companions"] = _comps
     save_player(p)
     active_dungeons.pop(uid, None)
     items_txt = ""
@@ -7517,7 +7553,7 @@ async def _dng_on_enemy_killed(uid, bot, p, state):
 
         # Companion drop
         comp_eligible = [k for k, v in DNG_COMPANIONS.items()
-                         if diff in v.get("diff",[]) and k not in p.get("dng_companions",[])]
+                         if diff in v.get("diff",[]) and k not in sjl(p.get("dng_companions"),[])]
         if comp_eligible and random.random() < cfg["companion_chance"]:
             comp_key = random.choice(comp_eligible)
             state["companion_earned"] = comp_key
@@ -8404,7 +8440,9 @@ def track_objective(p, obj_id, amount=1):
             obj["progress"] = min(obj["progress"] + amount, obj["target"])
             if obj["progress"] >= obj["target"]:
                 obj["done"] = True
-                completed.append((obj["desc"], obj["reward_exp"], obj["reward_gold"]))
+                # Scale the table's flat EXP (300..1500) to 1.6%-8% of a level
+                _obj_exp = exp_share(p.get("level", 1), min(0.08, obj["reward_exp"] / 1500 * 0.08))
+                completed.append((obj["desc"], _obj_exp, obj["reward_gold"]))
     p["daily_objectives"] = json.dumps(objs)
     if completed:
         p["total_obj_completed"] = safe_int(p.get("total_obj_completed")) + len(completed)
@@ -8504,11 +8542,15 @@ def get_accessory_bonus(p, stat):
         # all_stats
         elif stat in ("STR","DEF","AGI","INT","WIS","DEX","LUK") and "all_stats" in effect:
             total += effect["all_stats"]
-        # primary_stat
+        # primary_stat / any_stat both boost the class's primary stat
         elif "primary_stat" in effect:
             primary = get_primary_stat(p)
             if stat == primary:
                 total += effect["primary_stat"]
+        elif "any_stat" in effect:
+            primary = get_primary_stat(p)
+            if stat == primary:
+                total += effect["any_stat"]
     return total
 
 # Maps new class lines → existing gear category so they can use shared weapon/armor pools
@@ -9904,7 +9946,7 @@ async def _handle_wave_clear(bot, chat_id, raid_state, p=None):
             pp = get_player(u["id"])
             if not pp: continue
             share = max(0.10, raid_state["damage_dealt"].get(u["id"],0)/max(1,total_dmg))
-            exp_r  = round(tier["exp_reward"]*(0.5+share))
+            exp_r  = round(_scaled_raid_exp(pp["level"], tier["exp_reward"]) * (0.5+share))
             gold_r = round(tier["gold_reward"]*(0.5+share))
             pp["gold"] = pp.get("gold",0) + gold_r
             pp["quests_done"] = pp.get("quests_done",0) + 1
@@ -10383,6 +10425,13 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # ── Dungeon companions (earned in dungeon runs, grant PvP effects) ──────
+    try:
+        conn.execute("ALTER TABLE players ADD COLUMN dng_companions TEXT DEFAULT NULL")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
     # ── v24 DEF gear slots ────────────────────────────────────────────────────
     for _dc in [("equipped_hat","TEXT DEFAULT NULL"),("equipped_gloves","TEXT DEFAULT NULL"),
                 ("equipped_boots","TEXT DEFAULT NULL"),("equipped_mask","TEXT DEFAULT NULL")]:
@@ -10797,132 +10846,9 @@ def init_db():
     conn3.commit()
     conn3.close()
 
-    # ── v15 Item Name Migration ───────────────────────────────────────────────
-    ITEM_NAME_MAP = {
-        # Weapons  -  Warrior
-        "Broken Longsword":"Cracked House Cue","Militia Falchion":"Worn Practice Cue",
-        "Blacksteel Bastard Sword":"Graphite Break Cue","Giantslayer Zweihander":"Heavy Breaker Staff",
-        "Worldcleaver":"The Rack Splitter",
-        # Weapons  -  Mage
-        "Oak Practice Staff":"Chalked Finger","Petrified Willow Wand":"Blue Diamond Chalk",
-        "Cursed Ebony Staff":"Blackwood Bridge Stick","Astral Conduit Rod":"The Extension",
-        "Nullstar Scepter":"The Grand Bridge",
-        # Weapons  -  Archer
-        "Makeshift Shortbow":"Bent Triangle","Goat Horn Crossbow":"Standard Magic Rack",
-        "Falconwing Recurve Bow":"Precision Rack","Windripper Greatbow":"Diamond Rack",
-        "Heaven's Tear Ballista":"The Perfect Break Rack",
-        # Weapons  -  Thief
-        "Rusty Shiv":"Chalk Shiv","Serrated Kujang":"Mushroom Tip Blade",
-        "Venomspike Blowgun":"Ferrule Dart","Shadowstitch Katars":"Twin Tip Blades",
-        "Umbral Chain Sickle":"The Ball Return",
-        # Weapons  -  Priest
-        "Wooden Prayer Beads":"Chalk Beads","Iron Rosary":"Iron Chalk Ring",
-        "Sun Disc Pendant":"The Spot Marker","Martyr's Thorned Cross":"The Crossed Cues",
-        "Sanctus Aeterna":"The Diamond Staff",
-        # Armors  -  Warrior
-        "Padded Tunic":"Padded Cue Jacket","Iron Scale Vest":"Slate Guard",
-        "Crimson Plackart":"Red Cloth Plate","Onyx Golem Plate":"Black Ball Plate",
-        "Titanfoil Carapace":"Diamond Felt Armor",
-        # Armors  -  Mage
-        "Frayed Spellcloak":"Worn Chalk Coat","Windwoven Silk Robe":"Green Baize Robe",
-        "Arctic Fox Stole":"White Glove Wrap","Voidweave Mantle":"Blacklight Cloak",
-        "Singularity Robe":"The Nap Robe",
-        # Armors  -  Archer
-        "Sturdy Leather Jerkin":"Corner Pocket Vest","Hardened Hide Cuirass":"Rail Leather Chest",
-        "Griffon Plate Chest":"Diamond Point Plate","Phoenix Down Brigandine":"Red Baize Brigandine",
-        "Skybreaker Scale Armor":"The Rack Scale",
-        # Armors  -  Thief
-        "Dark Hooded Wrap":"Hustle Coat","Oilskin Shadow Coat":"Midnight Felt Coat",
-        "Stalker's Mesh Shroud":"The Sneak Mesh","Nocturnal Leather Harness":"Backdoor Harness",
-        "Abyssal Cloak of Silence":"The Ghost Coat",
-        # Armors  -  Priest
-        "Woven Vestments":"Chalk Cloth Vestments","Embroidered Cassock":"The Rule Book Robe",
-        "Silver Mitre Hood":"The Referee Hood","Lightweaver Chasuble":"The Tournament Cloak",
-        "Seraph's Surplice":"The House Saint Surplice",
-        # Shields
-        "Splintered Buckler":"Cracked Rack Shield","Ironbound Targe":"Iron Triangle",
-        "Kite Shield of the Vow":"The Break Shield","Obsidian Tower Shield":"Black Ball Barrier",
-        "Aegis of First Light":"The Diamond Aegis",
-        # Accessories  -  Common
-        "Pebble of Focus":"Chalk Nub","Frayed Rope Band":"Worn Tip Wrap",
-        "Copper Loop":"Brass Rail Ring","Tin Charm":"Pocket Marker",
-        "Traveler's Token":"Road Player's Coin",
-        # Accessories  -  Uncommon
-        "Fox Tail Ring":"Silk Tip Ring","Brass Holy Symbol":"Chalk Cross Pendant",
-        "Chipped Onyx Stud":"Black Ball Stud","Bloodstone Band":"Red Ball Band",
-        "Mercenary's Signet":"Road Shark Signet","Hunter's Fang Pendant":"Hustler's Tooth",
-        "Mana Bead Necklace":"Chalk Bead Necklace",
-        # Accessories  -  Rare
-        "Whisper Coin":"The Action Coin","Warmaster's Clasp":"Break Master's Clasp",
-        "Owl Medallion":"Diamond Sight Medallion","Phantom Loop":"Ghost Ball Loop",
-        "Executioner's Band":"Closer's Band","Spellweaver's Coil":"English Coil",
-        "Ironheart Medallion":"Slate Heart","Vampiric Fang Chain":"Shark Tooth Chain",
-        "Wanderer's Compass":"Road Player's Compass","Stormcaller's Torc":"The Break Torc",
-        # Accessories  -  Epic
-        "Twin Serpent Ring":"Double Kiss Ring","Eye of the Storm":"Eye of the Table",
-        "Void-Touched Circle":"Blackball Circle","Berserker's Knuckle":"Break Knuckle",
-        "Saint's Halo Band":"House Saint's Band","Cinder Heart Pendant":"Chalk Heart",
-        "Deathwhisper Amulet":"The Hustler's Whisper","Aegis Talisman":"The Safety Talisman",
-        "Luminous Crucifix":"The Crossed Cues Pendant","Dragon Soul Pendant":"The Slate and Felt Pendant",
-        # Accessories  -  Legendary
-        "Godshard Splinter":"Splinter of the Break","Infinity Loop":"The Endless Run",
-        "Ring of the Ancients":"The Old Road Ring","Ouroboros":"The Rack Eternal",
-        "Last Breath Locket":"The Final Shot Locket","Worldsoul Amulet":"The Felt Soul",
-        "Shard of Divinity":"The Diamond Shard","Mark of the Void":"The Blackball Mark",
-        # Consumables
-        "Health Potion":"Chalk Vial","Super Health Potion":"Premium Chalk Draft",
-        "Mega Health Potion":"Champion's Chalk Flask","Revival Charm":"The Re-Rack",
-        "Holy Relic":"Holy Water Vial","Dragon Scale":"Iron Shard",
-        "Enchanting Scroll":"The Custom Tip Scroll",
-    }
+    # (v15 item-name startup migration removed — save-time _ITEM_RENAME
+    #  now handles all legacy item-name normalization)
 
-    def _migrate_item_list(lst):
-        return [ITEM_NAME_MAP.get(x, x) for x in lst]
-
-    def _migrate_item_dict(d):
-        return {ITEM_NAME_MAP.get(k, k): v for k, v in d.items()}
-
-    try:
-        mig_conn = sqlite3.connect(DB_PATH)
-        try:
-            mig_conn.row_factory = sqlite3.Row
-            mig_c = mig_conn.cursor()
-            mig_c.execute("""SELECT user_id,inventory,equipped_weapon,equipped_armor,
-                                    equipped_shield,equipped_accessory,enhancements,enchants
-                             FROM players""")
-            rows = mig_c.fetchall()
-            migrated = 0
-            for row in rows:
-                changed = False
-                uid = row["user_id"]
-                inv  = sjl(row["inventory"], [])
-                new_inv = _migrate_item_list(inv)
-                if new_inv != inv: changed = True
-                ew  = ITEM_NAME_MAP.get(row["equipped_weapon"],  row["equipped_weapon"])
-                ea  = ITEM_NAME_MAP.get(row["equipped_armor"],   row["equipped_armor"])
-                es  = ITEM_NAME_MAP.get(row["equipped_shield"],  row["equipped_shield"])
-                eac = ITEM_NAME_MAP.get(row["equipped_accessory"], row["equipped_accessory"])
-                if ew != row["equipped_weapon"] or ea != row["equipped_armor"] or \
-                   es != row["equipped_shield"] or eac != row["equipped_accessory"]:
-                    changed = True
-                enh = sjl(row["enhancements"], {}); new_enh = _migrate_item_dict(enh)
-                if new_enh != enh: changed = True
-                enc = sjl(row["enchants"], {});     new_enc = _migrate_item_dict(enc)
-                if new_enc != enc: changed = True
-                if changed:
-                    mig_c.execute("""UPDATE players SET inventory=?,equipped_weapon=?,
-                                      equipped_armor=?,equipped_shield=?,equipped_accessory=?,
-                                      enhancements=?,enchants=? WHERE user_id=?""",
-                        (json.dumps(new_inv), ew, ea, es, eac,
-                         json.dumps(new_enh), json.dumps(new_enc), uid))
-                    migrated += 1
-            mig_conn.commit()
-            if migrated > 0:
-                logger.info(f"v15 item migration: updated {migrated} player(s)")
-        finally:
-            mig_conn.close()
-    except Exception as e:
-        logger.error(f"v15 item migration failed: {e}")
 
     # ── HP formula migration (raise base HP) ─────────────────────────────────
     # Runs every startup but is a no-op for already-updated players.
@@ -11084,14 +11010,115 @@ _ITEM_RENAME = {
     "Black Ball Barrier":  "Holy Pavise",
     "The Diamond Aegis":   "Celestial Bulwark",
     # Loot-table pool-themed items → RPG names
-    "Rack Cloth Vest":     "Rustic Cloth Vest",
-    "Reinforced Chalk Coat": "Reinforced Hide Coat",
+    # (targets must be real defined items or the rename strands the player
+    #  with an unusable inventory entry)
+    "Rack Cloth Vest":     "Rusty Iron Vest",
+    "Reinforced Chalk Coat": "Iron Chain Mail",
     "Ferrule Dart":        "Bloodsteel Shuriken",
-    "Toughened Rail Coat": "Toughened Leather Coat",
-    "Iron Rail Guard":     "Iron Wall Shield",
-    "The Chalk Wall":      "The Stone Wall",
-    "The Diamond Rack":    "The Crystal Barrier",
-    "Legendary Cue Coat":  "Legendary Runecoat",
+    "Toughened Rail Coat": "Soldier's Plating",
+    "Iron Rail Guard":     "Iron Heater Shield",
+    "The Chalk Wall":      "Steel Tower Shield",
+    "The Diamond Rack":    "Celestial Bulwark",
+    "Legendary Cue Coat":  "Dragonscale Plate",
+    # ── Ancient (pre-v15 fantasy) names → current names ──────────────────────
+    # Folded in from the old v15 startup migration so all normalization happens
+    # here at save time. Names that are ALSO current items are deliberately
+    # absent (renaming them would corrupt live inventories).
+    "Broken Longsword": "Rusty Shortsword",
+    "Militia Falchion": "Iron Broadsword",
+    "Blacksteel Bastard Sword": "Steel Knight Sword",
+    "Giantslayer Zweihander": "Warlord's Edge",
+    "Worldcleaver": "Ruinblade",
+    "Oak Practice Staff": "Gnarled Twig Wand",
+    "Petrified Willow Wand": "Crystal Core Wand",
+    "Cursed Ebony Staff": "Warlock's Dread Staff",
+    "Astral Conduit Rod": "Void Channel Staff",
+    "Nullstar Scepter": "The Mind's Eye",
+    "Makeshift Shortbow": "Frayed Hunting Bow",
+    "Goat Horn Crossbow": "Repeating Crossbow",
+    "Falconwing Recurve Bow": "Ranger's Marked Bow",
+    "Windripper Greatbow": "Warden's Gale Bow",
+    "Heaven's Tear Ballista": "The Dead Reckoning",
+    "Serrated Kujang": "Iron Stiletto",
+    "Venomspike Blowgun": "Bloodsteel Shuriken",
+    "Shadowstitch Katars": "Shadow Death Star",
+    "Umbral Chain Sickle": "Death's Whisper",
+    "Iron Rosary": "Silver Prayer Beads",
+    "Sun Disc Pendant": "Holy Judge's Cross",
+    "Martyr's Thorned Cross": "Grand Inquisitor's Cross",
+    "Sanctus Aeterna": "The Final Judgment",
+    "Padded Tunic": "Rusty Iron Vest",
+    "Iron Scale Vest": "Soldier's Plating",
+    "Crimson Plackart": "Steel Breastplate",
+    "Onyx Golem Plate": "Warlord's Battle Plate",
+    "Titanfoil Carapace": "Dragonscale Plate",
+    "Frayed Spellcloak": "Worn Cloth Robe",
+    "Windwoven Silk Robe": "Arcane Weave Robe",
+    "Arctic Fox Stole": "Sorcerer's Mantle",
+    "Voidweave Mantle": "Void-Touched Robe",
+    "Singularity Robe": "Archmage's Sanctum Robe",
+    "Sturdy Leather Jerkin": "Padded Hunting Vest",
+    "Hardened Hide Cuirass": "Scout's Leathers",
+    "Griffon Plate Chest": "Forest Scout Armor",
+    "Phoenix Down Brigandine": "Strider's Marked Armor",
+    "Skybreaker Scale Armor": "The Shadowmark Leather",
+    "Dark Hooded Wrap": "Torn Leather Vest",
+    "Oilskin Shadow Coat": "Rogue's Leathers",
+    "Stalker's Mesh Shroud": "Nightstalker's Vest",
+    "Nocturnal Leather Harness": "Phantom Leathers",
+    "Abyssal Cloak of Silence": "The Shadow Wrap",
+    "Woven Vestments": "Simple Cloth Vestment",
+    "Embroidered Cassock": "Blessed Cloth Robe",
+    "Silver Mitre Hood": "Sanctified Robe",
+    "Lightweaver Chasuble": "High Cleric's Vestment",
+    "Seraph's Surplice": "The High Saint's Vestment",
+    "Splintered Buckler": "Wooden Buckler",
+    "Ironbound Targe": "Soldier's Kite Shield",
+    "Kite Shield of the Vow": "Knight's Bulwark",
+    "Obsidian Tower Shield": "Holy Pavise",
+    "Aegis of First Light": "Celestial Bulwark",
+    "Pebble of Focus": "Iron Shard Ring",
+    "Frayed Rope Band": "Worn Leather Band",
+    "Copper Loop": "Brass Ring",
+    "Tin Charm": "Scout's Pendant",
+    "Traveler's Token": "Traveler's Coin",
+    "Fox Tail Ring": "Silk Band",
+    "Brass Holy Symbol": "Rune Cross Pendant",
+    "Chipped Onyx Stud": "Obsidian Stud",
+    "Mercenary's Signet": "Shadowmark Signet",
+    "Hunter's Fang Pendant": "Hunter's Fang",
+    "Mana Bead Necklace": "Crystal Bead Necklace",
+    "Whisper Coin": "Fortune Coin",
+    "Warmaster's Clasp": "War Master's Clasp",
+    "Owl Medallion": "Hawk Eye Medallion",
+    "Executioner's Band": "Warrior's Band",
+    "Spellweaver's Coil": "Mage's Coil",
+    "Ironheart Medallion": "Stone Heart",
+    "Vampiric Fang Chain": "Beast Fang Chain",
+    "Wanderer's Compass": "Traveler's Compass",
+    "Stormcaller's Torc": "The Storm Torc",
+    "Twin Serpent Ring": "Twin Strike Ring",
+    "Eye of the Storm": "Eye of the Void",
+    "Void-Touched Circle": "Void Circle",
+    "Berserker's Knuckle": "War Knuckle",
+    "Saint's Halo Band": "Cleric's Band",
+    "Cinder Heart Pendant": "Runed Heart",
+    "Deathwhisper Amulet": "The Shadow Whisper",
+    "Aegis Talisman": "Guardian's Talisman",
+    "Luminous Crucifix": "The Crossed Blades Pendant",
+    "Dragon Soul Pendant": "The Iron and Flame Pendant",
+    "Godshard Splinter": "Shard of the Void",
+    "Infinity Loop": "Ring of the Endless",
+    "Ring of the Ancients": "The Warlord's Ring",
+    "Last Breath Locket": "The Last Stand Locket",
+    "Worldsoul Amulet": "The Soul Amulet",
+    "Shard of Divinity": "The Divine Shard",
+    "Mark of the Void": "The Void Mark",
+    "Super Health Potion": "Greater Health Potion",
+    "Mega Health Potion": "Grand Restorative Flask",
+    "Revival Charm": "Scroll of Revival",
+    "Holy Relic": "Holy Water Vial",
+    "Dragon Scale": "Iron Shard",
 }
 
 def save_player(p):
@@ -11180,8 +11207,11 @@ def save_player(p):
         "regen_charges","regen_amt","heal_blocked_turns","revive_blocked_turns",
         "poison_pct","bleed_pct","burn_pct",
         "empire_buildings","empire_resources","empire_last_collect",
-        "mp","max_mp",
+        "mp","max_mp","dng_companions",
     ]
+    # dng_companions is held as a list in memory; store as JSON text
+    if isinstance(p.get("dng_companions"), list):
+        p["dng_companions"] = json.dumps(p["dng_companions"])
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
     col_str = ",".join(fields)
@@ -11363,11 +11393,11 @@ def check_titles(p):
     for title, data in TITLES.items():
         if title in earned: continue
         t, v = data["type"], data["threshold"]
-        if   t == "level"           and p["level"]                              >= v: pass
-        elif t == "wins"            and p["wins"]                               >= v: pass
-        elif t == "quests"          and p["quests_done"]                        >= v: pass
-        elif t == "heals"           and p["heals_given"]                        >= v: pass
-        elif t == "dodges"          and p["dodges"]                             >= v: pass
+        if   t == "level"           and safe_int(p.get("level"), 1)             >= v: pass
+        elif t == "wins"            and safe_int(p.get("wins"))                 >= v: pass
+        elif t == "quests"          and safe_int(p.get("quests_done"))          >= v: pass
+        elif t == "heals"           and safe_int(p.get("heals_given"))          >= v: pass
+        elif t == "dodges"          and safe_int(p.get("dodges"))               >= v: pass
         elif t == "crafts"          and safe_int(p.get("crafts_done"))          >= v: pass
         elif t == "prestige"        and safe_int(p.get("prestige_count"))       >= v: pass
         elif t == "reinforce"       and safe_int(p.get("total_reinforces"))     >= v: pass
@@ -12113,6 +12143,38 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
 
 
 
+def _pvp_kill_exp(a, d):
+    """PvP kill EXP: 6% of a level, based on the LOWER of the two levels so
+    farming low-level players pays little. Each repeat kill of the same victim
+    within 24h halves the payout (floor 10%)."""
+    base = exp_share(min(safe_int(a.get("level"), 1), safe_int(d.get("level"), 1)), 0.06)
+    cds = safe_cds(a)
+    log = cds.get("pvp_kill_log") or {}
+    vid = str(d.get("user_id"))
+    now = datetime.now()
+    entry = log.get(vid)
+    count = 0
+    if entry:
+        try:
+            if (now - datetime.fromisoformat(entry["first"])).total_seconds() < 86400:
+                count = safe_int(entry.get("count"))
+            else:
+                entry = None  # window expired — start fresh
+        except Exception:
+            entry = None
+    mult = max(0.10, 0.5 ** count)
+    if entry:
+        entry["count"] = count + 1
+    else:
+        entry = {"first": now.isoformat(), "count": 1}
+    log[vid] = entry
+    if len(log) > 30:  # keep the per-victim log bounded
+        log = dict(sorted(log.items(), key=lambda kv: kv[1].get("first", ""))[-30:])
+    cds["pvp_kill_log"] = log
+    a["passive_cooldowns"] = json.dumps(cds)
+    return max(1, round(base * mult))
+
+
 async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     """
     Full PvP combat resolution. Modifies a and d in-place and saves them.
@@ -12259,7 +12321,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             d["pvp_history"] = json.dumps(hist_ks[:5])
             for _desc, _exp, _gold in track_objective(a, "pvp_win"):
                 a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
-            exp_gain = 60 + a["level"] * 8
+            exp_gain = _pvp_kill_exp(a, d)
             if _d_was_wanted:
                 wanted_gold = 250; wanted_exp = round(exp_gain * 0.5)
                 a["gold"] = a.get("gold", 0) + wanted_gold
@@ -12390,6 +12452,8 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             extra_notes.append(f"⚖️ *Judgement!* {d['username']} retaliates for *{wis_dmg} holy dmg*!")
 
     reflect = apply_reflect(d, a, dmg)
+    if reflect:
+        extra_notes.append(f"🌵 *Thorns!* Reflects *{reflect} dmg* back to {a['username']}!")
 
     if cls_d and cls_d.get("line") == "priest" and d.get("class_path") == "A":
         ward_chance = get_proc_chance(0.15, d)
@@ -12822,6 +12886,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         a["hp"] = min(calc_max_hp(a), a["hp"] + int(kh))
         extra_notes.append(f"🧛 *{a.get('username','?')}* drains {int(kh)} HP from the kill!")
 
+    # The Last Stand Locket: survive the killing blow once per combat at 20% HP
+    if d["hp"] <= 0 and _dng_pvp_state(du_id).get("last_stand_available"):
+        _dng_pvp_state(du_id)["last_stand_available"] = False
+        d["hp"] = max(1, round(calc_max_hp(d) * 0.20))
+        extra_notes.append(f"🕯️ *The Last Stand Locket!* {d['username']} refuses to fall — revived at {d['hp']} HP!")
+
     if d["hp"] <= 0:
         d["hp"] = 0
         d["defeated_until"] = (datetime.now() + timedelta(minutes=6)).isoformat()
@@ -12866,7 +12936,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
                 f"🏹 *{a['username']}* took down *{d['username']}* with *Last Shot*! "
                 f"1-hour defeat.", delay=30))
             a["gold"] = a.get("gold", 0) + 150
-        exp_gain = 60 + a["level"] * 8
+        exp_gain = _pvp_kill_exp(a, d)
         if _d_was_wanted:
             wanted_gold = 250; wanted_exp = round(exp_gain * 0.5)
             a["gold"] = a.get("gold", 0) + wanted_gold
@@ -13547,7 +13617,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     a["kills_today"] = 0; a["kills_today_date"] = _fin_today
                 a["kills_today"] = safe_int(a.get("kills_today")) + 1
                 if a["kills_today"] >= 5: a["is_wanted"] = 1
-                _fin_exp = 60 + a["level"] * 8
+                _fin_exp = _pvp_kill_exp(a, d)
                 add_exp(a, _fin_exp, get_weather())
                 for _fd, _fe, _fg in track_objective(a, "pvp_win"):
                     a["gold"] = a.get("gold", 0) + _fg; add_exp(a, _fe)
@@ -13789,7 +13859,8 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             h["gold"] = h.get("gold",0) + _g; add_exp(h, _e)
     new_t = check_titles(h)
     if _heal_was_useful:
-        _heal_exp = 50 if (tu.id != hu.id and h.get("guild_id") and str(h.get("guild_id")) == str(t.get("guild_id"))) else 20
+        _heal_pct = 0.01 if (tu.id != hu.id and h.get("guild_id") and str(h.get("guild_id")) == str(t.get("guild_id"))) else 0.004
+        _heal_exp = exp_share(h["level"], _heal_pct)
         lmsgs, leveled = add_exp(h, _heal_exp)
     else:
         lmsgs, leveled = [], False
@@ -14943,7 +15014,7 @@ async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if random.random() < 0.10:
         item = random.choice(["Health Potion","Greater Health Potion","Grand Restorative Flask"])
         add_item(p, item)
-    daily_exp = 200 + (p["level"] * 10)
+    daily_exp = exp_share(p["level"], 0.10)
     lmsgs, leveled = add_exp(p, daily_exp)
     save_player(p)
     msg = f"🎁 *Daily Reward!*\n\n✨ +{daily_exp} EXP | 💰 +{gold} Gold"
@@ -14978,7 +15049,7 @@ async def train_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reply_to_dm(update, context,
             f"⏳ Train again in {time_remaining(p.get('last_train'), 1800)}."); return
     p["last_train"] = datetime.now().isoformat()
-    base = 150 + p["level"] * 5
+    base = exp_share(p["level"], 0.04)
     cls  = get_player_class(p)
     note = ""
     if cls:
@@ -15038,9 +15109,10 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _add_influence(p, _q_inf)
     _q_potion = "Greater Health Potion" if q["tier"] in ("Medium","Hard") else "Health Potion"
     add_item(p, _q_potion)
-    lmsgs, leveled = add_exp(p, q["exp"] * 3, w)
+    _q_exp = exp_share(p["level"], {"Easy": 0.03, "Medium": 0.05, "Hard": 0.08}.get(q["tier"], 0.03))
+    lmsgs, leveled = add_exp(p, _q_exp, w)
     new_t = check_titles(p); save_player(p)
-    msg = f"🗺️ *Quest  -  {q['tier']}*\n\n{q['text']}\n\n✨ +{q['exp'] * 3} EXP | 💰 +{gold} Gold | +{_q_inf} Influence | 🧪 {_q_potion}"
+    msg = f"🗺️ *Quest  -  {q['tier']}*\n\n{q['text']}\n\n✨ +{_q_exp:,} EXP | 💰 +{gold} Gold | +{_q_inf} Influence | 🧪 {_q_potion}"
     if item_found:
         rarity = ""
         for pool2 in [WEAPONS,ARMORS,ACCESSORIES,CONSUMABLES]:
@@ -15108,7 +15180,9 @@ async def _run_expedition(bot, chat_id, uid, zone):
     extra_notes = []
 
     if success:
-        exp  = round(zone["exp"] * w2.get("exp_mod", 1.0) * random.uniform(0.85, 1.15))
+        # Zone table values (600..28000) map to ~8%-25% of a level for the hour-long trip
+        _zone_pct = 0.08 + 0.17 * min(1.0, zone["exp"] / 28000)
+        exp  = round(exp_share(pp["level"], _zone_pct) * w2.get("exp_mod", 1.0) * random.uniform(0.85, 1.15))
         gold = round(zone["gold"] * random.uniform(0.80, 1.20))
         _expl_bonus = get_accessory_bonus(pp, "explore_bonus")
         if _expl_bonus:
@@ -15331,13 +15405,13 @@ async def _handle_drake_strike(update: Update, context: ContextTypes.DEFAULT_TYP
             fp = get_player(fid)
             if not fp: continue
             share = fd / max(1, total_dmg)
-            exp   = round(drake.get("exp_reward",1000) * share)
+            exp   = round(exp_share(fp["level"], 0.20) * share)
             loot  = None
             if random.random() < share * 0.5:
                 loot = roll_loot_table([(n,c) for n,c in drake.get("loot_table",[])])
             if loot: add_item(fp, loot)
             lmsgs, leveled = add_exp(fp, exp); save_player(fp)
-            lines.append(f"✅ *{fp['username']}*  -  {int(share*100)}% dmg | +{exp} EXP"
+            lines.append(f"✅ *{fp['username']}*  -  {int(share*100)}% dmg | +{exp:,} EXP"
                          + (f" | 🎒 {loot}" if loot else ""))
             if leveled and fp["level"] % 10 == 0:
                 asyncio.create_task(announce(context.bot, chat_id,
@@ -16798,10 +16872,11 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
                 lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
             if award_title(pp, data["title"]):
                 lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
-            add_exp(pp, BOSS_RAID_EXP, w2)
+            _braid_exp = exp_share(pp["level"], 0.10)
+            add_exp(pp, _braid_exp, w2)
             _add_influence(pp, 3)
             save_player(pp)
-            lines.append(f"✅ *{pp['username']}*  -  +{BOSS_RAID_EXP} EXP | +{data['gold']} Gold")
+            lines.append(f"✅ *{pp['username']}*  -  +{_braid_exp:,} EXP | +{data['gold']} Gold")
 
     # Delete the /attack command message, then edit the boss card in place
     try: await update.message.delete()
@@ -16936,10 +17011,11 @@ async def _try_complete_quest_social(p, action, target_id, bot):
     if not q or q.get("type") != "social" or q.get("action") != action: return
     if q.get("target_id") != target_id: return
     if q.get("expires", 0) < time.time(): p["active_quest"] = None; save_player(p); return
-    exp_r = q.get("reward_exp", 200); inf_r = q.get("reward_inf", 15)
-    p["exp"] = p.get("exp", 0) + exp_r; _add_influence(p, inf_r)
+    inf_r = q.get("reward_inf", 15)
+    exp_r = exp_share(p["level"], min(0.06, q.get("reward_exp", 200) / 900 * 0.06))
+    add_exp(p, exp_r); _add_influence(p, inf_r)
     p["active_quest"] = None; save_player(p)
-    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r} EXP  +{inf_r} Influence", parse_mode="Markdown")
+    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r:,} EXP  +{inf_r} Influence", parse_mode="Markdown")
     except: pass
 
 async def _try_complete_quest_phrase(p, text, reply_to_id, bot):
@@ -16953,11 +17029,12 @@ async def _try_complete_quest_phrase(p, text, reply_to_id, bot):
         phrase = q.get("phrase",""); tname = q.get("target_name","").lower(); tid = q.get("target_id")
         if phrase.lower() in text_l and (tname in text_l or (reply_to_id and reply_to_id == tid)): matched = True
     if not matched: return
-    exp_r = q.get("reward_exp", 800); inf_r = q.get("reward_inf", 50)
-    p["exp"] = p.get("exp", 0) + exp_r; _add_influence(p, inf_r)
+    inf_r = q.get("reward_inf", 50)
+    exp_r = exp_share(p["level"], min(0.06, q.get("reward_exp", 800) / 900 * 0.06))
+    add_exp(p, exp_r); _add_influence(p, inf_r)
     add_item(p, "Greater Health Potion")
     p["active_quest"] = None; save_player(p)
-    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r} EXP | +{inf_r} Influence | 🧪 Greater Health Potion", parse_mode="Markdown")
+    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r:,} EXP | +{inf_r} Influence | 🧪 Greater Health Potion", parse_mode="Markdown")
     except: pass
 
 async def _try_complete_broadcast_quest(p, text, bot):
@@ -18740,8 +18817,9 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity",""),""); break
                         out.append(f"🎒 Found: {r} *{loot_display}*!")
                     w2 = get_weather()
-                    add_exp(p, exp_reward, w2)
-                    out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{exp_reward:,} EXP | +{gold_reward}g")
+                    _raid_exp = _scaled_raid_exp(p["level"], exp_reward)
+                    add_exp(p, _raid_exp, w2)
+                    out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{_raid_exp:,} EXP | +{gold_reward}g")
         else:
             # Enemy still alive  -  counter-attack
             killed = raid_enemy_counter(p, raid_state, out)
@@ -18908,9 +18986,10 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     lines.append(f"🎒 *{pp['username']}* found: {r} *{loot_display}*!")
                 if award_title(pp, data["title"]):
                     lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
-                lmsgs, leveled = add_exp(pp, data["exp"], w2)
+                _boss_exp = _scaled_boss_exp(pp["level"], data["exp"])
+                lmsgs, leveled = add_exp(pp, _boss_exp, w2)
                 save_player(pp)
-                lines.append(f"✅ *{pp['username']}*  -  +{data['exp']:,} EXP | +{data['gold']} Gold")
+                lines.append(f"✅ *{pp['username']}*  -  +{_boss_exp:,} EXP | +{data['gold']} Gold")
                 if leveled and pp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{pp['username']}* reached *Level {pp['level']}*! 🏆",
@@ -19127,8 +19206,9 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                         for pool in [WEAPONS, ARMORS, ACCESSORIES]:
                             if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity",""), ""); break
                         out.append(f"🎒 Found: {r} *{loot_display}*!")
-                    add_exp(p, exp_reward, w)
-                    out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{exp_reward:,} EXP | +{gold_reward}g")
+                    _raid_exp = _scaled_raid_exp(p["level"], exp_reward)
+                    add_exp(p, _raid_exp, w)
+                    out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{_raid_exp:,} EXP | +{gold_reward}g")
         else:
             killed = raid_enemy_counter(p, raid_state, out)
             if killed and raid_kind == "solo":
@@ -19238,8 +19318,9 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     out.append(f"🎒 *{pp['username']}* found: {r} *{loot_display}*!")
                 if award_title(pp, data["title"]):
                     out.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
-                add_exp(pp, data["exp"], w_sk); save_player(pp)
-                out.append(f"✅ *{pp['username']}*  -  +{data['exp']} EXP | +{data['gold']} Gold")
+                _boss_exp = _scaled_boss_exp(pp["level"], data["exp"])
+                add_exp(pp, _boss_exp, w_sk); save_player(pp)
+                out.append(f"✅ *{pp['username']}*  -  +{_boss_exp:,} EXP | +{data['gold']} Gold")
             try:
                 await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown")
             except Exception:
@@ -19938,9 +20019,9 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             out.append(f"💀 *{tp['username']}* has been defeated by {sk['name']}!")
             for _d, _e, _g in track_objective(p, "pvp_win"):
                 p["gold"] = p.get("gold", 0) + _g; add_exp(p, _e)
-            _sk_exp = 60 + p["level"] * 8
+            _sk_exp = _pvp_kill_exp(p, tp)
             add_exp(p, _sk_exp, w)
-            out.append(f"✨ +{_sk_exp} EXP")
+            out.append(f"✨ +{_sk_exp:,} EXP")
             check_titles(p); check_titles(tp)
         save_player(p); save_player(tp)
         _sk_result_text = "\n".join(out)
@@ -20053,10 +20134,10 @@ async def _execute_skill(update, context, p, sk):
         cls_p = get_player_class(p)
         wis = get_stat(p, "WIS")
         mult = 1.25 if cls_p and cls_p.get("passive_key") == "mending_aura" else 1.0
-        # Accessory bonus
-        acc = p.get("equipped_accessory")
-        if acc and ACCESSORIES.get(acc, {}).get("effect", {}).get("revive_heal_bonus"):
-            mult += ACCESSORIES[acc]["effect"]["revive_heal_bonus"]
+        # Accessory bonus (any of the 4 accessory slots)
+        _rhb = get_accessory_bonus(p, "revive_heal_bonus")
+        if _rhb:
+            mult += _rhb
         heal = round(wis * sk.get("mult", 50) * mult)
         was_defeated = is_defeated(tp)
         if was_defeated:
@@ -20581,10 +20662,10 @@ async def _execute_skill(update, context, p, sk):
     # ── Dungeon companion/item effects on PvP skills ──────────────────────────
     _sk_d_fx = _dng_pvp_effects(d)
     _sk_a_fx = _dng_pvp_effects(p)
-    _sk_d_st = _dng_pvp_state(target_uid)
+    _sk_d_st = _dng_pvp_state(du.id)
     # Iron Guardian: block one skill per fight entirely
-    if dmg > 0 and not _dng_pvp_state(target_uid).get("guardian_block_used") and "block_one_skill" in _sk_d_fx:
-        _dng_pvp_state(target_uid)["guardian_block_used"] = True
+    if dmg > 0 and not _dng_pvp_state(du.id).get("guardian_block_used") and "block_one_skill" in _sk_d_fx:
+        _dng_pvp_state(du.id)["guardian_block_used"] = True
         lines.append(f"🛡️🤖 *Iron Guardian* blocks the skill entirely! (1 use per fight)")
         dmg = 0
     # Null Herald: immune to first 2 skills used against you in PvP
@@ -20624,6 +20705,11 @@ async def _execute_skill(update, context, p, sk):
     # ─────────────────────────────────────────────────────────────────────────
 
     d["hp"] = max(0, d["hp"] - dmg)
+    # The Last Stand Locket: survive the killing blow once per combat at 20% HP
+    if d["hp"] <= 0 and _dng_pvp_state(du.id).get("last_stand_available"):
+        _dng_pvp_state(du.id)["last_stand_available"] = False
+        d["hp"] = max(1, round(calc_max_hp(d) * 0.20))
+        lines.append(f"🕯️ *The Last Stand Locket!* {d['username']} refuses to fall — revived at {d['hp']} HP!")
     lines.append(f"💥 *{dmg} damage* to *{d['username']}*!\n"
                  f"❤️ {d['username']}: {d['hp']}/{d['max_hp']} HP")
 
@@ -20650,9 +20736,9 @@ async def _execute_skill(update, context, p, sk):
         d["losses"] = d.get("losses",0)+1
         p["wins"]   = p.get("wins",0)+1
         _fire(check_and_claim_bounty(context.bot, p, d, chat_id))
-        exp_gain = 80 + p["level"]*8
+        exp_gain = _pvp_kill_exp(p, d)
         lmsgs, leveled = add_exp(p, exp_gain, w); lvl_msgs = lmsgs
-        lines.append(f"\n💀 *{d['username']}* defeated by *{sk['name']}*! +{exp_gain} EXP")
+        lines.append(f"\n💀 *{d['username']}* defeated by *{sk['name']}*! +{exp_gain:,} EXP")
         if leveled and p["level"] % 10 == 0:
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🎉 *{p['username']}* reached *Level {p['level']}* via {sk['name']}! ⚡",
@@ -23457,7 +23543,8 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Open the chest
         td_gold_min, td_gold_max = td["gold"]
         gold_found = random.randint(td_gold_min, td_gold_max)
-        exp_found  = random.randint(*td["exp"])
+        # Chest EXP: table values (150..1200) map to ~1%-8% of a level
+        exp_found  = exp_share(p.get("level", 1), random.randint(*td["exp"]) / 1200 * 0.08)
         # Curse check: lose gold/exp instead
         if random.random() < td["curse_chance"]:
             gold_penalty = random.randint(20, 150)
@@ -23539,9 +23626,9 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         elif etype == "shrine" and choice == "pray":
             _r = random.random()
             if _r < 0.50:
-                exp_bonus = random.randint(50, 200)
+                exp_bonus = exp_share(p.get("level", 1), random.uniform(0.01, 0.02))
                 add_exp(p, exp_bonus)
-                result_text = f"🗿 *The shrine glows warmly.*\n+{exp_bonus} EXP blessed upon you!"
+                result_text = f"🗿 *The shrine glows warmly.*\n+{exp_bonus:,} EXP blessed upon you!"
             elif _r < 0.75:
                 hp_restore = round(calc_max_hp(p) * 0.30)
                 p["hp"] = min(calc_max_hp(p), safe_int(p.get("hp", 0)) + hp_restore)
@@ -24209,7 +24296,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 _core_qty = 3 if _core_roll < 0.05 else (2 if _core_roll < 0.30 else 1)
                 for _ in range(_core_qty):
                     add_item(p, core_item)
-                exp_gain  = enc["e_level"] * 40
+                exp_gain  = exp_share(enc["e_level"], 0.08)
                 gold_gain = enc["e_level"] * 8
                 add_exp(p, exp_gain)
                 p["gold"] = safe_int(p.get("gold", 0)) + gold_gain
@@ -28250,9 +28337,8 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if shot.get("loot"):
             item_found = roll_loot_table(shot["loot"])
             if item_found: add_item(p, item_found)
-        lvl_bonus  = max(1.0, 1.0 + (p["level"] - 1) * 0.15)
         gold_bonus = max(1.0, 1.0 + (p["level"] - 1) * 0.12)
-        exp_gain   = int(shot["exp"]  * lvl_bonus)
+        exp_gain   = _scaled_shot_exp(p["level"], shot["exp"])
         gold_gain  = int(shot["gold"] * gold_bonus)
         p["gold"] = p.get("gold", 0) + gold_gain
         p["last_pool"] = datetime.now().isoformat()
@@ -28470,7 +28556,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         if check_cooldown(p.get("last_daily"), 86400):
             p["last_daily"] = now.isoformat()
             gold = 50 + p["level"] * 5; p["gold"] = p.get("gold", 0) + gold
-            daily_exp = 200 + p["level"] * 10
+            daily_exp = exp_share(p["level"], 0.10)
             lmsgs, _ = add_exp(p, daily_exp)
             entry = f"🎁 Daily: +{daily_exp} EXP, +{gold}g"
             if random.random() < 0.10:
@@ -28480,7 +28566,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         else: skipped.append(f"🎁 Daily — {time_remaining(p.get('last_daily'), 86400)}")
         if check_cooldown(p.get("last_train"), 1800):
             p["last_train"] = now.isoformat()
-            base = 150 + p["level"] * 5
+            base = exp_share(p["level"], 0.04)
             cls = get_player_class(p)
             if cls:
                 pk = cls.get("passive_key","")
@@ -28511,7 +28597,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
             except Exception: pass
         if pool_ready:
             shot = roll_pool_shot_with_luk(p)
-            exp_gain = int(shot["exp"] * max(1.0, 1.0+(p["level"]-1)*0.15))
+            exp_gain = _scaled_shot_exp(p["level"], shot["exp"])
             gold_gain = int(shot["gold"] * max(1.0, 1.0+(p["level"]-1)*0.12))
             p["gold"] = p.get("gold",0)+gold_gain; p["last_pool"] = now.isoformat()
             if s_cd: s_cd["last_pool"] = p["last_pool"]; save_shadow(s_cd)
@@ -28563,7 +28649,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
             if random.random() < 0.10:
                 item = random.choice(["Health Potion","Greater Health Potion","Grand Restorative Flask"])
                 add_item(p, item)
-            daily_exp = 200 + p["level"] * 10
+            daily_exp = exp_share(p["level"], 0.10)
             lmsgs, _ = add_exp(p, daily_exp); save_player(p)
             text = f"🎁 *Daily Reward!*\n\n✨ +{daily_exp} EXP | 💰 +{gold} Gold"
             if item: text += f" | 🎒 *{item}*"
@@ -28578,7 +28664,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
             await _show(f"🏋️ *Train*\n\n⏳ Ready in {time_remaining(p.get('last_train'), 1800)}.")
         else:
             p["last_train"] = datetime.now().isoformat()
-            base = 150 + p["level"] * 5
+            base = exp_share(p["level"], 0.04)
             cls = get_player_class(p); note = ""
             if cls:
                 pk = cls.get("passive_key", "")
@@ -28803,7 +28889,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
             txt = "🔮 *Oracle*\n\n⏳ The oracle is cooling down — try again in a moment."
         else:
             shot = roll_pool_shot_with_luk(p)
-            exp_gain = int(shot["exp"] * max(1.0, 1.0 + (p["level"] - 1) * 0.15))
+            exp_gain = _scaled_shot_exp(p["level"], shot["exp"])
             gold_gain = int(shot["gold"] * max(1.0, 1.0 + (p["level"] - 1) * 0.12))
             p["gold"] = p.get("gold", 0) + gold_gain
             p["last_pool"] = datetime.now().isoformat()
@@ -29219,8 +29305,8 @@ POOL_SHOTS = [
             "You called it. Nobody believed you. "
             "The table is already empty. The game is already won.",
      "exp":700,"gold":280,"loot":[("Iron Shard",0.70),("Enchanting Scroll",0.45),
-                                    ("Scroll of Revival",0.20),("Deathwhisper Amulet",0.06),
-                                    ("Dragon Soul Pendant",0.04)]},
+                                    ("Scroll of Revival",0.20),("The Shadow Whisper",0.06),
+                                    ("The Iron and Flame Pendant",0.04)]},
 
     {"id":"call_shot_perfection","weight":2,"rarity":"epic",
      "text":"Every ball called before every shot. "
@@ -29228,8 +29314,8 @@ POOL_SHOTS = [
             "Not one fluke, not one assumption. "
             "Pure declared intention, executed perfectly.",
      "exp":750,"gold":300,"loot":[("Iron Shard",0.72),("Enchanting Scroll",0.48),
-                                    ("Scroll of Revival",0.22),("Eye of the Storm",0.05),
-                                    ("Aegis Talisman",0.04)]},
+                                    ("Scroll of Revival",0.22),("Eye of the Void",0.05),
+                                    ("Guardian's Talisman",0.04)]},
 
     # ── Mythic ───────────────────────────────────────────────────────────────
     {"id":"absolute_mastery","weight":1,"rarity":"mythic",
@@ -29579,13 +29665,12 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if item_found:
             add_item(p, item_found)
 
-    exp_gain  = shot["exp"] * 20
     gold_gain = shot["gold"]
 
     if p:
-        lvl_bonus = max(1.0, 1.0 + (p["level"] - 1) * 0.15)
+        # /pool is the flagship shot command — pays double the hub shot rate
+        exp_gain  = _scaled_shot_exp(p["level"], shot["exp"]) * 2
         gold_bonus = max(1.0, 1.0 + (p["level"] - 1) * 0.12)
-        exp_gain  = int(exp_gain  * lvl_bonus)
         gold_gain = int(gold_gain * gold_bonus)
         p["gold"] = p.get("gold", 0) + gold_gain
         p["last_pool"] = datetime.now().isoformat()
@@ -29599,6 +29684,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 delay=60))
     else:
         s["last_pool"] = datetime.now().isoformat()
+        exp_gain = _scaled_shot_exp(s["level"], shot["exp"]) * 2
         lmsgs, leveled = add_shadow_exp(s, exp_gain)
         save_shadow(s)
 
@@ -29669,7 +29755,7 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if random.random() < 0.10:
             item = random.choice(["Health Potion","Greater Health Potion","Grand Restorative Flask"])
             add_item(p, item)
-        daily_exp = 200 + p["level"] * 10
+        daily_exp = exp_share(p["level"], 0.10)
         lmsgs, _ = add_exp(p, daily_exp)
         entry = f"🎁 *Daily:* +{daily_exp} EXP, +{gold}g"
         if item: entry += f", *{item}*!"
@@ -29681,7 +29767,7 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Train ──────────────────────────────────────────────────────────────────
     if check_cooldown(p.get("last_train"), 1800):
         p["last_train"] = now.isoformat()
-        base = 150 + p["level"] * 5
+        base = exp_share(p["level"], 0.04)
         cls  = get_player_class(p)
         if cls:
             pk = cls.get("passive_key","")
@@ -29714,9 +29800,10 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         gold    = round(q["gold"] * (1 + luk_val * 0.002))
         p["gold"] = p.get("gold",0) + gold
         p["quests_done"] = p.get("quests_done",0) + 1
-        lmsgs, _ = add_exp(p, q["exp"], w)
+        _q_exp = exp_share(p["level"], {"Easy": 0.03, "Medium": 0.05, "Hard": 0.08}.get(q["tier"], 0.03))
+        lmsgs, _ = add_exp(p, _q_exp, w)
         check_titles(p)
-        entry = f"🗺️ *Quest:* +{q['exp']} EXP, +{gold}g"
+        entry = f"🗺️ *Quest:* +{_q_exp:,} EXP, +{gold}g"
         if item_found: entry += f", *{item_found}*!"
         ran.append(entry)
         if lmsgs: ran.extend(f"  {m}" for m in lmsgs)
@@ -29736,9 +29823,8 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if pool_ready:
         p["last_pool"] = now.isoformat()
         shot      = roll_pool_shot_with_luk(p)
-        exp_gain  = shot["exp"]; gold_gain = shot["gold"]
-        exp_gain  = int(exp_gain  * max(1.0, 1.0 + (p["level"] - 1) * 0.15))
-        gold_gain = int(gold_gain * max(1.0, 1.0 + (p["level"] - 1) * 0.12))
+        exp_gain  = _scaled_shot_exp(p["level"], shot["exp"])
+        gold_gain = int(shot["gold"] * max(1.0, 1.0 + (p["level"] - 1) * 0.12))
         p["gold"] = p.get("gold",0) + gold_gain
         item_found = None
         if shot.get("loot"):
@@ -29816,7 +29902,8 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             w2 = get_weather()
             success = random.random() < 0.70
             if success:
-                exp  = round(_zone_ref["exp"] * w2.get("exp_mod", 1.0))
+                _zone_pct = 0.08 + 0.17 * min(1.0, _zone_ref["exp"] / 28000)
+                exp  = round(exp_share(pp["level"], _zone_pct) * w2.get("exp_mod", 1.0))
                 gold = _zone_ref["gold"]
                 pp["gold"] = pp.get("gold", 0) + gold
                 item_found = roll_loot_table(_zone_ref.get("loot_table", []))
@@ -31034,7 +31121,9 @@ def _calc_idle_exp(idle_secs: float, player_level: int = 1) -> int:
     if idle_secs < 1800:
         return 0
     idle_hours = idle_secs / 3600
-    base_rate = 300 + player_level * 40
+    # Calibrated so a full 10h idle ramp pays ~15% of the current level requirement
+    # (the exponential sum below multiplies base_rate by ~6.5x at 10 hours)
+    base_rate = exp_share(player_level, 0.023)
     growth = 1.22
     capped_h = min(idle_hours, 10)
     # Geometric-sum style exponential ramp over the capped window
@@ -31347,8 +31436,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                    datetime.now() > datetime.fromisoformat(cds_s[key]) + timedelta(seconds=trigger["cooldown"]):
                     cds_s[key] = datetime.now().isoformat()
                     if trigger["exp"] > 0:
-                        shadow_exp += trigger["exp"]
-                        if p: rpg_exp += trigger["exp"]
+                        # Table values are weights: 1M of table value = 0.2% of
+                        # the current level requirement (so 1.5M→0.3%, 8M→1.6%)
+                        _trig_pct = (trigger["exp"] / 1_000_000) * 0.002
+                        shadow_exp += exp_share(s["level"], _trig_pct)
+                        if p: rpg_exp += exp_share(p["level"], _trig_pct)
                     elif trigger["exp"] < 0:
                         s["exp"] = max(0, s["exp"]+trigger["exp"])
                         if p: p["exp"] = max(0, p.get("exp",0)+trigger["exp"])
@@ -31362,30 +31454,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cds_s.update({"daily_date":today,"daily_messages":0,
                           "daily_bonus_given":False,
                           "streak_50":False,"streak_100":False,"streak_500":False})
+        # Chat EXP scales with level so it stays meaningful without
+        # trivializing progression (was flat 10M/500M/2B/10B).
         if not cds_s.get("daily_bonus_given"):
             cds_s["daily_bonus_given"] = True
-            shadow_exp += 10000000
-            if p: rpg_exp += 10000000
+            shadow_exp += exp_share(s["level"], 0.25)
+            if p: rpg_exp += exp_share(p["level"], 0.25)
 
         cds_s["daily_messages"] = cds_s.get("daily_messages",0) + 1
         dm = cds_s["daily_messages"]
         if dm >= 50 and not cds_s.get("streak_50"):
-            cds_s["streak_50"] = True; shadow_exp += 500000000
-            if p: rpg_exp += 500000000
+            cds_s["streak_50"] = True
+            _stk_exp = exp_share(s["level"], 0.10)
+            shadow_exp += _stk_exp
+            if p:
+                _stk_exp = exp_share(p["level"], 0.10)
+                rpg_exp += _stk_exp
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🔥 *{user.first_name}* hit a *50 message streak!* +500M EXP!",
+                f"🔥 *{user.first_name}* hit a *50 message streak!* +{_stk_exp:,} EXP!",
                 delay=8))
         if dm >= 100 and not cds_s.get("streak_100"):
-            cds_s["streak_100"] = True; shadow_exp += 2000000000; rpg_gold += 100
-            if p: rpg_exp += 2000000000
+            cds_s["streak_100"] = True; rpg_gold += 100
+            _stk_exp = exp_share(s["level"], 0.25)
+            shadow_exp += _stk_exp
+            if p:
+                _stk_exp = exp_share(p["level"], 0.25)
+                rpg_exp += _stk_exp
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🔥 *{user.first_name}* hit a *100 message streak!* +2B EXP!",
+                f"🔥 *{user.first_name}* hit a *100 message streak!* +{_stk_exp:,} EXP!",
                 delay=8))
         if dm >= 500 and not cds_s.get("streak_500"):
-            cds_s["streak_500"] = True; shadow_exp += 10000000000
-            if p: rpg_exp += 10000000000
+            cds_s["streak_500"] = True
+            _stk_exp = exp_share(s["level"], 1.00)
+            shadow_exp += _stk_exp
+            if p:
+                _stk_exp = exp_share(p["level"], 1.00)
+                rpg_exp += _stk_exp
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🏆 *{user.first_name}* hit a *500 message streak!* +10B EXP! 🎱",
+                f"🏆 *{user.first_name}* hit a *500 message streak!* +{_stk_exp:,} EXP! 🎱",
                 delay=8))
 
     # Apply shadow EXP
@@ -31446,12 +31552,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     fp = get_player(fid)
                     if not fp: continue
                     share = fdmg/max(1,total_dmg)
-                    exp_share = round(drake["exp_reward"] * share)
+                    # Damage share of a level-scaled pot (drake pays up to ~20% of a level)
+                    _drake_exp = round(exp_share(fp["level"], 0.20) * share)
                     loot = roll_loot_table(drake.get("loot_table",[]))
                     if loot: add_item(fp, loot)
-                    lmsgs, leveled = add_exp(fp, exp_share)
+                    lmsgs, leveled = add_exp(fp, _drake_exp)
                     save_player(fp)
-                    lines.append(f"✅ *{fp['username']}*  -  +{exp_share} EXP"
+                    lines.append(f"✅ *{fp['username']}*  -  +{_drake_exp:,} EXP"
                                  + (f" | 🎒 *{loot}*!" if loot else ""))
                     if leveled and fp["level"] % 10 == 0:
                         asyncio.create_task(announce(context.bot, chat_id,
@@ -31474,8 +31581,9 @@ async def greet_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         loot = roll_loot_table(event.get("loot_table",[]))
         if p and not is_defeated(p):
             if loot: add_item(p, loot)
-            lmsgs, leveled = add_exp(p, event["exp"]); save_player(p)
-            msg = f"🧙 *{user.first_name}* greets the traveler! +{event['exp']} EXP"
+            _trav_exp = exp_share(p["level"], 0.02)
+            lmsgs, leveled = add_exp(p, _trav_exp); save_player(p)
+            msg = f"🧙 *{user.first_name}* greets the traveler! +{_trav_exp:,} EXP"
             if loot: msg += f" | 🎒 *{loot}*!"
         else:
             lmsgs, leveled = add_shadow_exp(s, event["exp"]); save_shadow(s)
@@ -31508,15 +31616,17 @@ async def fight_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if event["key"] == "rival":
         active_events.pop(chat_id, None)
         gold_prize = random.randint(400, 1000)
-        exp_prize  = random.randint(1000, 2250)
+        _prize_pct = random.uniform(0.03, 0.06)
         lines = [f"⚔️ *{user.first_name}* steps up first and claims the table!"]
         if p and not is_defeated(p):
+            exp_prize = exp_share(p["level"], _prize_pct)
             p["gold"] = p.get("gold", 0) + gold_prize
             add_exp(p, exp_prize); save_player(p)
-            lines.append(f"💰 +{gold_prize} gold | ✨ +{exp_prize} EXP")
+            lines.append(f"💰 +{gold_prize} gold | ✨ +{exp_prize:,} EXP")
         elif s:
+            exp_prize = exp_share(s["level"], _prize_pct)
             add_shadow_exp(s, exp_prize); save_shadow(s)
-            lines.append(f"✨ +{exp_prize} EXP")
+            lines.append(f"✨ +{exp_prize:,} EXP")
         await send_group(update, "\n".join(lines), delay=20)
         return
 
@@ -31529,20 +31639,20 @@ async def fight_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
              f"(HP: {max(0, event['enemy_hp'])}/150)"]
     if event["enemy_hp"] <= 0:
         active_events.pop(chat_id, None)
-        lines.append("💀 *Bandit defeated!* +1250 EXP each!")
+        lines.append("💀 *Bandit defeated!* +5% of a level each!")
         for fid in event["fighters"]:
             fp = get_player(fid); fs = get_shadow(fid)
             if fp and not is_defeated(fp):
                 loot = roll_loot_table(event.get("loot_table", []))
                 if loot: add_item(fp, loot)
-                lmsgs, leveled = add_exp(fp, 1250); save_player(fp)
+                lmsgs, leveled = add_exp(fp, exp_share(fp["level"], 0.05)); save_player(fp)
                 if loot: lines.append(f"🎒 *{fp['username']}* found *{loot}*!")
                 if leveled and fp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{fp['username']}* reached *Level {fp['level']}* from battle! ⚔️",
                         delay=60))
             elif fs:
-                lmsgs, leveled = add_shadow_exp(fs, 1250); save_shadow(fs)
+                lmsgs, leveled = add_shadow_exp(fs, exp_share(fs["level"], 0.05)); save_shadow(fs)
     await send_group(update, "\n".join(lines), delay=15)
 
 async def shoot_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -31558,20 +31668,20 @@ async def shoot_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
              f"(HP: {max(0,event['enemy_hp'])}/200)"]
     if event["enemy_hp"] <= 0:
         active_events.pop(chat_id, None)
-        lines.append("✨ *Spirit banished!* +1500 EXP each!")
+        lines.append("✨ *Spirit banished!* +6% of a level each!")
         for fid in event["fighters"]:
             fp = get_player(fid); fs = get_shadow(fid)
             if fp and not is_defeated(fp):
                 loot = roll_loot_table(event.get("loot_table",[]))
                 if loot: add_item(fp, loot)
-                lmsgs, leveled = add_exp(fp, 1500); save_player(fp)
+                lmsgs, leveled = add_exp(fp, exp_share(fp["level"], 0.06)); save_player(fp)
                 if loot: lines.append(f"🎒 *{fp['username']}* found *{loot}*!")
                 if leveled and fp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{fp['username']}* reached *Level {fp['level']}* from the ghost! 👻",
                         delay=60))
             elif fs:
-                lmsgs, leveled = add_shadow_exp(fs, 1500); save_shadow(fs)
+                lmsgs, leveled = add_shadow_exp(fs, exp_share(fs["level"], 0.06)); save_shadow(fs)
     await send_group(update, "\n".join(lines), delay=15)
 
 async def claim_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -31664,7 +31774,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 out.append(f"\n🎱 *FINAL BOSS  -  {bd['name']}!* ❤️ HP: {boss_hp}")
             else:
                 active_soloraids.pop(uid, None)
-                exp_r = tier["exp_reward"]; gold_r = tier["gold_reward"]
+                exp_r = _scaled_raid_exp(p["level"], tier["exp_reward"]); gold_r = tier["gold_reward"]
                 p["gold"] = p.get("gold", 0) + gold_r; p["quests_done"] = p.get("quests_done", 0) + 1
                 for _d, _e, _g in track_objective(p, "solo_win"):
                     p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
@@ -31759,7 +31869,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
             lines.append(f"\n🎱 *FINAL BOSS  -  {bd['name']}!* ❤️ HP: {boss_hp}")
         else:
             active_soloraids.pop(uid, None)
-            exp_r = tier["exp_reward"]; gold_r = tier["gold_reward"]
+            exp_r = _scaled_raid_exp(p["level"], tier["exp_reward"]); gold_r = tier["gold_reward"]
             p["gold"] = p.get("gold", 0) + gold_r; p["quests_done"] = p.get("quests_done", 0) + 1
             for _d, _e, _g in track_objective(p, "solo_win"):
                 p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
@@ -31968,9 +32078,10 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
                 if award_title(pp, data["title"]):
                     lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
-                add_exp(pp, BOSS_RAID_EXP, w2)
+                _braid_exp = exp_share(pp["level"], 0.10)
+                add_exp(pp, _braid_exp, w2)
                 save_player(pp)
-                lines.append(f"✅ *{pp['username']}*  -  +{BOSS_RAID_EXP} EXP | +{data['gold']} Gold")
+                lines.append(f"✅ *{pp['username']}*  -  +{_braid_exp:,} EXP | +{data['gold']} Gold")
             try:
                 await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
             except Exception: pass
@@ -32104,8 +32215,9 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
             if award_title(pp, data["title"]):
                 lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
-            add_exp(pp, BOSS_RAID_EXP, w2); save_player(pp)
-            lines.append(f"✅ *{pp['username']}*  -  +{BOSS_RAID_EXP} EXP | +{data['gold']} Gold")
+            _braid_exp = exp_share(pp["level"], 0.10)
+            add_exp(pp, _braid_exp, w2); save_player(pp)
+            lines.append(f"✅ *{pp['username']}*  -  +{_braid_exp:,} EXP | +{data['gold']} Gold")
         try:
             await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
         except Exception: pass
@@ -32458,7 +32570,7 @@ async def _send_random_dm_event(bot, uid, p):
                 f"🎁 *A mysterious chest appears in your path!*\nYou find *{gold:,} gold*.",
                 parse_mode="Markdown")
         elif kind == "quest":
-            exp = random.randint(60, 220) + p.get("level", 1) * 6
+            exp = exp_share(p.get("level", 1), random.uniform(0.01, 0.03))
             add_exp(p, exp)
             save_player(p)
             await bot.send_message(uid,
