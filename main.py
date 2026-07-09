@@ -454,7 +454,8 @@ async def _finalize_pvp(pair, result_text, bot):
     _pvp_battle_logs.pop(pair, None)
     _pvp_cur_page.pop(pair, None)
     _pvp_origin_chat.pop(pair, None)
-    _pvp_card_tasks.pop(pair, None)
+    _cancel_card_timer(pair)  # cancel, don't just drop — or the pending
+                              # auto-delete later removes the final result card
     if len(pair) == 2:
         _f_au, _f_du = pair
         _f_a = get_player(_f_au)
@@ -542,7 +543,8 @@ def _cancel_card_timer(pair):
 
 # ── RATE LIMITER ──────────────────────────────────────────────────────────────
 _cmd_timestamps    = {}   # user_id -> [float timestamps]
-_processing_users  = set()  # user_ids currently inside a state-changing callback
+_processing_users  = {}  # user_id -> lock acquire time; users inside a state-changing callback
+_CB_LOCK_STALE_SECS = 30  # a leaked lock (unhandled exception) self-heals after this long
 
 def _rate_ok(uid: int, max_cmds: int = 8, window: float = 6.0) -> bool:
     """Return True if the user is within the rate limit, False if they're spamming."""
@@ -557,14 +559,19 @@ def _rate_ok(uid: int, max_cmds: int = 8, window: float = 6.0) -> bool:
     return True
 
 def _cb_lock(uid: int) -> bool:
-    """Acquire a processing lock for a callback. Returns False if already held."""
-    if uid in _processing_users:
+    """Acquire a processing lock for a callback. Returns False if already held.
+    Locks older than _CB_LOCK_STALE_SECS are treated as leaked (an exception
+    skipped the unlock) and are re-acquirable, so a player can never be
+    frozen out of buttons until restart."""
+    now = time.time()
+    ts = _processing_users.get(uid)
+    if ts is not None and now - ts < _CB_LOCK_STALE_SECS:
         return False
-    _processing_users.add(uid)
+    _processing_users[uid] = now
     return True
 
 def _cb_unlock(uid: int):
-    _processing_users.discard(uid)
+    _processing_users.pop(uid, None)
 
 # ── SEND HELPERS ──────────────────────────────────────────────────────────────
 async def _auto_delete(bot, chat_id, msg_id, delay):
@@ -2829,7 +2836,7 @@ ACCESSORIES = {
     "Worn Leather Band":    {"slot":"ring","effect":{"hp":10},"rarity":"common",
                                 "desc":"+10 max HP."},
     "Brass Ring":              {"slot":"ring","effect":{"any_stat":3},"rarity":"common",
-                                "desc":"+3 to one stat of your choice on equip."},
+                                "desc":"+3 to your class's primary stat."},
     "Scout's Pendant":             {"slot":"amulet","effect":{"hp":5},"rarity":"common",
                                 "desc":"+5 max HP."},
     "Traveler's Coin":       {"slot":"amulet","effect":{"all_stats":2},"rarity":"common",
@@ -2840,7 +2847,7 @@ ACCESSORIES = {
     "Rune Ring":           {"slot":"ring","effect":{"WIS":6},"rarity":"uncommon",
                                 "desc":"+6 WIS."},
     "Obsidian Stud":       {"slot":"ring","effect":{"any_stat":6},"rarity":"uncommon",
-                                "desc":"+6 STR or +6 INT (choose on equip)."},
+                                "desc":"+6 to your class's primary stat."},
     "Bloodstone Band":     {"slot":"ring","effect":{"hp":8,"STR":3},"rarity":"uncommon",
                                 "desc":"+8 HP, +3 STR."},
     "Shadowmark Signet":   {"slot":"ring","effect":{"atk":4,"gold_bonus":0.05},"rarity":"uncommon",
@@ -5690,7 +5697,7 @@ RAID_TIERS = [
      "loot_table":[
          ("Steel Knight Sword",0.35),("Crystal Core Wand",0.30),("Warlock's Dread Staff",0.25),
          ("Bloodstone Band",0.25),("Shadowmark Signet",0.20),("Hunter's Fang",0.18),
-         ("Crystal Bead Necklace",0.18),("Iron Scale Vest",0.15),("Shadow Leather Coat",0.12),
+         ("Crystal Bead Necklace",0.18),("Iron Chain Mail",0.15),("Shadow Leathers",0.12),
          ("Iron Shard",0.25),("Fortune Coin",0.10),("Hawk Eye Medallion",0.08),
          ("Enchanting Scroll",0.10),
          ("Templar's Helm",0.15),("Void Cowl",0.15),
@@ -5721,7 +5728,7 @@ RAID_TIERS = [
                      {"name":"Doom Cluster","hp":6000,"dmg_min":180,"dmg_max":260}],
      "exp_reward":8000,"gold_reward":2000,
      "loot_table":[
-         ("Ruinblade",0.12),("The Mind's Eye",0.10),("Runed Finger",0.15),
+         ("Ruinblade",0.12),("The Mind's Eye",0.10),("Rune Ring",0.15),
          ("Twin Strike Ring",0.18),("Eye of the Void",0.16),("Void Circle",0.14),
          ("War Knuckle",0.14),("Cleric's Band",0.12),("Runed Heart",0.14),
          ("The Shadow Whisper",0.12),("Guardian's Talisman",0.10),
@@ -5796,7 +5803,7 @@ SOLO_RAID_TIERS = [
      ],
      "exp_reward":3400,"gold_reward":1200,
      "loot_table":[
-         ("Runed Finger",0.14),("Twin Strike Ring",0.16),("Eye of the Void",0.14),
+         ("Rune Ring",0.14),("Twin Strike Ring",0.16),("Eye of the Void",0.14),
          ("Void Circle",0.12),("War Knuckle",0.12),("Cleric's Band",0.10),
          ("Runed Heart",0.12),("The Shadow Whisper",0.10),("Guardian's Talisman",0.09),
          ("Shard of the Void",0.05),("Ring of the Endless",0.04),("The Warlord's Ring",0.03),
@@ -6823,7 +6830,7 @@ def _dng_pvp_effects(p):
     for item_name, item_data in DNG_EXCLUSIVE_ITEMS.items():
         if item_name in inv:
             fx.add(item_data["effect"])
-    for comp_key in p.get("dng_companions", []):
+    for comp_key in sjl(p.get("dng_companions"), []):
         comp = DNG_COMPANIONS.get(comp_key, {})
         for eff in comp.get("pvp_effects", []):
             fx.add(eff)
@@ -6835,13 +6842,17 @@ def _dng_pvp_init(uid, p):
     state = {}
     if "Abyssal Plate" in inv:
         state["abyssal_plate_hits"] = 5
-    if "crystal_golem" in p.get("dng_companions", []):
+    _comps = sjl(p.get("dng_companions"), [])
+    if "crystal_golem" in _comps:
         state["golem_absorbs"] = 3
         state["golem_block_used"] = False
-    if "null_herald" in p.get("dng_companions", []):
+    if "null_herald" in _comps:
         state["herald_blocks"] = 2
-    if "iron_guardian" in p.get("dng_companions", []):
+    if "iron_guardian" in _comps:
         state["guardian_block_used"] = False
+    # The Last Stand Locket: revive once per combat at 20% HP
+    if get_accessory_bonus(p, "revive_once"):
+        state["last_stand_available"] = True
     if "Cryptwalker's Blade" in inv:
         state["cryptwalker_shield"] = False
     _pvp_battle_state[uid] = state
@@ -7066,9 +7077,10 @@ async def _dng_award_and_extract(uid, bot, p, state, narr_key="extract"):
         add_item(p, exc_name)
     comp_key = state.get("companion_earned")
     if comp_key and comp_key in DNG_COMPANIONS:
-        p.setdefault("dng_companions", [])
-        if comp_key not in p["dng_companions"]:
-            p["dng_companions"].append(comp_key)
+        _comps = sjl(p.get("dng_companions"), [])
+        if comp_key not in _comps:
+            _comps.append(comp_key)
+        p["dng_companions"] = _comps
     save_player(p)
     active_dungeons.pop(uid, None)
     items_txt = ""
@@ -7517,7 +7529,7 @@ async def _dng_on_enemy_killed(uid, bot, p, state):
 
         # Companion drop
         comp_eligible = [k for k, v in DNG_COMPANIONS.items()
-                         if diff in v.get("diff",[]) and k not in p.get("dng_companions",[])]
+                         if diff in v.get("diff",[]) and k not in sjl(p.get("dng_companions"),[])]
         if comp_eligible and random.random() < cfg["companion_chance"]:
             comp_key = random.choice(comp_eligible)
             state["companion_earned"] = comp_key
@@ -8504,11 +8516,15 @@ def get_accessory_bonus(p, stat):
         # all_stats
         elif stat in ("STR","DEF","AGI","INT","WIS","DEX","LUK") and "all_stats" in effect:
             total += effect["all_stats"]
-        # primary_stat
+        # primary_stat / any_stat both boost the class's primary stat
         elif "primary_stat" in effect:
             primary = get_primary_stat(p)
             if stat == primary:
                 total += effect["primary_stat"]
+        elif "any_stat" in effect:
+            primary = get_primary_stat(p)
+            if stat == primary:
+                total += effect["any_stat"]
     return total
 
 # Maps new class lines → existing gear category so they can use shared weapon/armor pools
@@ -10383,6 +10399,13 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # ── Dungeon companions (earned in dungeon runs, grant PvP effects) ──────
+    try:
+        conn.execute("ALTER TABLE players ADD COLUMN dng_companions TEXT DEFAULT NULL")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
     # ── v24 DEF gear slots ────────────────────────────────────────────────────
     for _dc in [("equipped_hat","TEXT DEFAULT NULL"),("equipped_gloves","TEXT DEFAULT NULL"),
                 ("equipped_boots","TEXT DEFAULT NULL"),("equipped_mask","TEXT DEFAULT NULL")]:
@@ -10797,132 +10820,9 @@ def init_db():
     conn3.commit()
     conn3.close()
 
-    # ── v15 Item Name Migration ───────────────────────────────────────────────
-    ITEM_NAME_MAP = {
-        # Weapons  -  Warrior
-        "Broken Longsword":"Cracked House Cue","Militia Falchion":"Worn Practice Cue",
-        "Blacksteel Bastard Sword":"Graphite Break Cue","Giantslayer Zweihander":"Heavy Breaker Staff",
-        "Worldcleaver":"The Rack Splitter",
-        # Weapons  -  Mage
-        "Oak Practice Staff":"Chalked Finger","Petrified Willow Wand":"Blue Diamond Chalk",
-        "Cursed Ebony Staff":"Blackwood Bridge Stick","Astral Conduit Rod":"The Extension",
-        "Nullstar Scepter":"The Grand Bridge",
-        # Weapons  -  Archer
-        "Makeshift Shortbow":"Bent Triangle","Goat Horn Crossbow":"Standard Magic Rack",
-        "Falconwing Recurve Bow":"Precision Rack","Windripper Greatbow":"Diamond Rack",
-        "Heaven's Tear Ballista":"The Perfect Break Rack",
-        # Weapons  -  Thief
-        "Rusty Shiv":"Chalk Shiv","Serrated Kujang":"Mushroom Tip Blade",
-        "Venomspike Blowgun":"Ferrule Dart","Shadowstitch Katars":"Twin Tip Blades",
-        "Umbral Chain Sickle":"The Ball Return",
-        # Weapons  -  Priest
-        "Wooden Prayer Beads":"Chalk Beads","Iron Rosary":"Iron Chalk Ring",
-        "Sun Disc Pendant":"The Spot Marker","Martyr's Thorned Cross":"The Crossed Cues",
-        "Sanctus Aeterna":"The Diamond Staff",
-        # Armors  -  Warrior
-        "Padded Tunic":"Padded Cue Jacket","Iron Scale Vest":"Slate Guard",
-        "Crimson Plackart":"Red Cloth Plate","Onyx Golem Plate":"Black Ball Plate",
-        "Titanfoil Carapace":"Diamond Felt Armor",
-        # Armors  -  Mage
-        "Frayed Spellcloak":"Worn Chalk Coat","Windwoven Silk Robe":"Green Baize Robe",
-        "Arctic Fox Stole":"White Glove Wrap","Voidweave Mantle":"Blacklight Cloak",
-        "Singularity Robe":"The Nap Robe",
-        # Armors  -  Archer
-        "Sturdy Leather Jerkin":"Corner Pocket Vest","Hardened Hide Cuirass":"Rail Leather Chest",
-        "Griffon Plate Chest":"Diamond Point Plate","Phoenix Down Brigandine":"Red Baize Brigandine",
-        "Skybreaker Scale Armor":"The Rack Scale",
-        # Armors  -  Thief
-        "Dark Hooded Wrap":"Hustle Coat","Oilskin Shadow Coat":"Midnight Felt Coat",
-        "Stalker's Mesh Shroud":"The Sneak Mesh","Nocturnal Leather Harness":"Backdoor Harness",
-        "Abyssal Cloak of Silence":"The Ghost Coat",
-        # Armors  -  Priest
-        "Woven Vestments":"Chalk Cloth Vestments","Embroidered Cassock":"The Rule Book Robe",
-        "Silver Mitre Hood":"The Referee Hood","Lightweaver Chasuble":"The Tournament Cloak",
-        "Seraph's Surplice":"The House Saint Surplice",
-        # Shields
-        "Splintered Buckler":"Cracked Rack Shield","Ironbound Targe":"Iron Triangle",
-        "Kite Shield of the Vow":"The Break Shield","Obsidian Tower Shield":"Black Ball Barrier",
-        "Aegis of First Light":"The Diamond Aegis",
-        # Accessories  -  Common
-        "Pebble of Focus":"Chalk Nub","Frayed Rope Band":"Worn Tip Wrap",
-        "Copper Loop":"Brass Rail Ring","Tin Charm":"Pocket Marker",
-        "Traveler's Token":"Road Player's Coin",
-        # Accessories  -  Uncommon
-        "Fox Tail Ring":"Silk Tip Ring","Brass Holy Symbol":"Chalk Cross Pendant",
-        "Chipped Onyx Stud":"Black Ball Stud","Bloodstone Band":"Red Ball Band",
-        "Mercenary's Signet":"Road Shark Signet","Hunter's Fang Pendant":"Hustler's Tooth",
-        "Mana Bead Necklace":"Chalk Bead Necklace",
-        # Accessories  -  Rare
-        "Whisper Coin":"The Action Coin","Warmaster's Clasp":"Break Master's Clasp",
-        "Owl Medallion":"Diamond Sight Medallion","Phantom Loop":"Ghost Ball Loop",
-        "Executioner's Band":"Closer's Band","Spellweaver's Coil":"English Coil",
-        "Ironheart Medallion":"Slate Heart","Vampiric Fang Chain":"Shark Tooth Chain",
-        "Wanderer's Compass":"Road Player's Compass","Stormcaller's Torc":"The Break Torc",
-        # Accessories  -  Epic
-        "Twin Serpent Ring":"Double Kiss Ring","Eye of the Storm":"Eye of the Table",
-        "Void-Touched Circle":"Blackball Circle","Berserker's Knuckle":"Break Knuckle",
-        "Saint's Halo Band":"House Saint's Band","Cinder Heart Pendant":"Chalk Heart",
-        "Deathwhisper Amulet":"The Hustler's Whisper","Aegis Talisman":"The Safety Talisman",
-        "Luminous Crucifix":"The Crossed Cues Pendant","Dragon Soul Pendant":"The Slate and Felt Pendant",
-        # Accessories  -  Legendary
-        "Godshard Splinter":"Splinter of the Break","Infinity Loop":"The Endless Run",
-        "Ring of the Ancients":"The Old Road Ring","Ouroboros":"The Rack Eternal",
-        "Last Breath Locket":"The Final Shot Locket","Worldsoul Amulet":"The Felt Soul",
-        "Shard of Divinity":"The Diamond Shard","Mark of the Void":"The Blackball Mark",
-        # Consumables
-        "Health Potion":"Chalk Vial","Super Health Potion":"Premium Chalk Draft",
-        "Mega Health Potion":"Champion's Chalk Flask","Revival Charm":"The Re-Rack",
-        "Holy Relic":"Holy Water Vial","Dragon Scale":"Iron Shard",
-        "Enchanting Scroll":"The Custom Tip Scroll",
-    }
+    # (v15 item-name startup migration removed — save-time _ITEM_RENAME
+    #  now handles all legacy item-name normalization)
 
-    def _migrate_item_list(lst):
-        return [ITEM_NAME_MAP.get(x, x) for x in lst]
-
-    def _migrate_item_dict(d):
-        return {ITEM_NAME_MAP.get(k, k): v for k, v in d.items()}
-
-    try:
-        mig_conn = sqlite3.connect(DB_PATH)
-        try:
-            mig_conn.row_factory = sqlite3.Row
-            mig_c = mig_conn.cursor()
-            mig_c.execute("""SELECT user_id,inventory,equipped_weapon,equipped_armor,
-                                    equipped_shield,equipped_accessory,enhancements,enchants
-                             FROM players""")
-            rows = mig_c.fetchall()
-            migrated = 0
-            for row in rows:
-                changed = False
-                uid = row["user_id"]
-                inv  = sjl(row["inventory"], [])
-                new_inv = _migrate_item_list(inv)
-                if new_inv != inv: changed = True
-                ew  = ITEM_NAME_MAP.get(row["equipped_weapon"],  row["equipped_weapon"])
-                ea  = ITEM_NAME_MAP.get(row["equipped_armor"],   row["equipped_armor"])
-                es  = ITEM_NAME_MAP.get(row["equipped_shield"],  row["equipped_shield"])
-                eac = ITEM_NAME_MAP.get(row["equipped_accessory"], row["equipped_accessory"])
-                if ew != row["equipped_weapon"] or ea != row["equipped_armor"] or \
-                   es != row["equipped_shield"] or eac != row["equipped_accessory"]:
-                    changed = True
-                enh = sjl(row["enhancements"], {}); new_enh = _migrate_item_dict(enh)
-                if new_enh != enh: changed = True
-                enc = sjl(row["enchants"], {});     new_enc = _migrate_item_dict(enc)
-                if new_enc != enc: changed = True
-                if changed:
-                    mig_c.execute("""UPDATE players SET inventory=?,equipped_weapon=?,
-                                      equipped_armor=?,equipped_shield=?,equipped_accessory=?,
-                                      enhancements=?,enchants=? WHERE user_id=?""",
-                        (json.dumps(new_inv), ew, ea, es, eac,
-                         json.dumps(new_enh), json.dumps(new_enc), uid))
-                    migrated += 1
-            mig_conn.commit()
-            if migrated > 0:
-                logger.info(f"v15 item migration: updated {migrated} player(s)")
-        finally:
-            mig_conn.close()
-    except Exception as e:
-        logger.error(f"v15 item migration failed: {e}")
 
     # ── HP formula migration (raise base HP) ─────────────────────────────────
     # Runs every startup but is a no-op for already-updated players.
@@ -11084,14 +10984,115 @@ _ITEM_RENAME = {
     "Black Ball Barrier":  "Holy Pavise",
     "The Diamond Aegis":   "Celestial Bulwark",
     # Loot-table pool-themed items → RPG names
-    "Rack Cloth Vest":     "Rustic Cloth Vest",
-    "Reinforced Chalk Coat": "Reinforced Hide Coat",
+    # (targets must be real defined items or the rename strands the player
+    #  with an unusable inventory entry)
+    "Rack Cloth Vest":     "Rusty Iron Vest",
+    "Reinforced Chalk Coat": "Iron Chain Mail",
     "Ferrule Dart":        "Bloodsteel Shuriken",
-    "Toughened Rail Coat": "Toughened Leather Coat",
-    "Iron Rail Guard":     "Iron Wall Shield",
-    "The Chalk Wall":      "The Stone Wall",
-    "The Diamond Rack":    "The Crystal Barrier",
-    "Legendary Cue Coat":  "Legendary Runecoat",
+    "Toughened Rail Coat": "Soldier's Plating",
+    "Iron Rail Guard":     "Iron Heater Shield",
+    "The Chalk Wall":      "Steel Tower Shield",
+    "The Diamond Rack":    "Celestial Bulwark",
+    "Legendary Cue Coat":  "Dragonscale Plate",
+    # ── Ancient (pre-v15 fantasy) names → current names ──────────────────────
+    # Folded in from the old v15 startup migration so all normalization happens
+    # here at save time. Names that are ALSO current items are deliberately
+    # absent (renaming them would corrupt live inventories).
+    "Broken Longsword": "Rusty Shortsword",
+    "Militia Falchion": "Iron Broadsword",
+    "Blacksteel Bastard Sword": "Steel Knight Sword",
+    "Giantslayer Zweihander": "Warlord's Edge",
+    "Worldcleaver": "Ruinblade",
+    "Oak Practice Staff": "Gnarled Twig Wand",
+    "Petrified Willow Wand": "Crystal Core Wand",
+    "Cursed Ebony Staff": "Warlock's Dread Staff",
+    "Astral Conduit Rod": "Void Channel Staff",
+    "Nullstar Scepter": "The Mind's Eye",
+    "Makeshift Shortbow": "Frayed Hunting Bow",
+    "Goat Horn Crossbow": "Repeating Crossbow",
+    "Falconwing Recurve Bow": "Ranger's Marked Bow",
+    "Windripper Greatbow": "Warden's Gale Bow",
+    "Heaven's Tear Ballista": "The Dead Reckoning",
+    "Serrated Kujang": "Iron Stiletto",
+    "Venomspike Blowgun": "Bloodsteel Shuriken",
+    "Shadowstitch Katars": "Shadow Death Star",
+    "Umbral Chain Sickle": "Death's Whisper",
+    "Iron Rosary": "Silver Prayer Beads",
+    "Sun Disc Pendant": "Holy Judge's Cross",
+    "Martyr's Thorned Cross": "Grand Inquisitor's Cross",
+    "Sanctus Aeterna": "The Final Judgment",
+    "Padded Tunic": "Rusty Iron Vest",
+    "Iron Scale Vest": "Soldier's Plating",
+    "Crimson Plackart": "Steel Breastplate",
+    "Onyx Golem Plate": "Warlord's Battle Plate",
+    "Titanfoil Carapace": "Dragonscale Plate",
+    "Frayed Spellcloak": "Worn Cloth Robe",
+    "Windwoven Silk Robe": "Arcane Weave Robe",
+    "Arctic Fox Stole": "Sorcerer's Mantle",
+    "Voidweave Mantle": "Void-Touched Robe",
+    "Singularity Robe": "Archmage's Sanctum Robe",
+    "Sturdy Leather Jerkin": "Padded Hunting Vest",
+    "Hardened Hide Cuirass": "Scout's Leathers",
+    "Griffon Plate Chest": "Forest Scout Armor",
+    "Phoenix Down Brigandine": "Strider's Marked Armor",
+    "Skybreaker Scale Armor": "The Shadowmark Leather",
+    "Dark Hooded Wrap": "Torn Leather Vest",
+    "Oilskin Shadow Coat": "Rogue's Leathers",
+    "Stalker's Mesh Shroud": "Nightstalker's Vest",
+    "Nocturnal Leather Harness": "Phantom Leathers",
+    "Abyssal Cloak of Silence": "The Shadow Wrap",
+    "Woven Vestments": "Simple Cloth Vestment",
+    "Embroidered Cassock": "Blessed Cloth Robe",
+    "Silver Mitre Hood": "Sanctified Robe",
+    "Lightweaver Chasuble": "High Cleric's Vestment",
+    "Seraph's Surplice": "The High Saint's Vestment",
+    "Splintered Buckler": "Wooden Buckler",
+    "Ironbound Targe": "Soldier's Kite Shield",
+    "Kite Shield of the Vow": "Knight's Bulwark",
+    "Obsidian Tower Shield": "Holy Pavise",
+    "Aegis of First Light": "Celestial Bulwark",
+    "Pebble of Focus": "Iron Shard Ring",
+    "Frayed Rope Band": "Worn Leather Band",
+    "Copper Loop": "Brass Ring",
+    "Tin Charm": "Scout's Pendant",
+    "Traveler's Token": "Traveler's Coin",
+    "Fox Tail Ring": "Silk Band",
+    "Brass Holy Symbol": "Rune Cross Pendant",
+    "Chipped Onyx Stud": "Obsidian Stud",
+    "Mercenary's Signet": "Shadowmark Signet",
+    "Hunter's Fang Pendant": "Hunter's Fang",
+    "Mana Bead Necklace": "Crystal Bead Necklace",
+    "Whisper Coin": "Fortune Coin",
+    "Warmaster's Clasp": "War Master's Clasp",
+    "Owl Medallion": "Hawk Eye Medallion",
+    "Executioner's Band": "Warrior's Band",
+    "Spellweaver's Coil": "Mage's Coil",
+    "Ironheart Medallion": "Stone Heart",
+    "Vampiric Fang Chain": "Beast Fang Chain",
+    "Wanderer's Compass": "Traveler's Compass",
+    "Stormcaller's Torc": "The Storm Torc",
+    "Twin Serpent Ring": "Twin Strike Ring",
+    "Eye of the Storm": "Eye of the Void",
+    "Void-Touched Circle": "Void Circle",
+    "Berserker's Knuckle": "War Knuckle",
+    "Saint's Halo Band": "Cleric's Band",
+    "Cinder Heart Pendant": "Runed Heart",
+    "Deathwhisper Amulet": "The Shadow Whisper",
+    "Aegis Talisman": "Guardian's Talisman",
+    "Luminous Crucifix": "The Crossed Blades Pendant",
+    "Dragon Soul Pendant": "The Iron and Flame Pendant",
+    "Godshard Splinter": "Shard of the Void",
+    "Infinity Loop": "Ring of the Endless",
+    "Ring of the Ancients": "The Warlord's Ring",
+    "Last Breath Locket": "The Last Stand Locket",
+    "Worldsoul Amulet": "The Soul Amulet",
+    "Shard of Divinity": "The Divine Shard",
+    "Mark of the Void": "The Void Mark",
+    "Super Health Potion": "Greater Health Potion",
+    "Mega Health Potion": "Grand Restorative Flask",
+    "Revival Charm": "Scroll of Revival",
+    "Holy Relic": "Holy Water Vial",
+    "Dragon Scale": "Iron Shard",
 }
 
 def save_player(p):
@@ -11180,8 +11181,11 @@ def save_player(p):
         "regen_charges","regen_amt","heal_blocked_turns","revive_blocked_turns",
         "poison_pct","bleed_pct","burn_pct",
         "empire_buildings","empire_resources","empire_last_collect",
-        "mp","max_mp",
+        "mp","max_mp","dng_companions",
     ]
+    # dng_companions is held as a list in memory; store as JSON text
+    if isinstance(p.get("dng_companions"), list):
+        p["dng_companions"] = json.dumps(p["dng_companions"])
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
     col_str = ",".join(fields)
@@ -11363,11 +11367,11 @@ def check_titles(p):
     for title, data in TITLES.items():
         if title in earned: continue
         t, v = data["type"], data["threshold"]
-        if   t == "level"           and p["level"]                              >= v: pass
-        elif t == "wins"            and p["wins"]                               >= v: pass
-        elif t == "quests"          and p["quests_done"]                        >= v: pass
-        elif t == "heals"           and p["heals_given"]                        >= v: pass
-        elif t == "dodges"          and p["dodges"]                             >= v: pass
+        if   t == "level"           and safe_int(p.get("level"), 1)             >= v: pass
+        elif t == "wins"            and safe_int(p.get("wins"))                 >= v: pass
+        elif t == "quests"          and safe_int(p.get("quests_done"))          >= v: pass
+        elif t == "heals"           and safe_int(p.get("heals_given"))          >= v: pass
+        elif t == "dodges"          and safe_int(p.get("dodges"))               >= v: pass
         elif t == "crafts"          and safe_int(p.get("crafts_done"))          >= v: pass
         elif t == "prestige"        and safe_int(p.get("prestige_count"))       >= v: pass
         elif t == "reinforce"       and safe_int(p.get("total_reinforces"))     >= v: pass
@@ -12823,6 +12827,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     if kh > 0 and d_hp_after <= 0:
         a["hp"] = min(calc_max_hp(a), a["hp"] + int(kh))
         extra_notes.append(f"🧛 *{a.get('username','?')}* drains {int(kh)} HP from the kill!")
+
+    # The Last Stand Locket: survive the killing blow once per combat at 20% HP
+    if d["hp"] <= 0 and _dng_pvp_state(du_id).get("last_stand_available"):
+        _dng_pvp_state(du_id)["last_stand_available"] = False
+        d["hp"] = max(1, round(calc_max_hp(d) * 0.20))
+        extra_notes.append(f"🕯️ *The Last Stand Locket!* {d['username']} refuses to fall — revived at {d['hp']} HP!")
 
     if d["hp"] <= 0:
         d["hp"] = 0
@@ -20055,10 +20065,10 @@ async def _execute_skill(update, context, p, sk):
         cls_p = get_player_class(p)
         wis = get_stat(p, "WIS")
         mult = 1.25 if cls_p and cls_p.get("passive_key") == "mending_aura" else 1.0
-        # Accessory bonus
-        acc = p.get("equipped_accessory")
-        if acc and ACCESSORIES.get(acc, {}).get("effect", {}).get("revive_heal_bonus"):
-            mult += ACCESSORIES[acc]["effect"]["revive_heal_bonus"]
+        # Accessory bonus (any of the 4 accessory slots)
+        _rhb = get_accessory_bonus(p, "revive_heal_bonus")
+        if _rhb:
+            mult += _rhb
         heal = round(wis * sk.get("mult", 50) * mult)
         was_defeated = is_defeated(tp)
         if was_defeated:
@@ -20626,6 +20636,11 @@ async def _execute_skill(update, context, p, sk):
     # ─────────────────────────────────────────────────────────────────────────
 
     d["hp"] = max(0, d["hp"] - dmg)
+    # The Last Stand Locket: survive the killing blow once per combat at 20% HP
+    if d["hp"] <= 0 and _dng_pvp_state(du.id).get("last_stand_available"):
+        _dng_pvp_state(du.id)["last_stand_available"] = False
+        d["hp"] = max(1, round(calc_max_hp(d) * 0.20))
+        lines.append(f"🕯️ *The Last Stand Locket!* {d['username']} refuses to fall — revived at {d['hp']} HP!")
     lines.append(f"💥 *{dmg} damage* to *{d['username']}*!\n"
                  f"❤️ {d['username']}: {d['hp']}/{d['max_hp']} HP")
 
@@ -29221,8 +29236,8 @@ POOL_SHOTS = [
             "You called it. Nobody believed you. "
             "The table is already empty. The game is already won.",
      "exp":700,"gold":280,"loot":[("Iron Shard",0.70),("Enchanting Scroll",0.45),
-                                    ("Scroll of Revival",0.20),("Deathwhisper Amulet",0.06),
-                                    ("Dragon Soul Pendant",0.04)]},
+                                    ("Scroll of Revival",0.20),("The Shadow Whisper",0.06),
+                                    ("The Iron and Flame Pendant",0.04)]},
 
     {"id":"call_shot_perfection","weight":2,"rarity":"epic",
      "text":"Every ball called before every shot. "
@@ -29230,8 +29245,8 @@ POOL_SHOTS = [
             "Not one fluke, not one assumption. "
             "Pure declared intention, executed perfectly.",
      "exp":750,"gold":300,"loot":[("Iron Shard",0.72),("Enchanting Scroll",0.48),
-                                    ("Scroll of Revival",0.22),("Eye of the Storm",0.05),
-                                    ("Aegis Talisman",0.04)]},
+                                    ("Scroll of Revival",0.22),("Eye of the Void",0.05),
+                                    ("Guardian's Talisman",0.04)]},
 
     # ── Mythic ───────────────────────────────────────────────────────────────
     {"id":"absolute_mastery","weight":1,"rarity":"mythic",
