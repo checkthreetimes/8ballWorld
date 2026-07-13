@@ -7,6 +7,7 @@ import os, json, random, logging, sqlite3, re, asyncio, time, threading
 from datetime import datetime, timedelta
 from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest, RetryAfter
 from telegram.ext import (
     Application, CommandHandler, ContextTypes,
     MessageHandler, filters, CallbackQueryHandler,
@@ -7048,7 +7049,8 @@ def _dng_combat_markup(uid, state):
             label = f"✨{sk.get('name','Sk')[:10]}({cost}MP)"
             sk_row.append(InlineKeyboardButton(label, callback_data=f"dng_skl_{uid}_{i}"))
         rows.append(sk_row)
-    rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"dng_flee_{uid}")])
+    rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"dng_flee_{uid}"),
+                 InlineKeyboardButton("🔄", callback_data=f"dng_refresh_{uid}")])
     return InlineKeyboardMarkup(rows)
 
 def _dng_skill_mp_cost(sk):
@@ -7074,22 +7076,101 @@ def _dng_floor_done_markup(uid, floor, diff="hard"):
     ]])
 
 async def _dng_edit(uid, bot, text, markup=None):
+    """Deliver a dungeon turn as a FRESH card: send the new card, then delete
+    the old one. No inline-edit fragility, and the card always sits at the
+    bottom of the chat — proper turn-based feel. If Telegram flood-limits the
+    send, falls back to editing the old card in place (edits are throttled
+    separately), so one path or the other always lands."""
     state = active_dungeons.get(uid)
     if not state: return
     state["last_action"] = datetime.now().isoformat()
+    # Remember the latest desired render so Refresh//dungeon can always redraw
+    state["last_render"] = (text[:4096], markup)
+
+    # Light pacing: never push cards faster than ~1/sec per player, so burst
+    # taps don't shove us into the group's send quota
+    _now = time.time()
+    _since = _now - state.get("_last_card_ts", 0)
+    if _since < 1.0:
+        await asyncio.sleep(1.0 - _since)
+
+    old_msg_id = state.get("msg_id")
+
+    async def _try_edit_old():
+        if not old_msg_id:
+            raise ValueError("no card to edit")
+        await asyncio.wait_for(bot.edit_message_text(
+            chat_id=state["chat_id"], message_id=old_msg_id,
+            text=text[:4096], parse_mode="Markdown", reply_markup=markup),
+            timeout=8)
+
+    # Primary path: fresh card, then remove the old one
     try:
-        await bot.edit_message_text(
-            chat_id=state["chat_id"], message_id=state["msg_id"],
-            text=text[:4096], parse_mode="Markdown", reply_markup=markup)
-    except Exception:
-        # Edit failed (message too old, deleted, etc.) — send a fresh message
+        new_msg = await asyncio.wait_for(bot.send_message(
+            chat_id=state["chat_id"], text=text[:4096],
+            parse_mode="Markdown", reply_markup=markup), timeout=8)
+        state["msg_id"] = new_msg.message_id
+        state["_last_card_ts"] = time.time()
+        if old_msg_id and old_msg_id != new_msg.message_id:
+            async def _rm_old(mid=old_msg_id, cid=state["chat_id"]):
+                try: await bot.delete_message(chat_id=cid, message_id=mid)
+                except Exception: pass
+            _t = asyncio.create_task(_rm_old())
+            _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+        return
+    except RetryAfter as e:
+        # Send quota hit — try updating the old card in place instead
         try:
-            new_msg = await bot.send_message(
-                chat_id=state["chat_id"], text=text[:4096],
-                parse_mode="Markdown", reply_markup=markup)
-            state["msg_id"] = new_msg.message_id
+            await _try_edit_old()
+            state["_last_card_ts"] = time.time()
+            return
         except Exception:
             pass
+        # Edit also failed: wait out the flood window once, then send fresh
+        try:
+            await asyncio.sleep(min(6, float(getattr(e, "retry_after", 3)) + 0.5))
+            new_msg = await asyncio.wait_for(bot.send_message(
+                chat_id=state["chat_id"], text=text[:4096],
+                parse_mode="Markdown", reply_markup=markup), timeout=8)
+            state["msg_id"] = new_msg.message_id
+            state["_last_card_ts"] = time.time()
+            return
+        except Exception:
+            pass
+    except Exception:
+        pass  # timeout / network — try the in-place edit below
+
+    # Last resort: edit the old card so the player still sees the turn
+    try:
+        await _try_edit_old()
+        state["_last_card_ts"] = time.time()
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
+            state["_last_card_ts"] = time.time()
+        # else: nothing worked — 🔄 or /dungeon redraws from last_render
+    except Exception:
+        pass
+
+async def _dng_final_card(bot, chat_id, msg_id, text, markup=None):
+    """Show an end-of-run card (extract/death) as a fresh message, removing the
+    old combat card. The run is already resolved, so the player MUST see the
+    result — falls back to editing the old card if the send is throttled."""
+    try:
+        await asyncio.wait_for(bot.send_message(
+            chat_id=chat_id, text=text[:4096],
+            parse_mode="Markdown", reply_markup=markup), timeout=8)
+        if msg_id:
+            try: await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception: pass
+        return
+    except Exception:
+        pass
+    try:
+        await asyncio.wait_for(bot.edit_message_text(
+            chat_id=chat_id, message_id=msg_id,
+            text=text[:4096], parse_mode="Markdown", reply_markup=markup), timeout=8)
+    except Exception:
+        pass
 
 async def _dng_award_and_extract(uid, bot, p, state, narr_key="extract"):
     add_exp(p, state.get("s_exp", 0))
@@ -7123,12 +7204,7 @@ async def _dng_award_and_extract(uid, bot, p, state, narr_key="extract"):
         f"⭐ *+{state.get('s_exp',0):,} EXP*"
         f"{items_txt}{comp_txt}"
     )
-    try:
-        await bot.edit_message_text(
-            chat_id=state["chat_id"], message_id=state["msg_id"],
-            text=text[:4096], parse_mode="Markdown")
-    except Exception:
-        pass
+    await _dng_final_card(bot, state["chat_id"], state["msg_id"], text)
 
 def _dng_cancel_ticker(uid):
     task = _dng_timers.pop(uid, None)
@@ -7592,12 +7668,7 @@ async def _dng_on_enemy_killed(uid, bot, p, state):
         state["room"] += 1
         markup = _dng_continue_markup(uid)
 
-    try:
-        await bot.edit_message_text(
-            chat_id=state["chat_id"], message_id=state["msg_id"],
-            text=text[:4096], parse_mode="Markdown", reply_markup=markup)
-    except Exception:
-        pass
+    await _dng_edit(uid, bot, text, markup)
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -7614,7 +7685,7 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid in active_dungeons:
         # Stale lockout guard: if the dungeon entry has no recent activity (>30 min), clear it
         _dng_state = active_dungeons[uid]
-        _dng_ts = _dng_state.get("started_at") or _dng_state.get("last_action")
+        _dng_ts = _dng_state.get("last_action") or _dng_state.get("started_at")
         _dng_stale = True
         if _dng_ts:
             try:
@@ -7624,7 +7695,31 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if _dng_stale:
             active_dungeons.pop(uid, None)
         else:
-            await send_group(update, "⚠️ You're already in a dungeon! Use the buttons to continue.", delay=10); return
+            # RESUME: never trust the old card to still be alive. Kill its
+            # buttons and re-render the current state as a fresh message so a
+            # player can always self-unstick with /dungeon.
+            _old_mid = _dng_state.get("msg_id")
+            if _old_mid:
+                try:
+                    await context.bot.edit_message_reply_markup(
+                        chat_id=_dng_state["chat_id"], message_id=_old_mid, reply_markup=None)
+                except Exception:
+                    pass
+            _dng_state["chat_id"] = update.effective_chat.id
+            _dng_state["msg_id"] = None  # force _dng_edit's fresh-message path
+            _render = _dng_state.get("last_render")
+            if _render:
+                _r_text, _r_markup = _render
+                _r_text = _r_text.replace("🔄 *Run resumed.*\n\n", "")  # don't stack prefixes
+            elif _dng_state.get("phase") == "combat" and _dng_state.get("enemy"):
+                _r_text, _r_markup = _dng_combat_card(_dng_state), _dng_combat_markup(uid, _dng_state)
+            else:
+                _r_text = (f"🏚️ *Dungeon — Floor {_dng_state.get('floor',1)}, Room {_dng_state.get('room',1)}*\n\n"
+                           f"❤️ {_dng_state.get('p_hp',0)}/{_dng_state.get('p_max_hp',1)} HP  "
+                           f"💙 {_dng_state.get('p_mp',0)}/{_dng_state.get('p_max_mp',1)} MP")
+                _r_markup = _dng_continue_markup(uid)
+            await _dng_edit(uid, context.bot, "🔄 *Run resumed.*\n\n" + _r_text, _r_markup)
+            return
     p_level = p.get("level", 1)
     rows = []
     for dk, dc in DNG_DIFF.items():
@@ -7647,6 +7742,22 @@ async def dungeon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(rows))
 
 async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Thin lock wrapper: one dungeon action per player at a time. Double-taps
+    are swallowed instead of racing two turns through the same state, and the
+    lock self-heals (30s) if an action ever crashes mid-turn."""
+    uid = update.effective_user.id
+    if not _cb_lock(uid):
+        try:
+            await update.callback_query.answer("⏳ Still processing — one tap at a time!")
+        except Exception:
+            pass
+        return
+    try:
+        await _dungeon_callback_inner(update, context)
+    finally:
+        _cb_unlock(uid)
+
+async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data  = query.data
     uid   = update.effective_user.id
@@ -7729,6 +7840,22 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not state:
         await query.answer("No active dungeon.", show_alert=True); return
+
+    # ── REFRESH: re-render the current state (instant unstick) ────────────────
+    if data.startswith("dng_refresh_"):
+        await query.answer("Refreshed!")
+        _render = state.get("last_render")
+        if _render:
+            _r_text, _r_markup = _render
+        elif state.get("phase") == "combat" and state.get("enemy"):
+            _r_text, _r_markup = _dng_combat_card(state), _dng_combat_markup(uid, state)
+        else:
+            _r_text = (f"🏚️ *Dungeon — Floor {state.get('floor',1)}, Room {state.get('room',1)}*\n\n"
+                       f"❤️ {state.get('p_hp',0)}/{state.get('p_max_hp',1)} HP  "
+                       f"💙 {state.get('p_mp',0)}/{state.get('p_max_mp',1)} MP")
+            _r_markup = _dng_continue_markup(uid)
+        await _dng_edit(uid, context.bot, _r_text, _r_markup)
+        return
 
     diff = state.get("diff", "hard")
     cfg  = DNG_DIFF.get(diff, DNG_DIFF["hard"])
@@ -7845,7 +7972,16 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(uid)
     if not p: await query.answer(); return
     e = state["enemy"]
-    await query.answer()
+    # Instant feedback toast (free — doesn't count against message quotas)
+    _toast = ("⚔️ Attacking..." if data.startswith("dng_atk_") else
+              "🛡️ Bracing..."   if data.startswith("dng_guard_") else
+              "🧪 Drinking..."  if data.startswith("dng_heal_") else
+              "✨ Casting..."   if data.startswith("dng_skl_") else
+              "🏃 Fleeing..."   if data.startswith("dng_flee_") else "")
+    try:
+        await query.answer(_toast)
+    except Exception:
+        pass
 
     async def _do_full_turn(player_log_lines):
         # Tick DoTs on both sides
@@ -7871,11 +8007,7 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💀 *You were defeated by {e.get('name','???')}!*\n\n_{narr}_\n\n"
                 f"_All session rewards lost: {state.get('s_gold',0):,}g, {state.get('s_exp',0):,} EXP_"
             )
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=state["chat_id"], message_id=state["msg_id"],
-                    text=death_text[:4096], parse_mode="Markdown")
-            except Exception: pass
+            await _dng_final_card(context.bot, state["chat_id"], state["msg_id"], death_text)
             return
 
         # Enemy attacks now
@@ -7895,11 +8027,7 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"💀 *You were defeated by {e.get('name','???')}!*\n\n_{narr}_\n\n"
                     f"_All rewards lost._"
                 )
-                try:
-                    await context.bot.edit_message_text(
-                        chat_id=state["chat_id"], message_id=state["msg_id"],
-                        text=death_text[:4096], parse_mode="Markdown")
-                except Exception: pass
+                await _dng_final_card(context.bot, state["chat_id"], state["msg_id"], death_text)
                 return
 
         if e["hp"] <= 0:
@@ -7954,6 +8082,7 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             idx = int(data.split("_")[3])
             sk  = get_combat_skills(p)[idx]
         except (IndexError, ValueError):
+            await query.answer("That skill isn't available anymore.", show_alert=True)
             return
         cost = _dng_skill_mp_cost(sk)
         if (state.get("floor_modifier") or {}).get("key") == "silence":
