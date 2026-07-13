@@ -371,10 +371,28 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     lines.append(f"💙 {o_mp}/{o_mxmp} MP")
     if o_status:
         lines.append(f"↳ {o_status}")
+    # On-card battle log (replaces the separate log message — halves API calls)
+    if pair is not None:
+        logs = _pvp_battle_logs.get(pair, [])
+        if logs:
+            lines.append("──────────────────")
+            for entry in logs[-2:]:
+                e_lines = [l.strip() for l in entry.split("\n") if l.strip()]
+                if e_lines:
+                    lines.append("▸ " + e_lines[0][:120])
+                    for extra in e_lines[1:3]:
+                        lines.append(f"  ↳ {extra[:90]}")
     return "\n".join(lines)
 
 
+_pvp_card_ts = {}  # uid -> last card send time (per-player pacing)
+
 async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
+    """Deliver a PvP turn as a FRESH card to each player (send new → delete
+    old), same mechanic as the dungeon revamp. The battle log rides on the
+    card itself, so one send per player replaces what used to be four inline
+    edits per action. Falls back to editing the old card if the send is
+    throttled, so one path always lands."""
     _pvp_cards.setdefault(pair, {})
     async def _upd_card(viewer_uid, viewer_p, opp_uid, opp_p):
         try:
@@ -385,70 +403,67 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
             markup = _build_pvp_card_markup(viewer_uid, opp_uid, viewer_p, opp_p)
         except Exception:
             markup = None
+
+        # Pace card sends per player (~1/sec — Telegram's DM send budget)
+        _since = time.time() - _pvp_card_ts.get(viewer_uid, 0)
+        if _since < 1.0:
+            await asyncio.sleep(1.0 - _since)
+
         stored = _pvp_dm_last_msg.get(viewer_uid)
-        if stored:
-            try:
-                await bot.edit_message_text(chat_id=stored[0], message_id=stored[1],
-                                            text=card, parse_mode="Markdown", reply_markup=markup)
-                return
-            except Exception as _e:
-                err = str(_e).lower()
-                if "not modified" in err:
-                    return
-                # Edit failed (deleted, flood, etc.) — delete stale ref, send fresh below
-                _pvp_dm_last_msg.pop(viewer_uid, None)
-                try:
-                    await bot.delete_message(chat_id=stored[0], message_id=stored[1])
-                except Exception:
-                    pass
+
+        async def _edit_old():
+            if not stored:
+                raise ValueError("no card to edit")
+            await asyncio.wait_for(bot.edit_message_text(
+                chat_id=stored[0], message_id=stored[1],
+                text=card, parse_mode="Markdown", reply_markup=markup), timeout=8)
+
+        # Primary: fresh card, then remove the old one
         try:
-            msg = await bot.send_message(chat_id=viewer_uid, text=card,
-                                         parse_mode="Markdown", reply_markup=markup)
+            msg = await asyncio.wait_for(bot.send_message(
+                chat_id=viewer_uid, text=card,
+                parse_mode="Markdown", reply_markup=markup), timeout=8)
             _pvp_dm_last_msg[viewer_uid] = (viewer_uid, msg.message_id)
-            asyncio.create_task(_auto_delete_pvp_card(bot, viewer_uid, viewer_uid, msg.message_id))
+            _pvp_card_ts[viewer_uid] = time.time()
+            if stored and stored[1] != msg.message_id:
+                async def _rm_old(cid=stored[0], mid=stored[1]):
+                    try: await bot.delete_message(chat_id=cid, message_id=mid)
+                    except Exception: pass
+                _t = asyncio.create_task(_rm_old())
+                _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+            _t2 = asyncio.create_task(_auto_delete_pvp_card(bot, viewer_uid, viewer_uid, msg.message_id))
+            _bg_tasks.add(_t2); _t2.add_done_callback(_bg_tasks.discard)
+            return
+        except RetryAfter as e:
+            # Send throttled — update the old card in place instead
+            try:
+                await _edit_old()
+                _pvp_card_ts[viewer_uid] = time.time()
+                return
+            except Exception:
+                pass
+            try:
+                await asyncio.sleep(min(6, float(getattr(e, "retry_after", 3)) + 0.5))
+                msg = await asyncio.wait_for(bot.send_message(
+                    chat_id=viewer_uid, text=card,
+                    parse_mode="Markdown", reply_markup=markup), timeout=8)
+                _pvp_dm_last_msg[viewer_uid] = (viewer_uid, msg.message_id)
+                _pvp_card_ts[viewer_uid] = time.time()
+                return
+            except Exception:
+                return
+        except Exception:
+            pass  # blocked bot / network — try the in-place edit as last resort
+        try:
+            await _edit_old()
+            _pvp_card_ts[viewer_uid] = time.time()
         except Exception:
             pass
     await asyncio.gather(_upd_card(au_id, a, du_id, d), _upd_card(du_id, d, au_id, a))
-    await _pvp_update_log(pair, au_id, du_id, None, bot)
 
 
-async def _pvp_update_log(pair, au_id, du_id, override_text, bot):
-    """Edit (or send) each player's separate live battle log message."""
-    if override_text:
-        text = override_text[:4096]
-    else:
-        logs = _pvp_battle_logs.get(pair, [])
-        if not logs:
-            return
-        parts = []
-        for entry in logs[-2:]:
-            lines = [l.strip() for l in entry.split("\n") if l.strip()]
-            if lines:
-                parts.append("▸ " + lines[0])
-                for extra in lines[1:]:
-                    parts.append(f"  ↳ {extra[:90]}")
-        text = "\n".join(parts)[:4096] if parts else None
-        if not text:
-            return
-
-    async def _upd_log(uid):
-        stored = _pvp_log_msg.get(uid)
-        if stored:
-            try:
-                await bot.edit_message_text(chat_id=stored[0], message_id=stored[1],
-                                            text=text, parse_mode="Markdown")
-                return
-            except Exception as _e:
-                if "not modified" in str(_e).lower():
-                    return
-        try:
-            msg = await bot.send_message(chat_id=uid, text=text, parse_mode="Markdown")
-            _pvp_log_msg[uid] = (uid, msg.message_id)
-        except Exception:
-            pass
-
-    await asyncio.gather(_upd_log(au_id), _upd_log(du_id))
-
+# (the separate live battle-log message was removed — the log now rides on
+#  the fight card itself, halving API calls per action)
 
 async def _finalize_pvp(pair, result_text, bot):
     _pvp_cards.pop(pair, None)
@@ -477,20 +492,25 @@ async def _finalize_pvp(pair, result_text, bot):
             # Append the full result text below the HP card so defeat/win is visible
             full_text = (card + "\n\n" + result_text)[:4096] if card else result_text[:4096]
             stored = _pvp_dm_last_msg.get(viewer_uid)
+            # Fresh final card, then remove the old combat card (same mechanic
+            # as mid-fight turns); falls back to editing the old card in place
+            try:
+                await bot.send_message(chat_id=viewer_uid, text=full_text, parse_mode="Markdown")
+                if stored:
+                    try: await bot.delete_message(chat_id=stored[0], message_id=stored[1])
+                    except Exception: pass
+                return
+            except Exception:
+                pass
             if stored:
                 try:
                     await bot.edit_message_text(chat_id=stored[0], message_id=stored[1],
                                                 text=full_text, parse_mode="Markdown",
                                                 reply_markup=None)
-                    return
                 except Exception:
                     pass
-            try:
-                await bot.send_message(chat_id=viewer_uid, text=full_text, parse_mode="Markdown")
-            except Exception:
-                pass
         await asyncio.gather(_fin_card(_f_au, _f_a, _f_d), _fin_card(_f_du, _f_d, _f_a))
-        await _pvp_update_log(pair, _f_au, _f_du, result_text, bot)
+        # (final result is on the fight card itself — no separate log message)
         # Clear all combat status effects for both players so they don't bleed into the next fight
         _status_fields = (
             "poison_stacks","poison_pct","poison_damage",
@@ -13602,9 +13622,11 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── PVP CARD CALLBACK ─────────────────────────────────────────────────────────
 async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Attack / Defend / Heal / Finisher buttons on PvP DM battle cards."""
+    """Handle Attack / Defend / Heal / Finisher buttons on PvP DM battle cards.
+    NOTE: a callback query can only be answered ONCE — answering generically up
+    front used to kill every alert below (ownership, fight-over, status popup),
+    so the answer now happens per-branch with a flavored toast."""
     query = update.callback_query
-    await query.answer()
     data = query.data
     parts = data.split("_")
     try:
@@ -13612,6 +13634,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid         = int(parts[2])
         target_id   = int(parts[3])
     except (IndexError, ValueError):
+        await query.answer()
         return
 
     if query.from_user.id != uid:
@@ -13624,6 +13647,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not _cb_lock(uid):
+        await query.answer("⏳ Still processing — one tap at a time!")
         return
 
     try:
@@ -13654,6 +13678,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if safe_int(a.get("heal_blocked_turns")) > 0:
                     a["heal_blocked_turns"] -= 1; save_player(a)
                 await query.answer("🚫 Healing blocked!", show_alert=True); return
+            try: await query.answer("🧪 Drinking...")
+            except Exception: pass
             inv = sjl(a.get("inventory"), [])
             potion = None; heal_amount = 0
             for pname, pamt in [("Ultimate Vitality Draught", 15000),
@@ -13695,6 +13721,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             if is_defeated(a):
                 await query.answer("You're defeated!", show_alert=True); return
+            try: await query.answer("🛡️ Defending...")
+            except Exception: pass
             max_sh = _shield_max(a)
             a["shield_hp"] = max_sh; a["shield_used"] = 1
             save_player(a)
@@ -13714,6 +13742,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("⚡ Kill condition not met!", show_alert=True); return
             if is_vanished(a):
                 await query.answer("You're vanished — can't use finisher while hidden!", show_alert=True); return
+            try: await query.answer("⚡ FINISHER!")
+            except Exception: pass
             stat_val = get_stat(a, kc["stat"])
             dmg = round(stat_val * kc["mult"])
             if kc.get("drain_pct"):
@@ -13800,6 +13830,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(f"{d['username']} is invincible right now!", show_alert=True); return
         if a.get("guild_id") and str(a.get("guild_id")) == str(d.get("guild_id")):
             await query.answer("Can't attack your own guild member!", show_alert=True); return
+        try: await query.answer("⚔️ Attacking...")
+        except Exception: pass
 
         w = get_weather()
         chat_id = _pvp_origin_chat.get(pair) or query.message.chat_id
