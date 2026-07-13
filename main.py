@@ -7685,7 +7685,8 @@ async def _dng_on_enemy_killed(uid, bot, p, state):
             return
         markup = _dng_floor_done_markup(uid, floor, diff)
     else:
-        state["room"] += 1
+        # No increment here — the ➡️ Next Room button (dng_next_) advances the
+        # room. Incrementing in both places made every fight skip a room.
         markup = _dng_continue_markup(uid)
 
     await _dng_edit(uid, bot, text, markup)
@@ -7795,6 +7796,24 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
 
     # ── DIFFICULTY SELECTION ──────────────────────────────────────────────────
     if data.startswith("dng_diff_"):
+        # Never let a (possibly stale) difficulty card wipe a live run
+        _cur = active_dungeons.get(uid)
+        if _cur:
+            _ts = _cur.get("last_action") or _cur.get("started_at")
+            _live = False
+            if _ts:
+                try:
+                    _live = (datetime.now() - datetime.fromisoformat(_ts)).total_seconds() <= 1800
+                except Exception:
+                    pass
+            if _live:
+                await query.answer("⚠️ You're mid-run! Use /dungeon to resume it.", show_alert=True)
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+                return
+            active_dungeons.pop(uid, None)
         parts = data.split("_")  # ["dng","diff",uid,diff_key]
         diff = parts[3] if len(parts) > 3 else "hard"
         if diff not in DNG_DIFF:
@@ -7853,6 +7872,15 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
     if data.startswith("dng_enter_"):
         if not state:
             await query.answer("Dungeon expired.", show_alert=True); return
+        # A stale Enter card would re-run _dng_enter_room mid-run and re-spawn
+        # the current room (same battle / re-awarded room rewards)
+        if state.get("msg_id") and query.message and query.message.message_id != state["msg_id"]:
+            await query.answer("🕰️ That's an old card — your run is already underway. Use /dungeon.", show_alert=True)
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            return
         await query.answer()
         state["msg_id"] = query.message.message_id
         state["chat_id"] = query.message.chat_id
@@ -7860,6 +7888,20 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
 
     if not state:
         await query.answer("No active dungeon.", show_alert=True); return
+
+    # ── STALE-CARD GUARD ──────────────────────────────────────────────────────
+    # Only the NEWEST card may act. If an old card survived (its delete failed),
+    # its buttons would replay rooms — re-spawning the same battle or re-opening
+    # shrine picks. Reject the tap and disarm that old card. (🔄 refresh is
+    # exempt — it exists to unstick.)
+    if not data.startswith("dng_refresh_") and state.get("msg_id") \
+            and query.message and query.message.message_id != state["msg_id"]:
+        await query.answer("🕰️ That's an old card — use the newest one (or tap 🔄).", show_alert=True)
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
 
     # ── REFRESH: re-render the current state (instant unstick) ────────────────
     if data.startswith("dng_refresh_"):
