@@ -385,14 +385,22 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     return "\n".join(lines)
 
 
-_pvp_card_ts = {}  # uid -> last card send time (per-player pacing)
+_pvp_card_ts = {}     # uid -> last card send time (per-player pacing)
+_pvp_render_seq = {}  # uid -> latest render sequence (stale renders are dropped)
+_pvp_card_locks = {}  # uid -> asyncio.Lock serializing card delivery per viewer
 
 async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
     """Deliver a PvP turn as a FRESH card to each player (send new → delete
     old), same mechanic as the dungeon revamp. The battle log rides on the
     card itself, so one send per player replaces what used to be four inline
     edits per action. Falls back to editing the old card if the send is
-    throttled, so one path always lands."""
+    throttled, so one path always lands.
+
+    Deliveries are SEQUENCED per viewer: rapid actions produce overlapping
+    renders, and without ordering an older render (with pre-hit HP) could
+    land after a newer one and become the visible card — making damage look
+    like it never applied. Each render takes a sequence number; superseded
+    renders are dropped instead of sent."""
     _pvp_cards.setdefault(pair, {})
     async def _upd_card(viewer_uid, viewer_p, opp_uid, opp_p):
         try:
@@ -404,11 +412,23 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
         except Exception:
             markup = None
 
-        # Pace card sends per player (~1/sec — Telegram's DM send budget)
-        _since = time.time() - _pvp_card_ts.get(viewer_uid, 0)
-        if _since < 1.0:
-            await asyncio.sleep(1.0 - _since)
+        my_seq = _pvp_render_seq.get(viewer_uid, 0) + 1
+        _pvp_render_seq[viewer_uid] = my_seq
+        dlock = _pvp_card_locks.setdefault(viewer_uid, asyncio.Lock())
+        async with dlock:
+            if _pvp_render_seq.get(viewer_uid) != my_seq:
+                return  # a newer turn already rendered — don't send stale HP
 
+            # Pace card sends per player (~1/sec — Telegram's DM send budget)
+            _since = time.time() - _pvp_card_ts.get(viewer_uid, 0)
+            if _since < 1.0:
+                await asyncio.sleep(1.0 - _since)
+            if _pvp_render_seq.get(viewer_uid) != my_seq:
+                return  # superseded while pacing — the newer render delivers
+
+            await _upd_card_locked(viewer_uid, card, markup)
+
+    async def _upd_card_locked(viewer_uid, card, markup):
         stored = _pvp_dm_last_msg.get(viewer_uid)
 
         async def _edit_old():
@@ -427,8 +447,16 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
             _pvp_card_ts[viewer_uid] = time.time()
             if stored and stored[1] != msg.message_id:
                 async def _rm_old(cid=stored[0], mid=stored[1]):
-                    try: await bot.delete_message(chat_id=cid, message_id=mid)
-                    except Exception: pass
+                    try:
+                        await bot.delete_message(chat_id=cid, message_id=mid)
+                    except Exception:
+                        # Can't delete (permissions/age) — at least strip the
+                        # old card's buttons so it can't be tapped
+                        try:
+                            await bot.edit_message_reply_markup(
+                                chat_id=cid, message_id=mid, reply_markup=None)
+                        except Exception:
+                            pass
                 _t = asyncio.create_task(_rm_old())
                 _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
             _t2 = asyncio.create_task(_auto_delete_pvp_card(bot, viewer_uid, viewer_uid, msg.message_id))
@@ -579,20 +607,25 @@ def _rate_ok(uid: int, max_cmds: int = 8, window: float = 6.0) -> bool:
     _cmd_timestamps[uid] = times
     return True
 
-def _cb_lock(uid: int) -> bool:
-    """Acquire a processing lock for a callback. Returns False if already held.
-    Locks older than _CB_LOCK_STALE_SECS are treated as leaked (an exception
-    skipped the unlock) and are re-acquirable, so a player can never be
-    frozen out of buttons until restart."""
+def _cb_lock(uid: int):
+    """Acquire a processing lock for a callback. Returns a truthy token on
+    success, None if already held. Locks older than _CB_LOCK_STALE_SECS are
+    treated as leaked (an exception skipped the unlock) and are re-acquirable,
+    so a player can never be frozen out of buttons until restart."""
     now = time.time()
     ts = _processing_users.get(uid)
     if ts is not None and now - ts < _CB_LOCK_STALE_SECS:
-        return False
+        return None
     _processing_users[uid] = now
-    return True
+    return now
 
-def _cb_unlock(uid: int):
-    _processing_users.pop(uid, None)
+def _cb_unlock(uid: int, token=None):
+    """Release the lock. With a token, only releases if the lock is still the
+    one that token was issued for — so a handler that already unlocked early
+    (and whose lock was then re-acquired by a newer tap) can't accidentally
+    release the newer tap's lock from its finally block."""
+    if token is None or _processing_users.get(uid) == token:
+        _processing_users.pop(uid, None)
 
 # ── SEND HELPERS ──────────────────────────────────────────────────────────────
 async def _auto_delete(bot, chat_id, msg_id, delay):
@@ -7133,8 +7166,16 @@ async def _dng_edit(uid, bot, text, markup=None):
         state["_last_card_ts"] = time.time()
         if old_msg_id and old_msg_id != new_msg.message_id:
             async def _rm_old(mid=old_msg_id, cid=state["chat_id"]):
-                try: await bot.delete_message(chat_id=cid, message_id=mid)
-                except Exception: pass
+                try:
+                    await bot.delete_message(chat_id=cid, message_id=mid)
+                except Exception:
+                    # Can't delete (permissions/age) — at least strip the old
+                    # card's buttons so stale taps can't happen at all
+                    try:
+                        await bot.edit_message_reply_markup(
+                            chat_id=cid, message_id=mid, reply_markup=None)
+                    except Exception:
+                        pass
             _t = asyncio.create_task(_rm_old())
             _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
         return
@@ -7767,7 +7808,8 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     are swallowed instead of racing two turns through the same state, and the
     lock self-heals (30s) if an action ever crashes mid-turn."""
     uid = update.effective_user.id
-    if not _cb_lock(uid):
+    _tok = _cb_lock(uid)
+    if not _tok:
         try:
             await update.callback_query.answer("⏳ Still processing — one tap at a time!")
         except Exception:
@@ -7776,7 +7818,7 @@ async def dungeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await _dungeon_callback_inner(update, context)
     finally:
-        _cb_unlock(uid)
+        _cb_unlock(uid, _tok)
 
 async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -13397,7 +13439,8 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
 
     # Lock prevents concurrent double-tap from firing two attacks
-    if not _cb_lock(uid):
+    _tok = _cb_lock(uid)
+    if not _tok:
         return  # silently drop — lock is the guard
 
     try:
@@ -13446,10 +13489,10 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         _pvp_log_append(pair, start_txt)
         fresh_a = get_player(uid) or a
         fresh_d = get_player(target_uid) or d
-        _cb_unlock(uid)
+        _cb_unlock(uid, _tok)
         await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_uid, start_txt, context.bot)
     finally:
-        _cb_unlock(uid)  # idempotent
+        _cb_unlock(uid, _tok)  # token-checked: can't release a newer tap's lock
 
 
 async def skill_target_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -13688,7 +13731,8 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("This fight has already ended.", show_alert=True)
         return
 
-    if not _cb_lock(uid):
+    _tok = _cb_lock(uid)
+    if not _tok:
         await query.answer("⏳ Still processing — one tap at a time!")
         return
 
@@ -13696,6 +13740,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         a = get_player(uid)
         d = get_player(target_id)
         if not a or not d:
+            await query.answer()
             return
 
         # ── OPTIONS ───────────────────────────────────────────────────────────
@@ -13736,7 +13781,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _pvp_log_append(pair, no_pot_entry)
                 fresh_a = get_player(uid) or a
                 fresh_d = get_player(target_id) or d
-                _cb_unlock(uid)
+                _cb_unlock(uid, _tok)
                 await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, no_pot_entry, context.bot)
                 return
             inv.remove(potion); a["inventory"] = json.dumps(inv)
@@ -13748,7 +13793,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _pvp_log_append(pair, heal_entry)
             fresh_a = get_player(uid) or a
             fresh_d = get_player(target_id) or d
-            _cb_unlock(uid)
+            _cb_unlock(uid, _tok)
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, heal_entry, context.bot)
             return
 
@@ -13772,7 +13817,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _pvp_log_append(pair, shield_entry)
             fresh_a = get_player(uid) or a
             fresh_d = get_player(target_id) or d
-            _cb_unlock(uid)
+            _cb_unlock(uid, _tok)
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, shield_entry, context.bot)
             return
 
@@ -13844,13 +13889,13 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _win_announce_text = (f"💀 *{_fin_a.get('username','?')}* defeated *{_fin_d.get('username','?')}*! "
                                       f"(Lv {_fin_a.get('level',1)} vs Lv {_fin_d.get('level',1)})")
                 asyncio.create_task(announce(context.bot, _fin_grp, _win_announce_text, permanent=True))
-                _cb_unlock(uid)
+                _cb_unlock(uid, _tok)
                 await _finalize_pvp(pair, kill_msg, context.bot)
             else:
                 save_player(a); save_player(d)
                 fresh_a = get_player(uid) or a
                 fresh_d = get_player(target_id) or d
-                _cb_unlock(uid)
+                _cb_unlock(uid, _tok)
                 await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, kill_msg, context.bot)
             return
 
@@ -13891,17 +13936,17 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _atk_win_txt = (f"💀 *{_win_a.get('username','?')}* defeated *{_win_d.get('username','?')}*! "
                             f"(Lv {_win_a.get('level',1)} vs Lv {_win_d.get('level',1)})")
             asyncio.create_task(announce(context.bot, _atk_grp, _atk_win_txt, permanent=True))
-            _cb_unlock(uid)
+            _cb_unlock(uid, _tok)
             await _finalize_pvp(pair, result_text, context.bot)
             return
 
         fresh_a = get_player(uid) or a
         fresh_d = get_player(target_id) or d
-        _cb_unlock(uid)
+        _cb_unlock(uid, _tok)
         await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, result_text, context.bot)
 
     finally:
-        _cb_unlock(uid)  # idempotent
+        _cb_unlock(uid, _tok)  # token-checked: can't release a newer tap's lock
 
 
 # ── DEFEND (damage-absorbing shield) ─────────────────────────────────────────
@@ -14809,7 +14854,8 @@ async def class_pick_callback(update, context):
     """Handle class picker buttons."""
     query = update.callback_query
     caller_id = query.from_user.id
-    if not _cb_lock(caller_id):
+    _tok = _cb_lock(caller_id)
+    if not _tok:
         await query.answer("Processing — please wait.", show_alert=False); return
     try:
         await query.answer()
@@ -14863,7 +14909,7 @@ async def class_pick_callback(update, context):
         except Exception:
             pass
     finally:
-        _cb_unlock(caller_id)
+        _cb_unlock(caller_id, _tok)
 
 # ── CLASS RESET ───────────────────────────────────────────────────────────────
 def _calc_applied_class_bonuses(p):
@@ -14989,7 +15035,8 @@ async def resetclass_callback(update, context):
     """Handle resetclass confirm/cancel buttons."""
     query = update.callback_query
     caller_id = query.from_user.id
-    if not _cb_lock(caller_id):
+    _tok = _cb_lock(caller_id)
+    if not _tok:
         await query.answer("Processing — please wait.", show_alert=False); return
     try:
         await query.answer()
@@ -15040,7 +15087,7 @@ async def resetclass_callback(update, context):
         except Exception:
             pass
     finally:
-        _cb_unlock(caller_id)
+        _cb_unlock(caller_id, _tok)
 
 
 # ── PRESTIGE (path selection at Lv 10, auto-advance after) ───────────────────
@@ -19318,6 +19365,23 @@ async def skillpage_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text(header, parse_mode="Markdown", reply_markup=markup)
 
 async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Guaranteed-unlock wrapper: the PvP branch of the skill handler acquires
+    the per-player lock mid-flow; any exception used to leak it, freezing the
+    player's attack/skill buttons for the 30s stale-heal window ('still
+    processing' over and over). The finally here makes the unlock unskippable
+    (idempotent — unlocking an unheld lock is a no-op)."""
+    _holder = {}
+    try:
+        await _skill_pick_callback_inner(update, context, _holder)
+    finally:
+        _htok = _holder.get("tok")
+        if _htok:
+            try:
+                _cb_unlock(update.effective_user.id, _htok)
+            except Exception:
+                pass
+
+async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAULT_TYPE, _tok_holder=None):
     """Inline button handler for skill picker in raids, boss fights, and PVP."""
     query = update.callback_query
     parts = query.data.split("_")
@@ -19585,10 +19649,15 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.answer(f"❌ Not enough MP! Need {_sk_mp_cost}, have {_p_mp_now}.", show_alert=True)
             return
         p["mp"] = max(0, _p_mp_now - _sk_mp_cost)
-        # Acquire per-player lock to prevent concurrent skill+attack races
-        if not _cb_lock(uid):
+        # Acquire per-player lock to prevent concurrent skill+attack races.
+        # The token goes into _tok_holder so the wrapper's finally can release
+        # it even if this handler throws (no more 30s 'still processing' jams).
+        _sk_tok = _cb_lock(uid)
+        if not _sk_tok:
             await query.answer("Still processing — try again!", show_alert=True)
             return
+        if _tok_holder is not None:
+            _tok_holder["tok"] = _sk_tok
         # Per-action charge burn on skill turns (mirrors the attack-turn burn in _execute_pvp_hit)
         _skill_turn_changed = False
         for _sf in ("heal_blocked_turns", "hex_turns", "revive_blocked_turns"):
@@ -19615,7 +19684,7 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             _pvp_log_append(_pvp_pair_k, text[:4096])
             p_upd  = get_player(uid) or p
             tp_upd = get_player(target_uid) or tp
-            _cb_unlock(uid)
+            _cb_unlock(uid, _sk_tok)
             await _pvp_notify_both(_pvp_pair_k, p_upd, tp_upd, uid, target_uid, text[:4096], context.bot)
         base = calc_attack_damage(p, w)
         out = [f"⚡ *{p['username']}* uses *{sk['name']}*!"]
@@ -20235,13 +20304,13 @@ async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 out.append(f"🎯 *Bounty claimed!* +{_bc}g")
             _sk_result_text = "\n".join(out)
             _pvp_log_append(_sk_pair, _sk_result_text)
-            _cb_unlock(uid)
+            _cb_unlock(uid, _sk_tok)
             await _finalize_pvp(_sk_pair, _sk_result_text, context.bot)
         else:
             _pvp_log_append(_sk_pair, _sk_result_text)
             fresh_p  = get_player(uid) or p
             fresh_tp = get_player(target_uid) or tp
-            _cb_unlock(uid)
+            _cb_unlock(uid, _sk_tok)
             await _pvp_notify_both(_sk_pair, fresh_p, fresh_tp, uid, target_uid, _sk_result_text, context.bot)
 
 async def _execute_skill(update, context, p, sk):
@@ -30222,7 +30291,8 @@ async def resetstats_callback(update, context):
     """Handle resetstats confirm/cancel buttons."""
     query = update.callback_query
     caller_id = query.from_user.id
-    if not _cb_lock(caller_id):
+    _tok = _cb_lock(caller_id)
+    if not _tok:
         await query.answer("Processing — please wait.", show_alert=False); return
     try:
         await query.answer()
@@ -30265,7 +30335,7 @@ async def resetstats_callback(update, context):
         except Exception:
             pass
     finally:
-        _cb_unlock(caller_id)
+        _cb_unlock(caller_id, _tok)
 
 # ── BROADCAST (admin only) ────────────────────────────────────────────────────
 async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
