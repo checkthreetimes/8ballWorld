@@ -10195,6 +10195,8 @@ async def _handle_wave_clear(bot, chat_id, raid_state, p=None):
             lines.append(f"✅ *{pp['username']}* ({int(share*100)}% dmg)  -  +{exp_r:,} EXP | +{gold_r}g")
         await bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
 
+_pvp_miss_streaks = {}  # (attacker_id, defender_id) -> consecutive misses
+
 def check_miss(attacker, defender):
     """Returns True if attack misses."""
     if is_invincible(defender):  return True
@@ -10274,9 +10276,25 @@ def check_miss(attacker, defender):
     # Shadow Sprite companion: +20% dodge
     if "dodge_20" in _dng_pvp_effects(defender):
         dodge += 0.20
-    dodge = max(0.0, dodge)
+
+    # HARD CAP: every dodge source is individually capped but the SUM was not,
+    # so stacked builds (stat + 4 accessories + passive + pet + companion)
+    # exceeded 100% dodge and became unhittable by normal attacks. 60% max —
+    # dodge builds stay strong without invalidating basic attacks.
+    dodge = max(0.0, min(dodge, 0.60))
+
+    # PITY RULE: after 2 consecutive misses against the same target, the 3rd
+    # attack always lands. Kills the miss-spiral without weakening dodge.
+    _miss_key = (attacker.get("user_id"), defender.get("user_id"))
+    if _pvp_miss_streaks.get(_miss_key, 0) >= 2:
+        _pvp_miss_streaks[_miss_key] = 0
+        return False
 
     did_dodge = random.random() < dodge
+    if did_dodge:
+        _pvp_miss_streaks[_miss_key] = _pvp_miss_streaks.get(_miss_key, 0) + 1
+    else:
+        _pvp_miss_streaks.pop(_miss_key, None)
     if did_dodge and cls_d:
         pk = cls_d.get("passive_key","")
         # deaths_shadow: every dodge restores 10 HP
