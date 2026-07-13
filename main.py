@@ -548,6 +548,7 @@ async def _finalize_pvp(pair, result_text, bot):
             "vanish_turns","regen_charges","regen_amt",
             "heal_blocked_turns","revive_blocked_turns","silence_turns","hex_turns",
             "stun_turns","freeze_turns","entangle_turns","distract_turns",
+            "dodge_momentum",
         )
         # Legacy timestamp-based status effects (separate mechanism from the turn/stack
         # fields above) — these must also be cleared or they bleed into the next PvP fight.
@@ -3947,7 +3948,9 @@ def _empire_collect(p):
                     notes.append(f"{_EMPIRE_RES_EMOJI['health_potion']} +{gained} Health Potion ({EMPIRE_BUILDINGS[bkey]['name']})")
             else:
                 # timber / stone / crystal — go into empire_resources
-                res[rtype] = res.get(rtype, 0) + amt
+                if amt >= 0.1:
+                    res[rtype] = res.get(rtype, 0) + amt
+                    notes.append(f"{_EMPIRE_RES_EMOJI.get(rtype,'📦')} +{amt:.1f} {rtype.capitalize()} ({EMPIRE_BUILDINGS[bkey]['name']})")
 
     # Round resource floats
     for k in res:
@@ -4131,6 +4134,9 @@ async def empire_build_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if not p: await query.answer("Player not found.", show_alert=True); return
     b = EMPIRE_BUILDINGS.get(bkey)
     if not b: await query.answer("Unknown building.", show_alert=True); return
+    # Bank any pending accrual BEFORE the upgrade — otherwise resetting the
+    # collect clock below silently wipes everything generated since last visit
+    _empire_collect(p)
     bld, res, lc = _get_empire(p)
     cur_lvl = bld.get(bkey, 0)
     if cur_lvl >= b["max_level"]:
@@ -4155,7 +4161,10 @@ async def empire_build_callback(update: Update, context: ContextTypes.DEFAULT_TY
     bld[bkey] = cur_lvl + 1
     nxt = bld[bkey]
     _save_empire(p, bld, res, lc)
-    p["empire_last_collect"] = datetime.now().isoformat()
+    # Initialize the collect clock on the FIRST build only — resetting it on
+    # every upgrade wiped pending accrual (the _empire_collect above banks it)
+    if not p.get("empire_last_collect"):
+        p["empire_last_collect"] = datetime.now().isoformat()
     save_player(p)
     # Flavor text
     flavor_idx = min(nxt - 1, len(b["flavor"]) - 1) if b.get("flavor") else -1
@@ -9298,6 +9307,12 @@ def calc_attack_damage(attacker, weather=None):
         if hp_pct < 0.30:
             buff_mod += get_accessory_bonus(attacker, "low_hp_dmg_bonus")
 
+    # Evasive Momentum: stacks earned by dodging, spent on the next attack
+    _dm_stacks = safe_int(attacker.get("dodge_momentum"))
+    if _dm_stacks > 0:
+        buff_mod += 0.08 * _dm_stacks
+        attacker["dodge_momentum"] = 0
+
     # Combat Power multiplier: higher CP = higher damage
     # +30% base, +3% per 300 CP tier, no cap
     try:
@@ -10293,6 +10308,12 @@ def check_miss(attacker, defender):
     did_dodge = random.random() < dodge
     if did_dodge:
         _pvp_miss_streaks[_miss_key] = _pvp_miss_streaks.get(_miss_key, 0) + 1
+        # Evasive Momentum: dodging rewards the dodger — +8% damage per stack
+        # (max 3) on their next attack. Classes with their own dodge proc
+        # (shadowstep/thunder_step/waltz/deaths_shadow) keep theirs instead.
+        _dm_pk = (cls_d or {}).get("passive_key", "")
+        if _dm_pk not in ("deaths_shadow", "shadowstep", "thunder_step", "waltz"):
+            defender["dodge_momentum"] = min(3, safe_int(defender.get("dodge_momentum")) + 1)
     else:
         _pvp_miss_streaks.pop(_miss_key, None)
     if did_dodge and cls_d:
@@ -10782,6 +10803,7 @@ def init_db():
         ("players", "bleed_pct",          "INTEGER DEFAULT 0"),
         ("players", "burn_pct",           "INTEGER DEFAULT 0"),
         ("players", "guild_stat_bonus",   "INTEGER DEFAULT 0"),
+        ("players", "dodge_momentum",     "INTEGER DEFAULT 0"),
     ]
     for table, col, definition in _charge_cols:
         try:
@@ -11458,7 +11480,7 @@ def save_player(p):
         "regen_charges","regen_amt","heal_blocked_turns","revive_blocked_turns",
         "poison_pct","bleed_pct","burn_pct",
         "empire_buildings","empire_resources","empire_last_collect",
-        "mp","max_mp","dng_companions",
+        "mp","max_mp","dng_companions","dodge_momentum",
     ]
     # dng_companions is held as a list in memory; store as JSON text
     if isinstance(p.get("dng_companions"), list):
@@ -32875,7 +32897,9 @@ async def _send_random_dm_event(bot, uid, p):
 async def _fire_random_world_events(bot):
     try:
         c = _db().cursor()
-        cutoff = (datetime.now() - timedelta(days=2)).isoformat()
+        # 7-day window so semi-away players get pulled back too, not only
+        # players who were already active yesterday
+        cutoff = (datetime.now() - timedelta(days=7)).isoformat()
         c.execute("SELECT user_id FROM shadow_profiles WHERE last_seen >= ?", (cutoff,))
         candidates = [r[0] for r in c.fetchall()]
     except Exception:
@@ -32883,9 +32907,9 @@ async def _fire_random_world_events(bot):
     if not candidates:
         return
     random.shuffle(candidates)
-    picks = candidates[: max(1, len(candidates) // 5)]  # ~20% of recently-active players per cycle
+    picks = candidates[: max(1, len(candidates) // 4)]  # ~25% of the window per cycle
     for uid in picks:
-        if random.random() > 0.35:  # not every pick actually gets an event
+        if random.random() > 0.50:
             continue
         try:
             if is_banned(uid):
@@ -32898,19 +32922,151 @@ async def _fire_random_world_events(bot):
         except Exception:
             continue
 
-async def _random_world_event_loop(bot):
-    """Runs forever in the background: every 45-90 min, sprinkles ambient
-    chest/quest/ambush DMs to a slice of recently-active players."""
+async def _pet_care_sweep(bot, max_sends=30):
+    """Proactively DM owners whose active pet is hungry/sad/done adventuring —
+    even if they haven't messaged in days. check_pet_notifications is already
+    rate-limited per condition (4-8h, persisted), so this can run often."""
+    try:
+        c = _db().cursor()
+        c.execute("SELECT DISTINCT owner_id FROM pets WHERE is_active=1")
+        owners = [r[0] for r in c.fetchall()]
+    except Exception:
+        return
+    random.shuffle(owners)
+    sent = 0
+    for uid in owners:
+        if sent >= max_sends:
+            break
+        try:
+            if is_banned(uid):
+                continue
+            p = get_player(uid)
+            if not p:
+                continue
+            pet = get_active_pet_record(uid)
+            if not pet:
+                continue
+            _needy = (pet.get("hunger", 100) < 30 or pet.get("mood", 100) < 30
+                      or pet.get("adventure_ends_at"))
+            if not _needy:
+                continue
+            await check_pet_notifications(p, bot)
+            sent += 1
+            await asyncio.sleep(0.3)
+        except Exception:
+            continue
+
+async def _winback_sweep(bot, max_sends=20):
+    """DM players who've been away 24h-14d with a personalized reason to
+    return (idle EXP waiting, empire stockpiles, lonely pet, /daily ready).
+    At most one win-back per player per 48h (persisted in pet_notify_ts)."""
+    now = datetime.now()
+    try:
+        c = _db().cursor()
+        lo = (now - timedelta(days=14)).isoformat()
+        hi = (now - timedelta(hours=24)).isoformat()
+        c.execute("""SELECT user_id, username, last_seen, pet_notify_ts
+                     FROM shadow_profiles WHERE last_seen BETWEEN ? AND ?""", (lo, hi))
+        rows = c.fetchall()
+    except Exception:
+        return
+    rows = list(rows)
+    random.shuffle(rows)
+    sent = 0
+    for row in rows:
+        if sent >= max_sends:
+            break
+        uid = row["user_id"]
+        try:
+            if is_banned(uid):
+                continue
+            # 48h per-player cooldown, persisted alongside pet notify stamps
+            try:
+                cache = json.loads(row["pet_notify_ts"] or "{}")
+            except Exception:
+                cache = {}
+            last_wb = cache.get("winback")
+            if last_wb:
+                try:
+                    if (now - datetime.fromisoformat(last_wb)).total_seconds() < 48 * 3600:
+                        continue
+                except Exception:
+                    pass
+            p = get_player(uid)
+            hooks = []
+            if p:
+                try:
+                    idle_secs = (now - datetime.fromisoformat(row["last_seen"])).total_seconds()
+                    idle_exp = _calc_idle_exp(idle_secs, p.get("level", 1))
+                    if idle_exp > 0:
+                        hooks.append(f"✨ *{idle_exp:,} idle EXP* is waiting for you")
+                except Exception:
+                    pass
+                try:
+                    bld, _, lc = _get_empire(p)
+                    if bld and p.get("empire_last_collect"):
+                        _emp_h = min(_EMPIRE_MAX_HOURS,
+                                     (now - datetime.fromisoformat(lc)).total_seconds() / 3600)
+                        if _emp_h >= 4:
+                            hooks.append(f"🏰 Your empire has *{_emp_h:.0f}h* of resources stockpiled")
+                except Exception:
+                    pass
+                if check_cooldown(p.get("last_daily"), 86400):
+                    hooks.append("🎁 Your */daily* reward is ready")
+            pet = get_active_pet_record(uid)
+            if pet:
+                _pname = pet.get("nickname") or PET_SPECIES.get(pet.get("species"), {}).get("name", "Your pet")
+                if pet.get("hunger", 100) < 50:
+                    hooks.append(f"🍖 *{_pname}* is getting hungry without you")
+                else:
+                    hooks.append(f"🐾 *{_pname}* misses you")
+            if not hooks:
+                continue  # nothing personal to say — don't send generic spam
+            random.shuffle(hooks)
+            msg = ("🎱 *The table's been quiet without you...*\n\n"
+                   + "\n".join(f"• {h}" for h in hooks[:3])
+                   + "\n\n_Come say something in the group — everything picks up where you left it._")
+            await bot.send_message(uid, msg, parse_mode="Markdown")
+            cache["winback"] = now.isoformat()
+            s = get_shadow(uid)
+            if s:
+                s["pet_notify_ts"] = json.dumps(cache)
+                save_shadow(s)
+            sent += 1
+            await asyncio.sleep(0.3)
+        except Exception:
+            continue
+
+async def _engagement_loop(bot):
+    """The re-engagement heartbeat. Every 15 min: pet care pings (internally
+    rate-limited to 4-8h per condition). Every 30 min: ambient world events
+    (chest/quest/ambush DMs). Every hour: personalized win-back DMs to
+    players away 1-14 days (max one per player per 48h)."""
+    cycle = 0
     while True:
         try:
-            await asyncio.sleep(random.randint(2700, 5400))
-            await _fire_random_world_events(bot)
+            await asyncio.sleep(900)  # 15 min heartbeat
+            cycle += 1
+            try:
+                await _pet_care_sweep(bot)
+            except Exception:
+                pass
+            if cycle % 2 == 0:
+                try:
+                    await _fire_random_world_events(bot)
+                except Exception:
+                    pass
+            if cycle % 4 == 0:
+                try:
+                    await _winback_sweep(bot)
+                except Exception:
+                    pass
         except Exception:
             pass
 
 async def _post_init(application):
-    """On startup: DM admin if bot version changed."""
-    asyncio.create_task(_random_world_event_loop(application.bot))
+    """On startup: launch the engagement heartbeat; DM admin if version changed."""
+    asyncio.create_task(_engagement_loop(application.bot))
     version_file = "/data/bot_version.txt"
     try:
         with open(version_file) as f:
