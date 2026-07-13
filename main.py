@@ -7076,73 +7076,99 @@ def _dng_floor_done_markup(uid, floor, diff="hard"):
     ]])
 
 async def _dng_edit(uid, bot, text, markup=None):
-    """Update the dungeon card. Hardened against the failure modes that made
-    runs look frozen: Telegram flood control (RetryAfter), 'message is not
-    modified' (harmless — treated as success), hung network calls (hard
-    timeout), and dead cards (falls back to a fresh message and disarms the
-    old card's buttons so two live cards can't fight over one state)."""
+    """Deliver a dungeon turn as a FRESH card: send the new card, then delete
+    the old one. No inline-edit fragility, and the card always sits at the
+    bottom of the chat — proper turn-based feel. If Telegram flood-limits the
+    send, falls back to editing the old card in place (edits are throttled
+    separately), so one path or the other always lands."""
     state = active_dungeons.get(uid)
     if not state: return
     state["last_action"] = datetime.now().isoformat()
-    # Remember the latest desired render so a Refresh can always redraw it
+    # Remember the latest desired render so Refresh//dungeon can always redraw
     state["last_render"] = (text[:4096], markup)
 
-    async def _try_edit():
+    # Light pacing: never push cards faster than ~1/sec per player, so burst
+    # taps don't shove us into the group's send quota
+    _now = time.time()
+    _since = _now - state.get("_last_card_ts", 0)
+    if _since < 1.0:
+        await asyncio.sleep(1.0 - _since)
+
+    old_msg_id = state.get("msg_id")
+
+    async def _try_edit_old():
+        if not old_msg_id:
+            raise ValueError("no card to edit")
         await asyncio.wait_for(bot.edit_message_text(
-            chat_id=state["chat_id"], message_id=state["msg_id"],
+            chat_id=state["chat_id"], message_id=old_msg_id,
             text=text[:4096], parse_mode="Markdown", reply_markup=markup),
             timeout=8)
 
-    try:
-        await _try_edit()
-        return
-    except BadRequest as e:
-        if "not modified" in str(e).lower():
-            return  # nothing changed — the card is already correct
-        # fall through: message deleted / too old → send fresh below
-    except RetryAfter as e:
-        # Group flood control — wait it out once (capped), then retry the edit
-        try:
-            await asyncio.sleep(min(6, float(getattr(e, "retry_after", 3)) + 0.5))
-            await _try_edit()
-            return
-        except Exception:
-            pass  # still failing → send fresh below
-    except Exception:
-        pass  # timeout / network / anything else → send fresh below
-
-    old_msg_id = state.get("msg_id")
+    # Primary path: fresh card, then remove the old one
     try:
         new_msg = await asyncio.wait_for(bot.send_message(
             chat_id=state["chat_id"], text=text[:4096],
             parse_mode="Markdown", reply_markup=markup), timeout=8)
         state["msg_id"] = new_msg.message_id
-        # Disarm the abandoned card so its stale buttons stop accepting taps
+        state["_last_card_ts"] = time.time()
         if old_msg_id and old_msg_id != new_msg.message_id:
-            try:
-                await bot.edit_message_reply_markup(
-                    chat_id=state["chat_id"], message_id=old_msg_id, reply_markup=None)
-            except Exception:
-                pass
+            async def _rm_old(mid=old_msg_id, cid=state["chat_id"]):
+                try: await bot.delete_message(chat_id=cid, message_id=mid)
+                except Exception: pass
+            _t = asyncio.create_task(_rm_old())
+            _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+        return
+    except RetryAfter as e:
+        # Send quota hit — try updating the old card in place instead
+        try:
+            await _try_edit_old()
+            state["_last_card_ts"] = time.time()
+            return
+        except Exception:
+            pass
+        # Edit also failed: wait out the flood window once, then send fresh
+        try:
+            await asyncio.sleep(min(6, float(getattr(e, "retry_after", 3)) + 0.5))
+            new_msg = await asyncio.wait_for(bot.send_message(
+                chat_id=state["chat_id"], text=text[:4096],
+                parse_mode="Markdown", reply_markup=markup), timeout=8)
+            state["msg_id"] = new_msg.message_id
+            state["_last_card_ts"] = time.time()
+            return
+        except Exception:
+            pass
     except Exception:
-        pass  # totally unreachable right now — /dungeon resume or 🔄 recovers
+        pass  # timeout / network — try the in-place edit below
+
+    # Last resort: edit the old card so the player still sees the turn
+    try:
+        await _try_edit_old()
+        state["_last_card_ts"] = time.time()
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
+            state["_last_card_ts"] = time.time()
+        # else: nothing worked — 🔄 or /dungeon redraws from last_render
+    except Exception:
+        pass
 
 async def _dng_final_card(bot, chat_id, msg_id, text, markup=None):
-    """Show an end-of-run card (extract/death) even when the inline edit fails —
-    the run is already resolved, so the player MUST see the result."""
+    """Show an end-of-run card (extract/death) as a fresh message, removing the
+    old combat card. The run is already resolved, so the player MUST see the
+    result — falls back to editing the old card if the send is throttled."""
+    try:
+        await asyncio.wait_for(bot.send_message(
+            chat_id=chat_id, text=text[:4096],
+            parse_mode="Markdown", reply_markup=markup), timeout=8)
+        if msg_id:
+            try: await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception: pass
+        return
+    except Exception:
+        pass
     try:
         await asyncio.wait_for(bot.edit_message_text(
             chat_id=chat_id, message_id=msg_id,
             text=text[:4096], parse_mode="Markdown", reply_markup=markup), timeout=8)
-        return
-    except BadRequest as e:
-        if "not modified" in str(e).lower():
-            return
-    except Exception:
-        pass
-    try:
-        await bot.send_message(chat_id=chat_id, text=text[:4096],
-                               parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
 
@@ -7946,7 +7972,16 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
     p = get_player(uid)
     if not p: await query.answer(); return
     e = state["enemy"]
-    await query.answer()
+    # Instant feedback toast (free — doesn't count against message quotas)
+    _toast = ("⚔️ Attacking..." if data.startswith("dng_atk_") else
+              "🛡️ Bracing..."   if data.startswith("dng_guard_") else
+              "🧪 Drinking..."  if data.startswith("dng_heal_") else
+              "✨ Casting..."   if data.startswith("dng_skl_") else
+              "🏃 Fleeing..."   if data.startswith("dng_flee_") else "")
+    try:
+        await query.answer(_toast)
+    except Exception:
+        pass
 
     async def _do_full_turn(player_log_lines):
         # Tick DoTs on both sides
