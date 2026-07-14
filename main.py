@@ -11528,11 +11528,27 @@ def save_player(p):
     if any(k in _ITEM_RENAME for k in enc):
         p["enchants"] = json.dumps({_ITEM_RENAME.get(k, k): v for k, v in enc.items()})
     conn = _db(); c = conn.cursor()
-    # Never wipe tg_username with NULL — preserve existing DB value
-    if p.get("tg_username") is None:
-        _tg_row = c.execute("SELECT tg_username FROM players WHERE user_id=?", (p.get("user_id"),)).fetchone()
-        if _tg_row and _tg_row[0]:
-            p["tg_username"] = _tg_row[0]
+    # ── STALE-SNAPSHOT GUARD ──────────────────────────────────────────────────
+    # Handlers run concurrently and each holds its own copy of the player row.
+    # A long-running handler (e.g. a chat message) saving an OLD snapshot after
+    # a newer award (dungeon extract, PvP kill) used to ERASE the level-up and
+    # its stat points. total_exp only ever grows, so if the DB row is ahead of
+    # this snapshot, adopt the DB's progression instead of overwriting it.
+    _cur_row = c.execute(
+        "SELECT tg_username, total_exp, exp, level, stat_points FROM players WHERE user_id=?",
+        (p.get("user_id"),)).fetchone()
+    if _cur_row:
+        # Never wipe tg_username with NULL — preserve existing DB value
+        if p.get("tg_username") is None and _cur_row["tg_username"]:
+            p["tg_username"] = _cur_row["tg_username"]
+        if safe_int(_cur_row["total_exp"]) > safe_int(p.get("total_exp")):
+            p["total_exp"] = safe_int(_cur_row["total_exp"])
+            p["exp"]       = safe_int(_cur_row["exp"])
+            if safe_int(_cur_row["level"]) > safe_int(p.get("level"), 1):
+                p["level"]       = safe_int(_cur_row["level"])
+                p["stat_points"] = safe_int(_cur_row["stat_points"])
+                p["max_hp"]      = calc_max_hp(p)
+                p["hp"]          = min(safe_int(p.get("hp")), p["max_hp"])
     fields = [
         "user_id","username","hp","max_hp","exp","level","total_exp",
         "gold","wins","losses","quests_done","heals_given","dodges",
