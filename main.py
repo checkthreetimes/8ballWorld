@@ -3934,11 +3934,45 @@ def _empire_stat_bonuses(p):
             bonuses[stat] = bonuses.get(stat, 0) + val * lvl
     return bonuses
 
+def _empire_pending(p):
+    """Peek at what's waiting to be collected WITHOUT banking it.
+    Returns {resource: amount} for display."""
+    bld, _, lc = _get_empire(p)
+    if not bld or not p.get("empire_last_collect"):
+        return {}
+    try:
+        elapsed = min(_EMPIRE_MAX_HOURS,
+                      (datetime.now() - datetime.fromisoformat(lc)).total_seconds() / 3600)
+    except Exception:
+        return {}
+    if elapsed < 0.016:
+        return {}
+    pend = {}
+    for bkey, lvl in bld.items():
+        if lvl <= 0: continue
+        for rtype, rate in EMPIRE_BUILDINGS.get(bkey, {}).get("generates", {}).items():
+            amt = rate * lvl * elapsed
+            if rtype in ("gold",):
+                if round(amt) > 0: pend[rtype] = pend.get(rtype, 0) + round(amt)
+            elif rtype in ("iron_shard", "health_potion"):
+                if int(amt) > 0: pend[rtype] = pend.get(rtype, 0) + int(amt)
+            else:
+                if amt >= 0.1: pend[rtype] = round(pend.get(rtype, 0) + amt, 1)
+    return pend
+
 def _empire_collect(p):
     """Calculate pending resources since last collect, apply to inventory/resources, return notes."""
     bld, res, lc = _get_empire(p)
     if not bld:
         return []
+    # Empires built before the empire_last_collect column existed have a NULL
+    # clock: _get_empire falls back to 'now', elapsed stays 0, and the early
+    # return below means the timestamp is NEVER written — permanent zero
+    # accrual. Initialize with 8h of retroactive production so long-broken
+    # empires finally pay out.
+    if not p.get("empire_last_collect"):
+        lc = (datetime.now() - timedelta(hours=8)).isoformat()
+        p["empire_last_collect"] = lc
     try:
         elapsed_hours = min(_EMPIRE_MAX_HOURS,
                             (datetime.now() - datetime.fromisoformat(lc)).total_seconds() / 3600)
@@ -4015,9 +4049,15 @@ def _build_empire_overview(p, uid):
         if amt > 0 or any(EMPIRE_BUILDINGS.get(b, {}).get("generates", {}).get(rtype) for b in bld if bld.get(b, 0) > 0):
             lines.append(f"  {emoji} {rtype.capitalize()}: *{amt:.1f}*")
 
-    # Pending
-    if elapsed_h >= 0.25 and bld:
-        lines.append(f"\n⏳ *Pending resources* (~{elapsed_h:.1f}h away) — tap Collect to claim.")
+    # Pending — show the actual amounts waiting so Collect never feels empty
+    if bld:
+        pend = _empire_pending(p)
+        if pend:
+            pend_str = "  ".join(f"{_EMPIRE_RES_EMOJI.get(r,'📦')} +{v:,.1f}" if isinstance(v, float)
+                                 else f"{_EMPIRE_RES_EMOJI.get(r,'📦')} +{v:,}" for r, v in pend.items())
+            lines.append(f"\n📦 *Ready to collect* ({elapsed_h:.1f}h):  {pend_str}")
+        else:
+            lines.append(f"\n⏳ _Resources are accruing — check back soon._")
 
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("📦 Collect Resources", callback_data=f"empire_collect_{uid}"),
@@ -29446,11 +29486,12 @@ async def empire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-    notes = _empire_collect(p)
-    save_player(p)
+    # Initialize a NULL collect clock (pre-migration empires) but DON'T bank —
+    # collection belongs to the Collect button so it never shows empty
+    if sjl(p.get("empire_buildings"), {}) and not p.get("empire_last_collect"):
+        p["empire_last_collect"] = (datetime.now() - timedelta(hours=8)).isoformat()
+        save_player(p)
     text, markup = _build_empire_overview(p, user.id)
-    if notes:
-        text = "📦 *Collected:*\n" + "\n".join(notes) + "\n\n" + text
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text[:4096], parse_mode="Markdown",
         reply_markup=markup)
@@ -31658,11 +31699,17 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
         p = get_player(uid)
         plvl = p["level"] if p else 1
         idle_exp = _calc_idle_exp(idle_secs, plvl)
-        # Empire resources accrue on their own schedule (per-building hourly rates),
-        # independent of the idle-EXP threshold — collect them even on short returns.
+        # Empire: point at pending resources instead of silently banking them —
+        # collection belongs to the /empire Collect button so it never shows empty
         empire_notes = []
         if p and not is_defeated(p):
-            empire_notes = _empire_collect(p)
+            if sjl(p.get("empire_buildings"), {}) and not p.get("empire_last_collect"):
+                p["empire_last_collect"] = (datetime.now() - timedelta(hours=8)).isoformat()
+            _pend = _empire_pending(p)
+            if _pend:
+                _pend_str = "  ".join(f"{_EMPIRE_RES_EMOJI.get(r,'📦')} +{v:,.1f}" if isinstance(v, float)
+                                      else f"{_EMPIRE_RES_EMOJI.get(r,'📦')} +{v:,}" for r, v in _pend.items())
+                empire_notes = [f"{_pend_str}\n  _Tap Collect in /empire to claim!_"]
         if idle_exp <= 0 and not empire_notes:
             return
         _idle_last_awarded[uid] = now_ts
@@ -31680,7 +31727,7 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
             save_player(p)
         emp_line = ""
         if empire_notes:
-            emp_line = "\n\n🏰 *Empire produced:*\n" + "\n".join(f"  {n}" for n in empire_notes[:6])
+            emp_line = "\n\n🏰 *Empire production waiting:*\n" + "\n".join(f"  {n}" for n in empire_notes[:6])
         exp_line = (f"💫 Idle reward: *+{idle_exp:,} EXP*\n"
                     f"_(Scales with your level — the higher your level, the more you earn)_"
                     if idle_exp > 0 else "")
@@ -34035,7 +34082,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if section == "empire":
-        _empire_collect(p); save_player(p)
+        if sjl(p.get("empire_buildings"), {}) and not p.get("empire_last_collect"):
+            p["empire_last_collect"] = (datetime.now() - timedelta(hours=8)).isoformat()
+            save_player(p)
         text, markup = _build_empire_overview(p, uid)
         rows = list(markup.inline_keyboard) + [back_row]
         await _show(text, rows)
