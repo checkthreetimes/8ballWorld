@@ -31721,18 +31721,22 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
         plvl = p["level"] if p else 1
         idle_exp = _calc_idle_exp(idle_secs, plvl)
         # Empire: point at pending resources instead of silently banking them —
-        # collection belongs to the /empire Collect button so it never shows empty
+        # collection belongs to the /empire Collect button. STRICTLY in tandem
+        # with the idle reward (30+ min away): the pending peek accrues within
+        # a minute, so letting it trigger the welcome-back alone spammed the
+        # message on every short gap between messages.
         empire_notes = []
-        if p and not is_defeated(p):
+        if idle_secs >= 1800 and p and not is_defeated(p):
             if sjl(p.get("empire_buildings"), {}) and not p.get("empire_last_collect"):
                 p["empire_last_collect"] = (datetime.now() - timedelta(hours=8)).isoformat()
+                save_player(p)
             _pend = _empire_pending(p)
             if _pend:
                 _pend_str = "  ".join(f"{_EMPIRE_RES_EMOJI.get(r,'📦')} +{v:,.1f}" if isinstance(v, float)
                                       else f"{_EMPIRE_RES_EMOJI.get(r,'📦')} +{v:,}" for r, v in _pend.items())
                 empire_notes = [f"{_pend_str}\n  _Tap Collect in /empire to claim!_"]
-        if idle_exp <= 0 and not empire_notes:
-            return
+        if idle_exp <= 0:
+            return  # welcome-back only fires when the idle reward itself fires
         _idle_last_awarded[uid] = now_ts
         ih = idle_secs / 3600
         away_str = (f"{int(ih)}h {int((idle_secs % 3600) / 60)}m"
