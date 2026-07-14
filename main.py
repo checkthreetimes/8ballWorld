@@ -6127,13 +6127,15 @@ RANDOM_EVENTS = [
      "msg":"🎱 *A Road Player has set up at the far table.*\nFirst to /greet gets a tip and something useful.",
      "exp":1500,"loot_table":[("Health Potion",0.40),("Iron Shard",0.20),("Iron Shard Ring",0.20),("Scout's Pendant",0.20)]},
     {"key":"bandit","freq":"common",
-     "msg":"🗡️ *A rogue warrior who lost badly is looking for someone to blame.* 150 HP. Use /fight. Take them down for +1250 EXP.",
+     "msg":"🗡️ *A rogue warrior who lost badly is looking for someone to blame.* 150 HP. Use /fight. Take them down for a *big EXP payout* and a shot at *rare gear*!",
      "enemy_hp":150,"exp_reward":1250,
-     "loot_table":[("Health Potion",0.30),("Rusty Shiv",0.15),("Brass Ring",0.10)]},
+     "loot_table":[("Health Potion",0.30),("Enchanting Scroll",0.18),("Steel Knight Sword",0.08),
+                   ("Nightstalker's Vest",0.05),("Shadow Death Star",0.03),("Brass Ring",0.10)]},
     {"key":"ghost","freq":"common",
-     "msg":"👻 *Something that used to wander here doesn't know it's gone.* 200 HP. Use /shoot to send it off. +1500 EXP.",
+     "msg":"👻 *Something that used to wander here doesn't know it's gone.* 200 HP. Use /shoot to send it off for a *big EXP payout* and a chance at *rare gear*!",
      "enemy_hp":200,"exp_reward":1500,
-     "loot_table":[("Greater Health Potion",0.20),("Worn Leather Band",0.15)]},
+     "loot_table":[("Greater Health Potion",0.25),("Crystal Core Wand",0.08),("Sorcerer's Mantle",0.06),
+                   ("Rune Cross Pendant",0.08),("The Mind's Eye",0.02),("Worn Leather Band",0.10)]},
     {"key":"merchant","freq":"uncommon",
      "msg":"🛍️ *A traveling merchant just arrived.*\n/greet them for 20% off at the shop for 30m.",
      "discount":0.20,"duration_min":30},
@@ -14360,7 +14362,10 @@ def get_fame_tier(n):
     return "👤 Whisper"
 
 def _add_influence(p, amount):
-    p["influence"] = p.get("influence", 0) + amount
+    # influence can be NULL in the DB — a bare .get() returned None and made
+    # this crash, silently killing oracle-quest completion and the greeting
+    # influence bonus for every affected player
+    p["influence"] = safe_int(p.get("influence")) + amount
 
 def _build_stats_pages(p, viewing_name=None):
     real_max     = calc_max_hp(p)
@@ -15825,7 +15830,7 @@ async def _handle_drake_strike(update: Update, context: ContextTypes.DEFAULT_TYP
             fp = get_player(fid)
             if not fp: continue
             share = fd / max(1, total_dmg)
-            exp   = round(exp_share(fp["level"], 0.20) * share)
+            exp   = round(exp_share(fp["level"], 0.30) * share)
             loot  = None
             if random.random() < share * 0.5:
                 loot = roll_loot_table([(n,c) for n,c in drake.get("loot_table",[])])
@@ -17418,11 +17423,13 @@ async def _dispatch_secret_quest(uid: int, bot):
     phrase, exp_r, inf_r = random.choice(_CHAT_QUEST_TPL)
     quest = {"type":"chat","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
     p["active_quest"] = json.dumps(quest); p["last_quest_ts"] = int(time.time()); save_player(p)
+    # Show the player's ACTUAL scaled reward, not the raw template weight
+    _exp_preview = exp_share(p["level"], min(0.15, exp_r / 900 * 0.15))
     dm = (f"🎱 *The oracle has a task for you.*\n\n"
           f"_Say this in the group:_\n\n"
           f"*\"{phrase}\"*\n\n"
           f"⏳ _Expires in 24 hours_\n"
-          f"💫 Reward: *{exp_r} EXP + {inf_r} Influence + Health Potion*")
+          f"💫 Reward: *{_exp_preview:,} EXP + {inf_r} Influence + Health Potion*")
     try: await bot.send_message(uid, dm, parse_mode="Markdown")
     except: pass
 
@@ -17432,7 +17439,7 @@ async def _try_complete_quest_social(p, action, target_id, bot):
     if q.get("target_id") != target_id: return
     if q.get("expires", 0) < time.time(): p["active_quest"] = None; save_player(p); return
     inf_r = q.get("reward_inf", 15)
-    exp_r = exp_share(p["level"], min(0.06, q.get("reward_exp", 200) / 900 * 0.06))
+    exp_r = exp_share(p["level"], min(0.15, q.get("reward_exp", 200) / 900 * 0.15))
     add_exp(p, exp_r); _add_influence(p, inf_r)
     p["active_quest"] = None; save_player(p)
     try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r:,} EXP  +{inf_r} Influence", parse_mode="Markdown")
@@ -17450,7 +17457,7 @@ async def _try_complete_quest_phrase(p, text, reply_to_id, bot):
         if phrase.lower() in text_l and (tname in text_l or (reply_to_id and reply_to_id == tid)): matched = True
     if not matched: return
     inf_r = q.get("reward_inf", 50)
-    exp_r = exp_share(p["level"], min(0.06, q.get("reward_exp", 800) / 900 * 0.06))
+    exp_r = exp_share(p["level"], min(0.15, q.get("reward_exp", 800) / 900 * 0.15))
     add_exp(p, exp_r); _add_influence(p, inf_r)
     add_item(p, "Greater Health Potion")
     p["active_quest"] = None; save_player(p)
@@ -32001,7 +32008,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if not fp: continue
                     share = fdmg/max(1,total_dmg)
                     # Damage share of a level-scaled pot (drake pays up to ~20% of a level)
-                    _drake_exp = round(exp_share(fp["level"], 0.20) * share)
+                    _drake_exp = round(exp_share(fp["level"], 0.30) * share)
                     loot = roll_loot_table(drake.get("loot_table",[]))
                     if loot: add_item(fp, loot)
                     lmsgs, leveled = add_exp(fp, _drake_exp)
@@ -32029,7 +32036,7 @@ async def greet_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         loot = roll_loot_table(event.get("loot_table",[]))
         if p and not is_defeated(p):
             if loot: add_item(p, loot)
-            _trav_exp = exp_share(p["level"], 0.02)
+            _trav_exp = exp_share(p["level"], 0.05)
             lmsgs, leveled = add_exp(p, _trav_exp); save_player(p)
             msg = f"🧙 *{user.first_name}* greets the traveler! +{_trav_exp:,} EXP"
             if loot: msg += f" | 🎒 *{loot}*!"
@@ -32064,7 +32071,7 @@ async def fight_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if event["key"] == "rival":
         active_events.pop(chat_id, None)
         gold_prize = random.randint(400, 1000)
-        _prize_pct = random.uniform(0.03, 0.06)
+        _prize_pct = random.uniform(0.08, 0.12)
         lines = [f"⚔️ *{user.first_name}* steps up first and claims the table!"]
         if p and not is_defeated(p):
             exp_prize = exp_share(p["level"], _prize_pct)
@@ -32087,20 +32094,27 @@ async def fight_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
              f"(HP: {max(0, event['enemy_hp'])}/150)"]
     if event["enemy_hp"] <= 0:
         active_events.pop(chat_id, None)
-        lines.append("💀 *Bandit defeated!* +5% of a level each!")
+        lines.append("💀 *Bandit defeated!* +12% of a level each!")
         for fid in event["fighters"]:
             fp = get_player(fid); fs = get_shadow(fid)
             if fp and not is_defeated(fp):
                 loot = roll_loot_table(event.get("loot_table", []))
                 if loot: add_item(fp, loot)
-                lmsgs, leveled = add_exp(fp, exp_share(fp["level"], 0.05)); save_player(fp)
+                # Bonus roll: 10% chance at a random rare/epic weapon
+                if random.random() < 0.10:
+                    _bonus_pool = [n for n, d in WEAPONS.items() if d.get("rarity") in ("rare", "epic")]
+                    if _bonus_pool:
+                        _bw = random.choice(_bonus_pool)
+                        add_item(fp, _bw)
+                        lines.append(f"✨ *{fp['username']}* looted a {RARITY_EMOJI.get(WEAPONS[_bw].get('rarity',''),'')} *{_bw}* from the bandit!")
+                lmsgs, leveled = add_exp(fp, exp_share(fp["level"], 0.12)); save_player(fp)
                 if loot: lines.append(f"🎒 *{fp['username']}* found *{loot}*!")
                 if leveled and fp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{fp['username']}* reached *Level {fp['level']}* from battle! ⚔️",
                         delay=60))
             elif fs:
-                lmsgs, leveled = add_shadow_exp(fs, exp_share(fs["level"], 0.05)); save_shadow(fs)
+                lmsgs, leveled = add_shadow_exp(fs, exp_share(fs["level"], 0.12)); save_shadow(fs)
     await send_group(update, "\n".join(lines), delay=15)
 
 async def shoot_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -32116,20 +32130,20 @@ async def shoot_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
              f"(HP: {max(0,event['enemy_hp'])}/200)"]
     if event["enemy_hp"] <= 0:
         active_events.pop(chat_id, None)
-        lines.append("✨ *Spirit banished!* +6% of a level each!")
+        lines.append("✨ *Spirit banished!* +12% of a level each!")
         for fid in event["fighters"]:
             fp = get_player(fid); fs = get_shadow(fid)
             if fp and not is_defeated(fp):
                 loot = roll_loot_table(event.get("loot_table",[]))
                 if loot: add_item(fp, loot)
-                lmsgs, leveled = add_exp(fp, exp_share(fp["level"], 0.06)); save_player(fp)
+                lmsgs, leveled = add_exp(fp, exp_share(fp["level"], 0.12)); save_player(fp)
                 if loot: lines.append(f"🎒 *{fp['username']}* found *{loot}*!")
                 if leveled and fp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{fp['username']}* reached *Level {fp['level']}* from the ghost! 👻",
                         delay=60))
             elif fs:
-                lmsgs, leveled = add_shadow_exp(fs, exp_share(fs["level"], 0.06)); save_shadow(fs)
+                lmsgs, leveled = add_shadow_exp(fs, exp_share(fs["level"], 0.12)); save_shadow(fs)
     await send_group(update, "\n".join(lines), delay=15)
 
 async def claim_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -33172,6 +33186,91 @@ async def _winback_sweep(bot, max_sends=20):
         except Exception:
             continue
 
+async def _post_daily_digest(bot):
+    """Evening group digest: top EXP grinders, PvP standout, kill-streak
+    leader, weather — social proof that pulls lurkers back into the game.
+    Gains are measured against the digest_snap table refreshed each post."""
+    c = _db().cursor()
+    week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+    try:
+        c.execute("""SELECT DISTINCT home_group FROM shadow_profiles
+                     WHERE home_group IS NOT NULL AND last_seen >= ?""", (week_ago,))
+        groups = [r[0] for r in c.fetchall()]
+    except Exception:
+        return
+    if not groups:
+        return
+    conn = _db()
+    conn.execute("""CREATE TABLE IF NOT EXISTS digest_snap
+                    (user_id INTEGER PRIMARY KEY, total_exp INTEGER, wins INTEGER)""")
+    conn.commit()
+    c.execute("""SELECT p.user_id, p.username, p.total_exp, p.wins, p.kill_streak,
+                        p.level, s.home_group
+                 FROM players p JOIN shadow_profiles s ON s.user_id = p.user_id
+                 WHERE s.last_seen >= ?""", (week_ago,))
+    rows = [dict(r) for r in c.fetchall()]
+    c.execute("SELECT user_id, total_exp, wins FROM digest_snap")
+    snap = {r["user_id"]: (safe_int(r["total_exp"]), safe_int(r["wins"])) for r in c.fetchall()}
+    per_group = {}
+    for r in rows:
+        old = snap.get(r["user_id"])
+        exp_gain = max(0, safe_int(r["total_exp"]) - old[0]) if old else 0
+        win_gain = max(0, safe_int(r["wins"]) - old[1]) if old else 0
+        per_group.setdefault(r["home_group"], []).append((r, exp_gain, win_gain))
+    w = get_weather()
+    for g in groups:
+        entries = per_group.get(g, [])
+        gainers  = sorted([e for e in entries if e[1] > 0], key=lambda e: -e[1])[:3]
+        fighters = sorted([e for e in entries if e[2] > 0], key=lambda e: -e[2])[:1]
+        streaker = None
+        if entries:
+            _cand = max(entries, key=lambda e: safe_int(e[0].get("kill_streak")))
+            if safe_int(_cand[0].get("kill_streak")) >= 3:
+                streaker = _cand[0]
+        lines = ["🎱 *DAILY DIGEST*", ""]
+        if gainers:
+            lines.append("🏆 *Top grinders today:*")
+            medals = ["🥇", "🥈", "🥉"]
+            for i, (r, eg, _) in enumerate(gainers):
+                lines.append(f"{medals[i]} *{r['username']}* (Lv {r['level']}) — +{eg:,} EXP")
+            lines.append("")
+        if fighters:
+            r, _, wg = fighters[0]
+            lines.append(f"⚔️ *PvP standout:* {r['username']} — {wg} win{'s' if wg != 1 else ''} today")
+            lines.append("")
+        if streaker:
+            lines.append(f"🔥 *Kill streak:* {streaker['username']} ×{streaker['kill_streak']} — someone stop them!")
+            lines.append("")
+        lines.append(f"🌍 *{w['name']}* — EXP ×{w['exp_mod']} | DMG ×{w['dmg_mod']}")
+        lines.append("")
+        lines.append("_Think you can top tomorrow's board? /daily · /dungeon · /attack_")
+        try:
+            await bot.send_message(g, "\n".join(lines), parse_mode="Markdown")
+        except Exception:
+            pass
+        await asyncio.sleep(0.5)
+    # Refresh the snapshot so tomorrow's digest measures the next 24h
+    try:
+        conn.execute("DELETE FROM digest_snap")
+        conn.execute("""INSERT INTO digest_snap
+                        SELECT user_id, COALESCE(total_exp,0), COALESCE(wins,0) FROM players""")
+        conn.commit()
+    except Exception:
+        pass
+
+async def _daily_digest_loop(bot):
+    """Posts the digest every evening at 20:00 server time."""
+    while True:
+        try:
+            now = datetime.now()
+            target = now.replace(hour=20, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target += timedelta(days=1)
+            await asyncio.sleep((target - now).total_seconds())
+            await _post_daily_digest(bot)
+        except Exception:
+            await asyncio.sleep(300)
+
 _revive_pinged = {}  # uid -> defeated_until value already pinged for
 
 async def _revive_watch_loop(bot):
@@ -33415,6 +33514,7 @@ async def _post_init(application):
     DM admin if version changed."""
     asyncio.create_task(_engagement_loop(application.bot))
     asyncio.create_task(_revive_watch_loop(application.bot))
+    asyncio.create_task(_daily_digest_loop(application.bot))
     # Telegram "/" command menu — discoverability for every command that matters
     try:
         from telegram import BotCommand
