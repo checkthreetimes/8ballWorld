@@ -23881,6 +23881,8 @@ async def _start_encounter_battle(query, uid, p):
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
+    _ft = asyncio.create_task(_send_enemy_flair(query.get_bot(), query.message.chat_id, enc["e_name"]))
+    _bg_tasks.add(_ft); _ft.add_done_callback(_bg_tasks.discard)
 
 async def _start_encounter_hunt(query, uid, p):
     # 3% chance: treasure chest. 5% chance: random event.
@@ -23930,6 +23932,8 @@ async def _start_encounter_hunt(query, uid, p):
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
     await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
+    _ft = asyncio.create_task(_send_enemy_flair(query.get_bot(), query.message.chat_id, enc["e_name"]))
+    _bg_tasks.add(_ft); _ft.add_done_callback(_bg_tasks.discard)
 
 async def _start_encounter_treasure(query, uid, p, mode="battle"):
     tier = random.choices(["wooden", "iron", "golden"], weights=[60, 30, 10])[0]
@@ -33855,6 +33859,77 @@ async def _crate_scheduler(bot):
 # CHAT GAMES — wild spawns, heists, rob, casino, scramble, roulette, collection
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── ENEMY / CREATURE IMAGES (file_id store — no hosting needed) ──────────────
+def _get_enemy_image(name):
+    if not name:
+        return None
+    imgs = _ws_get("enemy_images") or {}
+    return imgs.get(str(name).lower().strip())
+
+def _set_enemy_image(name, file_id):
+    imgs = _ws_get("enemy_images") or {}
+    if file_id:
+        imgs[str(name).lower().strip()] = file_id
+    else:
+        imgs.pop(str(name).lower().strip(), None)
+    _ws_set("enemy_images", imgs)
+
+async def setimage_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: reply to a photo with /setimage <enemy or species name> — that
+    image then shows whenever the enemy appears. /delimage <name> removes it,
+    /images lists what's configured."""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    name = " ".join(context.args) if context.args else ""
+    if not name:
+        await update.message.reply_text("Usage: reply to a photo with /setimage <name>"); return
+    rm = update.message.reply_to_message
+    if not rm or not rm.photo:
+        await update.message.reply_text("Reply to a *photo* with /setimage <name>.", parse_mode="Markdown"); return
+    file_id = rm.photo[-1].file_id  # largest size
+    _set_enemy_image(name, file_id)
+    try:
+        await context.bot.send_photo(update.effective_chat.id, photo=file_id,
+            caption=f"✅ Image set for *{name}* — it will now appear in encounters/spawns.",
+            parse_mode="Markdown")
+    except Exception:
+        await update.message.reply_text(f"✅ Image set for {name}.")
+
+async def delimage_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    name = " ".join(context.args) if context.args else ""
+    if not name:
+        await update.message.reply_text("Usage: /delimage <name>"); return
+    _set_enemy_image(name, None)
+    await update.message.reply_text(f"🗑️ Image removed for {name}.")
+
+async def images_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    imgs = _ws_get("enemy_images") or {}
+    if not imgs:
+        await update.message.reply_text("No images configured yet. Reply to a photo with /setimage <name>."); return
+    await update.message.reply_text("🖼️ Configured images:\n" + "\n".join(f"• {k}" for k in sorted(imgs)))
+
+async def _send_enemy_flair(bot, chat_id, name, caption=None, delete_after=90):
+    """If an image is configured for this enemy/species, flash it in the chat."""
+    fid = _get_enemy_image(name)
+    if not fid:
+        return
+    try:
+        msg = await bot.send_photo(chat_id, photo=fid,
+            caption=(caption or f"⚔️ *{name}* appears!")[:1024], parse_mode="Markdown")
+        if delete_after:
+            async def _rm(cid=chat_id, mid=msg.message_id):
+                await asyncio.sleep(delete_after)
+                try: await bot.delete_message(chat_id=cid, message_id=mid)
+                except Exception: pass
+            _t = asyncio.create_task(_rm())
+            _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+    except Exception:
+        pass
+
 # ── 1. WILD PET SPAWNS (first to tap catches it) ─────────────────────────────
 _wild_spawns = {}       # chat_id -> {"species","is_shiny","msg_id","expires"}
 _wild_last = {}         # chat_id -> last spawn ts
@@ -33870,14 +33945,19 @@ async def _spawn_wild_pet(bot, chat_id):
     shiny = random.random() < 0.02
     name = ("✨SHINY " if shiny else "") + sp["name"]
     rar = sp.get("rarity", "common")
+    _card_text = (f"🐾 *A wild {name} appears!* {sp.get('emoji','🐾')}\n"
+                  f"{RARITY_EMOJI.get(rar,'⚪')} _{rar.capitalize()} · {sp.get('element','?').capitalize()}_\n\n"
+                  f"_First to catch it keeps it!_")
+    _markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🎯 CATCH!", callback_data=f"wild_{chat_id}")]])
+    _img = _get_enemy_image(sp["name"])
     try:
-        msg = await bot.send_message(chat_id,
-            f"🐾 *A wild {name} appears!* {sp.get('emoji','🐾')}\n"
-            f"{RARITY_EMOJI.get(rar,'⚪')} _{rar.capitalize()} · {sp.get('element','?').capitalize()}_\n\n"
-            f"_First to catch it keeps it!_",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🎯 CATCH!", callback_data=f"wild_{chat_id}")]]))
+        if _img:
+            msg = await bot.send_photo(chat_id, photo=_img, caption=_card_text[:1024],
+                                       parse_mode="Markdown", reply_markup=_markup)
+        else:
+            msg = await bot.send_message(chat_id, _card_text, parse_mode="Markdown",
+                                         reply_markup=_markup)
     except Exception:
         return
     _wild_spawns[chat_id] = {"species": sk, "is_shiny": shiny,
@@ -33887,14 +33967,23 @@ async def _spawn_wild_pet(bot, chat_id):
         st = _wild_spawns.get(cid)
         if st and st["msg_id"] == mid:
             _wild_spawns.pop(cid, None)
-            try:
-                await bot.edit_message_text(chat_id=cid, message_id=mid,
-                    text=f"💨 *The wild {PET_SPECIES[st['species']]['name']} got away...*",
-                    parse_mode="Markdown")
-            except Exception:
-                pass
+            await _edit_any_card(bot, cid, mid,
+                f"💨 *The wild {PET_SPECIES[st['species']]['name']} got away...*")
     _t = asyncio.create_task(_flee())
     _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+async def _edit_any_card(bot, chat_id, msg_id, text, markup=None):
+    """Edit a card whether it's a text message or a photo (caption) message."""
+    try:
+        await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=text[:4096],
+                                    parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        try:
+            await bot.edit_message_caption(chat_id=chat_id, message_id=msg_id,
+                                           caption=text[:1024], parse_mode="Markdown",
+                                           reply_markup=markup)
+        except Exception:
+            pass
 
 async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -33921,13 +34010,9 @@ async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     save_pet(pet)
     shiny_tag = "✨SHINY " if st["is_shiny"] else ""
     await query.answer(f"🎯 Caught the {shiny_tag}{sp['name']}!")
-    try:
-        await query.edit_message_text(
-            f"🎯 *{p['username']}* caught the wild *{shiny_tag}{sp['name']}!* {sp.get('emoji','🐾')}\n"
-            f"_Check /pet → All Pets to meet them._",
-            parse_mode="Markdown")
-    except Exception:
-        pass
+    await _edit_any_card(context.bot, chat_id, st["msg_id"],
+        f"🎯 *{p['username']}* caught the wild *{shiny_tag}{sp['name']}!* {sp.get('emoji','🐾')}\n"
+        f"_Check /pet → All Pets to meet them._")
 
 # ── 2. GROUP HEISTS ───────────────────────────────────────────────────────────
 _heists = {}      # chat_id -> {"msg_id","crew":[(uid,name)],"expires"}
@@ -34945,6 +35030,9 @@ def main():
     app.add_handler(CallbackQueryHandler(crate_callback, pattern="^crate_"))
     app.add_handler(CallbackQueryHandler(bet_callback, pattern="^bet_"))
     app.add_handler(CallbackQueryHandler(world_event_button_callback, pattern="^wev_"))
+    app.add_handler(CommandHandler("setimage",     setimage_cmd))
+    app.add_handler(CommandHandler("delimage",     delimage_cmd))
+    app.add_handler(CommandHandler("images",       images_cmd))
     app.add_handler(CommandHandler("rob",          rob_cmd))
     app.add_handler(CommandHandler("slots",        slots_cmd))
     app.add_handler(CommandHandler("coinflip",     coinflip_cmd))
