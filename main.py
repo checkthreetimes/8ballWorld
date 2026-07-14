@@ -40,8 +40,17 @@ def _db() -> sqlite3.Connection:
     return conn
 
 # ── CHANGELOG ─────────────────────────────────────────────────────────────────
-CURRENT_VERSION = "v1.4"
+CURRENT_VERSION = "v1.5"
 CHANGELOG = [
+    {"version": "v1.5", "date": "2026-07-14", "changes": [
+        "Fresh-card turn system for dungeon AND PvP (no more inline-edit freezes)",
+        "Dodge capped at 60% + pity rule (3rd attack always lands) + Evasive Momentum",
+        "Empire resources: collect notes for timber/stone/crystal, upgrades no longer wipe pending accrual",
+        "Proactive engagement: automatic hungry-pet DMs, more world events, personalized win-back messages",
+        "Level-scaled EXP economy: every reward is a % of your current level requirement",
+        "Dungeon companions now persist; The Last Stand Locket implemented; stale-card guard",
+        "/ping health check + global error logging + duplicate-instance alerts",
+    ]},
     {"version": "v1.4", "date": "2026-06-04", "changes": [
         "Stable v14: encounter system overhaul, level-based enemy scaling, boosted encounter EXP, full item pool in encounters, pet level cap (player×3), HP rebalance, removed boss/raid/soloraid, fixed skill picker double-answer bug, fixed noop handler, trimmed dead code",
     ]},
@@ -33064,6 +33073,45 @@ async def _engagement_loop(bot):
         except Exception:
             pass
 
+_BOOT_TIME = datetime.now()
+_conflict_alert_ts = {"t": 0.0}
+
+async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Instant health check: confirms the bot is alive and WHICH build is live."""
+    try:
+        build = datetime.fromtimestamp(os.path.getmtime(__file__)).strftime("%m/%d %H:%M")
+    except Exception:
+        build = "?"
+    up = datetime.now() - _BOOT_TIME
+    up_str = f"{int(up.total_seconds()//3600)}h {int(up.total_seconds()%3600//60)}m"
+    await update.message.reply_text(
+        f"🏓 Pong! {WORLD_NAME} {CURRENT_VERSION}\n"
+        f"🧱 Build: {build}  •  ⏱️ Up: {up_str}")
+
+async def _global_error_handler(update, context):
+    """Log every handler exception (they were previously invisible), and DM the
+    admin when Telegram reports a Conflict — the classic 'two bot instances are
+    polling the same token' failure after an overlapping deploy, which makes
+    every command look dead."""
+    err = context.error
+    try:
+        logger.error("Handler error: %s", err, exc_info=err)
+    except Exception:
+        pass
+    if err.__class__.__name__ == "Conflict":
+        now_ts = time.time()
+        if now_ts - _conflict_alert_ts["t"] > 3600:  # alert at most hourly
+            _conflict_alert_ts["t"] = now_ts
+            try:
+                await context.bot.send_message(ADMIN_ID,
+                    "⚠️ *Bot conflict detected!*\n\n"
+                    "Another instance is polling this bot token — commands will "
+                    "look dead until only one instance runs. Check Railway for "
+                    "a stuck/duplicate deployment and restart the service.",
+                    parse_mode="Markdown")
+            except Exception:
+                pass
+
 async def _post_init(application):
     """On startup: launch the engagement heartbeat; DM admin if version changed."""
     asyncio.create_task(_engagement_loop(application.bot))
@@ -33093,8 +33141,10 @@ async def _post_init(application):
 def main():
     init_db()
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
+    app.add_error_handler(_global_error_handler)
 
     # Universal
+    app.add_handler(CommandHandler("ping",         ping_cmd))
     app.add_handler(CommandHandler("rank",         rank_cmd))
     app.add_handler(CommandHandler("rankme",       rankme_cmd))
     app.add_handler(CommandHandler("rankwins",     rankwins_cmd))
