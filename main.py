@@ -529,10 +529,14 @@ async def _finalize_pvp(pair, result_text, bot):
             # Append the full result text below the HP card so defeat/win is visible
             full_text = (card + "\n\n" + result_text)[:4096] if card else result_text[:4096]
             stored = _pvp_dm_last_msg.get(viewer_uid)
+            _opp_uid = _f_du if viewer_uid == _f_au else _f_au
+            _rematch = InlineKeyboardMarkup([[InlineKeyboardButton(
+                "⚔️ Rematch", callback_data=f"pvprematch_{viewer_uid}_{_opp_uid}")]])
             # Fresh final card, then remove the old combat card (same mechanic
             # as mid-fight turns); falls back to editing the old card in place
             try:
-                await bot.send_message(chat_id=viewer_uid, text=full_text, parse_mode="Markdown")
+                await bot.send_message(chat_id=viewer_uid, text=full_text,
+                                       parse_mode="Markdown", reply_markup=_rematch)
                 if stored:
                     try: await bot.delete_message(chat_id=stored[0], message_id=stored[1])
                     except Exception: pass
@@ -543,7 +547,7 @@ async def _finalize_pvp(pair, result_text, bot):
                 try:
                     await bot.edit_message_text(chat_id=stored[0], message_id=stored[1],
                                                 text=full_text, parse_mode="Markdown",
-                                                reply_markup=None)
+                                                reply_markup=_rematch)
                 except Exception:
                     pass
         await asyncio.gather(_fin_card(_f_au, _f_a, _f_d), _fin_card(_f_du, _f_d, _f_a))
@@ -7107,12 +7111,19 @@ def _dng_combat_markup(uid, state):
     p = get_player(uid)
     p_skills = get_combat_skills(p) if p else []
     mp = state.get("p_mp", 0)
+    inv = sjl(p.get("inventory"), []) if p else []
+    _hp_pots = sum(1 for i in inv if i in ("Health Potion", "Greater Health Potion",
+                   "Grand Restorative Flask", "Supreme Restorative Flask", "Ultimate Vitality Draught"))
+    _mp_pots = sum(1 for i in inv if i in ("MP Tonic", "Minor MP Tonic",
+                   "Major MP Elixir", "Grand Mana Crystal"))
     rows = []
     rows.append([
         InlineKeyboardButton("⚔️ Attack",  callback_data=f"dng_atk_{uid}"),
         InlineKeyboardButton("🛡️ Guard",   callback_data=f"dng_guard_{uid}"),
-        InlineKeyboardButton("🧪 Potion",  callback_data=f"dng_heal_{uid}"),
+        InlineKeyboardButton(f"🧪 ({_hp_pots})",  callback_data=f"dng_heal_{uid}"),
     ])
+    if _mp_pots > 0:
+        rows.append([InlineKeyboardButton(f"💙 MP Potion ({_mp_pots})", callback_data=f"dng_mp_{uid}")])
     if p_skills:
         sk_row = []
         for i, sk in enumerate(p_skills[:3]):
@@ -8098,6 +8109,7 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
     _toast = ("⚔️ Attacking..." if data.startswith("dng_atk_") else
               "🛡️ Bracing..."   if data.startswith("dng_guard_") else
               "🧪 Drinking..."  if data.startswith("dng_heal_") else
+              "💙 Drinking..."  if data.startswith("dng_mp_") else
               "✨ Casting..."   if data.startswith("dng_skl_") else
               "🏃 Fleeing..."   if data.startswith("dng_flee_") else "")
     try:
@@ -8196,6 +8208,25 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
             heal = max(1, int(heal * 0.60))
         state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + heal)
         await _do_full_turn([f"🧪 *{potion}* — healed *+{heal} HP!*"])
+        return
+
+    # ── MP POTION ──────────────────────────────────────────────────────────────
+    if data.startswith("dng_mp_"):
+        inv = sjl(p.get("inventory"), [])
+        _mp_item = None; _mp_gain = 0
+        for iname, igain in [("Grand Mana Crystal", -1), ("Major MP Elixir", 80),
+                              ("Minor MP Tonic", 30), ("MP Tonic", 30)]:
+            if iname in inv:
+                _mp_item = iname; _mp_gain = igain; break
+        if not _mp_item:
+            state.setdefault("combat_log",[]).append("💙 No MP potions!")
+            await _dng_edit(uid, context.bot, _dng_combat_card(state), _dng_combat_markup(uid, state)); return
+        inv.remove(_mp_item); p["inventory"] = json.dumps(inv); save_player(p)
+        _max_mp = state.get("p_max_mp", 10)
+        if _mp_gain < 0:  # Grand Mana Crystal — full restore
+            _mp_gain = _max_mp - state.get("p_mp", 0)
+        state["p_mp"] = min(_max_mp, state.get("p_mp", 0) + _mp_gain)
+        await _do_full_turn([f"💙 *{_mp_item}* — restored *+{_mp_gain} MP!* ({state['p_mp']}/{_max_mp})"])
         return
 
     # ── SKILL ──────────────────────────────────────────────────────────────────
@@ -12386,8 +12417,11 @@ def _pvp_log_append(pair, entry):
 def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
     """Action buttons for PvP card — Attack, Defend, Skills, Potion, Finisher."""
     inv = sjl(player_p.get("inventory"), [])
-    has_potion = any(i in inv for i in
-                     ["Health Potion", "Greater Health Potion", "Grand Restorative Flask"])
+    _hp_pots = sum(1 for i in inv if i in ("Health Potion", "Greater Health Potion",
+                   "Grand Restorative Flask", "Supreme Restorative Flask", "Ultimate Vitality Draught"))
+    _mp_pots = sum(1 for i in inv if i in ("MP Tonic", "Minor MP Tonic",
+                   "Major MP Elixir", "Grand Mana Crystal"))
+    has_potion = _hp_pots > 0
     all_skills = sjl(player_p.get("all_skills"), [])
     shield_active   = safe_int(player_p.get("shield_used")) == 1
     kill_ready = opp_p is not None and _check_kill_condition(player_p, opp_p)
@@ -12402,8 +12436,15 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
     defend_label = "🛡️ Shield ✓" if shield_active else "🛡️ Defend"
     row1.append(InlineKeyboardButton(defend_label, callback_data=f"pvpcard_def_{player_uid}_{opp_uid}"))
     rows.append(row1)
-    if has_potion:
-        rows.append([InlineKeyboardButton("🧪 Potion", callback_data=f"pvpcard_heal_{player_uid}_{opp_uid}")])
+    if has_potion or _mp_pots > 0:
+        _pot_row = []
+        if has_potion:
+            _pot_row.append(InlineKeyboardButton(f"🧪 Potion ({_hp_pots})",
+                            callback_data=f"pvpcard_heal_{player_uid}_{opp_uid}"))
+        if _mp_pots > 0:
+            _pot_row.append(InlineKeyboardButton(f"💙 MP ({_mp_pots})",
+                            callback_data=f"pvpcard_mp_{player_uid}_{opp_uid}"))
+        rows.append(_pot_row)
     # Class combat skills inline — 2 per row
     p_skills = get_combat_skills(player_p)
     all_sk_by_name = {sk.get("name"): i for i, sk in enumerate(all_skills)}
@@ -13544,6 +13585,51 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         _cb_unlock(uid, _tok)  # token-checked: can't release a newer tap's lock
 
 
+async def pvp_rematch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """⚔️ Rematch button on the end-of-fight card — restarts the fight in one tap."""
+    query = update.callback_query
+    parts = query.data.split("_")
+    try:
+        uid = int(parts[1]); opp_uid = int(parts[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your rematch button!", show_alert=True); return
+    a = get_player(uid); d = get_player(opp_uid)
+    if not a or not d:
+        await query.answer("Opponent not found.", show_alert=True); return
+    if is_defeated(a):
+        await query.answer("You're still defeated — heal up first!", show_alert=True); return
+    if is_defeated(d):
+        await query.answer(f"{d['username']} is still recovering — try again in a few minutes!",
+                           show_alert=True); return
+    if is_invincible(d):
+        await query.answer(f"{d['username']} is invincible right now — wait for their grace "
+                           f"period to end!", show_alert=True); return
+    _tok = _cb_lock(uid)
+    if not _tok:
+        await query.answer("⏳ Still processing!"); return
+    try:
+        await query.answer("⚔️ Rematch!")
+        pair = _pvp_pair_key(uid, opp_uid)
+        _pvp_cards.setdefault(pair, {})
+        _pvp_battle_logs.pop(pair, None)
+        _pk_grp = _resolve_pvp_group_chat(uid, query.message.chat_id if query.message else uid)
+        _pvp_origin_chat[pair] = _pk_grp
+        # Fresh battle state for per-fight items/companions
+        _dng_pvp_init(uid, a); _dng_pvp_init(opp_uid, d)
+        try:
+            await context.bot.send_message(chat_id=opp_uid,
+                text=f"⚔️ *{a['username']}* challenges you to a rematch!", parse_mode="Markdown")
+        except Exception:
+            pass
+        start_txt = f"⚔️ *REMATCH!* *{a['username']}* vs *{d['username']}* — round two!"
+        _pvp_log_append(pair, start_txt)
+        _cb_unlock(uid, _tok)
+        await _pvp_notify_both(pair, a, d, uid, opp_uid, start_txt, context.bot)
+    finally:
+        _cb_unlock(uid, _tok)
+
 async def skill_target_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle skl2_pick_{uid}_{target} and skl2_page_{uid}_{page} callbacks."""
     query = update.callback_query
@@ -13844,6 +13930,41 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             fresh_d = get_player(target_id) or d
             _cb_unlock(uid, _tok)
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, heal_entry, context.bot)
+            return
+
+        # ── MP POTION ─────────────────────────────────────────────────────────
+        if action_type == "mp":
+            try: await query.answer("💙 Drinking...")
+            except Exception: pass
+            inv = sjl(a.get("inventory"), [])
+            _mp_item = None; _mp_gain = 0
+            for iname, igain in [("Grand Mana Crystal", -1), ("Major MP Elixir", 80),
+                                  ("Minor MP Tonic", 30), ("MP Tonic", 30)]:
+                if iname in inv:
+                    _mp_item = iname; _mp_gain = igain; break
+            if not _mp_item:
+                no_mp_entry = f"💙 *{a['username']}* reaches for a mana potion — *none left!*"
+                _pvp_log_append(pair, no_mp_entry)
+                fresh_a = get_player(uid) or a
+                fresh_d = get_player(target_id) or d
+                _cb_unlock(uid, _tok)
+                await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, no_mp_entry, context.bot)
+                return
+            inv.remove(_mp_item); a["inventory"] = json.dumps(inv)
+            _max_mp = safe_int(a.get("max_mp")) or calc_max_mp(a)
+            _old_mp = safe_int(a.get("mp", 0))
+            if _mp_gain < 0:  # Grand Mana Crystal — full restore
+                a["mp"] = _max_mp
+            else:
+                a["mp"] = min(_max_mp, _old_mp + _mp_gain)
+            _actual = a["mp"] - _old_mp
+            save_player(a)
+            mp_entry = f"💙 *{a['username']}* uses *{_mp_item}* — *+{_actual} MP* 💙 {a['mp']}/{_max_mp}"
+            _pvp_log_append(pair, mp_entry)
+            fresh_a = get_player(uid) or a
+            fresh_d = get_player(target_id) or d
+            _cb_unlock(uid, _tok)
+            await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, mp_entry, context.bot)
             return
 
         # ── DEFEND ────────────────────────────────────────────────────────────
@@ -25970,14 +26091,9 @@ async def guide_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # PET COMMANDS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    p = get_player(user.id)
-    if not p:
-        await send_group(update, "🐾 Register first with /start.", delay=9); return
-    try: await update.message.delete()
-    except: pass
-    pet = get_active_pet_record(user.id)
+def _build_pet_home(uid, p):
+    """(text, markup) for the pet home card — used by /pet and the /menu hub."""
+    pet = get_active_pet_record(uid)
     if not pet:
         text = (f"🐾 *{p['username']}'s Pets*\n\n"
                 "You don't have an active pet yet!\n"
@@ -26027,8 +26143,18 @@ async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                          InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")])
         btn_rows.append([InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
                          InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")])
-        btn_rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")])
+        btn_rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
         markup = InlineKeyboardMarkup(btn_rows)
+    return text, markup
+
+async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "🐾 Register first with /start.", delay=9); return
+    try: await update.message.delete()
+    except: pass
+    text, markup = _build_pet_home(user.id, p)
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
         reply_markup=markup)
@@ -33046,6 +33172,58 @@ async def _winback_sweep(bot, max_sends=20):
         except Exception:
             continue
 
+_revive_pinged = {}  # uid -> defeated_until value already pinged for
+
+async def _revive_watch_loop(bot):
+    """Every 60s: DM players whose defeat timer just expired — 'you're back on
+    your feet' plus a revenge hook. Turns the defeat downtime into a comeback
+    notification instead of players drifting away."""
+    while True:
+        try:
+            await asyncio.sleep(60)
+            now = datetime.now()
+            try:
+                c = _db().cursor()
+                c.execute("""SELECT user_id, username, defeated_until, last_defeated_by,
+                                    revenge_target FROM players
+                             WHERE defeated_until IS NOT NULL""")
+                rows = c.fetchall()
+            except Exception:
+                continue
+            for row in rows:
+                uid = row["user_id"]
+                du = row["defeated_until"]
+                try:
+                    dt = datetime.fromisoformat(du)
+                except Exception:
+                    continue
+                since = (now - dt).total_seconds()
+                if not (0 <= since <= 120):
+                    continue  # not freshly expired
+                if _revive_pinged.get(uid) == du:
+                    continue  # already pinged for this defeat
+                _revive_pinged[uid] = du
+                if is_banned(uid):
+                    continue
+                _by = row["last_defeated_by"] or "your rival"
+                msg = (f"❤️‍🩹 *You're back on your feet!*\n\n"
+                       f"Your defeat timer is over — HP and shield are yours to rebuild.\n"
+                       f"⚔️ *{_by}* took you down")
+                if row["revenge_target"]:
+                    msg += " — revenge within 24h pays *+15% damage*. Reply to them with /attack!"
+                else:
+                    msg += ". Time to get back in there!"
+                try:
+                    await bot.send_message(uid, msg, parse_mode="Markdown")
+                except Exception:
+                    pass
+                await asyncio.sleep(0.3)
+            # keep the pinged map bounded
+            if len(_revive_pinged) > 500:
+                _revive_pinged.clear()
+        except Exception:
+            pass
+
 async def _engagement_loop(bot):
     """The re-engagement heartbeat. Every 15 min: pet care pings (internally
     rate-limited to 4-8h per condition). Every 30 min: ambient world events
@@ -33075,6 +33253,126 @@ async def _engagement_loop(bot):
 
 _BOOT_TIME = datetime.now()
 _conflict_alert_ts = {"t": 0.0}
+
+# ── MAIN MENU HUB ─────────────────────────────────────────────────────────────
+def _menu_markup(uid):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👤 Profile", callback_data=f"menu_stats_{uid}"),
+         InlineKeyboardButton("🏚️ Dungeon", callback_data=f"menu_dungeon_{uid}")],
+        [InlineKeyboardButton("🐾 Pets",    callback_data=f"menu_pets_{uid}"),
+         InlineKeyboardButton("🏰 Empire",  callback_data=f"menu_empire_{uid}")],
+        [InlineKeyboardButton("🛒 Shop",    callback_data=f"menu_shop_{uid}"),
+         InlineKeyboardButton("⚔️ Battle",  callback_data=f"menu_battle_{uid}")],
+        [InlineKeyboardButton("❌ Close",   callback_data=f"close_msg_{uid}")],
+    ])
+
+async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    try: await update.message.delete()
+    except Exception: pass
+    if not p:
+        await send_group(update, "Use /ascend first to enter the world!", delay=9); return
+    w = get_weather()
+    text = (f"🎱 *{WORLD_NAME}*\n\n"
+            f"👤 *{p['username']}* — Lv {p['level']}  |  ❤️ {p['hp']}/{p['max_hp']}\n"
+            f"💰 {p.get('gold',0):,}g  |  🌍 {w['name']}\n\n"
+            f"_Where to?_")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=text,
+                                   parse_mode="Markdown", reply_markup=_menu_markup(user.id))
+
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    try:
+        section = parts[1]; uid = int(parts[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    await query.answer()
+
+    back_row = [InlineKeyboardButton("« Menu", callback_data=f"menu_home_{uid}")]
+
+    async def _show(text, markup_rows):
+        try:
+            await query.edit_message_text(text[:4096], parse_mode="Markdown",
+                                          reply_markup=InlineKeyboardMarkup(markup_rows))
+        except Exception:
+            pass
+
+    if section == "home":
+        w = get_weather()
+        text = (f"🎱 *{WORLD_NAME}*\n\n"
+                f"👤 *{p['username']}* — Lv {p['level']}  |  ❤️ {p['hp']}/{p['max_hp']}\n"
+                f"💰 {p.get('gold',0):,}g  |  🌍 {w['name']}\n\n"
+                f"_Where to?_")
+        try:
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_menu_markup(uid))
+        except Exception:
+            pass
+        return
+
+    if section == "stats":
+        await _send_stats_page(query, uid, page=1, edit=True, back_rows=[back_row])
+        return
+
+    if section == "dungeon":
+        if uid in active_dungeons:
+            await _show("🏚️ *The Dungeon*\n\nYou're mid-run! Use /dungeon to resume your current card.",
+                        [back_row])
+            return
+        p_level = p.get("level", 1)
+        rows = []
+        for dk, dc in DNG_DIFF.items():
+            if p_level < dc["min_level"]:
+                rows.append([InlineKeyboardButton(
+                    f"{dc['emoji']} {dc['label']} (Lv{dc['min_level']}+) — 🔒",
+                    callback_data=f"dng_locked_{uid}")])
+            else:
+                rows.append([InlineKeyboardButton(
+                    f"{dc['emoji']} {dc['label']} — {dc['desc']}",
+                    callback_data=f"dng_diff_{uid}_{dk}")])
+        rows.append(back_row)
+        await _show(f"🏚️ *The Dungeon*\n\nChoose your difficulty. Die and you lose everything. "
+                    f"Extract to keep rewards.\n\n❤️ {p['hp']}/{calc_max_hp(p)} HP", rows)
+        return
+
+    if section == "pets":
+        text, markup = _build_pet_home(uid, p)
+        rows = list(markup.inline_keyboard) + [back_row]
+        await _show(text, rows)
+        return
+
+    if section == "empire":
+        _empire_collect(p); save_player(p)
+        text, markup = _build_empire_overview(p, uid)
+        rows = list(markup.inline_keyboard) + [back_row]
+        await _show(text, rows)
+        return
+
+    if section == "shop":
+        text, markup = _build_shop_view(p, "daily", uid, _shop_discount(p))
+        rows = list(markup.inline_keyboard) + [back_row]
+        await _show(text, rows)
+        return
+
+    if section == "battle":
+        await _show(
+            "⚔️ *Battle Guide*\n\n"
+            "• *PvP:* reply to any player's message with /attack — the fight card "
+            "lands in your DMs with attack/skill/potion buttons\n"
+            "• *Skills:* reply with /skill to open your skill picker\n"
+            "• *Monsters:* /encounter for wild battles and hunts\n"
+            "• *Dungeon:* /dungeon for the roguelike tower\n"
+            "• *Shield:* /defend raises a damage-absorbing shield\n\n"
+            "_Defeated players revive after 6 minutes — revenge within 24h pays +15% damage._",
+            [back_row])
+        return
+    await query.answer("Unknown menu option.")
 
 async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Instant health check: confirms the bot is alive and WHICH build is live."""
@@ -33113,8 +33411,40 @@ async def _global_error_handler(update, context):
                 pass
 
 async def _post_init(application):
-    """On startup: launch the engagement heartbeat; DM admin if version changed."""
+    """On startup: launch background loops, register the command menu,
+    DM admin if version changed."""
     asyncio.create_task(_engagement_loop(application.bot))
+    asyncio.create_task(_revive_watch_loop(application.bot))
+    # Telegram "/" command menu — discoverability for every command that matters
+    try:
+        from telegram import BotCommand
+        await application.bot.set_my_commands([
+            BotCommand("menu",      "🏠 Main menu — everything in one place"),
+            BotCommand("stats",     "👤 Your profile & stats"),
+            BotCommand("daily",     "🎁 Claim your daily reward"),
+            BotCommand("quest",     "🗺️ Run an hourly quest"),
+            BotCommand("train",     "🏋️ Train for EXP (30m)"),
+            BotCommand("pool",      "🎱 Shoot pool for EXP & loot"),
+            BotCommand("dungeon",   "🏚️ Enter the dungeon"),
+            BotCommand("encounter", "🐉 Fight wild monsters"),
+            BotCommand("attack",    "⚔️ Attack a player (reply to them)"),
+            BotCommand("skill",     "✨ Use a skill (reply to target)"),
+            BotCommand("heal",      "💚 Heal an ally (reply to them)"),
+            BotCommand("defend",    "🛡️ Raise your shield"),
+            BotCommand("pet",       "🐾 Your pets"),
+            BotCommand("empire",    "🏰 Your empire & resources"),
+            BotCommand("shop",      "🛒 Item shop"),
+            BotCommand("inventory", "🎒 Your items"),
+            BotCommand("explore",   "🧭 Send an expedition (1h)"),
+            BotCommand("rank",      "🏆 Leaderboards"),
+            BotCommand("guild",     "🏰 Guild hub"),
+            BotCommand("party",     "👥 Party up"),
+            BotCommand("objectives","📋 Daily objectives"),
+            BotCommand("help",      "❓ How to play"),
+            BotCommand("ping",      "🏓 Bot health check"),
+        ])
+    except Exception:
+        pass
     version_file = "/data/bot_version.txt"
     try:
         with open(version_file) as f:
@@ -33145,6 +33475,9 @@ def main():
 
     # Universal
     app.add_handler(CommandHandler("ping",         ping_cmd))
+    app.add_handler(CommandHandler("menu",         menu_cmd))
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
+    app.add_handler(CallbackQueryHandler(pvp_rematch_callback, pattern="^pvprematch_"))
     app.add_handler(CommandHandler("rank",         rank_cmd))
     app.add_handler(CommandHandler("rankme",       rankme_cmd))
     app.add_handler(CommandHandler("rankwins",     rankwins_cmd))
