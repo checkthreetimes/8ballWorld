@@ -10905,6 +10905,7 @@ def init_db():
         ("players", "burn_pct",           "INTEGER DEFAULT 0"),
         ("players", "guild_stat_bonus",   "INTEGER DEFAULT 0"),
         ("players", "dodge_momentum",     "INTEGER DEFAULT 0"),
+        ("players", "collection_log",     "TEXT DEFAULT NULL"),
     ]
     for table, col, definition in _charge_cols:
         try:
@@ -11581,7 +11582,7 @@ def save_player(p):
         "regen_charges","regen_amt","heal_blocked_turns","revive_blocked_turns",
         "poison_pct","bleed_pct","burn_pct",
         "empire_buildings","empire_resources","empire_last_collect",
-        "mp","max_mp","dng_companions","dodge_momentum",
+        "mp","max_mp","dng_companions","dodge_momentum","collection_log",
     ]
     # dng_companions is held as a list in memory; store as JSON text
     if isinstance(p.get("dng_companions"), list):
@@ -11943,6 +11944,10 @@ def add_item(p, item_name):
     inv = sjl(p.get("inventory"), [])
     inv.append(item_name)
     p["inventory"] = json.dumps(inv)
+    try:
+        _coll_record(p, item_name)  # collection log: every item ever owned
+    except Exception:
+        pass
 
 def grant_loot_item(p, item_name):
     """Add item to inventory and apply drop bonuses. Returns display string like 'Sword +3 ✨(Flaming)'."""
@@ -31755,6 +31760,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text    = (update.message.text or "").lower()
 
+    # Word scramble: exact item-name answers win the prize
+    if text and chat_id in _scrambles:
+        try:
+            await _check_scramble_answer(update, context, chat_id, text)
+        except Exception:
+            pass
+
     # Alliance name creation: leader typed the name after clicking "Found an Order"
     if context.user_data.get("awaiting_alliance_name") is not None:
         raw_name = (update.message.text or "").strip()
@@ -31877,6 +31889,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                          and r.get("expires", now_iso) < now_iso]
         for cid in expired_raids:
             active_raids.pop(cid, None)
+
+    # Wild pet spawns: chat activity summons creatures (Pokétwo-style race)
+    if (cnt % 45 == 20 and chat_id not in _wild_spawns
+            and time.time() - _wild_last.get(chat_id, 0) >= 1500):
+        _wild_last[chat_id] = time.time()
+        _wt = asyncio.create_task(_spawn_wild_pet(context.bot, chat_id))
+        _bg_tasks.add(_wt); _wt.add_done_callback(_bg_tasks.discard)
 
     _last_ev = last_event_times.get(chat_id)
     _ev_ok = _last_ev is None or (datetime.now() - _last_ev).total_seconds() >= 1800
@@ -33432,6 +33451,13 @@ async def _post_daily_digest(bot):
             lines.append("")
         except Exception:
             pass
+        try:
+            _lot_line = await _lottery_draw(bot)
+            if _lot_line:
+                lines.append(_lot_line)
+                lines.append("")
+        except Exception:
+            pass
         lines.append(f"🌍 *{w['name']}* — EXP ×{w['exp_mod']} | DMG ×{w['dmg_mod']}")
         lines.append("")
         lines.append("_Think you can top tomorrow's board? /daily · /dungeon · /attack_")
@@ -33805,6 +33831,667 @@ async def _crate_scheduler(bot):
             await _spawn_crate(bot, g)
             await asyncio.sleep(0.3)
 
+# ══════════════════════════════════════════════════════════════════════════════
+# CHAT GAMES — wild spawns, heists, rob, casino, scramble, roulette, collection
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 1. WILD PET SPAWNS (first to tap catches it) ─────────────────────────────
+_wild_spawns = {}       # chat_id -> {"species","is_shiny","msg_id","expires"}
+_wild_last = {}         # chat_id -> last spawn ts
+
+async def _spawn_wild_pet(bot, chat_id):
+    if chat_id in _wild_spawns:
+        return
+    _rarity_w = {"common": 50, "uncommon": 30, "rare": 15, "epic": 4, "legendary": 1}
+    keys = list(PET_SPECIES.keys())
+    weights = [_rarity_w.get(PET_SPECIES[k].get("rarity", "common"), 10) for k in keys]
+    sk = random.choices(keys, weights=weights, k=1)[0]
+    sp = PET_SPECIES[sk]
+    shiny = random.random() < 0.02
+    name = ("✨SHINY " if shiny else "") + sp["name"]
+    rar = sp.get("rarity", "common")
+    try:
+        msg = await bot.send_message(chat_id,
+            f"🐾 *A wild {name} appears!* {sp.get('emoji','🐾')}\n"
+            f"{RARITY_EMOJI.get(rar,'⚪')} _{rar.capitalize()} · {sp.get('element','?').capitalize()}_\n\n"
+            f"_First to catch it keeps it!_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🎯 CATCH!", callback_data=f"wild_{chat_id}")]]))
+    except Exception:
+        return
+    _wild_spawns[chat_id] = {"species": sk, "is_shiny": shiny,
+                             "msg_id": msg.message_id, "expires": time.time() + 120}
+    async def _flee(cid=chat_id, mid=msg.message_id):
+        await asyncio.sleep(125)
+        st = _wild_spawns.get(cid)
+        if st and st["msg_id"] == mid:
+            _wild_spawns.pop(cid, None)
+            try:
+                await bot.edit_message_text(chat_id=cid, message_id=mid,
+                    text=f"💨 *The wild {PET_SPECIES[st['species']]['name']} got away...*",
+                    parse_mode="Markdown")
+            except Exception:
+                pass
+    _t = asyncio.create_task(_flee())
+    _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try:
+        chat_id = int(query.data.split("_")[1])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    st = _wild_spawns.get(chat_id)
+    if not st or time.time() > st["expires"]:
+        await query.answer("💨 Too slow — it got away!", show_alert=True); return
+    uid = query.from_user.id
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if len(get_all_pets(uid)) >= 12:
+        await query.answer("🐾 Your kennel is full (12 pets)! Release one first.", show_alert=True); return
+    _wild_spawns.pop(chat_id, None)  # claimed — race is over
+    sp = PET_SPECIES[st["species"]]
+    pet = {"pet_id": None, "owner_id": uid, "species": st["species"],
+           "level": 1, "exp": 0, "hunger": 100, "mood": 100,
+           "is_active": 0 if get_active_pet_record(uid) else 1,
+           "is_shiny": 1 if st["is_shiny"] else 0,
+           "created_at": datetime.now().isoformat()}
+    save_pet(pet)
+    shiny_tag = "✨SHINY " if st["is_shiny"] else ""
+    await query.answer(f"🎯 Caught the {shiny_tag}{sp['name']}!")
+    try:
+        await query.edit_message_text(
+            f"🎯 *{p['username']}* caught the wild *{shiny_tag}{sp['name']}!* {sp.get('emoji','🐾')}\n"
+            f"_Check /pet → All Pets to meet them._",
+            parse_mode="Markdown")
+    except Exception:
+        pass
+
+# ── 2. GROUP HEISTS ───────────────────────────────────────────────────────────
+_heists = {}      # chat_id -> {"msg_id","crew":[(uid,name)],"expires"}
+_heist_last = {}  # chat_id -> ts
+_HEIST_BUYIN = 200
+
+async def _spawn_heist(bot, chat_id):
+    if chat_id in _heists:
+        return
+    try:
+        msg = await bot.send_message(chat_id,
+            f"🏦 *THE VAULT IS OPEN!*\n\n"
+            f"A crew is forming for a heist — buy-in *{_HEIST_BUYIN}g*.\n"
+            f"_More crew = better odds. Doors close in 90 seconds!_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🥷 JOIN THE HEIST", callback_data=f"heist_{chat_id}")]]))
+    except Exception:
+        return
+    _heists[chat_id] = {"msg_id": msg.message_id, "crew": [], "expires": time.time() + 90}
+    async def _resolve(cid=chat_id, mid=msg.message_id):
+        await asyncio.sleep(92)
+        st = _heists.pop(cid, None)
+        if not st or st["msg_id"] != mid:
+            return
+        crew = st["crew"]
+        if len(crew) < 2:
+            for uid, _ in crew:  # refund the lonely
+                cp = get_player(uid)
+                if cp:
+                    cp["gold"] = cp.get("gold", 0) + _HEIST_BUYIN; save_player(cp)
+            try:
+                await bot.edit_message_text(chat_id=cid, message_id=mid,
+                    text="🏦 *Heist called off* — not enough crew. Buy-ins refunded.",
+                    parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+        odds = min(0.85, 0.30 + 0.12 * len(crew))
+        names = ", ".join(f"*{n}*" for _, n in crew)
+        if random.random() < odds:
+            share = round(_HEIST_BUYIN * 2.5)
+            lines = [f"🏦💰 *HEIST SUCCESSFUL!* ({int(odds*100)}% odds, {len(crew)} crew)",
+                     f"Crew: {names}", ""]
+            for uid, nm in crew:
+                cp = get_player(uid)
+                if not cp: continue
+                _hx = exp_share(cp["level"], 0.05)
+                cp["gold"] = cp.get("gold", 0) + share
+                add_exp(cp, _hx)
+                save_player(cp)
+                lines.append(f"💰 *{nm}* — +{share}g, +{_hx:,} EXP")
+            txt = "\n".join(lines)
+        else:
+            txt = (f"🚨 *HEIST FAILED!* The vault alarm screamed. ({int(odds*100)}% odds)\n"
+                   f"Crew: {names}\n\n_Everyone's buy-in is gone. The house always hears._")
+        try:
+            await bot.edit_message_text(chat_id=cid, message_id=mid, text=txt[:4096],
+                                        parse_mode="Markdown")
+        except Exception:
+            pass
+    _t = asyncio.create_task(_resolve())
+    _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+async def heist_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try:
+        chat_id = int(query.data.split("_")[1])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    st = _heists.get(chat_id)
+    if not st or time.time() > st["expires"]:
+        await query.answer("🚪 The doors are closed!", show_alert=True); return
+    uid = query.from_user.id
+    if any(u == uid for u, _ in st["crew"]):
+        await query.answer("You're already on the crew!"); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if p.get("gold", 0) < _HEIST_BUYIN:
+        await query.answer(f"Need {_HEIST_BUYIN}g buy-in!", show_alert=True); return
+    p["gold"] -= _HEIST_BUYIN
+    save_player(p)
+    st["crew"].append((uid, p["username"]))
+    odds = min(0.85, 0.30 + 0.12 * len(st["crew"]))
+    await query.answer(f"🥷 You're in! Crew odds: {int(odds*100)}%")
+    names = ", ".join(f"*{n}*" for _, n in st["crew"])
+    try:
+        await query.edit_message_text(
+            f"🏦 *THE VAULT IS OPEN!*\n\n"
+            f"Crew ({len(st['crew'])}): {names}\n"
+            f"📈 Success odds: *{int(odds*100)}%*  ·  Buy-in {_HEIST_BUYIN}g\n"
+            f"_Doors close soon — more crew, better odds!_",
+            parse_mode="Markdown", reply_markup=query.message.reply_markup)
+    except Exception:
+        pass
+
+# ── 3. /ROB ───────────────────────────────────────────────────────────────────
+async def rob_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if not update.message.reply_to_message or not update.message.reply_to_message.from_user:
+        await send_group(update, "Reply to the player you want to rob with /rob!", delay=9); return
+    tu = update.message.reply_to_message.from_user
+    if tu.id == user.id:
+        await send_group(update, "Robbing yourself is just... budgeting.", delay=9); return
+    t = get_player(tu.id)
+    if not t:
+        await send_group(update, f"{tu.first_name} hasn't ascended — nothing to steal!", delay=9); return
+    if is_defeated(p):
+        await send_group(update, "☠️ You're defeated — can't rob anyone.", delay=9); return
+    if p.get("guild_id") and str(p.get("guild_id")) == str(t.get("guild_id")):
+        await send_group(update, "You can't rob your own guildmate!", delay=9); return
+    cds = safe_cds(p)
+    now = datetime.now()
+    last_rob = cds.get("last_rob")
+    if last_rob:
+        try:
+            since = (now - datetime.fromisoformat(last_rob)).total_seconds()
+            if since < 3600:
+                await send_group(update, f"🕶️ Lay low — you can rob again in *{int((3600-since)//60)}m*.", delay=9); return
+        except Exception:
+            pass
+    t_cds = safe_cds(t)
+    last_robbed = t_cds.get("last_robbed")
+    if last_robbed:
+        try:
+            if (now - datetime.fromisoformat(last_robbed)).total_seconds() < 3 * 3600:
+                await send_group(update, f"👮 *{t['username']}* is still shaken from the last robbery — leave them be (3h protection).", delay=9); return
+        except Exception:
+            pass
+    if t.get("gold", 0) < 100:
+        await send_group(update, f"💸 *{t['username']}* has barely any gold. Not worth the risk.", delay=9); return
+    cds["last_rob"] = now.isoformat()
+    p["passive_cooldowns"] = json.dumps(cds)
+    atk_roll = get_stat(p, "AGI") + get_stat(p, "LUK") + random.randint(0, 60)
+    def_roll = get_stat(t, "AGI") + get_stat(t, "DEX") + random.randint(0, 60)
+    if atk_roll > def_roll:
+        loot = min(round(t.get("gold", 0) * 0.08), 1000)
+        loot = max(50, loot)
+        t["gold"] = max(0, t.get("gold", 0) - loot)
+        p["gold"] = p.get("gold", 0) + loot
+        t_cds["last_robbed"] = now.isoformat()
+        t["passive_cooldowns"] = json.dumps(t_cds)
+        save_player(p); save_player(t)
+        await send_group(update,
+            f"🕶️ *ROBBERY!* You slip through the shadows and lift *{loot}g* from *{t['username']}*!\n"
+            f"_({atk_roll} vs {def_roll} — clean getaway)_", delay=20)
+        try:
+            await context.bot.send_message(tu.id,
+                f"🚨 *You've been robbed!* *{p['username']}* stole *{loot}g* from you!\n"
+                f"_Revenge is legal here: reply to them with /attack._", parse_mode="Markdown")
+        except Exception:
+            pass
+    else:
+        fine = min(200, p.get("gold", 0))
+        p["gold"] = max(0, p.get("gold", 0) - fine)
+        t["gold"] = t.get("gold", 0) + fine
+        p["is_wanted"] = 1
+        save_player(p); save_player(t)
+        await send_group(update,
+            f"👮 *CAUGHT IN THE ACT!* *{t['username']}* grabbed your wrist mid-reach!\n"
+            f"You paid *{fine}g* in shame money and you're now 🔴 *WANTED*.\n"
+            f"_({atk_roll} vs {def_roll})_", delay=20)
+
+# ── 4. CASINO — /slots, /coinflip, /lottery ──────────────────────────────────
+_SLOT_REELS = ["🎱", "💰", "💎", "7️⃣", "🍀", "⭐"]
+_coinflips = {}  # (challenger, target) -> {"amt","expires","chat_id"}
+
+async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    try:
+        amt = int(context.args[0]) if context.args else 100
+    except (ValueError, IndexError):
+        amt = 100
+    amt = max(50, min(2000, amt))
+    if p.get("gold", 0) < amt:
+        await send_group(update, f"Need {amt}g to spin! (You have {p.get('gold',0):,}g)", delay=9); return
+    cds = safe_cds(p)
+    today = datetime.now().strftime("%Y-%m-%d")
+    if cds.get("slots_date") != today:
+        cds["slots_date"] = today; cds["slots_net"] = 0
+    if cds.get("slots_net", 0) <= -5000:
+        await send_group(update, "🎰 The house cuts you off — you've lost 5,000g today. Come back tomorrow.", delay=9); return
+    reels = [random.choice(_SLOT_REELS) for _ in range(3)]
+    p["gold"] -= amt
+    win = 0
+    if reels[0] == reels[1] == reels[2]:
+        win = amt * 10 if reels[0] == "🎱" else amt * 5
+    elif reels[0] == reels[1] or reels[1] == reels[2] or reels[0] == reels[2]:
+        win = round(amt * 1.5)
+    p["gold"] += win
+    cds["slots_net"] = cds.get("slots_net", 0) + (win - amt)
+    p["passive_cooldowns"] = json.dumps(cds)
+    save_player(p)
+    if win > amt:
+        verdict = f"🎉 *+{win - amt:,}g profit!*" + (" *JACKPOT!* 🎱🎱🎱" if win == amt * 10 else "")
+    elif win > 0:
+        verdict = f"😌 Pair — {win:,}g back."
+    else:
+        verdict = f"💸 House wins. -{amt:,}g"
+    await send_group(update,
+        f"🎰 [ {reels[0]} | {reels[1]} | {reels[2]} ]\n\n{verdict}\n💰 Gold: {p['gold']:,}", delay=15)
+
+async def coinflip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if not update.message.reply_to_message or not update.message.reply_to_message.from_user:
+        await send_group(update, "Reply to your opponent: /coinflip <gold>", delay=9); return
+    tu = update.message.reply_to_message.from_user
+    if tu.id == user.id:
+        await send_group(update, "You'd win. And lose.", delay=9); return
+    t = get_player(tu.id)
+    if not t:
+        await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
+    try:
+        amt = int(context.args[0]) if context.args else 100
+    except (ValueError, IndexError):
+        amt = 100
+    amt = max(50, min(5000, amt))
+    if p.get("gold", 0) < amt:
+        await send_group(update, f"You need {amt}g to stake!", delay=9); return
+    if t.get("gold", 0) < amt:
+        await send_group(update, f"{t['username']} can't cover {amt}g!", delay=9); return
+    key = (user.id, tu.id)
+    _coinflips[key] = {"amt": amt, "expires": time.time() + 60, "chat_id": update.effective_chat.id}
+    await context.bot.send_message(update.effective_chat.id,
+        f"🪙 *{p['username']}* challenges *{t['username']}* to a coinflip for *{amt:,}g*!\n"
+        f"_Winner takes all. 60s to accept._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🪙 ACCEPT", callback_data=f"cf_{user.id}_{tu.id}")]]))
+
+async def coinflip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    try:
+        cu, tu_id = int(parts[1]), int(parts[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != tu_id:
+        await query.answer("This challenge isn't for you!", show_alert=True); return
+    ch = _coinflips.pop((cu, tu_id), None)
+    if not ch or time.time() > ch["expires"]:
+        await query.answer("⏳ The challenge expired!", show_alert=True); return
+    a, b = get_player(cu), get_player(tu_id)
+    amt = ch["amt"]
+    if not a or not b or a.get("gold", 0) < amt or b.get("gold", 0) < amt:
+        await query.answer("Someone can't cover the stake anymore!", show_alert=True); return
+    await query.answer("🪙 Flipping...")
+    winner, loser = (a, b) if random.random() < 0.5 else (b, a)
+    winner["gold"] = winner.get("gold", 0) + amt
+    loser["gold"] = max(0, loser.get("gold", 0) - amt)
+    save_player(winner); save_player(loser)
+    try:
+        await query.edit_message_text(
+            f"🪙 *THE COIN LANDS...*\n\n"
+            f"🏆 *{winner['username']}* wins *{amt:,}g* from *{loser['username']}*!",
+            parse_mode="Markdown")
+    except Exception:
+        pass
+
+async def lottery_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    today = datetime.now().strftime("%Y-%m-%d")
+    lot = _ws_get("lottery") or {"date": today, "pot": 0, "tickets": []}
+    if lot.get("date") != today:
+        lot = {"date": today, "pot": lot.get("pot", 0) if not lot.get("tickets") else 0, "tickets": []}
+    if user.id in lot["tickets"]:
+        await send_group(update,
+            f"🎟️ You're in tonight's draw! Pot: *{lot['pot']:,}g* ({len(lot['tickets'])} tickets)\n"
+            f"_Drawn with the evening digest._", delay=12); return
+    if p.get("gold", 0) < 250:
+        await send_group(update, "🎟️ Tickets cost 250g!", delay=9); return
+    p["gold"] -= 250
+    save_player(p)
+    lot["tickets"].append(user.id)
+    lot["pot"] = lot.get("pot", 0) + 250
+    _ws_set("lottery", lot)
+    await send_group(update,
+        f"🎟️ *Ticket bought!* Tonight's pot: *{lot['pot']:,}g* ({len(lot['tickets'])} tickets)\n"
+        f"_Winner drawn with the evening digest. One ticket per player._", delay=12)
+
+async def _lottery_draw(bot):
+    """Called from the daily digest. Returns a digest line or None."""
+    lot = _ws_get("lottery")
+    if not lot or not lot.get("tickets"):
+        return None
+    winner_uid = random.choice(lot["tickets"])
+    pot = lot.get("pot", 0)
+    wp = get_player(winner_uid)
+    _ws_set("lottery", {"date": datetime.now().strftime("%Y-%m-%d"), "pot": 0, "tickets": []})
+    if wp:
+        wp["gold"] = wp.get("gold", 0) + pot
+        save_player(wp)
+        try:
+            await bot.send_message(winner_uid,
+                f"🎉 *YOU WON THE LOTTERY!* The pot of *{pot:,}g* is yours!",
+                parse_mode="Markdown")
+        except Exception:
+            pass
+        return f"🎟️ *Lottery:* {wp['username']} won the *{pot:,}g* pot! (/lottery for tomorrow's draw)"
+    return None
+
+# ── 5. WORD SCRAMBLE ──────────────────────────────────────────────────────────
+_scrambles = {}       # chat_id -> {"answer","item","msg_id","expires"}
+_scramble_last = {}   # chat_id -> ts
+
+def _scramble_word(name):
+    out = []
+    for w in name.split(" "):
+        if len(w) > 2:
+            mid = list(w)
+            random.shuffle(mid)
+            out.append("".join(mid).upper())
+        else:
+            out.append(w.upper())
+    return " ".join(out)
+
+async def _spawn_scramble(bot, chat_id):
+    if chat_id in _scrambles:
+        return
+    pool = [n for n, d in {**WEAPONS, **ACCESSORIES, **CONSUMABLES}.items()
+            if d.get("rarity") in ("common", "uncommon", "rare") and len(n) >= 6]
+    if not pool:
+        return
+    item = random.choice(pool)
+    scrambled = _scramble_word(item)
+    if scrambled.lower().replace(" ", "") == item.lower().replace(" ", ""):
+        return  # unlucky shuffle — skip this cycle
+    try:
+        msg = await bot.send_message(chat_id,
+            f"🔤 *WORD SCRAMBLE!*\n\n`{scrambled}`\n\n"
+            f"_First to type the item name wins it! (3 min)_",
+            parse_mode="Markdown")
+    except Exception:
+        return
+    _scrambles[chat_id] = {"answer": item.lower(), "item": item,
+                           "msg_id": msg.message_id, "expires": time.time() + 180}
+    async def _reveal(cid=chat_id, mid=msg.message_id):
+        await asyncio.sleep(185)
+        st = _scrambles.get(cid)
+        if st and st["msg_id"] == mid:
+            _scrambles.pop(cid, None)
+            try:
+                await bot.edit_message_text(chat_id=cid, message_id=mid,
+                    text=f"🔤 *Time's up!* It was *{st['item']}* — nobody claimed it.",
+                    parse_mode="Markdown")
+            except Exception:
+                pass
+    _t = asyncio.create_task(_reveal())
+    _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+async def _check_scramble_answer(update, context, chat_id, text):
+    st = _scrambles.get(chat_id)
+    if not st or time.time() > st["expires"]:
+        return False
+    if text.lower().strip() != st["answer"]:
+        return False
+    _scrambles.pop(chat_id, None)
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        return False
+    add_item(p, st["item"])
+    _sc_exp = exp_share(p["level"], 0.03)
+    add_exp(p, _sc_exp)
+    save_player(p)
+    try:
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=st["msg_id"],
+            text=f"🔤 *{p['username']}* unscrambled it — *{st['item']}*!\n"
+                 f"🎒 Item + {_sc_exp:,} EXP claimed!", parse_mode="Markdown")
+    except Exception:
+        pass
+    try:
+        await update.message.reply_text(
+            f"🏆 Correct! *{st['item']}* is yours, +{_sc_exp:,} EXP!", parse_mode="Markdown")
+    except Exception:
+        pass
+    return True
+
+# ── 6. RUSSIAN ROULETTE ───────────────────────────────────────────────────────
+_rr_lobbies = {}  # chat_id -> {"msg_id","buyin","players":[(uid,name)],"expires"}
+
+async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if chat_id in _rr_lobbies:
+        await send_group(update, "💀 A roulette lobby is already open — join it!", delay=9); return
+    try:
+        buyin = int(context.args[0]) if context.args else 100
+    except (ValueError, IndexError):
+        buyin = 100
+    buyin = max(50, min(2000, buyin))
+    if p.get("gold", 0) < buyin:
+        await send_group(update, f"Need {buyin}g to start the table!", delay=9); return
+    p["gold"] -= buyin
+    save_player(p)
+    try: await update.message.delete()
+    except Exception: pass
+    msg = await context.bot.send_message(chat_id,
+        f"💀 *RUSSIAN ROULETTE* — buy-in *{buyin}g*\n\n"
+        f"Players (1): *{p['username']}*\n"
+        f"_2-6 players. Last one standing takes the pot. 45s to join!_",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("💀 TAKE A SEAT", callback_data=f"rr_{chat_id}")]]))
+    _rr_lobbies[chat_id] = {"msg_id": msg.message_id, "buyin": buyin,
+                            "players": [(user.id, p["username"])], "expires": time.time() + 45}
+    async def _run_table(cid=chat_id, mid=msg.message_id):
+        await asyncio.sleep(47)
+        st = _rr_lobbies.pop(cid, None)
+        if not st or st["msg_id"] != mid:
+            return
+        players = st["players"]
+        if len(players) < 2:
+            for uid, _ in players:
+                cp = get_player(uid)
+                if cp:
+                    cp["gold"] = cp.get("gold", 0) + st["buyin"]; save_player(cp)
+            try:
+                await context.bot.edit_message_text(chat_id=cid, message_id=mid,
+                    text="💀 *Nobody else sat down.* Buy-in refunded — the revolver sleeps.",
+                    parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+        pot = st["buyin"] * len(players)
+        order = players[:]
+        random.shuffle(order)
+        lines = [f"💀 *THE CYLINDER SPINS...* ({len(players)} players, pot *{pot:,}g*)", ""]
+        flavor = ["*click* — survives.", "*click* — cold sweat.", "*click* — laughs nervously.",
+                  "💥 *BANG!* Down!", "💥 *BANG!* Gone!", "💥 *BANG!* Out cold!"]
+        while len(order) > 1:
+            victim = random.choice(order)
+            order.remove(victim)
+            lines.append(f"🔫 *{victim[1]}* — {random.choice(flavor[3:])}")
+        winner_uid, winner_name = order[0]
+        wp = get_player(winner_uid)
+        if wp:
+            wp["gold"] = wp.get("gold", 0) + pot
+            save_player(wp)
+        lines.append("")
+        lines.append(f"🏆 *{winner_name}* walks away with *{pot:,}g*!")
+        try:
+            await context.bot.edit_message_text(chat_id=cid, message_id=mid,
+                text="\n".join(lines)[:4096], parse_mode="Markdown")
+        except Exception:
+            pass
+    _t = asyncio.create_task(_run_table())
+    _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+async def roulette_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try:
+        chat_id = int(query.data.split("_")[1])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    st = _rr_lobbies.get(chat_id)
+    if not st or time.time() > st["expires"]:
+        await query.answer("💀 The table is closed!", show_alert=True); return
+    uid = query.from_user.id
+    if any(u == uid for u, _ in st["players"]):
+        await query.answer("You're already seated!"); return
+    if len(st["players"]) >= 6:
+        await query.answer("Table's full (6)!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if p.get("gold", 0) < st["buyin"]:
+        await query.answer(f"Need {st['buyin']}g!", show_alert=True); return
+    p["gold"] -= st["buyin"]
+    save_player(p)
+    st["players"].append((uid, p["username"]))
+    await query.answer("💀 Seated. Good luck.")
+    names = ", ".join(f"*{n}*" for _, n in st["players"])
+    try:
+        await query.edit_message_text(
+            f"💀 *RUSSIAN ROULETTE* — buy-in *{st['buyin']}g*\n\n"
+            f"Players ({len(st['players'])}): {names}\n"
+            f"_Last one standing takes *{st['buyin']*len(st['players']):,}g*!_",
+            parse_mode="Markdown", reply_markup=query.message.reply_markup)
+    except Exception:
+        pass
+
+# ── 7. COLLECTION LOG ─────────────────────────────────────────────────────────
+_COLL_CATS = [("Weapons", lambda: WEAPONS), ("Armors", lambda: ARMORS),
+              ("Shields", lambda: SHIELDS), ("Accessories", lambda: ACCESSORIES),
+              ("Consumables", lambda: CONSUMABLES)]
+_COLL_MILESTONES = [25, 50, 75, 100]
+
+def _coll_get(p):
+    log = set(sjl(p.get("collection_log"), []))
+    # Seed with everything currently held/equipped (covers pre-feature items)
+    log |= set(sjl(p.get("inventory"), []))
+    for slot in ("equipped_weapon", "equipped_armor", "equipped_shield",
+                 "equipped_accessory", "equipped_accessory_2",
+                 "equipped_accessory_3", "equipped_accessory_4"):
+        if p.get(slot):
+            log.add(p[slot])
+    return log
+
+def _coll_record(p, item_name):
+    log = sjl(p.get("collection_log"), [])
+    if item_name not in log:
+        log.append(item_name)
+        p["collection_log"] = json.dumps(log)
+
+async def collection_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    log = _coll_get(p)
+    p["collection_log"] = json.dumps(sorted(log))
+    cds = safe_cds(p)
+    claimed = cds.get("coll_claimed") or {}
+    lines = [f"📖 *{p['username']}'s Collection Log*\n"]
+    total_have = total_all = 0
+    rewards = []
+    for cat, getter in _COLL_CATS:
+        pool = set(getter().keys())
+        have = len(log & pool)
+        total_have += have; total_all += len(pool)
+        pct = round(have / max(1, len(pool)) * 100)
+        bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+        lines.append(f"*{cat}:* `{bar}` {have}/{len(pool)} ({pct}%)")
+        cat_claimed = claimed.get(cat, [])
+        for ms in _COLL_MILESTONES:
+            if pct >= ms and ms not in cat_claimed:
+                cat_claimed.append(ms)
+                _ms_exp = exp_share(p["level"], 0.10)
+                _ms_gold = ms * 20
+                add_exp(p, _ms_exp)
+                p["gold"] = p.get("gold", 0) + _ms_gold
+                rewards.append(f"🏅 *{cat} {ms}%* — +{_ms_exp:,} EXP, +{_ms_gold}g")
+        claimed[cat] = cat_claimed
+    overall = round(total_have / max(1, total_all) * 100)
+    lines.append(f"\n*Overall:* {total_have}/{total_all} ({overall}%)")
+    if rewards:
+        lines.append("\n🎉 *Milestones reached:*")
+        lines.extend(rewards)
+    lines.append("\n_Every item you've ever owned counts. Milestones pay at 25/50/75/100% per category._")
+    cds["coll_claimed"] = claimed
+    p["passive_cooldowns"] = json.dumps(cds)
+    save_player(p)
+    await send_group(update, "\n".join(lines), delay=45)
+
+# ── SCHEDULERS for spawns/heists/scrambles (ride the engagement loop) ────────
+async def _chat_games_scheduler(bot):
+    try:
+        c = _db().cursor()
+        day_ago = (datetime.now() - timedelta(days=1)).isoformat()
+        c.execute("""SELECT DISTINCT home_group FROM shadow_profiles
+                     WHERE home_group IS NOT NULL AND last_seen >= ?""", (day_ago,))
+        groups = [r[0] for r in c.fetchall()]
+    except Exception:
+        return
+    now_ts = time.time()
+    for g in groups:
+        # Heists: rare appointment moments (~1/day)
+        if now_ts - _heist_last.get(g, 0) > 14 * 3600 and random.random() < 0.08:
+            _heist_last[g] = now_ts
+            await _spawn_heist(bot, g)
+            await asyncio.sleep(0.3)
+        # Scrambles: light filler (~2/day)
+        if now_ts - _scramble_last.get(g, 0) > 5 * 3600 and random.random() < 0.10:
+            _scramble_last[g] = now_ts
+            await _spawn_scramble(bot, g)
+            await asyncio.sleep(0.3)
+
 _revive_pinged = {}  # uid -> defeated_until value already pinged for
 
 async def _revive_watch_loop(bot):
@@ -33877,6 +34564,10 @@ async def _engagement_loop(bot):
                 pass
             try:
                 await _crate_scheduler(bot)
+            except Exception:
+                pass
+            try:
+                await _chat_games_scheduler(bot)
             except Exception:
                 pass
             if cycle % 2 == 0:
@@ -34185,6 +34876,12 @@ async def _post_init(application):
             BotCommand("guild",     "🏰 Guild hub"),
             BotCommand("party",     "👥 Party up"),
             BotCommand("objectives","📋 Daily objectives"),
+            BotCommand("collection","📖 Your collection log"),
+            BotCommand("slots",     "🎰 Spin the slots"),
+            BotCommand("coinflip",  "🪙 Wager vs a player (reply)"),
+            BotCommand("lottery",   "🎟️ Buy a lottery ticket"),
+            BotCommand("roulette",  "💀 Russian roulette lobby"),
+            BotCommand("rob",       "🕶️ Rob a player (reply, risky)"),
             BotCommand("help",      "❓ How to play"),
             BotCommand("ping",      "🏓 Bot health check"),
         ])
@@ -34228,6 +34925,16 @@ def main():
     app.add_handler(CallbackQueryHandler(crate_callback, pattern="^crate_"))
     app.add_handler(CallbackQueryHandler(bet_callback, pattern="^bet_"))
     app.add_handler(CallbackQueryHandler(world_event_button_callback, pattern="^wev_"))
+    app.add_handler(CommandHandler("rob",          rob_cmd))
+    app.add_handler(CommandHandler("slots",        slots_cmd))
+    app.add_handler(CommandHandler("coinflip",     coinflip_cmd))
+    app.add_handler(CommandHandler("lottery",      lottery_cmd))
+    app.add_handler(CommandHandler("roulette",     roulette_cmd))
+    app.add_handler(CommandHandler("collection",   collection_cmd))
+    app.add_handler(CallbackQueryHandler(wild_catch_callback, pattern="^wild_"))
+    app.add_handler(CallbackQueryHandler(heist_callback, pattern="^heist_"))
+    app.add_handler(CallbackQueryHandler(coinflip_callback, pattern="^cf_"))
+    app.add_handler(CallbackQueryHandler(roulette_callback, pattern="^rr_"))
     app.add_handler(CommandHandler("rank",         rank_cmd))
     app.add_handler(CommandHandler("rankme",       rankme_cmd))
     app.add_handler(CommandHandler("rankwins",     rankwins_cmd))
