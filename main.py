@@ -14788,6 +14788,13 @@ async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(announce(context.bot, update.effective_chat.id,
         f"⚔️ *{user.first_name}* has ASCENDED! "
         f"Level {slvl} → RPG! 🎱", delay=120))
+    # Send the First Steps onboarding checklist as a DM
+    try:
+        _fs_text, _fs_markup = _build_first_steps(p, user.id)
+        await context.bot.send_message(chat_id=user.id, text=_fs_text,
+                                       parse_mode="Markdown", reply_markup=_fs_markup)
+    except Exception:
+        pass
 
 # ── CLASS BROWSER ─────────────────────────────────────────────────────────────
 _CLASS_EMOJIS = {
@@ -17420,16 +17427,45 @@ async def _dispatch_secret_quest(uid: int, bot):
     if not p: return
     if p.get("active_quest"): return
     if time.time() - (p.get("last_quest_ts") or 0) < 28800: return
-    phrase, exp_r, inf_r = random.choice(_CHAT_QUEST_TPL)
-    quest = {"type":"chat","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
+
+    # 40% of assignments are TARGETED: say the phrase to a specific recently-
+    # active player — doubles as a social nudge between players
+    target = None
+    if random.random() < 0.40:
+        try:
+            c = _db().cursor()
+            cutoff = (datetime.now() - timedelta(hours=48)).isoformat()
+            c.execute("""SELECT s.user_id, p.username FROM shadow_profiles s
+                         JOIN players p ON p.user_id = s.user_id
+                         WHERE s.last_seen >= ? AND s.user_id != ?
+                         ORDER BY RANDOM() LIMIT 1""", (cutoff, uid))
+            row = c.fetchone()
+            if row and row["username"]:
+                target = (row["user_id"], row["username"])
+        except Exception:
+            target = None
+
+    if target:
+        phrase, exp_r, inf_r = random.choice(_TARGETED_QUEST_TPL)
+        quest = {"type":"targeted","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,
+                 "target_id":target[0],"target_name":target[1],"expires":int(time.time())+86400}
+        _exp_preview = exp_share(p["level"], min(0.15, exp_r / 900 * 0.15))
+        dm = (f"🎱 *The oracle has a task for you.*\n\n"
+              f"_Say this to *{target[1]}* in the group — reply to one of their "
+              f"messages, or include their name:_\n\n"
+              f"*\"{phrase}\"*\n\n"
+              f"⏳ _Expires in 24 hours_\n"
+              f"💫 Reward: *{_exp_preview:,} EXP + {inf_r} Influence + Health Potion*")
+    else:
+        phrase, exp_r, inf_r = random.choice(_CHAT_QUEST_TPL)
+        quest = {"type":"chat","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
+        _exp_preview = exp_share(p["level"], min(0.15, exp_r / 900 * 0.15))
+        dm = (f"🎱 *The oracle has a task for you.*\n\n"
+              f"_Say this in the group:_\n\n"
+              f"*\"{phrase}\"*\n\n"
+              f"⏳ _Expires in 24 hours_\n"
+              f"💫 Reward: *{_exp_preview:,} EXP + {inf_r} Influence + Health Potion*")
     p["active_quest"] = json.dumps(quest); p["last_quest_ts"] = int(time.time()); save_player(p)
-    # Show the player's ACTUAL scaled reward, not the raw template weight
-    _exp_preview = exp_share(p["level"], min(0.15, exp_r / 900 * 0.15))
-    dm = (f"🎱 *The oracle has a task for you.*\n\n"
-          f"_Say this in the group:_\n\n"
-          f"*\"{phrase}\"*\n\n"
-          f"⏳ _Expires in 24 hours_\n"
-          f"💫 Reward: *{_exp_preview:,} EXP + {inf_r} Influence + Health Potion*")
     try: await bot.send_message(uid, dm, parse_mode="Markdown")
     except: pass
 
@@ -33353,17 +33389,110 @@ async def _engagement_loop(bot):
 _BOOT_TIME = datetime.now()
 _conflict_alert_ts = {"t": 0.0}
 
+# ── FIRST STEPS (new-player onboarding checklist) ────────────────────────────
+_FIRST_STEPS = [
+    ("daily",  "🎁 Claim your /daily reward",        lambda p: bool(p.get("last_daily"))),
+    ("train",  "🏋️ /train once",                     lambda p: bool(p.get("last_train"))),
+    ("pool",   "🎱 Shoot some /pool",                lambda p: bool(p.get("last_pool"))),
+    ("quest",  "🗺️ Run a /quest",                    lambda p: bool(p.get("last_quest"))),
+    ("weapon", "⚔️ Equip a weapon (/shop → /equip)", lambda p: bool(p.get("equipped_weapon"))),
+    ("class",  "🧙 Reach Lv 5 and pick a /class",    lambda p: bool(p.get("class_id"))),
+]
+_FSTEP_PCT = 0.05    # each step pays 5% of a level
+_FSTEP_BONUS = 0.15  # completing all pays +15% + gold + potion
+
+def _first_steps_state(p):
+    cds = safe_cds(p)
+    claimed = set(cds.get("fsteps_claimed") or [])
+    done_ids = {sid for sid, _, chk in _FIRST_STEPS if chk(p)}
+    return claimed, done_ids, cds
+
+def _first_steps_complete(p):
+    claimed, _, cds = _first_steps_state(p)
+    return cds.get("fsteps_bonus_claimed") or len(claimed) >= len(_FIRST_STEPS)
+
+def _build_first_steps(p, uid):
+    claimed, done_ids, cds = _first_steps_state(p)
+    claimable = [sid for sid in done_ids if sid not in claimed]
+    lines = ["🚀 *First Steps* — your path into the world\n"]
+    for sid, label, _ in _FIRST_STEPS:
+        mark = "✅" if sid in claimed else ("🎉" if sid in done_ids else "⬜")
+        lines.append(f"{mark} {label}")
+    lines.append("")
+    step_exp = exp_share(p["level"], _FSTEP_PCT)
+    lines.append(f"_Each step pays *{step_exp:,} EXP*. Finish all {len(_FIRST_STEPS)} for a "
+                 f"*bonus {exp_share(p['level'], _FSTEP_BONUS):,} EXP + 500g + Greater Health Potion*!_")
+    if claimable:
+        lines.append(f"\n🎉 *{len(claimable)} reward{'s' if len(claimable)!=1 else ''} ready to claim!*")
+    rows = []
+    if claimable or (len(claimed) >= len(_FIRST_STEPS) and not cds.get("fsteps_bonus_claimed")):
+        rows.append([InlineKeyboardButton("🎁 Claim rewards", callback_data=f"fsteps_claim_{uid}")])
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+async def firststeps_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    try: await update.message.delete()
+    except Exception: pass
+    text, markup = _build_first_steps(p, user.id)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=text,
+                                   parse_mode="Markdown", reply_markup=markup)
+
+async def firststeps_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    try: uid = int(parts[2])
+    except (IndexError, ValueError): await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("This isn't your checklist!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    claimed, done_ids, cds = _first_steps_state(p)
+    claimable = [sid for sid in done_ids if sid not in claimed]
+    total_exp = 0; extras = []
+    for sid in claimable:
+        total_exp += exp_share(p["level"], _FSTEP_PCT)
+        claimed.add(sid)
+    if len(claimed) >= len(_FIRST_STEPS) and not cds.get("fsteps_bonus_claimed"):
+        total_exp += exp_share(p["level"], _FSTEP_BONUS)
+        p["gold"] = p.get("gold", 0) + 500
+        add_item(p, "Greater Health Potion")
+        cds["fsteps_bonus_claimed"] = True
+        extras = ["💰 +500 gold", "🧪 Greater Health Potion", "🏆 *All First Steps complete!*"]
+    if total_exp <= 0:
+        await query.answer("Nothing to claim yet — finish more steps!", show_alert=True); return
+    cds["fsteps_claimed"] = sorted(claimed)
+    p["passive_cooldowns"] = json.dumps(cds)
+    lmsgs, _ = add_exp(p, total_exp)
+    save_player(p)
+    await query.answer(f"Claimed +{total_exp:,} EXP!")
+    text, markup = _build_first_steps(get_player(uid), uid)
+    text = f"✅ *Claimed: +{total_exp:,} EXP!*" + ("".join(f"\n{e}" for e in extras)) + "\n\n" + text
+    if lmsgs: text += "\n\n" + "\n".join(lmsgs)
+    try:
+        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
+
 # ── MAIN MENU HUB ─────────────────────────────────────────────────────────────
-def _menu_markup(uid):
-    return InlineKeyboardMarkup([
+def _menu_markup(uid, p=None):
+    rows = [
         [InlineKeyboardButton("👤 Profile", callback_data=f"menu_stats_{uid}"),
          InlineKeyboardButton("🏚️ Dungeon", callback_data=f"menu_dungeon_{uid}")],
         [InlineKeyboardButton("🐾 Pets",    callback_data=f"menu_pets_{uid}"),
          InlineKeyboardButton("🏰 Empire",  callback_data=f"menu_empire_{uid}")],
         [InlineKeyboardButton("🛒 Shop",    callback_data=f"menu_shop_{uid}"),
          InlineKeyboardButton("⚔️ Battle",  callback_data=f"menu_battle_{uid}")],
-        [InlineKeyboardButton("❌ Close",   callback_data=f"close_msg_{uid}")],
-    ])
+    ]
+    if p is not None and not _first_steps_complete(p):
+        rows.insert(0, [InlineKeyboardButton("🚀 First Steps — rewards inside!",
+                                             callback_data=f"menu_fsteps_{uid}")])
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return InlineKeyboardMarkup(rows)
 
 async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -33378,7 +33507,7 @@ async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 {p.get('gold',0):,}g  |  🌍 {w['name']}\n\n"
             f"_Where to?_")
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text,
-                                   parse_mode="Markdown", reply_markup=_menu_markup(user.id))
+                                   parse_mode="Markdown", reply_markup=_menu_markup(user.id, p))
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -33410,7 +33539,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💰 {p.get('gold',0):,}g  |  🌍 {w['name']}\n\n"
                 f"_Where to?_")
         try:
-            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_menu_markup(uid))
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_menu_markup(uid, p))
         except Exception:
             pass
         return
@@ -33456,6 +33585,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if section == "shop":
         text, markup = _build_shop_view(p, "daily", uid, _shop_discount(p))
         rows = list(markup.inline_keyboard) + [back_row]
+        await _show(text, rows)
+        return
+
+    if section == "fsteps":
+        text, markup = _build_first_steps(p, uid)
+        rows = list(markup.inline_keyboard)
+        rows.insert(-1, back_row)
         await _show(text, rows)
         return
 
@@ -33520,6 +33656,7 @@ async def _post_init(application):
         from telegram import BotCommand
         await application.bot.set_my_commands([
             BotCommand("menu",      "🏠 Main menu — everything in one place"),
+            BotCommand("firststeps","🚀 New player? Start here"),
             BotCommand("stats",     "👤 Your profile & stats"),
             BotCommand("daily",     "🎁 Claim your daily reward"),
             BotCommand("quest",     "🗺️ Run an hourly quest"),
@@ -33576,7 +33713,9 @@ def main():
     # Universal
     app.add_handler(CommandHandler("ping",         ping_cmd))
     app.add_handler(CommandHandler("menu",         menu_cmd))
+    app.add_handler(CommandHandler("firststeps",   firststeps_cmd))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
+    app.add_handler(CallbackQueryHandler(firststeps_callback, pattern="^fsteps_claim_"))
     app.add_handler(CallbackQueryHandler(pvp_rematch_callback, pattern="^pvprematch_"))
     app.add_handler(CommandHandler("rank",         rank_cmd))
     app.add_handler(CommandHandler("rankme",       rankme_cmd))
