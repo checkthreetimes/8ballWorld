@@ -355,6 +355,10 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     o_mx = max(1, int(opp_p.get("max_hp", 100)))
     vn = str(viewer_p.get("username", "You"))[:16]
     on = str(opp_p.get("username", "Foe"))[:16]
+    _k = _get_king()
+    if _k:
+        if _k.get("uid") == viewer_p.get("user_id"): vn = "👑" + vn
+        if _k.get("uid") == opp_p.get("user_id"):    on = "👑" + on
     v_lvl = viewer_p.get("level", 1)
     o_lvl = opp_p.get("level", 1)
     v_pct = round(v_hp / v_mx * 100)
@@ -502,7 +506,12 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
 # (the separate live battle-log message was removed — the log now rides on
 #  the fight card itself, halving API calls per action)
 
-async def _finalize_pvp(pair, result_text, bot):
+async def _finalize_pvp(pair, result_text, bot, winner_id=None):
+    # Settle spectator bets first (refunds if no winner known)
+    try:
+        await _resolve_fight_bets(bot, pair, winner_id, result_text)
+    except Exception:
+        pass
     _pvp_cards.pop(pair, None)
     _pvp_battle_logs.pop(pair, None)
     _pvp_cur_page.pop(pair, None)
@@ -8716,6 +8725,7 @@ def refresh_daily_objectives(p):
 
 def track_objective(p, obj_id, amount=1):
     """Increment objective progress. Returns list of (desc, exp, gold) for newly completed ones."""
+    _goal_bump(p, obj_id, amount)  # weekly group goal counts qualifying actions
     refresh_daily_objectives(p)
     objs = json.loads(p.get("daily_objectives") or "[]")
     completed = []
@@ -9355,6 +9365,10 @@ def calc_attack_damage(attacker, weather=None):
         buff_mod += 0.08 * _dm_stacks
         attacker["dodge_momentum"] = 0
 
+    # King of the Table: +5% damage while holding the crown
+    if _is_king(attacker):
+        buff_mod += 0.05
+
     # Combat Power multiplier: higher CP = higher damage
     # +30% base, +3% per 300 CP tier, no cap
     try:
@@ -9575,6 +9589,11 @@ async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
         target_uid   = int(target["user_id"])
     except (KeyError, TypeError, ValueError):
         return 0
+    # King of the Table: every PvP kill path funnels through here
+    try:
+        await _update_king_on_kill(bot, attacker, target, chat_id)
+    except Exception:
+        pass
 
     conn = _db(); bc = conn.cursor()
     bc.execute("SELECT * FROM bounties WHERE target_id=? AND claimed_by IS NULL AND expires_at > ?",
@@ -13577,6 +13596,8 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
             pass
         if _is_new_battle_pk:
             asyncio.create_task(announce(context.bot, _pk_grp, _pvp_fight_start_line(a["username"], d["username"]), permanent=True))
+            _bt = asyncio.create_task(_open_fight_bets(context.bot, _pk_grp, pair, a, d))
+            _bg_tasks.add(_bt); _bt.add_done_callback(_bg_tasks.discard)
         start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
         _pvp_log_append(pair, start_txt)
         fresh_a = get_player(uid) or a
@@ -13627,6 +13648,8 @@ async def pvp_rematch_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             pass
         start_txt = f"⚔️ *REMATCH!* *{a['username']}* vs *{d['username']}* — round two!"
         _pvp_log_append(pair, start_txt)
+        _bt = asyncio.create_task(_open_fight_bets(context.bot, _pk_grp, pair, a, d))
+        _bg_tasks.add(_bt); _bt.add_done_callback(_bg_tasks.discard)
         _cb_unlock(uid, _tok)
         await _pvp_notify_both(pair, a, d, uid, opp_uid, start_txt, context.bot)
     finally:
@@ -14062,7 +14085,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                       f"(Lv {_fin_a.get('level',1)} vs Lv {_fin_d.get('level',1)})")
                 asyncio.create_task(announce(context.bot, _fin_grp, _win_announce_text, permanent=True))
                 _cb_unlock(uid, _tok)
-                await _finalize_pvp(pair, kill_msg, context.bot)
+                await _finalize_pvp(pair, kill_msg, context.bot, winner_id=uid)
             else:
                 save_player(a); save_player(d)
                 fresh_a = get_player(uid) or a
@@ -14109,7 +14132,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"(Lv {_win_a.get('level',1)} vs Lv {_win_d.get('level',1)})")
             asyncio.create_task(announce(context.bot, _atk_grp, _atk_win_txt, permanent=True))
             _cb_unlock(uid, _tok)
-            await _finalize_pvp(pair, result_text, context.bot)
+            await _finalize_pvp(pair, result_text, context.bot, winner_id=uid)
             return
 
         fresh_a = get_player(uid) or a
@@ -20518,7 +20541,7 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
             _sk_result_text = "\n".join(out)
             _pvp_log_append(_sk_pair, _sk_result_text)
             _cb_unlock(uid, _sk_tok)
-            await _finalize_pvp(_sk_pair, _sk_result_text, context.bot)
+            await _finalize_pvp(_sk_pair, _sk_result_text, context.bot, winner_id=uid)
         else:
             _pvp_log_append(_sk_pair, _sk_result_text)
             fresh_p  = get_player(uid) or p
@@ -31823,7 +31846,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if event["key"] == "legendary_merchant":
                 from datetime import timedelta
                 legend_shop_expiry[chat_id] = datetime.now() + timedelta(minutes=event.get("duration_min", 10))
-            msg = await update.message.reply_text(event["msg"], parse_mode="Markdown")
+            # One-tap action buttons — same events, zero typing
+            _WEV_BTN = {"bandit":  ("⚔️ Fight!",  "fight"),
+                        "ghost":   ("🔫 Shoot!",  "shoot"),
+                        "rival":   ("⚔️ Fight!",  "fight"),
+                        "traveler":("👋 Greet",   "greet"),
+                        "merchant":("👋 Greet",   "greet"),
+                        "cache":   ("🫳 Claim!",  "claim"),
+                        "shrine":  ("🙏 Pray",    "pray"),
+                        "drake":   ("⚔️ Strike!", "strike")}
+            _wev = _WEV_BTN.get(event["key"])
+            _wev_markup = (InlineKeyboardMarkup([[InlineKeyboardButton(
+                _wev[0], callback_data=f"wev_{_wev[1]}_{chat_id}")]]) if _wev else None)
+            msg = await update.message.reply_text(event["msg"], parse_mode="Markdown",
+                                                  reply_markup=_wev_markup)
             # Store drake message id for reply detection
             if event["key"] == "drake":
                 active_drakes[chat_id] = {
@@ -32029,38 +32065,101 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if (update.message.reply_to_message and
                 update.message.reply_to_message.message_id == drake["msg_id"] and
                 p and not is_defeated(p)):
-            dmg = random.randint(10,30) + p["level"]//2
-            drake["hp"] = max(0, drake["hp"]-dmg)
-            uid = user.id
-            drake["fighters"][uid] = drake["fighters"].get(uid,0) + dmg
-            lines = [f"🐉 *{user.first_name}* strikes the Wild Drake for *{dmg}*!\n"
-                     f"❤️ Drake HP: {drake['hp']}/{drake['max_hp']}"]
-            if drake["hp"] <= 0:
-                active_drakes.pop(chat_id, None)
-                lines.append("\n🏆 *Wild Drake defeated!*\n")
-                total_dmg = sum(drake["fighters"].values())
-                for fid, fdmg in drake["fighters"].items():
-                    fp = get_player(fid)
-                    if not fp: continue
-                    share = fdmg/max(1,total_dmg)
-                    # Damage share of a level-scaled pot (drake pays up to ~20% of a level)
-                    _drake_exp = round(exp_share(fp["level"], 0.30) * share)
-                    loot = roll_loot_table(drake.get("loot_table",[]))
-                    if loot: add_item(fp, loot)
-                    lmsgs, leveled = add_exp(fp, _drake_exp)
-                    save_player(fp)
-                    lines.append(f"✅ *{fp['username']}*  -  +{_drake_exp:,} EXP"
-                                 + (f" | 🎒 *{loot}*!" if loot else ""))
-                    if leveled and fp["level"] % 10 == 0:
-                        asyncio.create_task(announce(context.bot, chat_id,
-                            f"🎉 *{fp['username']}* reached *Level {fp['level']}* from the Drake! 🐉",
-                            delay=60))
+            lines = _drake_hit(context.bot, chat_id, p, user.first_name)
             try:
                 await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
             except Exception:
                 pass
 
+def _drake_hit(bot, chat_id, p, display_name):
+    """One strike against the group drake — shared by reply-strikes and the
+    event card's Strike button. Returns response lines; handles the payout."""
+    drake = active_drakes.get(chat_id)
+    if not drake:
+        return ["🐉 The drake is gone."]
+    dmg = random.randint(10, 30) + p["level"] // 2
+    drake["hp"] = max(0, drake["hp"] - dmg)
+    uid = p["user_id"]
+    drake.setdefault("fighters", {})
+    drake["fighters"][uid] = drake["fighters"].get(uid, 0) + dmg
+    lines = [f"🐉 *{display_name}* strikes the Wild Drake for *{dmg}*!\n"
+             f"❤️ Drake HP: {drake['hp']}/{drake['max_hp']}"]
+    if drake["hp"] <= 0:
+        active_drakes.pop(chat_id, None)
+        lines.append("\n🏆 *Wild Drake defeated!*\n")
+        total_dmg = sum(drake["fighters"].values())
+        for fid, fdmg in drake["fighters"].items():
+            fp = get_player(fid)
+            if not fp: continue
+            share = fdmg / max(1, total_dmg)
+            _drake_exp = round(exp_share(fp["level"], 0.30) * share)
+            loot = roll_loot_table(drake.get("loot_table", []))
+            if loot: add_item(fp, loot)
+            lmsgs, leveled = add_exp(fp, _drake_exp)
+            save_player(fp)
+            lines.append(f"✅ *{fp['username']}*  -  +{_drake_exp:,} EXP"
+                         + (f" | 🎒 *{loot}*!" if loot else ""))
+            if leveled and fp["level"] % 10 == 0:
+                asyncio.create_task(announce(bot, chat_id,
+                    f"🎉 *{fp['username']}* reached *Level {fp['level']}* from the Drake! 🐉",
+                    delay=60))
+    return lines
+
 # ── EVENT HANDLERS ────────────────────────────────────────────────────────────
+async def world_event_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """One-tap action buttons on world-event cards (wev_{action}_{chat_id}).
+    Reuses the existing command handlers — send_group and the event handlers
+    only touch effective_chat/effective_user/get_bot, all present on callback
+    updates. Drake strikes go through the shared _drake_hit."""
+    query = update.callback_query
+    parts = query.data.split("_")
+    try:
+        action = parts[1]; ev_chat = int(parts[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    uid = query.from_user.id
+    if action == "strike":
+        p = get_player(uid)
+        if not p:
+            await query.answer("Use /ascend first!", show_alert=True); return
+        if is_defeated(p):
+            await query.answer("☠️ You're defeated!", show_alert=True); return
+        if ev_chat not in active_drakes:
+            await query.answer("The drake is gone!", show_alert=True)
+            try: await query.edit_message_reply_markup(reply_markup=None)
+            except Exception: pass
+            return
+        await query.answer("⚔️ Striking!")
+        lines = _drake_hit(context.bot, ev_chat, p, query.from_user.first_name)
+        try:
+            await context.bot.send_message(ev_chat, "\n".join(lines), parse_mode="Markdown")
+        except Exception:
+            pass
+        if ev_chat not in active_drakes:
+            try: await query.edit_message_reply_markup(reply_markup=None)
+            except Exception: pass
+        return
+    _handlers = {"fight": fight_event, "shoot": shoot_event, "greet": greet_event,
+                 "claim": claim_event, "pray": pray_event}
+    handler = _handlers.get(action)
+    if not handler:
+        await query.answer(); return
+    ev = active_events.get(ev_chat)
+    if not ev:
+        await query.answer("This event has ended!", show_alert=True)
+        try: await query.edit_message_reply_markup(reply_markup=None)
+        except Exception: pass
+        return
+    await query.answer("🎯 On it!")
+    try:
+        await handler(update, context)
+    except Exception:
+        logger.exception("world event button failed")
+    # If the event resolved, disarm the card's button
+    if ev_chat not in active_events:
+        try: await query.edit_message_reply_markup(reply_markup=None)
+        except Exception: pass
+
 async def greet_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id; user = update.effective_user
     event = active_events.get(chat_id)
@@ -33277,6 +33376,15 @@ async def _post_daily_digest(bot):
         if streaker:
             lines.append(f"🔥 *Kill streak:* {streaker['username']} ×{streaker['kill_streak']} — someone stop them!")
             lines.append("")
+        _king = _get_king()
+        if _king:
+            lines.append(f"👑 *King of the Table:* {_king['name']} — dethrone them in PvP!")
+            lines.append("")
+        try:
+            lines.append(await _goal_check_reward(bot))
+            lines.append("")
+        except Exception:
+            pass
         lines.append(f"🌍 *{w['name']}* — EXP ×{w['exp_mod']} | DMG ×{w['dmg_mod']}")
         lines.append("")
         lines.append("_Think you can top tomorrow's board? /daily · /dungeon · /attack_")
@@ -33306,6 +33414,349 @@ async def _daily_digest_loop(bot):
             await _post_daily_digest(bot)
         except Exception:
             await asyncio.sleep(300)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP INTERACTIVITY — king of the table, weekly goal, crates, fight bets,
+# weather announcements. State lives in the world_state key/value table.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _ws_get(key, default=None):
+    try:
+        conn = _db()
+        conn.execute("CREATE TABLE IF NOT EXISTS world_state (key TEXT PRIMARY KEY, value TEXT)")
+        row = conn.execute("SELECT value FROM world_state WHERE key=?", (key,)).fetchone()
+        return json.loads(row["value"]) if row else default
+    except Exception:
+        return default
+
+def _ws_set(key, value):
+    try:
+        conn = _db()
+        conn.execute("CREATE TABLE IF NOT EXISTS world_state (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT OR REPLACE INTO world_state (key, value) VALUES (?, ?)",
+                     (key, json.dumps(value)))
+        conn.commit()
+    except Exception:
+        pass
+
+# ── KING OF THE TABLE ────────────────────────────────────────────────────────
+def _get_king():
+    return _ws_get("king")  # {"uid", "name", "since"} or None
+
+def _is_king(p):
+    k = _get_king()
+    return bool(k and p and k.get("uid") == p.get("user_id"))
+
+async def _update_king_on_kill(bot, winner, loser, chat_id=None):
+    """Crown logic: beating the King takes the crown; if the throne is empty,
+    the first PvP kill claims it. One announcement per crown change."""
+    try:
+        k = _get_king()
+        w_uid = winner.get("user_id"); w_name = winner.get("username", "?")
+        if k and k.get("uid") == w_uid:
+            return  # king defended the crown — no spam
+        took_crown = (k is None) or (k.get("uid") == loser.get("user_id"))
+        if not took_crown:
+            return
+        _ws_set("king", {"uid": w_uid, "name": w_name, "since": datetime.now().isoformat()})
+        grp = chat_id or _megaphone_state.get("group")
+        if grp:
+            if k:
+                txt = (f"👑 *THE CROWN CHANGES HANDS!*\n\n"
+                       f"*{w_name}* dethroned *{k.get('name','?')}* and is the new "
+                       f"*King of the Table!*\n_+5% damage while holding the crown. "
+                       f"Defeat them in PvP to take it._")
+            else:
+                txt = (f"👑 *A KING RISES!*\n\n*{w_name}* has claimed the empty throne — "
+                       f"*King of the Table!*\n_+5% damage while holding the crown. "
+                       f"Defeat them in PvP to take it._")
+            try:
+                await bot.send_message(grp, txt, parse_mode="Markdown")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+# ── WEEKLY GROUP GOAL ────────────────────────────────────────────────────────
+_GOAL_TYPES = [
+    ("pvp_win",     "⚔️ Win {n} PvP fights together",      120),
+    ("dungeon_run", "🏚️ Complete {n} dungeon runs together", 40),
+    ("quest_run",   "🗺️ Complete {n} quests together",      150),
+    ("pool_run",    "🎱 Finish {n} adventures together",     80),
+]
+
+def _goal_get():
+    g = _ws_get("weekly_goal")
+    wk = datetime.now().strftime("%Y-%W")
+    if not g or g.get("week") != wk:
+        key, desc, target = random.choice(_GOAL_TYPES)
+        g = {"week": wk, "key": key, "desc": desc.format(n=target), "target": target,
+             "progress": 0, "contributors": {}, "rewarded": False}
+        _ws_set("weekly_goal", g)
+    return g
+
+def _goal_bump(p, obj_id, amount=1):
+    """Called from track_objective — counts qualifying actions toward the goal."""
+    try:
+        g = _goal_get()
+        if g.get("key") != obj_id or g.get("rewarded"):
+            return
+        g["progress"] = g.get("progress", 0) + amount
+        cu = str(p.get("user_id"))
+        g["contributors"][cu] = g["contributors"].get(cu, 0) + amount
+        _ws_set("weekly_goal", g)
+    except Exception:
+        pass
+
+async def _goal_check_reward(bot):
+    """If the goal just completed, pay every contributor and announce. Returns
+    a digest line describing current goal state."""
+    g = _goal_get()
+    bar_w = 12
+    filled = min(bar_w, round(g["progress"] / max(1, g["target"]) * bar_w))
+    bar = "█" * filled + "░" * (bar_w - filled)
+    if g["progress"] >= g["target"] and not g.get("rewarded"):
+        g["rewarded"] = True
+        _ws_set("weekly_goal", g)
+        paid = 0
+        for cu, cnt in list(g.get("contributors", {}).items())[:100]:
+            cp = get_player(int(cu))
+            if cp:
+                add_exp(cp, exp_share(cp["level"], 0.20))
+                cp["gold"] = cp.get("gold", 0) + 400
+                save_player(cp)
+                paid += 1
+                try:
+                    await bot.send_message(int(cu),
+                        f"🎉 *Group Quest complete!* {g['desc']} — done!\n"
+                        f"Your share: *+20% of a level EXP + 400g*", parse_mode="Markdown")
+                except Exception:
+                    pass
+                await asyncio.sleep(0.2)
+        return f"🏁 *GROUP QUEST COMPLETE!* {g['desc']} — {paid} heroes rewarded!"
+    return f"🤝 *Group Quest:* {g['desc']}\n`{bar}` {g['progress']}/{g['target']}"
+
+# ── LOOT CRATES (first-come tap race) ────────────────────────────────────────
+_active_crates = {}   # chat_id -> {"msg_id", "claimed": [(uid,name)], "expires"}
+_CRATE_LOOT = ["Health Potion", "Greater Health Potion", "Iron Shard", "Enchanting Scroll",
+               "MP Tonic", "Scroll of Revival"]
+
+async def _spawn_crate(bot, chat_id):
+    if chat_id in _active_crates:
+        return
+    try:
+        msg = await bot.send_message(chat_id,
+            "📦 *A supply crate crashes onto the table!*\n\n"
+            "_First 3 to grab it get gold, EXP, and loot!_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🫳 GRAB IT!", callback_data=f"crate_{chat_id}")]]))
+    except Exception:
+        return
+    _active_crates[chat_id] = {"msg_id": msg.message_id, "claimed": [], "expires": time.time() + 90}
+    async def _crate_expire(cid=chat_id, mid=msg.message_id):
+        await asyncio.sleep(95)
+        st = _active_crates.get(cid)
+        if st and st["msg_id"] == mid:
+            _active_crates.pop(cid, None)
+            try:
+                if st["claimed"]:
+                    names = ", ".join(n for _, n in st["claimed"])
+                    await bot.edit_message_text(chat_id=cid, message_id=mid,
+                        text=f"📦 *Crate emptied!* Grabbed by: {names}", parse_mode="Markdown")
+                else:
+                    await bot.delete_message(chat_id=cid, message_id=mid)
+            except Exception:
+                pass
+    _t = asyncio.create_task(_crate_expire())
+    _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+async def crate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try:
+        chat_id = int(query.data.split("_")[1])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    st = _active_crates.get(chat_id)
+    uid = query.from_user.id
+    if not st or time.time() > st["expires"]:
+        await query.answer("Too slow — the crate is gone!", show_alert=True); return
+    if any(u == uid for u, _ in st["claimed"]):
+        await query.answer("You already grabbed your share!"); return
+    if len(st["claimed"]) >= 3:
+        await query.answer("Too slow — all 3 shares are gone!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    st["claimed"].append((uid, p["username"]))
+    gold = 150 + p["level"] * 10
+    exp = exp_share(p["level"], 0.03)
+    item = random.choice(_CRATE_LOOT)
+    p["gold"] = p.get("gold", 0) + gold
+    add_item(p, item)
+    add_exp(p, exp)
+    save_player(p)
+    await query.answer(f"📦 +{gold}g, +{exp:,} EXP, {item}!")
+    names = ", ".join(f"*{n}*" for _, n in st["claimed"])
+    left = 3 - len(st["claimed"])
+    try:
+        await query.edit_message_text(
+            f"📦 *A supply crate crashed onto the table!*\n\n"
+            f"Grabbed by: {names}\n" +
+            (f"_{left} share{'s' if left != 1 else ''} left — be quick!_" if left else "_Emptied!_"),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🫳 GRAB IT!", callback_data=f"crate_{chat_id}")]]) if left else None)
+    except Exception:
+        pass
+    if not left:
+        _active_crates.pop(chat_id, None)
+
+# ── FIGHT BETTING (spectators stake gold on PvP fights) ──────────────────────
+_fight_bets = {}  # pair -> {"chat_id","msg_id","bets":{uid:(side_uid,amt,name)},"open_until","names":{uid:name}}
+_BET_AMOUNT = 100
+
+async def _open_fight_bets(bot, chat_id, pair, a, d):
+    if pair in _fight_bets or not chat_id or chat_id in (a.get("user_id"), d.get("user_id")):
+        return
+    au, du = a.get("user_id"), d.get("user_id")
+    try:
+        msg = await bot.send_message(chat_id,
+            f"⚔️ *FIGHT!*  *{a['username']}* (Lv {a.get('level',1)})  vs  "
+            f"*{d['username']}* (Lv {d.get('level',1)})\n\n"
+            f"💰 _Spectators: bet {_BET_AMOUNT}g on the winner — 60s window, 2x payout!_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(f"💰 {a['username'][:12]}", callback_data=f"bet_{au}_{du}_{au}"),
+                InlineKeyboardButton(f"💰 {d['username'][:12]}", callback_data=f"bet_{au}_{du}_{du}"),
+            ]]))
+        _fight_bets[pair] = {"chat_id": chat_id, "msg_id": msg.message_id, "bets": {},
+                             "open_until": time.time() + 60,
+                             "names": {au: a["username"], du: d["username"]}}
+    except Exception:
+        pass
+
+async def bet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    try:
+        au, du, side = int(parts[1]), int(parts[2]), int(parts[3])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    pair = _pvp_pair_key(au, du)
+    st = _fight_bets.get(pair)
+    uid = query.from_user.id
+    if not st:
+        await query.answer("Betting is closed for this fight.", show_alert=True); return
+    if time.time() > st["open_until"]:
+        await query.answer("⏳ The betting window has closed!", show_alert=True); return
+    if uid in (au, du):
+        await query.answer("Fighters can't bet on their own match!", show_alert=True); return
+    if uid in st["bets"]:
+        await query.answer("You already placed your bet!"); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if p.get("gold", 0) < _BET_AMOUNT:
+        await query.answer(f"Need {_BET_AMOUNT}g to bet!", show_alert=True); return
+    p["gold"] -= _BET_AMOUNT
+    save_player(p)
+    st["bets"][uid] = (side, _BET_AMOUNT, p["username"])
+    await query.answer(f"💰 {_BET_AMOUNT}g on {st['names'].get(side,'?')}!")
+    n_bets = len(st["bets"])
+    try:
+        await query.edit_message_text(
+            f"⚔️ *FIGHT!*  *{st['names'][au]}*  vs  *{st['names'][du]}*\n\n"
+            f"💰 {n_bets} bet{'s' if n_bets != 1 else ''} placed — "
+            f"_{_BET_AMOUNT}g a seat, 2x payout, window closes fast!_",
+            parse_mode="Markdown", reply_markup=query.message.reply_markup)
+    except Exception:
+        pass
+
+async def _resolve_fight_bets(bot, pair, winner_id, result_text=""):
+    st = _fight_bets.pop(pair, None)
+    if not st:
+        return
+    names = st["names"]
+    lines = [f"🏁 *{names.get(winner_id, '?')} WINS!*"]
+    if st["bets"]:
+        w_names, l_names = [], []
+        for uid, (side, amt, nm) in st["bets"].items():
+            if winner_id is not None and side == winner_id:
+                bp = get_player(uid)
+                if bp:
+                    bp["gold"] = bp.get("gold", 0) + amt * 2
+                    save_player(bp)
+                w_names.append(nm)
+            elif winner_id is None:
+                bp = get_player(uid)  # fight fizzled — refund
+                if bp:
+                    bp["gold"] = bp.get("gold", 0) + amt
+                    save_player(bp)
+            else:
+                l_names.append(nm)
+        if winner_id is None:
+            lines = ["🏳️ *Fight ended without a winner — all bets refunded.*"]
+        else:
+            if w_names: lines.append(f"💰 *Paid 2x:* {', '.join(w_names)}")
+            if l_names: lines.append(f"💸 *Lost the house's favor:* {', '.join(l_names)}")
+    try:
+        await bot.edit_message_text(chat_id=st["chat_id"], message_id=st["msg_id"],
+            text="\n".join(lines), parse_mode="Markdown", reply_markup=None)
+    except Exception:
+        pass
+
+# ── WEATHER CHANGE ANNOUNCEMENTS ─────────────────────────────────────────────
+_last_weather_announced = {"name": None}
+
+async def _weather_watch(bot):
+    """Announce weather CHANGES to active groups (max ~1/hour by nature)."""
+    w = get_weather()
+    if w["name"] == _last_weather_announced["name"]:
+        return
+    first_run = _last_weather_announced["name"] is None
+    _last_weather_announced["name"] = w["name"]
+    if first_run:
+        return  # don't announce on boot — only on actual changes
+    hint = "\n🌑 _Something ancient stirs... it can be summoned tonight._" if w.get("secret_eligible") else ""
+    try:
+        c = _db().cursor()
+        week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+        c.execute("""SELECT DISTINCT home_group FROM shadow_profiles
+                     WHERE home_group IS NOT NULL AND last_seen >= ?""", (week_ago,))
+        groups = [r[0] for r in c.fetchall()]
+    except Exception:
+        return
+    for g in groups:
+        try:
+            await bot.send_message(g,
+                f"🌦️ *The conditions have changed: {w['name']}*\n_{w['desc']}_\n\n"
+                f"📈 EXP ×{w['exp_mod']}  |  ⚔️ DMG ×{w['dmg_mod']}{hint}",
+                parse_mode="Markdown")
+        except Exception:
+            pass
+        await asyncio.sleep(0.3)
+
+_crate_last = {}  # chat_id -> last crate spawn ts
+
+async def _crate_scheduler(bot):
+    """Give each active group a crate race a few times a day, at random."""
+    try:
+        c = _db().cursor()
+        day_ago = (datetime.now() - timedelta(days=1)).isoformat()
+        c.execute("""SELECT DISTINCT home_group FROM shadow_profiles
+                     WHERE home_group IS NOT NULL AND last_seen >= ?""", (day_ago,))
+        groups = [r[0] for r in c.fetchall()]
+    except Exception:
+        return
+    now_ts = time.time()
+    for g in groups:
+        if now_ts - _crate_last.get(g, 0) < 6 * 3600:
+            continue  # at most one crate per ~6h per group
+        if random.random() < 0.12:  # ~once per 2h of eligible cycles → 2-3/day
+            _crate_last[g] = now_ts
+            await _spawn_crate(bot, g)
+            await asyncio.sleep(0.3)
 
 _revive_pinged = {}  # uid -> defeated_until value already pinged for
 
@@ -33371,6 +33822,14 @@ async def _engagement_loop(bot):
             cycle += 1
             try:
                 await _pet_care_sweep(bot)
+            except Exception:
+                pass
+            try:
+                await _weather_watch(bot)
+            except Exception:
+                pass
+            try:
+                await _crate_scheduler(bot)
             except Exception:
                 pass
             if cycle % 2 == 0:
@@ -33717,6 +34176,9 @@ def main():
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
     app.add_handler(CallbackQueryHandler(firststeps_callback, pattern="^fsteps_claim_"))
     app.add_handler(CallbackQueryHandler(pvp_rematch_callback, pattern="^pvprematch_"))
+    app.add_handler(CallbackQueryHandler(crate_callback, pattern="^crate_"))
+    app.add_handler(CallbackQueryHandler(bet_callback, pattern="^bet_"))
+    app.add_handler(CallbackQueryHandler(world_event_button_callback, pattern="^wev_"))
     app.add_handler(CommandHandler("rank",         rank_cmd))
     app.add_handler(CommandHandler("rankme",       rankme_cmd))
     app.add_handler(CommandHandler("rankwins",     rankwins_cmd))
