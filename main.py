@@ -17565,16 +17565,26 @@ async def _try_complete_quest_social(p, action, target_id, bot):
     try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r:,} EXP  +{inf_r} Influence", parse_mode="Markdown")
     except: pass
 
+def _phrase_norm(s):
+    """Normalize for phrase matching: lowercase, strip ALL punctuation
+    (players type smart quotes, drop periods, swap commas), collapse spaces."""
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", " ", str(s).lower())).strip()
+
+def _phrase_matches(phrase, text):
+    np_, nt = _phrase_norm(phrase), _phrase_norm(text)
+    return bool(np_) and np_ in nt
+
 async def _try_complete_quest_phrase(p, text, reply_to_id, bot):
     q = sjl(p.get("active_quest"), None)
     if not q: return
     if q.get("expires", 0) < time.time(): p["active_quest"] = None; save_player(p); return
     qtype = q.get("type"); text_l = text.lower().strip(); matched = False
     if qtype == "chat":
-        if q.get("phrase","").lower() in text_l: matched = True
+        if _phrase_matches(q.get("phrase",""), text): matched = True
     elif qtype == "targeted":
         phrase = q.get("phrase",""); tname = q.get("target_name","").lower(); tid = q.get("target_id")
-        if phrase.lower() in text_l and (tname in text_l or (reply_to_id and reply_to_id == tid)): matched = True
+        if _phrase_matches(phrase, text) and (tname in text_l or (reply_to_id and reply_to_id == tid)):
+            matched = True
     if not matched: return
     inf_r = q.get("reward_inf", 50)
     exp_r = exp_share(p["level"], min(0.15, q.get("reward_exp", 800) / 900 * 0.15))
@@ -17591,7 +17601,7 @@ async def _try_complete_broadcast_quest(p, text, bot):
         _broadcast_quest = None; _broadcast_claims = set(); return
     uid = p["user_id"]
     if uid in _broadcast_claims: return
-    if _broadcast_quest["phrase"].lower() not in text.lower(): return
+    if not _phrase_matches(_broadcast_quest["phrase"], text): return
     exp = _broadcast_quest["exp"]
     add_exp(p, exp)
     save_player(p)
@@ -23892,15 +23902,7 @@ async def _start_encounter_battle(query, uid, p):
     _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = "battle"
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
-    _art_msg = await _send_enemy_photo(query.get_bot(), query.message.chat_id,
-                                       enc["e_name"], card, markup=markup)
-    if _art_msg is not None:
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-    else:
-        await _enc_edit(query, card, parse_mode="Markdown", reply_markup=markup)
+    await _enc_edit(query, card, parse_mode="Markdown", reply_markup=markup)
 
 async def _start_encounter_hunt(query, uid, p):
     # 3% chance: treasure chest. 5% chance: random event.
@@ -23949,15 +23951,7 @@ async def _start_encounter_hunt(query, uid, p):
     _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = "hunt"
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
-    _art_msg = await _send_enemy_photo(query.get_bot(), query.message.chat_id,
-                                       enc["e_name"], card, markup=markup)
-    if _art_msg is not None:
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-    else:
-        await _enc_edit(query, card, parse_mode="Markdown", reply_markup=markup)
+    await _enc_edit(query, card, parse_mode="Markdown", reply_markup=markup)
 
 async def _start_encounter_treasure(query, uid, p, mode="battle"):
     tier = random.choices(["wooden", "iron", "golden"], weights=[60, 30, 10])[0]
@@ -33883,140 +33877,6 @@ async def _crate_scheduler(bot):
 # CHAT GAMES — wild spawns, heists, rob, casino, scramble, roulette, collection
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ── ENEMY / CREATURE IMAGES (file_id store — no hosting needed) ──────────────
-def _get_enemy_image(name):
-    if not name:
-        return None
-    imgs = _ws_get("enemy_images") or {}
-    return imgs.get(str(name).lower().strip())
-
-def _set_enemy_image(name, file_id):
-    imgs = _ws_get("enemy_images") or {}
-    if file_id:
-        imgs[str(name).lower().strip()] = file_id
-    else:
-        imgs.pop(str(name).lower().strip(), None)
-    _ws_set("enemy_images", imgs)
-
-async def setimage_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: reply to a photo with /setimage <enemy or species name> — that
-    image then shows whenever the enemy appears. /delimage <name> removes it,
-    /images lists what's configured."""
-    if update.effective_user.id != ADMIN_ID:
-        return
-    name = " ".join(context.args) if context.args else ""
-    if not name:
-        await update.message.reply_text("Usage: reply to a photo with /setimage <name>"); return
-    rm = update.message.reply_to_message
-    if not rm or not rm.photo:
-        await update.message.reply_text("Reply to a *photo* with /setimage <name>.", parse_mode="Markdown"); return
-    file_id = rm.photo[-1].file_id  # largest size
-    _set_enemy_image(name, file_id)
-    try:
-        await context.bot.send_photo(update.effective_chat.id, photo=file_id,
-            caption=f"✅ Image set for *{name}* — it will now appear in encounters/spawns.",
-            parse_mode="Markdown")
-    except Exception:
-        await update.message.reply_text(f"✅ Image set for {name}.")
-
-async def delimage_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    name = " ".join(context.args) if context.args else ""
-    if not name:
-        await update.message.reply_text("Usage: /delimage <name>"); return
-    _set_enemy_image(name, None)
-    await update.message.reply_text(f"🗑️ Image removed for {name}.")
-
-async def images_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    imgs = _ws_get("enemy_images") or {}
-    if not imgs:
-        await update.message.reply_text("No images configured yet. Reply to a photo with /setimage <name>."); return
-    await update.message.reply_text("🖼️ Configured images:\n" + "\n".join(f"• {k}" for k in sorted(imgs)))
-
-_ART_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "art")
-
-def _art_slug(name):
-    return re.sub(r"[^a-z0-9]+", "_", str(name).lower()).strip("_")
-
-_art_sig_memo = {}  # path -> content md5 (per-process memo)
-
-def _art_sig(path):
-    sig = _art_sig_memo.get(path)
-    if sig is None:
-        try:
-            with open(path, "rb") as f:
-                sig = hashlib.md5(f.read()).hexdigest()
-        except Exception:
-            sig = ""
-        _art_sig_memo[path] = sig
-    return sig
-
-def _get_enemy_art(name):
-    """Art source for a name: an admin-set Telegram file_id wins; otherwise the
-    bundled sprite from art/, served via a content-signature keyed file_id
-    cache so regenerated art automatically re-uploads instead of serving the
-    old cached image. Returns ('id', fid) | ('path', path, slug, sig) | None."""
-    fid = _get_enemy_image(name)
-    if fid:
-        return ("id", fid)
-    sl = _art_slug(name)
-    path = os.path.join(_ART_DIR, sl + ".png")
-    if not os.path.exists(path):
-        return None
-    sig = _art_sig(path)
-    cache = _ws_get("art_fid_cache") or {}
-    ent = cache.get(sl)
-    if ent and ent[0] == sig:
-        return ("id", ent[1])
-    return ("path", path, sl, sig)
-
-async def _send_enemy_photo(bot, chat_id, name, caption, markup=None):
-    """Send the art for `name` (file_id or bundled sprite). First send of a
-    bundled sprite uploads the file once, then caches the returned file_id so
-    every later send is instant. Returns the message or None."""
-    art = _get_enemy_art(name)
-    if not art:
-        return None
-    fh = None
-    try:
-        if art[0] == "id":
-            photo = art[1]
-        else:
-            fh = open(art[1], "rb")
-            photo = fh
-        msg = await bot.send_photo(chat_id, photo=photo, caption=(caption or "")[:1024],
-                                   parse_mode="Markdown", reply_markup=markup)
-        if art[0] == "path" and getattr(msg, "photo", None):
-            try:
-                # signature-keyed cache: instant re-sends until the art changes
-                cache = _ws_get("art_fid_cache") or {}
-                cache[art[2]] = [art[3], msg.photo[-1].file_id]
-                _ws_set("art_fid_cache", cache)
-            except Exception:
-                pass
-        return msg
-    except Exception:
-        return None
-    finally:
-        if fh:
-            try: fh.close()
-            except Exception: pass
-
-async def _send_enemy_flair(bot, chat_id, name, caption=None, delete_after=90):
-    """Flash this enemy's art in the chat (auto-deletes)."""
-    msg = await _send_enemy_photo(bot, chat_id, name,
-                                  caption or f"⚔️ *{name}* appears!")
-    if msg and delete_after:
-        async def _rm(cid=chat_id, mid=msg.message_id):
-            await asyncio.sleep(delete_after)
-            try: await bot.delete_message(chat_id=cid, message_id=mid)
-            except Exception: pass
-        _t = asyncio.create_task(_rm())
-        _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
-
 # ── 1. WILD PET SPAWNS (first to tap catches it) ─────────────────────────────
 _wild_spawns = {}       # chat_id -> {"species","is_shiny","msg_id","expires"}
 _wild_last = {}         # chat_id -> last spawn ts
@@ -34037,13 +33897,11 @@ async def _spawn_wild_pet(bot, chat_id):
                   f"_First to catch it keeps it!_")
     _markup = InlineKeyboardMarkup([[
         InlineKeyboardButton("🎯 CATCH!", callback_data=f"wild_{chat_id}")]])
-    msg = await _send_enemy_photo(bot, chat_id, sp["name"], _card_text, markup=_markup)
-    if msg is None:
-        try:
-            msg = await bot.send_message(chat_id, _card_text, parse_mode="Markdown",
-                                         reply_markup=_markup)
-        except Exception:
-            return
+    try:
+        msg = await bot.send_message(chat_id, _card_text, parse_mode="Markdown",
+                                     reply_markup=_markup)
+    except Exception:
+        return
     _wild_spawns[chat_id] = {"species": sk, "is_shiny": shiny,
                              "msg_id": msg.message_id, "expires": time.time() + 120}
     async def _flee(cid=chat_id, mid=msg.message_id):
@@ -35036,15 +34894,6 @@ async def _global_error_handler(update, context):
 async def _post_init(application):
     """On startup: launch background loops, register the command menu,
     DM admin if version changed."""
-    # One-time: v1 sprite file_ids were auto-cached into the admin image store;
-    # clear it so the v2 art takes over (admin /setimage entries re-settable)
-    try:
-        if not _ws_get("art_cache_reset_v2"):
-            _ws_set("enemy_images", {})
-            _ws_set("art_fid_cache", {})
-            _ws_set("art_cache_reset_v2", True)
-    except Exception:
-        pass
     asyncio.create_task(_engagement_loop(application.bot))
     asyncio.create_task(_revive_watch_loop(application.bot))
     asyncio.create_task(_daily_digest_loop(application.bot))
@@ -35123,9 +34972,6 @@ def main():
     app.add_handler(CallbackQueryHandler(crate_callback, pattern="^crate_"))
     app.add_handler(CallbackQueryHandler(bet_callback, pattern="^bet_"))
     app.add_handler(CallbackQueryHandler(world_event_button_callback, pattern="^wev_"))
-    app.add_handler(CommandHandler("setimage",     setimage_cmd))
-    app.add_handler(CommandHandler("delimage",     delimage_cmd))
-    app.add_handler(CommandHandler("images",       images_cmd))
     app.add_handler(CommandHandler("rob",          rob_cmd))
     app.add_handler(CommandHandler("slots",        slots_cmd))
     app.add_handler(CommandHandler("coinflip",     coinflip_cmd))
