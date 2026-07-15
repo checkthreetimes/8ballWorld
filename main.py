@@ -33912,23 +33912,62 @@ async def images_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No images configured yet. Reply to a photo with /setimage <name>."); return
     await update.message.reply_text("🖼️ Configured images:\n" + "\n".join(f"• {k}" for k in sorted(imgs)))
 
-async def _send_enemy_flair(bot, chat_id, name, caption=None, delete_after=90):
-    """If an image is configured for this enemy/species, flash it in the chat."""
+_ART_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "art")
+
+def _art_slug(name):
+    return re.sub(r"[^a-z0-9]+", "_", str(name).lower()).strip("_")
+
+def _get_enemy_art(name):
+    """Art source for a name: an admin-set Telegram file_id wins; otherwise the
+    bundled procedural sprite from art/. Returns ('id', fid) | ('path', p) | None."""
     fid = _get_enemy_image(name)
-    if not fid:
-        return
+    if fid:
+        return ("id", fid)
+    path = os.path.join(_ART_DIR, _art_slug(name) + ".png")
+    if os.path.exists(path):
+        return ("path", path)
+    return None
+
+async def _send_enemy_photo(bot, chat_id, name, caption, markup=None):
+    """Send the art for `name` (file_id or bundled sprite). First send of a
+    bundled sprite uploads the file once, then caches the returned file_id so
+    every later send is instant. Returns the message or None."""
+    art = _get_enemy_art(name)
+    if not art:
+        return None
+    fh = None
     try:
-        msg = await bot.send_photo(chat_id, photo=fid,
-            caption=(caption or f"⚔️ *{name}* appears!")[:1024], parse_mode="Markdown")
-        if delete_after:
-            async def _rm(cid=chat_id, mid=msg.message_id):
-                await asyncio.sleep(delete_after)
-                try: await bot.delete_message(chat_id=cid, message_id=mid)
-                except Exception: pass
-            _t = asyncio.create_task(_rm())
-            _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+        if art[0] == "id":
+            photo = art[1]
+        else:
+            fh = open(art[1], "rb")
+            photo = fh
+        msg = await bot.send_photo(chat_id, photo=photo, caption=(caption or "")[:1024],
+                                   parse_mode="Markdown", reply_markup=markup)
+        if art[0] == "path" and getattr(msg, "photo", None):
+            try:
+                _set_enemy_image(name, msg.photo[-1].file_id)  # cache for instant re-sends
+            except Exception:
+                pass
+        return msg
     except Exception:
-        pass
+        return None
+    finally:
+        if fh:
+            try: fh.close()
+            except Exception: pass
+
+async def _send_enemy_flair(bot, chat_id, name, caption=None, delete_after=90):
+    """Flash this enemy's art in the chat (auto-deletes)."""
+    msg = await _send_enemy_photo(bot, chat_id, name,
+                                  caption or f"⚔️ *{name}* appears!")
+    if msg and delete_after:
+        async def _rm(cid=chat_id, mid=msg.message_id):
+            await asyncio.sleep(delete_after)
+            try: await bot.delete_message(chat_id=cid, message_id=mid)
+            except Exception: pass
+        _t = asyncio.create_task(_rm())
+        _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
 
 # ── 1. WILD PET SPAWNS (first to tap catches it) ─────────────────────────────
 _wild_spawns = {}       # chat_id -> {"species","is_shiny","msg_id","expires"}
@@ -33950,16 +33989,13 @@ async def _spawn_wild_pet(bot, chat_id):
                   f"_First to catch it keeps it!_")
     _markup = InlineKeyboardMarkup([[
         InlineKeyboardButton("🎯 CATCH!", callback_data=f"wild_{chat_id}")]])
-    _img = _get_enemy_image(sp["name"])
-    try:
-        if _img:
-            msg = await bot.send_photo(chat_id, photo=_img, caption=_card_text[:1024],
-                                       parse_mode="Markdown", reply_markup=_markup)
-        else:
+    msg = await _send_enemy_photo(bot, chat_id, sp["name"], _card_text, markup=_markup)
+    if msg is None:
+        try:
             msg = await bot.send_message(chat_id, _card_text, parse_mode="Markdown",
                                          reply_markup=_markup)
-    except Exception:
-        return
+        except Exception:
+            return
     _wild_spawns[chat_id] = {"species": sk, "is_shiny": shiny,
                              "msg_id": msg.message_id, "expires": time.time() + 120}
     async def _flee(cid=chat_id, mid=msg.message_id):
