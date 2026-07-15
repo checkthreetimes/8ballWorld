@@ -4893,6 +4893,37 @@ def _npc_level_stats(base_hp, base_dmg, level, player_max_hp=0):
 
 # ── PARTY SYSTEM ──────────────────────────────────────────────────────────────
 
+def _are_allies(a, b):
+    """True if a and b are the same player or bound as allies (guild, party,
+    marriage, holding hands). Support skills use this so a heal/revive/buff
+    aimed at a NON-ally self-casts instead of aiding an enemy."""
+    if not a or not b:
+        return False
+    au, bu = a.get("user_id"), b.get("user_id")
+    if au == bu:
+        return True
+    # guild
+    ag = a.get("guild_id")
+    if ag and str(ag) != "None" and str(ag) == str(b.get("guild_id")):
+        return True
+    # party
+    pa = _get_party_of(au)
+    if pa and bu in _get_party_members(pa["id"]):
+        return True
+    # marriage
+    ms = sjl(a.get("marriages"), []) or ([{"id": a.get("married_to_id")}] if a.get("married_to_id") else [])
+    if any(str(m.get("id")) == str(bu) for m in ms):
+        return True
+    if str(a.get("married_to_id")) == str(bu):
+        return True
+    # holding hands
+    hh = sjl(a.get("holding_hands_list"), [])
+    if any(str(h.get("id") if isinstance(h, dict) else h) == str(bu) for h in hh):
+        return True
+    if str(a.get("holding_hands_with_id")) == str(bu):
+        return True
+    return False
+
 def _get_party_of(uid):
     c = _db().cursor()
     c.execute("SELECT p.id, p.leader_id, p.name FROM parties p "
@@ -5364,9 +5395,12 @@ def _enc_process_skill(enc, p, sk):
         wis = get_stat(p, "WIS")
         _hmult = sk.get("mult", 3)
         dmg = max(1, wis * _hmult)
-        if sk_active == "Radiant Strike":
-            p["hp"] = min(p.get("max_hp", p["hp"]), p["hp"] + wis * 2)
-        txt = f"✨ *{sk_name}*! WIS×{_hmult} = *{dmg}* holy damage!{pet_extra}"
+        if sk.get("active", sk.get("name", "")) == "Radiant Strike":
+            _hheal = wis * 2
+            enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + _hheal)
+            txt = f"✨ *{sk_name}*! WIS×{_hmult} = *{dmg}* holy damage! +{_hheal} HP!{pet_extra}"
+        else:
+            txt = f"✨ *{sk_name}*! WIS×{_hmult} = *{dmg}* holy damage!{pet_extra}"
     elif stype == "condemn":
         wis = get_stat(p, "WIS")
         dmg = max(1, wis * 8)
@@ -20704,12 +20738,14 @@ async def _execute_skill(update, context, p, sk):
         await send_group(update, "\n".join(lines), delay=15); return
 
     elif stype == "revive_heal":
-        if not update.message.reply_to_message:
-            await send_group(update, "Reply to your target with /skill!", delay=9); return
-        tu = update.message.reply_to_message.from_user
-        tp = get_player(tu.id)
-        if not tp:
-            await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
+        # Ally-support skill: reply to an ally to heal/revive them. If the
+        # reply target isn't an ally (or no reply), self-cast so it's never
+        # wasted or used to heal an enemy.
+        tu = update.message.reply_to_message.from_user if update.message.reply_to_message else None
+        tp = get_player(tu.id) if tu else None
+        if not tp or not _are_allies(p, tp):
+            tp = p
+            lines.append("_(No ally targeted — channeling the light on yourself.)_")
         cls_p = get_player_class(p)
         wis = get_stat(p, "WIS")
         mult = 1.25 if cls_p and cls_p.get("passive_key") == "mending_aura" else 1.0
@@ -20737,12 +20773,11 @@ async def _execute_skill(update, context, p, sk):
         await send_group(update, "\n".join(lines), delay=15); return
 
     elif stype == "regen":
-        if not update.message.reply_to_message:
-            await send_group(update, "Reply to your target with /skill!", delay=9); return
-        tu = update.message.reply_to_message.from_user
-        tp = get_player(tu.id)
-        if not tp:
-            await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
+        tu = update.message.reply_to_message.from_user if update.message.reply_to_message else None
+        tp = get_player(tu.id) if tu else None
+        if not tp or not _are_allies(p, tp):
+            tp = p
+            lines.append("_(No ally targeted — renewing yourself.)_")
         wis = get_stat(p, "WIS")
         heal = wis * sk.get("mult", 8)  # use skill mult (default 8 for Renew, was 35 hardcoded)
         tp["hp"] = min(calc_max_hp(tp), tp["hp"] + heal)
@@ -20760,12 +20795,11 @@ async def _execute_skill(update, context, p, sk):
         await send_group(update, "\n".join(lines), delay=15); return
 
     elif stype == "full_revive":
-        if not update.message.reply_to_message:
-            await send_group(update, "Reply to your target with /skill!", delay=9); return
-        tu = update.message.reply_to_message.from_user
-        tp = get_player(tu.id)
-        if not tp:
-            await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
+        tu = update.message.reply_to_message.from_user if update.message.reply_to_message else None
+        tp = get_player(tu.id) if tu else None
+        if not tp or not _are_allies(p, tp):
+            tp = p
+            lines.append("_(No ally targeted — the miracle restores you.)_")
         inv = sjl(p.get("inventory"), [])
         if "Holy Water Vial" not in inv:
             await send_group(update, "✨ *Miracle* requires a *Holy Water Vial* — you don't have one.", delay=9); return
