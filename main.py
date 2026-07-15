@@ -3,7 +3,7 @@
 The World of 8Ball  -  RPG Bot v13
 """
 
-import os, json, random, logging, sqlite3, re, asyncio, time, threading
+import os, json, random, logging, sqlite3, re, asyncio, time, threading, hashlib
 from datetime import datetime, timedelta
 from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -33941,16 +33941,37 @@ _ART_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "art")
 def _art_slug(name):
     return re.sub(r"[^a-z0-9]+", "_", str(name).lower()).strip("_")
 
+_art_sig_memo = {}  # path -> content md5 (per-process memo)
+
+def _art_sig(path):
+    sig = _art_sig_memo.get(path)
+    if sig is None:
+        try:
+            with open(path, "rb") as f:
+                sig = hashlib.md5(f.read()).hexdigest()
+        except Exception:
+            sig = ""
+        _art_sig_memo[path] = sig
+    return sig
+
 def _get_enemy_art(name):
     """Art source for a name: an admin-set Telegram file_id wins; otherwise the
-    bundled procedural sprite from art/. Returns ('id', fid) | ('path', p) | None."""
+    bundled sprite from art/, served via a content-signature keyed file_id
+    cache so regenerated art automatically re-uploads instead of serving the
+    old cached image. Returns ('id', fid) | ('path', path, slug, sig) | None."""
     fid = _get_enemy_image(name)
     if fid:
         return ("id", fid)
-    path = os.path.join(_ART_DIR, _art_slug(name) + ".png")
-    if os.path.exists(path):
-        return ("path", path)
-    return None
+    sl = _art_slug(name)
+    path = os.path.join(_ART_DIR, sl + ".png")
+    if not os.path.exists(path):
+        return None
+    sig = _art_sig(path)
+    cache = _ws_get("art_fid_cache") or {}
+    ent = cache.get(sl)
+    if ent and ent[0] == sig:
+        return ("id", ent[1])
+    return ("path", path, sl, sig)
 
 async def _send_enemy_photo(bot, chat_id, name, caption, markup=None):
     """Send the art for `name` (file_id or bundled sprite). First send of a
@@ -33970,7 +33991,10 @@ async def _send_enemy_photo(bot, chat_id, name, caption, markup=None):
                                    parse_mode="Markdown", reply_markup=markup)
         if art[0] == "path" and getattr(msg, "photo", None):
             try:
-                _set_enemy_image(name, msg.photo[-1].file_id)  # cache for instant re-sends
+                # signature-keyed cache: instant re-sends until the art changes
+                cache = _ws_get("art_fid_cache") or {}
+                cache[art[2]] = [art[3], msg.photo[-1].file_id]
+                _ws_set("art_fid_cache", cache)
             except Exception:
                 pass
         return msg
@@ -35012,6 +35036,15 @@ async def _global_error_handler(update, context):
 async def _post_init(application):
     """On startup: launch background loops, register the command menu,
     DM admin if version changed."""
+    # One-time: v1 sprite file_ids were auto-cached into the admin image store;
+    # clear it so the v2 art takes over (admin /setimage entries re-settable)
+    try:
+        if not _ws_get("art_cache_reset_v2"):
+            _ws_set("enemy_images", {})
+            _ws_set("art_fid_cache", {})
+            _ws_set("art_cache_reset_v2", True)
+    except Exception:
+        pass
     asyncio.create_task(_engagement_loop(application.bot))
     asyncio.create_task(_revive_watch_loop(application.bot))
     asyncio.create_task(_daily_digest_loop(application.bot))
