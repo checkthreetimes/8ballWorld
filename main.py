@@ -23806,6 +23806,18 @@ def _enc_is_stale(uid, max_minutes=30):
     except Exception:
         return True
 
+async def _enc_edit(query, text, parse_mode="Markdown", reply_markup=None):
+    """Edit the encounter card whether it's a text message or a photo card
+    (photo cards carry the battle text as their caption, 1024-char limit)."""
+    try:
+        await query.edit_message_text(text[:4096], parse_mode=parse_mode, reply_markup=reply_markup)
+    except Exception:
+        try:
+            await query.edit_message_caption(caption=text[:1024], parse_mode=parse_mode,
+                                             reply_markup=reply_markup)
+        except Exception:
+            pass
+
 async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     p = get_player(user.id)
@@ -23880,9 +23892,15 @@ async def _start_encounter_battle(query, uid, p):
     _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = "battle"
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
-    await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
-    _ft = asyncio.create_task(_send_enemy_flair(query.get_bot(), query.message.chat_id, enc["e_name"]))
-    _bg_tasks.add(_ft); _ft.add_done_callback(_bg_tasks.discard)
+    _art_msg = await _send_enemy_photo(query.get_bot(), query.message.chat_id,
+                                       enc["e_name"], card, markup=markup)
+    if _art_msg is not None:
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+    else:
+        await _enc_edit(query, card, parse_mode="Markdown", reply_markup=markup)
 
 async def _start_encounter_hunt(query, uid, p):
     # 3% chance: treasure chest. 5% chance: random event.
@@ -23931,9 +23949,15 @@ async def _start_encounter_hunt(query, uid, p):
     _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = "hunt"
     card = _encounter_battle_card(enc)
     markup = _encounter_battle_markup(enc, p)
-    await query.edit_message_text(card, parse_mode="Markdown", reply_markup=markup)
-    _ft = asyncio.create_task(_send_enemy_flair(query.get_bot(), query.message.chat_id, enc["e_name"]))
-    _bg_tasks.add(_ft); _ft.add_done_callback(_bg_tasks.discard)
+    _art_msg = await _send_enemy_photo(query.get_bot(), query.message.chat_id,
+                                       enc["e_name"], card, markup=markup)
+    if _art_msg is not None:
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+    else:
+        await _enc_edit(query, card, parse_mode="Markdown", reply_markup=markup)
 
 async def _start_encounter_treasure(query, uid, p, mode="battle"):
     tier = random.choices(["wooden", "iron", "golden"], weights=[60, 30, 10])[0]
@@ -23944,7 +23968,7 @@ async def _start_encounter_treasure(query, uid, p, mode="battle"):
     }
     _enc_set(uid, enc)
     _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = mode
-    await query.edit_message_text(_treasure_card(enc), parse_mode="Markdown",
+    await _enc_edit(query, _treasure_card(enc), parse_mode="Markdown",
                                   reply_markup=_treasure_markup(enc))
 
 async def _start_encounter_event(query, uid, p, mode="battle"):
@@ -23956,7 +23980,7 @@ async def _start_encounter_event(query, uid, p, mode="battle"):
     }
     _enc_set(uid, enc)
     _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["mode"] = mode
-    await query.edit_message_text(_event_card(enc), parse_mode="Markdown",
+    await _enc_edit(query, _event_card(enc), parse_mode="Markdown",
                                   reply_markup=_event_markup(enc))
 
 async def enc_next_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -23998,14 +24022,14 @@ async def enc_next_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not wins and not losses and not items:
             lines.append("_No battles completed._")
         try:
-            await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+            await _enc_edit(query, "\n".join(lines), parse_mode="Markdown")
         except Exception: pass
         return
 
     # Continue or Retry: restart in the same mode (no picker shown)
     p = get_player(uid)
     if not p:
-        try: await query.edit_message_text("Player data not found."); return
+        try: await _enc_edit(query, "Player data not found."); return
         except Exception: return
     if uid in active_encounters:
         await query.answer("Already in an encounter!", show_alert=True); return
@@ -24095,7 +24119,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         uid = owner_uid
         enc = active_encounters.get(uid)
         if not enc or enc.get("mode") != "treasure":
-            await query.answer(); await query.edit_message_text("No active chest."); return
+            await query.answer(); await _enc_edit(query, "No active chest."); return
         p = get_player(uid)
         if not p: await query.answer(); return
         await query.answer()
@@ -24109,7 +24133,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ]])
         if action == "leave":
             try:
-                await query.edit_message_text(f"🚶 You walk past the chest.\n_Safety first._",
+                await _enc_edit(query, f"🚶 You walk past the chest.\n_Safety first._",
                                               parse_mode="Markdown", reply_markup=result_markup)
             except Exception: pass
             return
@@ -24125,7 +24149,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             p["gold"] = max(0, safe_int(p.get("gold", 0)) - gold_penalty)
             save_player(p)
             try:
-                await query.edit_message_text(
+                await _enc_edit(query, 
                     f"💀 *CURSED CHEST!*\n_{td['emoji']} The chest springs a trap!_\n"
                     f"Lost *{gold_penalty} gold* and *{exp_penalty} EXP*! Watch your greed...",
                     parse_mode="Markdown", reply_markup=result_markup)
@@ -24156,7 +24180,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})["wins"] = \
             _enc_sessions.get(uid, {}).get("wins", 0) + 1
         try:
-            await query.edit_message_text(
+            await _enc_edit(query, 
                 f"🎉 *{td['emoji']} Chest Opened!*\n" + "\n".join(loot_lines),
                 parse_mode="Markdown", reply_markup=result_markup)
         except Exception: pass
@@ -24172,7 +24196,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         uid = owner_uid
         enc = active_encounters.get(uid)
         if not enc or enc.get("mode") != "event":
-            await query.answer(); await query.edit_message_text("No active event."); return
+            await query.answer(); await _enc_edit(query, "No active event."); return
         p = get_player(uid)
         if not p: await query.answer(); return
         await query.answer()
@@ -24248,7 +24272,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 result_text = f"⚠️ *Couldn't shake them!* Took damage in the chaos."
         save_player(p)
         try:
-            await query.edit_message_text(result_text, parse_mode="Markdown", reply_markup=result_markup)
+            await _enc_edit(query, result_text, parse_mode="Markdown", reply_markup=result_markup)
         except Exception: pass
         return
 
@@ -24272,7 +24296,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     enc = active_encounters.get(uid)
     if not enc:
         try:
-            await query.edit_message_text(
+            await _enc_edit(query, 
                 "⚠️ *Encounter session expired.*\nThe bot may have restarted. Use /encounter to start a new one.",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[
@@ -24322,7 +24346,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception:
             pass
         try:
-            await query.edit_message_text(result_text, parse_mode="Markdown", reply_markup=result_markup)
+            await _enc_edit(query, result_text, parse_mode="Markdown", reply_markup=result_markup)
         except Exception:
             try:
                 await context.bot.send_message(query.message.chat_id, result_text,
@@ -24349,11 +24373,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 enc.setdefault("action_log",[]).append(npc_act)
                 if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
                 try:
-                    await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                    await _enc_edit(query, _encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception:
                     try:
-                        await query.edit_message_text(_encounter_battle_card(enc),
+                        await _enc_edit(query, _encounter_battle_card(enc),
                                                       reply_markup=_encounter_battle_markup(enc, p))
                     except Exception:
                         try:
@@ -24457,11 +24481,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 save_player(p)
                 context.user_data["encounter"] = enc
                 try:
-                    await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                    await _enc_edit(query, _encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception:
                     try:
-                        await query.edit_message_text(_encounter_battle_card(enc),
+                        await _enc_edit(query, _encounter_battle_card(enc),
                                                       reply_markup=_encounter_battle_markup(enc, p))
                     except Exception:
                         try:
@@ -24489,7 +24513,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     await _end_encounter(f"💀 *You were defeated by {enc['e_name']}!*")
                     return
                 try:
-                    await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                    await _enc_edit(query, _encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception: pass
                 return
@@ -24508,11 +24532,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             enc.setdefault("action_log",[]).append(npc_act)
             if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
             try:
-                await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                await _enc_edit(query, _encounter_battle_card(enc), parse_mode="Markdown",
                                               reply_markup=_encounter_battle_markup(enc, p))
             except Exception:
                 try:
-                    await query.edit_message_text(_encounter_battle_card(enc),
+                    await _enc_edit(query, _encounter_battle_card(enc),
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception:
                     try:
@@ -24671,11 +24695,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         enc.setdefault("action_log",[]).append(npc_act)
         if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
         try:
-            await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+            await _enc_edit(query, _encounter_battle_card(enc), parse_mode="Markdown",
                                           reply_markup=_encounter_battle_markup(enc, p))
         except Exception:
             try:
-                await query.edit_message_text(_encounter_battle_card(enc),
+                await _enc_edit(query, _encounter_battle_card(enc),
                                               reply_markup=_encounter_battle_markup(enc, p))
             except Exception:
                 try:
