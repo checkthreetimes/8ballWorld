@@ -51,6 +51,7 @@ CHANGELOG = [
         "Commands no longer freeze bot-wide: updates now process concurrently instead of one at a time",
         "Fixed: chatting fast silently ate your next command (shared rate-limit bucket) — chat and commands now count separately",
         "Rate-limited commands now say so instead of vanishing; handler errors DM the admin",
+        "Fixed crash that killed chat EXP on messages containing trigger words (hi/lol/nice/...)",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
         "Fresh-card turn system for dungeon AND PvP (no more inline-edit freezes)",
@@ -32033,7 +32034,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             active_events[chat_id] = event
             last_event_times[chat_id] = datetime.now()
             if event["key"] == "legendary_merchant":
-                from datetime import timedelta
                 legend_shop_expiry[chat_id] = datetime.now() + timedelta(minutes=event.get("duration_min", 10))
             # One-tap action buttons — same events, zero typing
             _WEV_BTN = {"bandit":  ("⚔️ Fight!",  "fight"),
