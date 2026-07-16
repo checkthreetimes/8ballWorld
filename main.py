@@ -40,8 +40,15 @@ def _db() -> sqlite3.Connection:
     return conn
 
 # ── CHANGELOG ─────────────────────────────────────────────────────────────────
-CURRENT_VERSION = "v1.5"
+CURRENT_VERSION = "v1.6"
 CHANGELOG = [
+    {"version": "v1.6", "date": "2026-07-16", "changes": [
+        "Skill balance pass: per-skill power scalar in all four combat engines, capstones retuned",
+        "Support skills (regen/revive/renewal) target allies only — self-cast if no ally",
+        "Oracle quest phrases match through punctuation/smart-quote differences",
+        "Fight bets: abandoned fights auto-refund all stakes after 15 min (no more lost gold)",
+        "PvP memory hygiene: per-fight tracking state cleaned up when a fight ends",
+    ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
         "Fresh-card turn system for dungeon AND PvP (no more inline-edit freezes)",
         "Dodge capped at 60% + pity rule (3rd attack always lands) + Evasive Momentum",
@@ -596,6 +603,12 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
     for _uid in pair:
         _pvp_dm_last_msg.pop(_uid, None)
         _pvp_log_msg.pop(_uid, None)
+        _pvp_card_ts.pop(_uid, None)
+        _pvp_render_seq.pop(_uid, None)
+        _pvp_card_locks.pop(_uid, None)
+    if len(pair) == 2:
+        _pvp_miss_streaks.pop((pair[0], pair[1]), None)
+        _pvp_miss_streaks.pop((pair[1], pair[0]), None)
 
 
 def _reset_card_timer(pair, bot, chat_id, mid, seconds=20):
@@ -33799,8 +33812,20 @@ async def _open_fight_bets(bot, chat_id, pair, a, d):
         _fight_bets[pair] = {"chat_id": chat_id, "msg_id": msg.message_id, "bets": {},
                              "open_until": time.time() + 60,
                              "names": {au: a["username"], du: d["username"]}}
+        # Watchdog: if the fight never finalizes (both players walk away),
+        # refund every stake and close the card instead of leaking the escrow.
+        _wt = asyncio.create_task(_bet_watchdog(bot, pair))
+        _bg_tasks.add(_wt); _wt.add_done_callback(_bg_tasks.discard)
     except Exception:
         pass
+
+async def _bet_watchdog(bot, pair, delay=900):
+    await asyncio.sleep(delay)
+    if pair in _fight_bets:
+        try:
+            await _resolve_fight_bets(bot, pair, None)
+        except Exception:
+            _fight_bets.pop(pair, None)
 
 async def bet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -33844,28 +33869,29 @@ async def _resolve_fight_bets(bot, pair, winner_id, result_text=""):
     if not st:
         return
     names = st["names"]
-    lines = [f"🏁 *{names.get(winner_id, '?')} WINS!*"]
-    if st["bets"]:
+    if winner_id is None:
+        lines = ["🏳️ *The fight fizzled out — no winner.*"]
+        if st["bets"]:
+            for uid, (side, amt, nm) in st["bets"].items():
+                bp = get_player(uid)
+                if bp:
+                    bp["gold"] = bp.get("gold", 0) + amt
+                    save_player(bp)
+            lines.append("💰 *All bets refunded.*")
+    else:
+        lines = [f"🏁 *{names.get(winner_id, '?')} WINS!*"]
         w_names, l_names = [], []
         for uid, (side, amt, nm) in st["bets"].items():
-            if winner_id is not None and side == winner_id:
+            if side == winner_id:
                 bp = get_player(uid)
                 if bp:
                     bp["gold"] = bp.get("gold", 0) + amt * 2
                     save_player(bp)
                 w_names.append(nm)
-            elif winner_id is None:
-                bp = get_player(uid)  # fight fizzled — refund
-                if bp:
-                    bp["gold"] = bp.get("gold", 0) + amt
-                    save_player(bp)
             else:
                 l_names.append(nm)
-        if winner_id is None:
-            lines = ["🏳️ *Fight ended without a winner — all bets refunded.*"]
-        else:
-            if w_names: lines.append(f"💰 *Paid 2x:* {', '.join(w_names)}")
-            if l_names: lines.append(f"💸 *Lost the house's favor:* {', '.join(l_names)}")
+        if w_names: lines.append(f"💰 *Paid 2x:* {', '.join(w_names)}")
+        if l_names: lines.append(f"💸 *Lost the house's favor:* {', '.join(l_names)}")
     try:
         await bot.edit_message_text(chat_id=st["chat_id"], message_id=st["msg_id"],
             text="\n".join(lines), parse_mode="Markdown", reply_markup=None)
