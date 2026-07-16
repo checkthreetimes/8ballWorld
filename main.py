@@ -49,6 +49,8 @@ CHANGELOG = [
         "Fight bets: abandoned fights auto-refund all stakes after 15 min (no more lost gold)",
         "PvP memory hygiene: per-fight tracking state cleaned up when a fight ends",
         "Commands no longer freeze bot-wide: updates now process concurrently instead of one at a time",
+        "Fixed: chatting fast silently ate your next command (shared rate-limit bucket) — chat and commands now count separately",
+        "Rate-limited commands now say so instead of vanishing; handler errors DM the admin",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
         "Fresh-card turn system for dungeon AND PvP (no more inline-edit freezes)",
@@ -628,21 +630,34 @@ def _cancel_card_timer(pair):
         old.cancel()
 
 # ── RATE LIMITER ──────────────────────────────────────────────────────────────
-_cmd_timestamps    = {}   # user_id -> [float timestamps]
+# Commands and ordinary chat messages get SEPARATE buckets. They used to share
+# _cmd_timestamps, so an active chatter (8 messages in 6s) filled the bucket
+# with plain conversation and their next command was silently swallowed by the
+# pre-filter — "certain commands randomly do nothing" until a few quiet seconds
+# passed. Chatting must never consume command budget.
+_cmd_timestamps    = {}   # user_id -> [float timestamps]  (commands only)
+_chat_timestamps   = {}   # user_id -> [float timestamps]  (non-command messages)
+_rate_warn_ts      = {}   # user_id -> last "slow down" warning time
 _processing_users  = {}  # user_id -> lock acquire time; users inside a state-changing callback
 _CB_LOCK_STALE_SECS = 30  # a leaked lock (unhandled exception) self-heals after this long
 
-def _rate_ok(uid: int, max_cmds: int = 8, window: float = 6.0) -> bool:
+def _rate_ok(uid: int, max_cmds: int = 8, window: float = 6.0, _store=None) -> bool:
     """Return True if the user is within the rate limit, False if they're spamming."""
+    store = _cmd_timestamps if _store is None else _store
     now = time.time()
-    times = _cmd_timestamps.get(uid, [])
+    times = store.get(uid, [])
     times = [t for t in times if now - t < window]
     if len(uid_times := times) >= max_cmds:
-        _cmd_timestamps[uid] = uid_times
+        store[uid] = uid_times
         return False
     times.append(now)
-    _cmd_timestamps[uid] = times
+    store[uid] = times
     return True
+
+def _chat_rate_ok(uid: int) -> bool:
+    """Rate limit for ordinary chat messages (EXP ticks etc.) — its own bucket,
+    higher ceiling: fast group conversation is normal, not abuse."""
+    return _rate_ok(uid, max_cmds=15, window=6.0, _store=_chat_timestamps)
 
 def _cb_lock(uid: int):
     """Acquire a processing lock for a callback. Returns a truthy token on
@@ -31863,7 +31878,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user or user.is_bot: return
     if is_banned(user.id): return
-    if not _rate_ok(user.id):
+    if not _chat_rate_ok(user.id):
         return  # silently drop — no response, no feedback loop
     chat_id = update.effective_chat.id
     text    = (update.message.text or "").lower()
@@ -34711,6 +34726,7 @@ async def _engagement_loop(bot):
 
 _BOOT_TIME = datetime.now()
 _conflict_alert_ts = {"t": 0.0}
+_err_alert_ts = {"t": 0.0}
 
 # ── FIRST STEPS (new-player onboarding checklist) ────────────────────────────
 _FIRST_STEPS = [
@@ -34969,6 +34985,27 @@ async def _global_error_handler(update, context):
                     parse_mode="Markdown")
             except Exception:
                 pass
+        return
+    # Any other handler crash: DM the admin a short diagnostic (throttled to
+    # one per 5 min) so a command that dies silently in production is visible
+    # without digging through Railway logs.
+    now_ts = time.time()
+    if now_ts - _err_alert_ts["t"] > 300:
+        _err_alert_ts["t"] = now_ts
+        _src = ""
+        try:
+            if update is not None and getattr(update, "message", None) and update.message and update.message.text:
+                _src = update.message.text.split()[0][:32]
+            elif update is not None and getattr(update, "callback_query", None) and update.callback_query:
+                _src = "button " + str(update.callback_query.data)[:32]
+        except Exception:
+            pass
+        try:
+            await context.bot.send_message(ADMIN_ID,
+                f"🐞 Handler error{(' on ' + _src) if _src else ''}: "
+                f"{err.__class__.__name__}: {str(err)[:300]}")
+        except Exception:
+            pass
 
 async def _post_init(application):
     """On startup: launch background loops, register the command menu,
@@ -35336,7 +35373,19 @@ def main():
         if u.id != ADMIN_ID and is_banned(u.id):
             raise ApplicationHandlerStop  # banned — silently block all commands
         if u.id != ADMIN_ID and not _rate_ok(u.id):
-            raise ApplicationHandlerStop  # silently drop — no reply, no exploit loop
+            # Never make the bot look dead: tell the user ONCE (per 20s) that
+            # they're throttled, then swallow the burst silently.
+            _now_w = time.time()
+            if _now_w - _rate_warn_ts.get(u.id, 0) > 20:
+                _rate_warn_ts[u.id] = _now_w
+                try:
+                    _warn = await update.message.reply_text(
+                        "⏳ Easy there — too many commands at once. Give it a few seconds.")
+                    asyncio.create_task(_auto_delete(
+                        context.bot, _warn.chat_id, _warn.message_id, 6))
+                except Exception:
+                    pass
+            raise ApplicationHandlerStop  # drop the burst — no exploit loop
         _is_grp = update.effective_chat and update.effective_chat.type in ("group", "supergroup")
         try:
             _lc = sqlite3.connect(DB_PATH); _lc.row_factory = sqlite3.Row
