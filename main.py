@@ -944,7 +944,7 @@ CLASS_TREE = {
         "skills":[
             {"tier":5,"unlock":100,"name":"Divine Judgment",
              "passive":"All holy skills deal 25% more damage.",
-             "active":"Wrath of the Fallen","type":"holy_nuke",
+             "active":"Wrath of the Fallen","type":"holy_nuke","power":2.8,
              "desc":"Massive STR+DEF+WIS x3 combined hit. On kill: all guild members in chat gain +20% damage for 10 actions.",
              "passive_key":"divine_judgment"},
         ]
@@ -1228,7 +1228,7 @@ CLASS_TREE = {
         "skills":[
             {"tier":5,"unlock":100,"name":"Death's Shadow",
              "passive":"Every dodge restores 10 HP.",
-             "active":"Soul Rend","type":"fear_kill",
+             "active":"Soul Rend","type":"fear_kill","power":2.5,
              "desc":"AGI x6 damage. On kill: cannot be targeted for 10 actions.",
              "passive_key":"deaths_shadow"},
         ]
@@ -1431,7 +1431,7 @@ CLASS_TREE = {
         "skills":[
             {"tier":5,"unlock":100,"name":"Dead or Alive",
              "passive":"Every kill permanently adds +2 to your max damage ceiling. Caps at +50 damage (25 kills).",
-             "active":"Last Shot","type":"execution_shot",
+             "active":"Last Shot","type":"execution_shot","power":6.0,
              "desc":"On kill: target defeated timer doubled to 1 hour. You earn triple gold and EXP. Public announcement names you.",
              "passive_key":"dead_or_alive"},
         ]
@@ -1655,7 +1655,7 @@ CLASS_TREE = {
         "skills":[
             {"tier":5,"unlock":100,"name":"Eternal Bloom",
              "passive":"Cannot be poisoned or diseased. All heals 50% stronger. Allies you've healed gain +5% all stats while in chat.",
-             "active":"Blossom Nova","type":"aoe_heal_dmg","mult":50,
+             "active":"Blossom Nova","type":"aoe_heal_dmg","mult":50,"power":6.0,
              "desc":"Pulse of pure life: heal all allies for WIS x50 HP. Enemies currently poisoned take WIS x8 burst damage.",
              "passive_key":"eternal_bloom"},
         ]
@@ -1929,7 +1929,7 @@ CLASS_TREE = {
         "skills":[
             {"tier":4,"unlock":60,"name":"Iron Bulwark",
              "passive":"Take 20% less damage from all sources. Guild members you have recently defended gain +5% DEF.",
-             "active":"Vanguard's Presence","type":"intercept_aoe",
+             "active":"Vanguard's Presence","type":"intercept_aoe","power":6.0,
              "desc":"DEF×2 damage + gain 2 ward charges (each reduces an incoming hit by 40%). While ward is active, intercepted attackers take DEF×2 back.",
              "passive_key":"iron_bulwark"},
         ]
@@ -2005,7 +2005,7 @@ CLASS_TREE = {
         "skills":[
             {"tier":5,"unlock":100,"name":"Celestial Wrath",
              "passive":"+25% crit damage. Crits apply lingering lightning (+10 dmg for 3 hits). On kill: lightning arcs to all recent attackers.",
-             "active":"Valhalla's Thunder","type":"godlike_lightning",
+             "active":"Valhalla's Thunder","type":"godlike_lightning","power":6.0,
              "desc":"STR x5 lightning strike. On kill: gain +50 temp HP, and deal STR x2 AOE lightning to all recent attackers.",
              "passive_key":"celestial_wrath"},
         ]
@@ -2149,7 +2149,7 @@ CLASS_TREE = {
         "skills":[
             {"tier":5,"unlock":100,"name":"Sovereign's Veil",
              "passive":"30% dodge chance. Every dodge heals 15 HP and grants 3-second immunity. You cannot be stunned or rooted.",
-             "active":"Ethereal Storm","type":"phantom_aoe",
+             "active":"Ethereal Storm","type":"phantom_aoe","power":9.0,
              "desc":"Phase through all damage for 1 hit while auto-striking all recent attackers for AGI x2. End: release AGI x6 nova on all targets.",
              "passive_key":"sovereign_veil"},
         ]
@@ -5509,6 +5509,11 @@ def _enc_process_skill(enc, p, sk):
     if dmg > 0 and stype not in ("crit_dmg", "void_nuke", "execute_multihit") and check_crit(p):
         dmg = apply_crit(p, dmg)
         txt += " 💥 *CRITICAL HIT!*"
+
+    # Per-skill balance scalar (default 1.0). One knob per skill in CLASS_TREE;
+    # not applied to %-of-HP nukes which are already target-scaled.
+    if dmg > 0 and stype not in ("void_nuke",):
+        dmg = max(1, round(dmg * sk.get("power", 1.0)))
 
     enc["e_hp"] = max(0, enc["e_hp"] - dmg)
     return txt, dmg, False
@@ -10045,6 +10050,10 @@ def apply_skill_to_raid_enemy(p, sk, raid_state, w):
     if dmg > 0 and check_crit(p) and stype not in ("crit_dmg","void_nuke","pierce_all","charged_shot"):
         dmg = apply_crit(p, dmg)
         lines.append("💥 *Critical hit!*")
+
+    # Per-skill balance scalar (default 1.0)
+    if dmg > 0 and stype not in ("void_nuke",):
+        dmg = max(1, round(dmg * sk.get("power", 1.0)))
 
     raid_state["enemy_hp"] = max(0, raid_state["enemy_hp"] - dmg)
     return lines, dmg
@@ -20588,6 +20597,9 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
             p["hp"] = min(calc_max_hp(p), p["hp"] + _sn_heal)
             out.append(f"🐍 *{sk['name']}!* STR×{mult} = *{dmg}* fatal strike — cannot be dodged or blocked!\n💚 *{p['username']}* heals *{_sn_heal} HP* ({p['hp']}/{p['max_hp']})!")
             # Extend defeat timer on kill (handled after hp apply)
+        # Per-skill balance scalar (default 1.0)
+        if dmg and dmg > 0 and stype not in ("void_nuke",):
+            dmg = max(1, round(dmg * sk.get("power", 1.0)))
         if check_crit(p):
             dmg = apply_crit(p, dmg); out.append("💥 *CRITICAL HIT!*")
         # Pet defensive ability for skill damage
@@ -21267,6 +21279,11 @@ async def _execute_skill(update, context, p, sk):
         if _dbl and random.random() < _dbl:
             dmg *= 2
             lines.append(f"✨ *Void Echo!* Spell resonates — damage doubled!")
+
+    # Per-skill balance scalar (default 1.0) — scales raw skill damage before
+    # defense; %-of-HP nukes are already target-scaled so are skipped
+    if dmg and dmg > 0 and stype not in ("void_nuke",):
+        dmg = max(1, round(dmg * sk.get("power", 1.0)))
 
     # Apply defense
     if stype not in ("pierce_all","void_nuke","holy_dmg"):
