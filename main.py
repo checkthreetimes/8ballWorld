@@ -48,6 +48,7 @@ CHANGELOG = [
         "Oracle quest phrases match through punctuation/smart-quote differences",
         "Fight bets: abandoned fights auto-refund all stakes after 15 min (no more lost gold)",
         "PvP memory hygiene: per-fight tracking state cleaned up when a fight ends",
+        "Commands no longer freeze bot-wide: updates now process concurrently instead of one at a time",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
         "Fresh-card turn system for dungeon AND PvP (no more inline-edit freezes)",
@@ -13447,9 +13448,10 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         d["pvp_history"] = json.dumps(hist_nl[:5])
 
     check_titles(a); check_titles(d)
-    _a_snap, _d_snap = a.copy(), d.copy()
-    await asyncio.get_running_loop().run_in_executor(
-        None, lambda: (save_player(_a_snap), save_player(_d_snap)))
+    # Save on the event-loop thread: a WAL write is ~1ms, and pushing it to a
+    # worker thread made it the bot's only concurrent DB writer — the source
+    # of 10s "database is locked" busy-waits that froze the update pipeline.
+    save_player(a); save_player(d)
 
     if d["hp"] > 0:
         _total_hp_lost = max(0, _d_hp_before_attack - d["hp"])
@@ -35036,7 +35038,15 @@ async def _post_init(application):
 
 def main():
     init_db()
-    app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
+    # concurrent_updates: PTB's default processes ONE update at a time for the
+    # whole bot — any handler that awaits (PvP card pacing, dungeon turns, a
+    # slow Telegram call) stalls EVERY other player's commands, and during
+    # active play the update queue backs up until the bot looks dead and needs
+    # a restart. Handlers are already concurrency-safe (per-user _cb_lock,
+    # per-pair PvP locks, save_player's stale-snapshot guard), so let them run
+    # in parallel.
+    app = (Application.builder().token(BOT_TOKEN).post_init(_post_init)
+           .concurrent_updates(32).build())
     app.add_error_handler(_global_error_handler)
 
     # Universal
@@ -35365,7 +35375,9 @@ def main():
     _bot_ref = app.bot
     explore_timers.clear()
     print(f"🎱 {WORLD_NAME} {CURRENT_VERSION} is running...")
-    app.run_polling(poll_interval=0.3)
+    # Drop updates that queued up while the bot was down — replaying a flood of
+    # stale commands after a redeploy just re-creates the backlog freeze.
+    app.run_polling(poll_interval=0.3, drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
