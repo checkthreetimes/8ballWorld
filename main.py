@@ -67,6 +67,7 @@ CHANGELOG = [
         "Fixed crash that killed chat EXP on messages containing trigger words (hi/lol/nice/...)",
         "Fixed 'database is locked' errors: 30s lock wait on all connections, no more network waits inside open transactions",
         "Database moved to autocommit: a write lock can never outlive its statement — locked errors structurally impossible",
+        "Fixed OverflowError for high-level players: EXP curve flattens at 10^16/level, counters clamp to SQLite range, damaged rows auto-repaired",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
         "Fresh-card turn system for dungeon AND PvP (no more inline-edit freezes)",
@@ -823,33 +824,33 @@ def get_weather():
     return _weather_cache["weather"]
 
 # ── EXP CURVE ─────────────────────────────────────────────────────────────────
+# SQLite INTEGER tops out at 2^63-1 (~9.2e18). The old curve blew past that
+# around level 180 (lifetime total_exp) and produced per-level requirements in
+# the 10^21+ range near the cap — every save for such a player crashed with
+# OverflowError. Requirements now flatten at _EXP_REQ_CEIL, and stored EXP/gold
+# clamp to _INT_SAFE_MAX at save time, keeping every number storable forever.
+_EXP_REQ_CEIL = 10_000_000_000_000_000       # 1e16 — max EXP needed for one level
+_INT_SAFE_MAX = 8_000_000_000_000_000_000    # 8e18 — hard cap for stored counters
+
 def exp_for_level(level):
-    if level <= 10:   return level * 20000
-    elif level <= 20: return level * 100000
-    elif level <= 30: return level * 500000
-    elif level <= 40: return level * 3000000
-    elif level <= 50: return level * 10000000
-    elif level <= 60: return level * 40000000
-    elif level <= 70: return level * 150000000
+    if level <= 10:   req = level * 20000
+    elif level <= 20: req = level * 100000
+    elif level <= 30: req = level * 500000
+    elif level <= 40: req = level * 3000000
+    elif level <= 50: req = level * 10000000
+    elif level <= 60: req = level * 40000000
+    elif level <= 70: req = level * 150000000
     # ── POST-70: every 10 levels multiplies requirement by ~4-6× ──
-    elif level <= 80: return level * 800000000
-    elif level <= 90: return level * 4000000000
-    elif level <= 100: return level * 20000000000
-    elif level <= 110: return level * 100000000000
-    elif level <= 120: return level * 500000000000
-    elif level <= 130: return level * 2500000000000
-    elif level <= 140: return level * 12000000000000
-    elif level <= 150: return level * 60000000000000
-    elif level <= 160: return level * 300000000000000
-    elif level <= 170: return level * 1500000000000000
-    elif level <= 180: return level * 7500000000000000
-    elif level <= 190: return level * 35000000000000000
-    elif level <= 200: return level * 150000000000000000
-    elif level <= 210: return level * 700000000000000000
-    elif level <= 220: return level * 3000000000000000000
-    elif level <= 230: return level * 12000000000000000000
-    elif level <= 240: return level * 50000000000000000000
-    else:              return level * 200000000000000000000
+    elif level <= 80: req = level * 800000000
+    elif level <= 90: req = level * 4000000000
+    elif level <= 100: req = level * 20000000000
+    elif level <= 110: req = level * 100000000000
+    elif level <= 120: req = level * 500000000000
+    elif level <= 130: req = level * 2500000000000
+    elif level <= 140: req = level * 12000000000000
+    elif level <= 150: req = level * 60000000000000
+    else:             req = level * 300000000000000
+    return min(req, _EXP_REQ_CEIL)
 
 def exp_share(level, pct):
     """EXP equal to `pct` (0.10 = 10%) of the EXP required for `level`.
@@ -11285,6 +11286,27 @@ def init_db():
             _mig_conn.commit()
             logger.info("Migration pet_level_cap_v1: pet levels capped to player_level * 3")
 
+        # int_overflow_clamp_v1: repair counters that outgrew SQLite's INTEGER
+        # range (stored as REAL floats). Any such row made every subsequent
+        # save for that player raise OverflowError, freezing their progress.
+        _mig_cur.execute("SELECT 1 FROM _migrations WHERE name='int_overflow_clamp_v1'")
+        if not _mig_cur.fetchone():
+            _cap = _INT_SAFE_MAX
+            _fixed = 0
+            for _tbl, _cols in (("players", ("exp", "total_exp", "gold")),
+                                ("shadow_profiles", ("exp", "total_exp"))):
+                for _col in _cols:
+                    _cur2 = _mig_conn.execute(
+                        f"UPDATE {_tbl} SET {_col}=? WHERE {_col} > ?", (_cap, _cap))
+                    _fixed += _cur2.rowcount
+                _cur2 = _mig_conn.execute(
+                    f"UPDATE {_tbl} SET level=250 WHERE level > 250")
+                _fixed += _cur2.rowcount
+            _mig_conn.execute("INSERT INTO _migrations (name, ran_at) VALUES ('int_overflow_clamp_v1', ?)",
+                              (datetime.now().isoformat(),))
+            _mig_conn.commit()
+            logger.info(f"Migration int_overflow_clamp_v1: clamped {_fixed} out-of-range value(s)")
+
         _mig_conn.close()
     except Exception as _me:
         logger.error(f"Migration error: {_me}")
@@ -11352,6 +11374,9 @@ def get_player(uid):   return _get("players", uid)
 
 def save_shadow(s):
     conn = _db(); c = conn.cursor()
+    for _bigf in ("exp", "total_exp"):
+        if safe_int(s.get(_bigf)) > _INT_SAFE_MAX:
+            s[_bigf] = _INT_SAFE_MAX
     c.execute("""INSERT OR REPLACE INTO shadow_profiles
         (user_id,username,level,exp,total_exp,message_count,
          passive_cooldowns,ascended,last_seen,last_pool,pending_items,pet_notify_ts,home_group)
@@ -11696,6 +11721,12 @@ def save_player(p):
     # dng_companions is held as a list in memory; store as JSON text
     if isinstance(p.get("dng_companions"), list):
         p["dng_companions"] = json.dumps(p["dng_companions"])
+    # Clamp unbounded counters into SQLite's INTEGER range — a value past
+    # 2^63-1 makes the whole save raise OverflowError and the player's
+    # progress silently stops persisting.
+    for _bigf in ("exp", "total_exp", "gold"):
+        if safe_int(p.get(_bigf)) > _INT_SAFE_MAX:
+            p[_bigf] = _INT_SAFE_MAX
     vals = [p.get(f) for f in fields]
     placeholders = ",".join(["?"]*len(fields))
     col_str = ",".join(fields)
@@ -11914,8 +11945,9 @@ def add_exp(p, amount, weather=None):
     if _emp_exp_pct > 0:
         amount = round(amount * (1 + _emp_exp_pct))
     msgs = []; leveled_up = False
-    p["exp"]      += max(0, amount)
-    p["total_exp"] = safe_int(p.get("total_exp")) + max(0, amount)
+    amount = min(max(0, safe_int(amount)), _EXP_REQ_CEIL)  # one grant ≤ one max level
+    p["exp"]      = min(safe_int(p.get("exp")) + amount, _INT_SAFE_MAX)
+    p["total_exp"] = min(safe_int(p.get("total_exp")) + amount, _INT_SAFE_MAX)
     while p["level"] < 250 and p["exp"] >= exp_for_level(p["level"]):
         p["exp"] -= exp_for_level(p["level"])
         p["level"] += 1; leveled_up = True
@@ -12012,8 +12044,9 @@ def give_pet_exp(owner_id, raw_amount):
 def add_shadow_exp(s, amount):
     if s["level"] >= 250: return [], False
     msgs = []; leveled_up = False
-    s["exp"]      += max(0, amount)
-    s["total_exp"] = safe_int(s.get("total_exp")) + max(0, amount)
+    amount = min(max(0, safe_int(amount)), _EXP_REQ_CEIL)  # one grant ≤ one max level
+    s["exp"]      = min(safe_int(s.get("exp")) + amount, _INT_SAFE_MAX)
+    s["total_exp"] = min(safe_int(s.get("total_exp")) + amount, _INT_SAFE_MAX)
     while s["level"] < 250 and s["exp"] >= exp_for_level(s["level"]):
         s["exp"] -= exp_for_level(s["level"])
         s["level"] += 1; leveled_up = True
