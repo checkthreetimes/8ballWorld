@@ -69,6 +69,7 @@ CHANGELOG = [
         "Database moved to autocommit: a write lock can never outlive its statement — locked errors structurally impossible",
         "Fixed OverflowError for high-level players: EXP curve flattens at 10^16/level, counters clamp to SQLite range, damaged rows auto-repaired",
         "Level-ups can no longer be erased by concurrent saves: progression guard now compares (level, total_exp) and never moves backwards",
+        "Ancient Serpent is mortal again: Immortal Coils 1h cooldown now persists, evaluates after companion echoes; class signature passives (Execute, Devotion, ...) now actually fire",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
         "Fresh-card turn system for dungeon AND PvP (no more inline-edit freezes)",
@@ -2346,6 +2347,18 @@ CLASS_TREE = {
         ]
     },
 }
+
+# Signature passive injection: 40+ combat branches read cls.get("passive_key")
+# to trigger class passives (Execute, Devotion, Immortal Coils, Shadowstep
+# priming, ...), but class defs only carry passive_key inside their skills
+# lists — so every one of those branches silently never fired. Each class's
+# signature passive is its highest-tier skill's passive_key.
+for _cid, _cdef in CLASS_TREE.items():
+    if not _cdef.get("passive_key"):
+        for _sk in reversed(_cdef.get("skills", [])):
+            if _sk.get("passive_key"):
+                _cdef["passive_key"] = _sk["passive_key"]
+                break
 
 # Class progression paths
 CLASS_PATHS = {
@@ -11001,6 +11014,10 @@ def init_db():
         ("players", "guild_stat_bonus",   "INTEGER DEFAULT 0"),
         ("players", "dodge_momentum",     "INTEGER DEFAULT 0"),
         ("players", "collection_log",     "TEXT DEFAULT NULL"),
+        # Immortal Coils 1h survive cooldown — MUST persist or the Ancient
+        # Serpent survives every fatal blow forever (each handler loads a
+        # fresh row and never sees the in-memory timestamp)
+        ("players", "serpent_revive_used", "TEXT DEFAULT NULL"),
     ]
     for table, col, definition in _charge_cols:
         try:
@@ -11734,6 +11751,7 @@ def save_player(p):
         "poison_pct","bleed_pct","burn_pct",
         "empire_buildings","empire_resources","empire_last_collect",
         "mp","max_mp","dng_companions","dodge_momentum","collection_log",
+        "serpent_revive_used",
     ]
     # dng_companions is held as a list in memory; store as JSON text
     if isinstance(p.get("dng_companions"), list):
@@ -13294,24 +13312,17 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             _as_dmg = max(1, round(get_stat(d, "STR") * 0.5))
             a["hp"] = max(0, a["hp"] - _as_dmg)
             extra_notes.append(f"🛡️ *Armored Scales!* {d['username']}'s scales retaliate — {a['username']} takes {_as_dmg} dmg!")
-        if _pk_d_serp == "immortal_coils" and d["hp"] <= 0 and not _ts_active(d, "serpent_revive_used"):
-            d["hp"] = 1
-            set_status(d, "serpent_revive_used", 3600)
-            extra_notes.append(f"🐍 *Immortal Coils!* {d['username']} refuses to fall — survives at 1 HP! (1h cooldown)")
+        # (immortal_coils survive-at-1-HP is evaluated at the END of the action,
+        #  after companion echoes — see the final gate next to the Last Stand
+        #  Locket — so a follow-up hit in the same action can't waste the proc)
         # coiling_stance: -10% damage taken when below 50% HP (only when actual damage was dealt)
         if "coiling_stance" in get_all_passive_keys(d) and dmg_after_def > 0 and safe_int(d.get("hp", 0)) / max(1, calc_max_hp(d)) < 0.50:
             _cs_reduce = round(dmg_after_def * 0.10)
             d["hp"] = min(calc_max_hp(d), d["hp"] + _cs_reduce)
             extra_notes.append(f"🐍 *Coiling Stance!* {d['username']} resists — {_cs_reduce} damage absorbed!")
 
-    # Serpent attacker kill-heal: fires AFTER defender survival passives so it only procs on a true kill
-    if cls_a and d["hp"] <= 0:
-        _pk_a_serp = cls_a.get("passive_key", "")
-        if _pk_a_serp in ("serpentine_mastery", "immortal_coils"):
-            _kill_pct = 0.15 if _pk_a_serp == "immortal_coils" else 0.20
-            _sk_heal = round(calc_max_hp(a) * _kill_pct)
-            a["hp"] = min(calc_max_hp(a), a["hp"] + _sk_heal)
-            extra_notes.append(f"🐍 *{_pk_a_serp.replace('_',' ').title()}!* Kill heals {a['username']} for {_sk_heal} HP!")
+    # (serpent attacker kill-heal moved after the end-of-action survival gates
+    #  so it only procs on a true kill)
 
     # mana_overload_reflect fires regardless of attacker class
     if d.get("mana_overload_reflect"):
@@ -13354,7 +13365,9 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     _display_dmg = _dmg_before_shield if _shield_absorbed else dmg_after_def
     action = f"⚔️ *{a['username']}* → *{d['username']}* for *{_display_dmg} dmg*{crit_note}{revenge_bonus_note}{reflect_note}"
-    if extra_notes: action += "\n" + "\n".join(extra_notes)
+    if extra_notes:
+        action += "\n" + "\n".join(extra_notes)
+        extra_notes.clear()  # notes appended after this point flush before return
     if healed:      action += f" | 🦸 +{healed} HP"
     if proc_fired:  action += f"\n{proc_msg}"
     if oh_fired:    action += f"\n{oh_msg}"
@@ -13439,6 +13452,22 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
         _dng_pvp_state(du_id)["last_stand_available"] = False
         d["hp"] = max(1, round(calc_max_hp(d) * 0.20))
         extra_notes.append(f"🕯️ *The Last Stand Locket!* {d['username']} refuses to fall — revived at {d['hp']} HP!")
+
+    # Immortal Coils (final gate): evaluated against the action's TOTAL damage
+    # — after crits, companion echoes, and every rider — once per hour
+    if d["hp"] <= 0 and "immortal_coils" in get_all_passive_keys(d) and not _ts_active(d, "serpent_revive_used"):
+        d["hp"] = 1
+        set_status(d, "serpent_revive_used", 3600)
+        extra_notes.append(f"🐍 *Immortal Coils!* {d['username']} refuses to fall — survives at 1 HP! (1h cooldown)")
+
+    # Serpent attacker kill-heal — after all survival gates so it only procs on a true kill
+    if cls_a and d["hp"] <= 0:
+        _pk_a_serp = cls_a.get("passive_key", "")
+        if _pk_a_serp in ("serpentine_mastery", "immortal_coils"):
+            _kill_pct = 0.15 if _pk_a_serp == "immortal_coils" else 0.20
+            _sk_heal = round(calc_max_hp(a) * _kill_pct)
+            a["hp"] = min(calc_max_hp(a), a["hp"] + _sk_heal)
+            extra_notes.append(f"🐍 *{_pk_a_serp.replace('_',' ').title()}!* Kill heals {a['username']} for {_sk_heal} HP!")
 
     if d["hp"] <= 0:
         d["hp"] = 0
@@ -13532,6 +13561,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             _hist_entry["hp_dmg"] = dmg_after_def
         hist_nl.insert(0, _hist_entry)
         d["pvp_history"] = json.dumps(hist_nl[:5])
+
+    # Flush notes generated after the mid-action merge (locket / Immortal
+    # Coils survives, kill heals) — they were previously never displayed
+    if extra_notes:
+        action += "\n" + "\n".join(extra_notes)
+        extra_notes.clear()
 
     check_titles(a); check_titles(d)
     # Save on the event-loop thread: a WAL write is ~1ms, and pushing it to a
