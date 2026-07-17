@@ -32,12 +32,18 @@ _db_local = threading.local()
 def _db() -> sqlite3.Connection:
     conn = getattr(_db_local, "conn", None)
     if conn is None:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         _db_local.conn = conn
     return conn
+
+def _connect_db() -> sqlite3.Connection:
+    """Fresh short-lived connection (caller closes it). Generous busy timeout:
+    sqlite's 5s default turned routine write contention into user-visible
+    'database is locked' errors once updates started processing concurrently."""
+    return sqlite3.connect(DB_PATH, timeout=30)
 
 # ── CHANGELOG ─────────────────────────────────────────────────────────────────
 CURRENT_VERSION = "v1.6"
@@ -52,6 +58,7 @@ CHANGELOG = [
         "Fixed: chatting fast silently ate your next command (shared rate-limit bucket) — chat and commands now count separately",
         "Rate-limited commands now say so instead of vanishing; handler errors DM the admin",
         "Fixed crash that killed chat EXP on messages containing trigger words (hi/lol/nice/...)",
+        "Fixed 'database is locked' errors: 30s lock wait on all connections, no more network waits inside open transactions",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
         "Fresh-card turn system for dungeon AND PvP (no more inline-edit freezes)",
@@ -3468,7 +3475,7 @@ def _decay_pet(pet):
 
 def get_active_pet_record(owner_id):
     """Fetch the active pet for a player from the DB."""
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
     c.execute("SELECT * FROM pets WHERE owner_id=? AND is_active=1", (owner_id,))
     row = c.fetchone(); conn.close()
     if row:
@@ -3478,14 +3485,14 @@ def get_active_pet_record(owner_id):
     return None
 
 def get_all_pets(owner_id):
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
     c.execute("SELECT * FROM pets WHERE owner_id=? ORDER BY is_active DESC, level DESC", (owner_id,))
     rows = [dict(r) for r in c.fetchall()]; conn.close()
     for p in rows: _decay_pet(p)
     return rows
 
 def save_pet(pet):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _connect_db(); c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO pets
         (pet_id,owner_id,species,nickname,level,exp,hunger,mood,last_fed,last_trained,
          is_active,created_at,bond_score,adventure_ends_at,last_battle,evolution_stage,
@@ -9714,6 +9721,7 @@ async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
     total_reward = 0
     claimed_count = 0
 
+    _refund_dms = []
     for bounty in bounties:
         self_placed = (int(bounty["placer_id"]) == attacker_uid)
         if self_placed:
@@ -9728,15 +9736,19 @@ async def check_and_claim_bounty(bot, attacker, target, chat_id=None):
             refund = round(reward * 0.25)
             placer_p["gold"] = placer_p.get("gold", 0) + refund
             save_player(placer_p)
-            try:
-                await bot.send_message(
-                    chat_id=placer_p["user_id"],
-                    text=f"💰 Your *{reward}g* bounty on *{target['username']}* was claimed!\n"
-                         f"You received *{refund}g* back.",
-                    parse_mode="Markdown")
-            except Exception: pass
+            _refund_dms.append((placer_p["user_id"], reward, refund))
 
     conn.commit()
+    # DM placers only AFTER the commit — awaiting the network while holding an
+    # open write transaction stalls every other DB writer in the bot.
+    for _dm_uid, _dm_reward, _dm_refund in _refund_dms:
+        try:
+            await bot.send_message(
+                chat_id=_dm_uid,
+                text=f"💰 Your *{_dm_reward}g* bounty on *{target['username']}* was claimed!\n"
+                     f"You received *{_dm_refund}g* back.",
+                parse_mode="Markdown")
+        except Exception: pass
 
     if claimed_count == 0:
         return 0
@@ -10638,7 +10650,7 @@ def check_bleed_tick(p):
 # ── DATABASE ──────────────────────────────────────────────────────────────────
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect_db()
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     c    = conn.cursor()
@@ -11079,7 +11091,7 @@ def init_db():
         return {ITEM_NAME_MAP_V21.get(k, k): v for k, v in d.items()}
 
     try:
-        mig21 = sqlite3.connect(DB_PATH)
+        mig21 = _connect_db()
         try:
             mig21.row_factory = sqlite3.Row
             c21 = mig21.cursor()
@@ -11121,7 +11133,7 @@ def init_db():
         logger.error(f"v21 item rename failed: {e}")
 
     # ── Pets table ───────────────────────────────────────────────────────────
-    _pets_conn = sqlite3.connect(DB_PATH)
+    _pets_conn = _connect_db()
     _pets_conn.execute("""CREATE TABLE IF NOT EXISTS pets (
         pet_id          INTEGER PRIMARY KEY AUTOINCREMENT,
         owner_id        INTEGER NOT NULL,
@@ -11157,7 +11169,7 @@ def init_db():
     _pets_conn.close()
     # ── Extra accessory slots migration ──────────────────────────────────────
     try:
-        _acc_conn = sqlite3.connect(DB_PATH)
+        _acc_conn = _connect_db()
         for _col in ["equipped_accessory_2","equipped_accessory_3","equipped_accessory_4"]:
             try:
                 _acc_conn.execute(f"ALTER TABLE players ADD COLUMN {_col} TEXT DEFAULT NULL")
@@ -11169,7 +11181,7 @@ def init_db():
         pass
     # Retired pet stat columns
     try:
-        _ret_conn = sqlite3.connect(DB_PATH)
+        _ret_conn = _connect_db()
         for _col, _def in [("pet_retire_atk","INTEGER DEFAULT 0"),
                             ("pet_retire_hp","INTEGER DEFAULT 0"),
                             ("retired_pets","TEXT DEFAULT '[]'")]:
@@ -11183,7 +11195,7 @@ def init_db():
         pass
     # Re-open connection for the v22 consumable rename migration
     try:
-        migc = sqlite3.connect(DB_PATH); migc.row_factory = sqlite3.Row; cc = migc.cursor()
+        migc = _connect_db(); migc.row_factory = sqlite3.Row; cc = migc.cursor()
         cc.execute("SELECT user_id,inventory,equipped_weapon,equipped_armor,equipped_shield,equipped_accessory,enhancements,enchants FROM players")
         rows_c = cc.fetchall(); mc_count = 0
         for row in rows_c:
@@ -11211,7 +11223,7 @@ def init_db():
     # ── v23 encounter columns ─────────────────────────────────────────────────
     for _ec in [("last_encounter","TEXT DEFAULT NULL"), ("monster_squad","TEXT DEFAULT NULL")]:
         try:
-            conn_v23 = sqlite3.connect(DB_PATH)
+            conn_v23 = _connect_db()
             conn_v23.execute(f"ALTER TABLE players ADD COLUMN {_ec[0]} {_ec[1]}")
             conn_v23.commit(); conn_v23.close()
         except sqlite3.OperationalError:
@@ -11237,7 +11249,7 @@ def init_db():
         ("max_mp",                "INTEGER DEFAULT 0"),
     ]:
         try:
-            _v24conn = sqlite3.connect(DB_PATH)
+            _v24conn = _connect_db()
             _v24conn.execute(f"ALTER TABLE players ADD COLUMN {_v24col[0]} {_v24col[1]}")
             _v24conn.commit(); _v24conn.close()
         except sqlite3.OperationalError:
@@ -11245,7 +11257,7 @@ def init_db():
 
     # ── One-time migrations table ────────────────────────────────────────────
     try:
-        _mig_conn = sqlite3.connect(DB_PATH)
+        _mig_conn = _connect_db()
         _mig_conn.execute("CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, ran_at TEXT)")
         _mig_conn.commit()
         _mig_cur = _mig_conn.cursor()
@@ -11270,7 +11282,7 @@ def init_db():
         logger.error(f"Migration error: {_me}")
 
     try:
-        conn_v23b = sqlite3.connect(DB_PATH)
+        conn_v23b = _connect_db()
         conn_v23b.execute("""CREATE TABLE IF NOT EXISTS parties (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             leader_id INTEGER NOT NULL UNIQUE,
@@ -11284,10 +11296,10 @@ def init_db():
         conn_v23b.commit(); conn_v23b.close()
     except Exception: pass
 
-    conn = sqlite3.connect(DB_PATH)  # reopen for remaining setup
+    conn = _connect_db()  # reopen for remaining setup
 
     # Clear stale explore locks on startup
-    conn3 = sqlite3.connect(DB_PATH)
+    conn3 = _connect_db()
     c3 = conn3.cursor()
     cutoff = (datetime.now() - timedelta(hours=2)).isoformat()
     c3.execute("UPDATE players SET explore_count_today=0 WHERE last_explore < ?", (cutoff,))
@@ -11301,7 +11313,7 @@ def init_db():
     # ── HP formula migration (raise base HP) ─────────────────────────────────
     # Runs every startup but is a no-op for already-updated players.
     try:
-        hp_mig = sqlite3.connect(DB_PATH)
+        hp_mig = _connect_db()
         hp_mig.row_factory = sqlite3.Row
         hc = hp_mig.cursor()
         hc.execute("SELECT user_id, level, max_hp FROM players")
@@ -17489,32 +17501,32 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
 # ─── Alliance DB ───────────────────────────────────────────
 def get_alliance(aid):
     if not aid: return None
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
     c.execute("SELECT * FROM alliances WHERE id = ?", (aid,))
     row = c.fetchone(); conn.close()
     return dict(row) if row else None
 
 def get_alliance_by_name(name):
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
     c.execute("SELECT * FROM alliances WHERE LOWER(name) = LOWER(?)", (name,))
     row = c.fetchone(); conn.close()
     return dict(row) if row else None
 
 def save_alliance(a):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _connect_db(); c = conn.cursor()
     fields = ["id","name","leader_id","members","influence_pool","created"]
     c.execute(f"INSERT OR REPLACE INTO alliances ({','.join(fields)}) VALUES ({','.join(['?']*len(fields))})",
               [a.get(f) for f in fields])
     conn.commit(); conn.close()
 
 def get_all_alliances():
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
     c.execute("SELECT * FROM alliances ORDER BY influence_pool DESC")
     rows = c.fetchall(); conn.close()
     return [dict(r) for r in rows]
 
 def delete_alliance(aid):
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _connect_db(); c = conn.cursor()
     c.execute("DELETE FROM alliances WHERE id = ?", (aid,)); conn.commit(); conn.close()
 
 # ─── Quest Templates ────────────────────────────────────────
@@ -17931,7 +17943,7 @@ async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not a or a.get("leader_id") != p["user_id"]: await query.answer("Leaders only.", show_alert=True); return
         mbs_inv = sjl(a.get("members"), [])
         if len(mbs_inv) >= 30: await query.answer("Order is full (30/30).", show_alert=True); return
-        _iconn = sqlite3.connect(DB_PATH); _ic = _iconn.cursor()
+        _iconn = _connect_db(); _ic = _iconn.cursor()
         _ic.execute("SELECT user_id, username FROM players WHERE level >= 1 ORDER BY level DESC LIMIT 40")
         _all_pl = [{"id": r[0], "username": r[1]} for r in _ic.fetchall()]; _iconn.close()
         candidates = [pl for pl in _all_pl if pl["id"] not in mbs_inv and pl["id"] != p["user_id"]][:20]
@@ -18027,7 +18039,7 @@ async def rumor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     inf = p.get("influence", 0); cost = 50
     if inf < cost:
         await send_group(update, f"🗣️ Spreading rumors costs *{cost} influence*. You have *{inf}*.", delay=9); return
-    conn = sqlite3.connect(DB_PATH); cr = conn.cursor()
+    conn = _connect_db(); cr = conn.cursor()
     cr.execute("SELECT user_id, username FROM players WHERE user_id != ? ORDER BY RANDOM() LIMIT 8", (p["user_id"],))
     targets = [{"id": r[0], "username": r[1]} for r in cr.fetchall()]; conn.close()
     if not targets: await send_group(update, "No one to spread rumors about yet.", delay=9); return
@@ -18358,7 +18370,7 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data == "social_gjoin":
         if p.get("guild_id") and str(p.get("guild_id")) not in ("None", ""):
             await query.answer("Already in a guild.", show_alert=True); return
-        conn_sg = sqlite3.connect(DB_PATH); conn_sg.row_factory = sqlite3.Row; c_sg = conn_sg.cursor()
+        conn_sg = _connect_db(); conn_sg.row_factory = sqlite3.Row; c_sg = conn_sg.cursor()
         c_sg.execute("SELECT guild_id, name, level, members FROM guilds ORDER BY level DESC LIMIT 10")
         rows = [dict(r) for r in c_sg.fetchall()]; conn_sg.close()
         if not rows:
@@ -18505,7 +18517,7 @@ async def guildcreate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if p.get("gold",0) < 100:
         await send_group(update, "Need 100 gold to found a hall!", delay=9); return
     name = " ".join(context.args)
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _connect_db(); c = conn.cursor()
     try:
         c.execute("INSERT INTO guilds (name,leader_id,members,level,exp,bank) VALUES(?,?,?,1,0,0)",
                   (name, user.id, json.dumps([user.id])))
@@ -18553,7 +18565,7 @@ async def guildjoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Use /ascend first!", delay=9); return
     if p.get("guild_id") and str(p.get("guild_id")) != "None":
         await send_group(update, "You're already in a guild! Use /guildleave first.", delay=9); return
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
     c.execute("SELECT guild_id,name,level,members FROM guilds ORDER BY level DESC LIMIT 10")
     rows = c.fetchall(); conn.close()
     if not rows:
@@ -18613,7 +18625,7 @@ async def guildinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # No args — show all halls as a button list
-    conn_gi = sqlite3.connect(DB_PATH); conn_gi.row_factory = sqlite3.Row; c_gi = conn_gi.cursor()
+    conn_gi = _connect_db(); conn_gi.row_factory = sqlite3.Row; c_gi = conn_gi.cursor()
     c_gi.execute("SELECT guild_id, name, level, members, war_wins FROM guilds ORDER BY level DESC, war_wins DESC LIMIT 15")
     rows = [dict(r) for r in c_gi.fetchall()]; conn_gi.close()
 
@@ -18663,7 +18675,7 @@ async def guildinfo_members_callback(update: Update, context: ContextTypes.DEFAU
     member_ids = sjl(g.get("members", "[]"), [])
     member_rows = []
     if member_ids:
-        conn_m = sqlite3.connect(DB_PATH); conn_m.row_factory = sqlite3.Row; c_m = conn_m.cursor()
+        conn_m = _connect_db(); conn_m.row_factory = sqlite3.Row; c_m = conn_m.cursor()
         placeholders = ",".join("?" * len(member_ids))
         c_m.execute(
             f"SELECT username, level, class_id FROM players WHERE user_id IN ({placeholders})"
@@ -18688,7 +18700,7 @@ async def guildinfo_members_callback(update: Update, context: ContextTypes.DEFAU
 async def guildinfo_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Return to the full hall list."""
     query = update.callback_query
-    conn_gl = sqlite3.connect(DB_PATH); conn_gl.row_factory = sqlite3.Row; c_gl = conn_gl.cursor()
+    conn_gl = _connect_db(); conn_gl.row_factory = sqlite3.Row; c_gl = conn_gl.cursor()
     c_gl.execute("SELECT guild_id, name, level, members, war_wins FROM guilds ORDER BY level DESC, war_wins DESC LIMIT 15")
     rows = [dict(r) for r in c_gl.fetchall()]; conn_gl.close()
 
@@ -18727,7 +18739,7 @@ async def guildrename_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def guildlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
     c.execute("SELECT name,level,members FROM guilds ORDER BY level DESC LIMIT 10")
     rows = c.fetchall(); conn.close()
     if not rows:
@@ -18955,7 +18967,7 @@ async def guilddisband_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚠️ This permanently disbands *{g['name']}* and removes all members.\n"
             f"Tap Confirm or type /guilddisband confirm to proceed.",
             delay=15, reply_markup=gdisband_markup); return
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _connect_db(); c = conn.cursor()
     c.execute("UPDATE players SET guild_id=NULL, guild_stat_bonus=0 WHERE guild_id=?", (p["guild_id"],))
     c.execute("DELETE FROM guilds WHERE guild_id=?", (p["guild_id"],))
     conn.commit(); conn.close()
@@ -18996,7 +19008,7 @@ async def guilddisband_callback(update, context):
         await query.answer("Only the guild leader can disband!", show_alert=True)
         return
     guild_name = g["name"]
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _connect_db(); c = conn.cursor()
     c.execute("UPDATE players SET guild_id=NULL, guild_stat_bonus=0 WHERE guild_id=?", (p["guild_id"],))
     c.execute("DELETE FROM guilds WHERE guild_id=?", (p["guild_id"],))
     conn.commit(); conn.close()
@@ -19022,7 +19034,7 @@ async def guildrename_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(new_name) < 2 or len(new_name) > 30:
         await send_group(update, "Guild name must be 2–30 characters.", delay=9); return
     try:
-        conn_gr = sqlite3.connect(DB_PATH); c_gr = conn_gr.cursor()
+        conn_gr = _connect_db(); c_gr = conn_gr.cursor()
         c_gr.execute("UPDATE guilds SET name=? WHERE guild_id=?", (new_name, gid))
         conn_gr.commit(); conn_gr.close()
     except sqlite3.IntegrityError:
@@ -19036,7 +19048,7 @@ async def guildrename_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def resolve_expired_wars(bot=None, chat_id=None):
     """Resolve all expired guild wars: award EXP, mark inactive, return result strings."""
     try:
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM guild_wars WHERE active=1 AND expires_at <= ?",
                   (datetime.now().isoformat(),))
         expired = [dict(r) for r in c.fetchall()]
@@ -19047,7 +19059,7 @@ async def resolve_expired_wars(bot=None, chat_id=None):
     for war in expired:
         try:
             # Mark war inactive in its own connection so save_guild doesn't deadlock
-            _wconn = sqlite3.connect(DB_PATH); _wconn.execute(
+            _wconn = _connect_db(); _wconn.execute(
                 "UPDATE guild_wars SET active=0 WHERE war_id=?", (war["war_id"],))
             _wconn.commit(); _wconn.close()
 
@@ -19066,7 +19078,7 @@ async def resolve_expired_wars(bot=None, chat_id=None):
                 winner, loser = (g1, g2) if k1 > k2 else (g2, g1)
                 wk = max(k1, k2); lk = min(k1, k2)
                 add_guild_exp(winner, 2000); save_guild(winner)
-                _gwconn = sqlite3.connect(DB_PATH); _gwconn.execute(
+                _gwconn = _connect_db(); _gwconn.execute(
                     "UPDATE guilds SET war_wins=war_wins+1 WHERE guild_id=?", (winner["guild_id"],))
                 _gwconn.commit(); _gwconn.close()
                 lv_note = ""
@@ -19101,7 +19113,7 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if war:
             my_gid = str(g["guild_id"])
             enemy_gid = war["guild2_id"] if str(war["guild1_id"]) == my_gid else war["guild1_id"]
-            conn_gw2 = sqlite3.connect(DB_PATH); conn_gw2.row_factory = sqlite3.Row; c2 = conn_gw2.cursor()
+            conn_gw2 = _connect_db(); conn_gw2.row_factory = sqlite3.Row; c2 = conn_gw2.cursor()
             c2.execute("SELECT name, members FROM guilds WHERE guild_id=?", (enemy_gid,))
             enemy_row = c2.fetchone(); conn_gw2.close()
             enemy_name    = enemy_row["name"] if enemy_row else "Unknown"
@@ -19112,7 +19124,7 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             enemy_member_ids = sjl(enemy_row["members"] if enemy_row else "[]", [])
             enemy_names = []
             if enemy_member_ids:
-                conn_em = sqlite3.connect(DB_PATH); conn_em.row_factory = sqlite3.Row; c_em = conn_em.cursor()
+                conn_em = _connect_db(); conn_em.row_factory = sqlite3.Row; c_em = conn_em.cursor()
                 placeholders = ",".join("?" * len(enemy_member_ids))
                 c_em.execute(f"SELECT username FROM players WHERE user_id IN ({placeholders})", enemy_member_ids)
                 enemy_names = [r["username"] for r in c_em.fetchall()]
@@ -19134,7 +19146,7 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"_Only the Guild leader can declare war._", delay=12)
             return
 
-        conn_gl = sqlite3.connect(DB_PATH); conn_gl.row_factory = sqlite3.Row; c_gl = conn_gl.cursor()
+        conn_gl = _connect_db(); conn_gl.row_factory = sqlite3.Row; c_gl = conn_gl.cursor()
         c_gl.execute("SELECT guild_id, name, level FROM guilds WHERE guild_id != ? ORDER BY level DESC LIMIT 15",
                      (g["guild_id"],))
         all_guilds = [dict(r) for r in c_gl.fetchall()]
@@ -19162,7 +19174,7 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "Only the Guild leader can declare war!", delay=9); return
 
     target_name = " ".join(args)
-    conn_gw3 = sqlite3.connect(DB_PATH); conn_gw3.row_factory = sqlite3.Row; c3 = conn_gw3.cursor()
+    conn_gw3 = _connect_db(); conn_gw3.row_factory = sqlite3.Row; c3 = conn_gw3.cursor()
     c3.execute("SELECT * FROM guilds WHERE LOWER(name)=LOWER(?)", (target_name,))
     enemy_g = c3.fetchone()
     conn_gw3.close()
@@ -19177,7 +19189,7 @@ async def guildwar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, f"There's already an active war between {g['name']} and {enemy_g['name']}!", delay=12); return
 
     expires = (datetime.now() + timedelta(hours=24)).isoformat()
-    conn_gw4 = sqlite3.connect(DB_PATH); c4 = conn_gw4.cursor()
+    conn_gw4 = _connect_db(); c4 = conn_gw4.cursor()
     c4.execute("""INSERT INTO guild_wars (guild1_id, guild2_id, declared_by, declared_at, expires_at, kills1, kills2, active)
                   VALUES (?,?,?,?,?,0,0,1)""",
                (g["guild_id"], enemy_g["guild_id"], user.first_name, datetime.now().isoformat(), expires))
@@ -19209,7 +19221,7 @@ async def guildwar_declare_callback(update: Update, context: ContextTypes.DEFAUL
         if not g or g.get("leader_id") != uid:
             await query.answer("Only the Guild leader can declare war.", show_alert=True); return
 
-        conn_e = sqlite3.connect(DB_PATH); conn_e.row_factory = sqlite3.Row; c_e = conn_e.cursor()
+        conn_e = _connect_db(); conn_e.row_factory = sqlite3.Row; c_e = conn_e.cursor()
         c_e.execute("SELECT * FROM guilds WHERE guild_id=?", (enemy_gid,))
         enemy_row = c_e.fetchone(); conn_e.close()
         if not enemy_row:
@@ -19228,7 +19240,7 @@ async def guildwar_declare_callback(update: Update, context: ContextTypes.DEFAUL
                 show_alert=True); return
 
         expires = (datetime.now() + timedelta(hours=24)).isoformat()
-        conn_w = sqlite3.connect(DB_PATH); c_w = conn_w.cursor()
+        conn_w = _connect_db(); c_w = conn_w.cursor()
         c_w.execute("""INSERT INTO guild_wars (guild1_id, guild2_id, declared_by, declared_at, expires_at, kills1, kills2, active)
                        VALUES (?,?,?,?,?,0,0,1)""",
                     (g_gid, e_gid, query.from_user.first_name, datetime.now().isoformat(), expires))
@@ -19275,7 +19287,7 @@ async def gbank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if p.get("gold", 0) < amt:
             await send_group(update, f"You only have {p.get('gold',0)}g!", delay=9); return
         p["gold"] -= amt; save_player(p)
-        conn_gb = sqlite3.connect(DB_PATH); c_gb = conn_gb.cursor()
+        conn_gb = _connect_db(); c_gb = conn_gb.cursor()
         c_gb.execute("UPDATE guilds SET bank_gold=bank_gold+? WHERE guild_id=?", (amt, g["guild_id"]))
         conn_gb.commit(); conn_gb.close()
         await send_group(update,
@@ -19295,7 +19307,7 @@ async def gbank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if amt > bank:
             await send_group(update, f"Bank only has {bank}g!", delay=9); return
         p["gold"] = p.get("gold", 0) + amt; save_player(p)
-        conn_gb2 = sqlite3.connect(DB_PATH); c_gb2 = conn_gb2.cursor()
+        conn_gb2 = _connect_db(); c_gb2 = conn_gb2.cursor()
         c_gb2.execute("UPDATE guilds SET bank_gold=bank_gold-? WHERE guild_id=?", (amt, g["guild_id"]))
         conn_gb2.commit(); conn_gb2.close()
         await send_group(update,
@@ -20280,7 +20292,7 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
             dmg = round(base * 0.6)
             placed = False
             try:
-                _bconn = sqlite3.connect(DB_PATH); _bc2 = _bconn.cursor()
+                _bconn = _connect_db(); _bc2 = _bconn.cursor()
                 _ac = _bc2.execute(
                     "SELECT COUNT(*) FROM bounties WHERE placer_id=? AND claimed_by IS NULL AND expires_at > ?",
                     (p["user_id"], datetime.now().isoformat())).fetchone()[0]
@@ -21156,7 +21168,7 @@ async def _execute_skill(update, context, p, sk):
         expires = "2099-12-31T23:59:59"
         placed = False
         try:
-            bconn = sqlite3.connect(DB_PATH); bc2 = bconn.cursor()
+            bconn = _connect_db(); bc2 = bconn.cursor()
             active_count = bc2.execute(
                 "SELECT COUNT(*) FROM bounties WHERE placer_id=? AND claimed_by IS NULL AND expires_at > ?",
                 (p["user_id"], datetime.now().isoformat())).fetchone()[0]
@@ -21537,7 +21549,7 @@ async def cooldowns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await reply_to_dm(update, context, "\n".join(lines))
 
 async def who_cmd(update, context):
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+    conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
     cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
     c.execute("""SELECT s.user_id, s.username, s.level, s.last_seen,
                         p.class_id, p.hp, p.max_hp, p.kill_streak, p.kills_today,
@@ -21627,7 +21639,7 @@ def _war_page_text(page: int) -> str:
     now_iso = datetime.now().isoformat()
     today_str = datetime.now().strftime("%Y-%m-%d")
     try:
-        conn_w = sqlite3.connect(DB_PATH); conn_w.row_factory = sqlite3.Row; cw = conn_w.cursor()
+        conn_w = _connect_db(); conn_w.row_factory = sqlite3.Row; cw = conn_w.cursor()
 
         if page == 0:
             lines = [f"💀 *Today's Top Killers* _{today_str}_\n"]
@@ -22915,7 +22927,7 @@ async def bounty_amount_callback(update: Update, context: ContextTypes.DEFAULT_T
             f"❌ Not enough gold! Need *{amount}g*, have *{p.get('gold',0)}g*.",
             parse_mode="Markdown"); return
 
-    bconn = sqlite3.connect(DB_PATH); bconn.row_factory = sqlite3.Row; bc = bconn.cursor()
+    bconn = _connect_db(); bconn.row_factory = sqlite3.Row; bc = bconn.cursor()
     now_iso = datetime.now().isoformat()
 
     # One bounty per placer per target
@@ -25516,7 +25528,7 @@ _BONDS_PAGES = 6
 _BONDS_TITLES = ["💍 Marriages", "🤝 Holding Hands", "🫂 Hugs", "💋 Kisses", "👉 Pokes", "👋 Slaps"]
 
 def _bonds_fetch_rows():
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
+    conn = _connect_db(); conn.row_factory = sqlite3.Row
     try:
         return conn.execute(
             "SELECT user_id, username, marriages, holding_hands_list, "
@@ -26659,7 +26671,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("petview_"):
         pid = int(data.split("_")[1])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -26670,11 +26682,11 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("petactivate_"):
         pid = int(data.split("_")[1])
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        conn = _connect_db(); c = conn.cursor()
         c.execute("UPDATE pets SET is_active=0 WHERE owner_id=?", (user.id,))
         c.execute("UPDATE pets SET is_active=1 WHERE pet_id=? AND owner_id=?", (pid, user.id))
         conn.commit(); conn.close()
-        conn2 = sqlite3.connect(DB_PATH); conn2.row_factory = sqlite3.Row; c2 = conn2.cursor()
+        conn2 = _connect_db(); conn2.row_factory = sqlite3.Row; c2 = conn2.cursor()
         c2.execute("SELECT * FROM pets WHERE pet_id=?", (pid,))
         row = c2.fetchone(); conn2.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -26686,7 +26698,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("petfeed_"):
         pid = int(data.split("_")[1])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -26717,7 +26729,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("pettrain_"):
         pid = int(data.split("_")[1])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -26759,7 +26771,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("petplay_"):
         pid = int(data.split("_")[1])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -26797,7 +26809,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("petrelease_"):
         pid = int(data.split("_")[1])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -26815,7 +26827,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("petrelease_confirm_"):
         pid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone()
         if not row: conn.close(); await query.answer("Pet not found.", show_alert=True); return
@@ -26830,7 +26842,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Sell Pet ──────────────────────────────────────────────────────────────
     if data.startswith("petsell_") and not data.startswith("petsell_confirm_"):
         pid = int(data.split("_")[1])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -26855,7 +26867,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("petsell_confirm_"):
         parts = data.split("_")
         pid = int(parts[2]); sell_price = int(parts[3])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone()
         if not row: conn.close(); await query.answer("Pet not found.", show_alert=True); return
@@ -26878,7 +26890,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("petrename_"):
         pid = int(data.split("_")[1])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -26893,7 +26905,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Pet Adventures ────────────────────────────────────────────────────────
     if data.startswith("petadv_pick_"):
         pid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -26917,7 +26929,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("petadv_start_"):
         parts = data.split("_")
         pid = int(parts[2]); hours = int(parts[3])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -26937,7 +26949,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("petadv_status_"):
         pid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -26985,7 +26997,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Pet Adventures: Claim on /pet command ─────────────────────────────────
     if data.startswith("petadv_claim_"):
         pid = int(data.split("_")[2]); hours = int(data.split("_")[3])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -27027,7 +27039,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Pet Battles ───────────────────────────────────────────────────────────
     if data.startswith("petbattle_pick_"):
         pid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -27044,7 +27056,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.answer(f"⏳ {pname} needs rest. Battle cooldown: {int((7200-el)//60)} min.", show_alert=True); return
             except Exception: pass
         # Find eligible opponents (players with active pets)
-        conn2 = sqlite3.connect(DB_PATH); conn2.row_factory = sqlite3.Row; c2 = conn2.cursor()
+        conn2 = _connect_db(); conn2.row_factory = sqlite3.Row; c2 = conn2.cursor()
         c2.execute("""SELECT p.owner_id, p.pet_id, p.species, p.nickname, p.level
                       FROM pets p WHERE p.is_active=1 AND p.owner_id!=? ORDER BY RANDOM() LIMIT 5""", (user.id,))
         candidates = [dict(r) for r in c2.fetchall()]; conn2.close()
@@ -27066,7 +27078,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("petbattle_fight_"):
         parts = data.split("_")
         my_pid = int(parts[2]); opp_pid = int(parts[3])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (my_pid, user.id))
         my_row = c.fetchone()
         c.execute("SELECT * FROM pets WHERE pet_id=?", (opp_pid,))
@@ -27131,7 +27143,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Pet Evolution ─────────────────────────────────────────────────────────
     if data.startswith("petevolve_"):
         pid = int(data.split("_")[1])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -27166,7 +27178,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Pet Jobs ──────────────────────────────────────────────────────────────
     if data.startswith("petjob_pick_"):
         pid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -27198,13 +27210,13 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("petjob_start_"):
         parts = data.split("_"); pid = int(parts[2]); hours = int(parts[3])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
         pet = dict(row)
         ends_at = (datetime.now() + timedelta(hours=hours)).isoformat()
-        conn2 = sqlite3.connect(DB_PATH); c2 = conn2.cursor()
+        conn2 = _connect_db(); c2 = conn2.cursor()
         c2.execute("UPDATE pets SET job_ends_at=? WHERE pet_id=?", (ends_at, pid))
         conn2.commit(); conn2.close()
         pet["job_ends_at"] = ends_at
@@ -27219,7 +27231,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("petjob_status_"):
         pid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -27234,7 +27246,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("petjob_claim_"):
         pid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
@@ -27263,7 +27275,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_player(p)
         # Bond gain from working
         pet["bond_score"] = min(200, pet.get("bond_score", 0) + 5)
-        conn3 = sqlite3.connect(DB_PATH); c3 = conn3.cursor()
+        conn3 = _connect_db(); c3 = conn3.cursor()
         c3.execute("UPDATE pets SET job_ends_at=NULL, bond_score=? WHERE pet_id=?", (pet["bond_score"], pid))
         conn3.commit(); conn3.close()
         pet["job_ends_at"] = None
@@ -27488,7 +27500,7 @@ async def pethub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "pethub_top":
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE is_active=1 ORDER BY level DESC, bond_score DESC LIMIT 10")
         rows = [dict(r) for r in c.fetchall()]; conn.close()
         if not rows:
@@ -27619,7 +27631,7 @@ async def petretire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         p["retired_pets"] = json.dumps(retired)
         save_player(p)
         # Delete pet record
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        conn = _connect_db(); c = conn.cursor()
         c.execute("DELETE FROM pets WHERE pet_id=?", (pid,))
         conn.commit(); conn.close()
         await query.edit_message_text(
@@ -27850,7 +27862,7 @@ async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if sub == "pick":
         # Show online players who have active pets
-        conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT DISTINCT p.user_id, p.username FROM players p "
                   "JOIN pets pet ON pet.owner_id=p.user_id AND pet.is_active=1 "
                   "WHERE p.user_id != ? LIMIT 10", (uid,))
@@ -28605,7 +28617,7 @@ async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     await _show("🛡️ *Guild*\n\nGuild data not found.", pg)
         elif cmd_key == "guildlist":
             try:
-                conn_gl = sqlite3.connect(DB_PATH)
+                conn_gl = _connect_db()
                 conn_gl.row_factory = sqlite3.Row
                 c_gl = conn_gl.cursor()
                 c_gl.execute("SELECT name, members, gold FROM guilds ORDER BY gold DESC LIMIT 8")
@@ -28721,7 +28733,7 @@ async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await _show("\n".join(lines), pg)
         elif cmd_key == "bounties":
             try:
-                conn_b = sqlite3.connect(DB_PATH)
+                conn_b = _connect_db()
                 conn_b.row_factory = sqlite3.Row
                 c_b = conn_b.cursor()
                 c_b.execute("SELECT b.*, p.username FROM bounties b "
@@ -30885,7 +30897,7 @@ async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     _wipe_confirm.pop(user.id, None)
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _connect_db(); c = conn.cursor()
     c.execute("DROP TABLE IF EXISTS shadow_profiles")
     c.execute("DROP TABLE IF EXISTS players")
     c.execute("DROP TABLE IF EXISTS guilds")
@@ -30905,7 +30917,7 @@ async def wipe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def is_banned(user_id: int) -> bool:
     try:
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        conn = _connect_db(); c = conn.cursor()
         c.execute("SELECT 1 FROM banned_users WHERE user_id=?", (user_id,))
         row = c.fetchone(); conn.close()
         return row is not None
@@ -30914,7 +30926,7 @@ def is_banned(user_id: int) -> bool:
 
 def _do_ban_wipe(tid: int, tname: str):
     """Record ban in banned_users. Remove from guild and clear relationship bonds."""
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _connect_db(); c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO banned_users (user_id, username, banned_at) VALUES (?,?,?)",
               (tid, tname, datetime.now().isoformat()))
     conn.commit(); conn.close()
@@ -30987,7 +30999,7 @@ _BAN_PAGE_SIZE = 10
 
 def _build_ban_picker(page: int = 0):
     """Return (text, InlineKeyboardMarkup) for the ban player-picker."""
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _connect_db(); c = conn.cursor()
     c.execute("""
         SELECT user_id, username, level FROM players
         WHERE user_id NOT IN (SELECT user_id FROM banned_users)
@@ -31042,7 +31054,7 @@ async def ban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data.startswith("banpick_sel_"):
         await query.answer()
         tid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        conn = _connect_db(); c = conn.cursor()
         c.execute("SELECT username, level FROM players WHERE user_id=?", (tid,))
         row = c.fetchone(); conn.close()
         if not row:
@@ -31068,7 +31080,7 @@ async def ban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data.startswith("banpick_confirm_"):
         await query.answer("Banning...", show_alert=False)
         tid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        conn = _connect_db(); c = conn.cursor()
         c.execute("SELECT username FROM players WHERE user_id=?", (tid,))
         row = c.fetchone(); conn.close()
         tname = row[0] if row else f"User#{tid}"
@@ -31109,7 +31121,7 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Priority 2: numeric user ID
     elif context.args and context.args[0].lstrip("-").isdigit():
         tid = int(context.args[0])
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        conn = _connect_db(); c = conn.cursor()
         c.execute("SELECT username FROM players WHERE user_id=?", (tid,))
         row = c.fetchone()
         if not row:
@@ -31139,7 +31151,7 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"They can no longer use any bot commands.", delay=30)
 
 def _build_unban_picker():
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _connect_db(); c = conn.cursor()
     c.execute("SELECT user_id, username, banned_at FROM banned_users ORDER BY banned_at DESC")
     rows = c.fetchall(); conn.close()
     return rows
@@ -31173,7 +31185,7 @@ async def unban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if data.startswith("unbanpick_sel_"):
         await query.answer()
         tid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        conn = _connect_db(); c = conn.cursor()
         c.execute("SELECT username, banned_at FROM banned_users WHERE user_id=?", (tid,))
         row = c.fetchone(); conn.close()
         if not row:
@@ -31216,7 +31228,7 @@ async def unban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if data.startswith("unbanpick_confirm_"):
         await query.answer()
         tid = int(data.split("_")[2])
-        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        conn = _connect_db(); c = conn.cursor()
         c.execute("SELECT username FROM banned_users WHERE user_id=?", (tid,))
         row = c.fetchone()
         if not row:
@@ -31259,7 +31271,7 @@ async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     arg = context.args[0].lstrip("@")
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _connect_db(); c = conn.cursor()
     if arg.isdigit():
         c.execute("SELECT user_id, username FROM banned_users WHERE user_id=?", (int(arg),))
     else:
@@ -31285,7 +31297,7 @@ async def banlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != ADMIN_ID:
         await send_group(update, "❌ Admin only.", delay=9); return
-    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    conn = _connect_db(); c = conn.cursor()
     c.execute("SELECT user_id, username, banned_at FROM banned_users ORDER BY banned_at DESC")
     rows = c.fetchall(); conn.close()
     if not rows:
@@ -31326,7 +31338,7 @@ async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return allocated, pool, max_pts
 
     if not context.args:
-        conn_s = sqlite3.connect(DB_PATH); conn_s.row_factory = sqlite3.Row; c_s = conn_s.cursor()
+        conn_s = _connect_db(); conn_s.row_factory = sqlite3.Row; c_s = conn_s.cursor()
         c_s.execute("SELECT user_id, username, level, prestige_count, stat_points, "
                     "stats, class_id, class_path FROM players")
         rows = [dict(r) for r in c_s.fetchall()]; conn_s.close()
@@ -31352,7 +31364,7 @@ async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_id = int(query_str)
     except ValueError:
         search = query_str.lower()
-        conn_n = sqlite3.connect(DB_PATH); conn_n.row_factory = sqlite3.Row; c_n = conn_n.cursor()
+        conn_n = _connect_db(); conn_n.row_factory = sqlite3.Row; c_n = conn_n.cursor()
         c_n.execute("SELECT user_id, username FROM players WHERE LOWER(username) LIKE ?",
                     (f"%{search}%",))
         matches = [dict(r) for r in c_n.fetchall()]; conn_n.close()
@@ -31448,7 +31460,7 @@ async def fixgear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return bad
 
     if not context.args:
-        conn_fg = sqlite3.connect(DB_PATH); conn_fg.row_factory = sqlite3.Row; c_fg = conn_fg.cursor()
+        conn_fg = _connect_db(); conn_fg.row_factory = sqlite3.Row; c_fg = conn_fg.cursor()
         c_fg.execute("SELECT user_id, username, class_id, class_path, equipped_weapon, equipped_armor, "
                      "equipped_shield, equipped_hat, equipped_gloves, equipped_boots, equipped_mask FROM players")
         rows = [dict(r) for r in c_fg.fetchall()]; conn_fg.close()
@@ -31468,7 +31480,7 @@ async def fixgear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         target_id = int(query_str)
     except ValueError:
-        conn_fg2 = sqlite3.connect(DB_PATH); conn_fg2.row_factory = sqlite3.Row; c_fg2 = conn_fg2.cursor()
+        conn_fg2 = _connect_db(); conn_fg2.row_factory = sqlite3.Row; c_fg2 = conn_fg2.cursor()
         c_fg2.execute("SELECT user_id, username FROM players WHERE LOWER(username) LIKE ?",
                       (f"%{query_str.lower()}%",))
         matches = [dict(r) for r in c_fg2.fetchall()]; conn_fg2.close()
@@ -31926,7 +31938,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Keep tg_username fresh on every message so /attack @handle always works
     if getattr(user, "username", None):
         try:
-            _tgu_c = sqlite3.connect(DB_PATH)
+            _tgu_c = _connect_db()
             _tgu_c.execute("UPDATE players SET tg_username=? WHERE user_id=?", (user.username, user.id))
             _tgu_c.commit(); _tgu_c.close()
         except Exception:
@@ -31938,7 +31950,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _ru = update.message.reply_to_message.from_user
         if getattr(_ru, "username", None):
             try:
-                _tgr_c = sqlite3.connect(DB_PATH)
+                _tgr_c = _connect_db()
                 _tgr_c.execute("UPDATE players SET tg_username=? WHERE user_id=?", (_ru.username, _ru.id))
                 _tgr_c.commit(); _tgr_c.close()
             except Exception:
@@ -31979,7 +31991,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_spot = _bounty_spot_cache.get(cache_key, 0)
     if (datetime.now().timestamp() - last_spot) > 600:
         try:
-            bconn = sqlite3.connect(DB_PATH); bconn.row_factory = sqlite3.Row
+            bconn = _connect_db(); bconn.row_factory = sqlite3.Row
             rows = bconn.execute(
                 "SELECT b.placer_id FROM bounties b "
                 "JOIN players rp ON rp.user_id = b.placer_id AND rp.class_id = 'bounty_hunter' "
@@ -35388,7 +35400,7 @@ def main():
             raise ApplicationHandlerStop  # drop the burst — no exploit loop
         _is_grp = update.effective_chat and update.effective_chat.type in ("group", "supergroup")
         try:
-            _lc = sqlite3.connect(DB_PATH); _lc.row_factory = sqlite3.Row
+            _lc = _connect_db(); _lc.row_factory = sqlite3.Row
             _row = _lc.execute(
                 "SELECT last_seen FROM shadow_profiles WHERE user_id=?", (u.id,)).fetchone()
             if _row and _row["last_seen"]:
@@ -35405,7 +35417,7 @@ def main():
         # Keep tg_username fresh so /attack @handle works reliably
         if getattr(u, "username", None):
             try:
-                _pu = sqlite3.connect(DB_PATH)
+                _pu = _connect_db()
                 _pu.execute("UPDATE players SET tg_username=? WHERE user_id=?", (u.username, u.id))
                 _pu.commit(); _pu.close()
             except Exception: pass
@@ -35414,7 +35426,7 @@ def main():
             _rtu = update.message.reply_to_message.from_user
             if getattr(_rtu, "username", None):
                 try:
-                    _ptr = sqlite3.connect(DB_PATH)
+                    _ptr = _connect_db()
                     _ptr.execute("UPDATE players SET tg_username=? WHERE user_id=?", (_rtu.username, _rtu.id))
                     _ptr.commit(); _ptr.close()
                 except Exception: pass
