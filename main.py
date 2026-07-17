@@ -68,6 +68,7 @@ CHANGELOG = [
         "Fixed 'database is locked' errors: 30s lock wait on all connections, no more network waits inside open transactions",
         "Database moved to autocommit: a write lock can never outlive its statement — locked errors structurally impossible",
         "Fixed OverflowError for high-level players: EXP curve flattens at 10^16/level, counters clamp to SQLite range, damaged rows auto-repaired",
+        "Level-ups can no longer be erased by concurrent saves: progression guard now compares (level, total_exp) and never moves backwards",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
         "Fresh-card turn system for dungeon AND PvP (no more inline-edit freezes)",
@@ -11377,6 +11378,17 @@ def save_shadow(s):
     for _bigf in ("exp", "total_exp"):
         if safe_int(s.get(_bigf)) > _INT_SAFE_MAX:
             s[_bigf] = _INT_SAFE_MAX
+    # Stale-snapshot guard (same idea as save_player): never let an old copy
+    # of the shadow row drag level/total_exp backwards under concurrency.
+    _sh_row = c.execute("SELECT level, exp, total_exp FROM shadow_profiles WHERE user_id=?",
+                        (s.get("user_id"),)).fetchone()
+    if _sh_row:
+        _db_lvl, _db_tot = safe_int(_sh_row["level"], 1), safe_int(_sh_row["total_exp"])
+        _my_lvl, _my_tot = safe_int(s.get("level"), 1), safe_int(s.get("total_exp"))
+        if (_db_lvl, _db_tot) > (_my_lvl, _my_tot):
+            s["level"]     = _db_lvl
+            s["total_exp"] = _db_tot
+            s["exp"]       = safe_int(_sh_row["exp"])
     c.execute("""INSERT OR REPLACE INTO shadow_profiles
         (user_id,username,level,exp,total_exp,message_count,
          passive_cooldowns,ascended,last_seen,last_pool,pending_items,pet_notify_ts,home_group)
@@ -11650,8 +11662,12 @@ def save_player(p):
     # Handlers run concurrently and each holds its own copy of the player row.
     # A long-running handler (e.g. a chat message) saving an OLD snapshot after
     # a newer award (dungeon extract, PvP kill) used to ERASE the level-up and
-    # its stat points. total_exp only ever grows, so if the DB row is ahead of
-    # this snapshot, adopt the DB's progression instead of overwriting it.
+    # its stat points. Progression only ever moves forward (nothing in the game
+    # lowers a level), so compare (level, total_exp) lexicographically: if the
+    # DB row is FURTHER along than this snapshot, adopt the DB's progression
+    # wholesale instead of dragging the player backwards. (The old guard keyed
+    # on total_exp alone and missed the case where the stale snapshot had MORE
+    # exp but hadn't seen the level-up — it erased the level anyway.)
     _cur_row = c.execute(
         "SELECT tg_username, total_exp, exp, level, stat_points FROM players WHERE user_id=?",
         (p.get("user_id"),)).fetchone()
@@ -11659,14 +11675,15 @@ def save_player(p):
         # Never wipe tg_username with NULL — preserve existing DB value
         if p.get("tg_username") is None and _cur_row["tg_username"]:
             p["tg_username"] = _cur_row["tg_username"]
-        if safe_int(_cur_row["total_exp"]) > safe_int(p.get("total_exp")):
-            p["total_exp"] = safe_int(_cur_row["total_exp"])
-            p["exp"]       = safe_int(_cur_row["exp"])
-            if safe_int(_cur_row["level"]) > safe_int(p.get("level"), 1):
-                p["level"]       = safe_int(_cur_row["level"])
-                p["stat_points"] = safe_int(_cur_row["stat_points"])
-                p["max_hp"]      = calc_max_hp(p)
-                p["hp"]          = min(safe_int(p.get("hp")), p["max_hp"])
+        _db_lvl, _db_tot = safe_int(_cur_row["level"], 1), safe_int(_cur_row["total_exp"])
+        _my_lvl, _my_tot = safe_int(p.get("level"), 1), safe_int(p.get("total_exp"))
+        if (_db_lvl, _db_tot) > (_my_lvl, _my_tot):
+            p["level"]       = _db_lvl
+            p["total_exp"]   = _db_tot
+            p["exp"]         = safe_int(_cur_row["exp"])
+            p["stat_points"] = safe_int(_cur_row["stat_points"])
+            p["max_hp"]      = calc_max_hp(p)
+            p["hp"]          = min(safe_int(p.get("hp")), p["max_hp"])
     fields = [
         "user_id","username","hp","max_hp","exp","level","total_exp",
         "gold","wins","losses","quests_done","heals_given","dodges",
