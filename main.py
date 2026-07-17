@@ -30,9 +30,17 @@ ADMIN_ID = 15941534
 _db_local = threading.local()
 
 def _db() -> sqlite3.Connection:
+    # isolation_level=None = AUTOCOMMIT: every statement commits instantly, so
+    # the write lock is held for microseconds — never across an await, never
+    # until some later .commit(). Python's default mode opens an implicit
+    # transaction on the first write, and any async handler that yielded
+    # between a write and its commit kept the ENTIRE database locked while it
+    # waited on Telegram — the source of the constant 'database is locked'
+    # errors. All existing .commit() calls remain as harmless no-ops.
     conn = getattr(_db_local, "conn", None)
     if conn is None:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30,
+                               isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
@@ -40,10 +48,9 @@ def _db() -> sqlite3.Connection:
     return conn
 
 def _connect_db() -> sqlite3.Connection:
-    """Fresh short-lived connection (caller closes it). Generous busy timeout:
-    sqlite's 5s default turned routine write contention into user-visible
-    'database is locked' errors once updates started processing concurrently."""
-    return sqlite3.connect(DB_PATH, timeout=30)
+    """Fresh short-lived connection (caller closes it). Autocommit + generous
+    busy timeout — see _db() for why autocommit is load-bearing here."""
+    return sqlite3.connect(DB_PATH, timeout=30, isolation_level=None)
 
 # ── CHANGELOG ─────────────────────────────────────────────────────────────────
 CURRENT_VERSION = "v1.6"
@@ -59,6 +66,7 @@ CHANGELOG = [
         "Rate-limited commands now say so instead of vanishing; handler errors DM the admin",
         "Fixed crash that killed chat EXP on messages containing trigger words (hi/lol/nice/...)",
         "Fixed 'database is locked' errors: 30s lock wait on all connections, no more network waits inside open transactions",
+        "Database moved to autocommit: a write lock can never outlive its statement — locked errors structurally impossible",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
         "Fresh-card turn system for dungeon AND PvP (no more inline-edit freezes)",
