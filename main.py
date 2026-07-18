@@ -70,6 +70,7 @@ CHANGELOG = [
         "Fixed OverflowError for high-level players: EXP curve flattens at 10^16/level, counters clamp to SQLite range, damaged rows auto-repaired",
         "Level-ups can no longer be erased by concurrent saves: progression guard now compares (level, total_exp) and never moves backwards",
         "Ancient Serpent is mortal again: Immortal Coils 1h cooldown now persists, evaluates after companion echoes; class signature passives (Execute, Devotion, ...) now actually fire",
+        "EXP is now banked atomically in the database the moment it is granted — no race between handlers can ever discard an award again",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
         "Fresh-card turn system for dungeon AND PvP (no more inline-edit freezes)",
@@ -11981,8 +11982,37 @@ def add_exp(p, amount, weather=None):
         amount = round(amount * (1 + _emp_exp_pct))
     msgs = []; leveled_up = False
     amount = min(max(0, safe_int(amount)), _EXP_REQ_CEIL)  # one grant ≤ one max level
-    p["exp"]      = min(safe_int(p.get("exp")) + amount, _INT_SAFE_MAX)
-    p["total_exp"] = min(safe_int(p.get("total_exp")) + amount, _INT_SAFE_MAX)
+    # ── ATOMIC EXP BANKING ────────────────────────────────────────────────────
+    # Award the EXP additively IN THE DATABASE, not on this handler's possibly
+    # stale in-memory snapshot. Handlers race constantly (chat trigger + idle
+    # reward + PvP all saving the same player); computing exp on a snapshot and
+    # writing it back wholesale meant whichever save lost the race THREW AWAY
+    # its award — players saw "+X EXP" that never landed. An additive UPDATE
+    # can never lose a grant regardless of save ordering, and this function is
+    # synchronous (no awaits), so the read-back + level-up below is atomic
+    # within the single-threaded event loop.
+    _row_exp = None
+    if p.get("user_id") is not None:
+        _conn_xp = _db()
+        _cur_xp = _conn_xp.execute(
+            "UPDATE players SET exp = MIN(exp + ?, ?), total_exp = MIN(total_exp + ?, ?) WHERE user_id=?",
+            (amount, _INT_SAFE_MAX, amount, _INT_SAFE_MAX, p["user_id"]))
+        if _cur_xp.rowcount:
+            _row_exp = _conn_xp.execute(
+                "SELECT exp, total_exp, level, stat_points FROM players WHERE user_id=?",
+                (p["user_id"],)).fetchone()
+    if _row_exp is not None:
+        p["exp"]       = safe_int(_row_exp["exp"])
+        p["total_exp"] = safe_int(_row_exp["total_exp"])
+        if safe_int(_row_exp["level"]) > safe_int(p.get("level"), 1):
+            # another handler already leveled this player — adopt before looping
+            p["level"]       = safe_int(_row_exp["level"])
+            p["stat_points"] = safe_int(_row_exp["stat_points"])
+            p["max_hp"]      = calc_max_hp(p)
+    else:
+        # player row not in DB yet (mid-creation) — in-memory fallback
+        p["exp"]      = min(safe_int(p.get("exp")) + amount, _INT_SAFE_MAX)
+        p["total_exp"] = min(safe_int(p.get("total_exp")) + amount, _INT_SAFE_MAX)
     while p["level"] < 250 and p["exp"] >= exp_for_level(p["level"]):
         p["exp"] -= exp_for_level(p["level"])
         p["level"] += 1; leveled_up = True
@@ -12030,6 +12060,15 @@ def add_exp(p, amount, weather=None):
             award_title(p, "Absolute Legend")
         for t in check_titles(p):
             msgs.append(f"🏅 New title: *{t}*!")
+    # Persist the level-up IMMEDIATELY (atomic, same synchronous block) so a
+    # racing stale save can never observe the pre-level-up row for long; the
+    # level<? clause is insurance against ever writing a lower level.
+    if leveled_up and _row_exp is not None:
+        _db().execute(
+            """UPDATE players SET level=?, exp=?, stat_points=?, max_hp=?, hp=?
+               WHERE user_id=? AND level<?""",
+            (p["level"], p["exp"], p["stat_points"], p["max_hp"], p["hp"],
+             p["user_id"], p["level"]))
     # Award pet EXP (15% of player EXP)
     if amount > 0 and p.get("user_id"):
         pet_msg = give_pet_exp(p["user_id"], amount)
@@ -12080,13 +12119,51 @@ def add_shadow_exp(s, amount):
     if s["level"] >= 250: return [], False
     msgs = []; leveled_up = False
     amount = min(max(0, safe_int(amount)), _EXP_REQ_CEIL)  # one grant ≤ one max level
-    s["exp"]      = min(safe_int(s.get("exp")) + amount, _INT_SAFE_MAX)
-    s["total_exp"] = min(safe_int(s.get("total_exp")) + amount, _INT_SAFE_MAX)
+    # Atomic EXP banking — same rationale as add_exp: additive DB update so a
+    # racing stale save can never discard this grant.
+    _row_sx = None
+    if s.get("user_id") is not None:
+        _conn_sx = _db()
+        _cur_sx = _conn_sx.execute(
+            "UPDATE shadow_profiles SET exp = MIN(exp + ?, ?), total_exp = MIN(total_exp + ?, ?) WHERE user_id=?",
+            (amount, _INT_SAFE_MAX, amount, _INT_SAFE_MAX, s["user_id"]))
+        if _cur_sx.rowcount:
+            _row_sx = _conn_sx.execute(
+                "SELECT exp, total_exp, level FROM shadow_profiles WHERE user_id=?",
+                (s["user_id"],)).fetchone()
+    if _row_sx is not None:
+        s["exp"]       = safe_int(_row_sx["exp"])
+        s["total_exp"] = safe_int(_row_sx["total_exp"])
+        if safe_int(_row_sx["level"]) > safe_int(s.get("level"), 1):
+            s["level"] = safe_int(_row_sx["level"])
+    else:
+        s["exp"]      = min(safe_int(s.get("exp")) + amount, _INT_SAFE_MAX)
+        s["total_exp"] = min(safe_int(s.get("total_exp")) + amount, _INT_SAFE_MAX)
     while s["level"] < 250 and s["exp"] >= exp_for_level(s["level"]):
         s["exp"] -= exp_for_level(s["level"])
         s["level"] += 1; leveled_up = True
         msgs.append(f"📈 *{s['username']}* reached *Level {s['level']}*!")
+    if leveled_up and _row_sx is not None:
+        _db().execute(
+            "UPDATE shadow_profiles SET level=?, exp=? WHERE user_id=? AND level<?",
+            (s["level"], s["exp"], s["user_id"], s["level"]))
     return msgs, leveled_up
+
+def _exp_penalty(p, loss):
+    """Subtract EXP atomically in the DB (defeat penalties). Mirrors add_exp's
+    atomic banking so a stale snapshot save can't resurrect lost EXP or wipe
+    concurrent gains."""
+    loss = max(0, safe_int(loss))
+    uid = p.get("user_id")
+    if uid is not None:
+        conn = _db()
+        cur = conn.execute("UPDATE players SET exp = MAX(0, exp - ?) WHERE user_id=?", (loss, uid))
+        if cur.rowcount:
+            row = conn.execute("SELECT exp FROM players WHERE user_id=?", (uid,)).fetchone()
+            if row is not None:
+                p["exp"] = safe_int(row["exp"])
+                return
+    p["exp"] = max(0, safe_int(p.get("exp")) - loss)
 
 def _auto_advance_class(p, threshold):
     """Automatically advance class at tier thresholds 30, 60, 100."""
@@ -12870,7 +12947,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             d["revenge_expires"] = (datetime.now() + timedelta(hours=24)).isoformat()
             _fire(check_and_claim_bounty(bot, a, d, chat_id))
             exp_loss = round(d.get("exp", 0) * 0.10)
-            d["exp"] = max(0, d.get("exp", 0) - exp_loss)
+            _exp_penalty(d, exp_loss)
             d["losses"] = d.get("losses", 0) + 1
             a["wins"] = a.get("wins", 0) + 1
             a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
@@ -13489,7 +13566,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             if safe_int(a.get(_cf)) > 0:
                 a[_cf] = 0
         exp_loss = round(d.get("exp", 0) * 0.10)
-        d["exp"] = max(0, d.get("exp", 0) - exp_loss)
+        _exp_penalty(d, exp_loss)
         d["losses"] = d.get("losses", 0) + 1
         a["wins"] = a.get("wins", 0) + 1
         a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
