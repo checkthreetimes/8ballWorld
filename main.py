@@ -73,6 +73,7 @@ CHANGELOG = [
         "EXP is now banked atomically in the database the moment it is granted — no race between handlers can ever discard an award again",
         "Gold changes merge additively on save — racing purchases/payouts can no longer erase each other",
         "All 299 card-edit sites tolerate Telegram's 'message is not modified' (pet feed at full hunger etc. no longer errors)",
+        "Tapping a button on an expired (auto-deleted) card now shows a friendly toast instead of erroring",
         "Full audit: all 138 commands smoke-tested clean, all 230 button types verified wired to handlers",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
@@ -710,7 +711,16 @@ async def _q_edit(query, *args, **kwargs):
     try:
         return await query.edit_message_text(*args, **kwargs)
     except BadRequest as e:
-        if "not modified" in str(e).lower():
+        _el = str(e).lower()
+        if "not modified" in _el:
+            return None
+        if "to edit not found" in _el or "be edited" in _el:
+            # The card was auto-deleted (or cleaned up) but the button lived on
+            # in the client — tell the tapper instead of crashing the handler.
+            try:
+                await query.answer("⌛ That card has expired — run the command again.")
+            except Exception:
+                pass
             return None
         raise
 
