@@ -71,6 +71,9 @@ CHANGELOG = [
         "Level-ups can no longer be erased by concurrent saves: progression guard now compares (level, total_exp) and never moves backwards",
         "Ancient Serpent is mortal again: Immortal Coils 1h cooldown now persists, evaluates after companion echoes; class signature passives (Execute, Devotion, ...) now actually fire",
         "EXP is now banked atomically in the database the moment it is granted — no race between handlers can ever discard an award again",
+        "Gold changes merge additively on save — racing purchases/payouts can no longer erase each other",
+        "All 299 card-edit sites tolerate Telegram's 'message is not modified' (pet feed at full hunger etc. no longer errors)",
+        "Full audit: all 138 commands smoke-tested clean, all 230 button types verified wired to handlers",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
         "Fresh-card turn system for dungeon AND PvP (no more inline-edit freezes)",
@@ -700,6 +703,17 @@ def _cb_unlock(uid: int, token=None):
         _processing_users.pop(uid, None)
 
 # ── SEND HELPERS ──────────────────────────────────────────────────────────────
+async def _q_edit(query, *args, **kwargs):
+    """query.edit_message_text that tolerates Telegram's 'Message is not
+    modified' refusal — re-rendering an identical card (e.g. feeding an
+    already-full pet) is a no-op, not an error worth crashing the handler."""
+    try:
+        return await query.edit_message_text(*args, **kwargs)
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
+            return None
+        raise
+
 async def _auto_delete(bot, chat_id, msg_id, delay):
     await asyncio.sleep(delay)
     try:
@@ -4220,7 +4234,7 @@ async def empire_tab_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         await query.answer(); return
     try:
-        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception: pass
     await query.answer()
 
@@ -4242,7 +4256,7 @@ async def empire_collect_callback(update: Update, context: ContextTypes.DEFAULT_
     text, markup = _build_empire_overview(p, uid)
     text = "📦 *Collected:*\n" + "\n".join(notes) + "\n\n" + text
     try:
-        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception: pass
 
 
@@ -4297,7 +4311,7 @@ async def empire_build_callback(update: Update, context: ContextTypes.DEFAULT_TY
     text, markup = _build_empire_build(p, uid)
     text = f"✅ *{action}: {b['emoji']} {b['name']}!*\n_{flavor}_\n\n" + text
     try:
-        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception: pass
 
 
@@ -8083,7 +8097,7 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
             f"Die and you lose everything. Extract to keep rewards.\n\n"
             f"❤️ {p_hp}/{p_max_hp} HP  💙 {p_max_mp}/{p_max_mp} MP"
         )
-        await query.edit_message_text(intro, parse_mode="Markdown",
+        await _q_edit(query, intro, parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("⚔️ Enter the Dungeon", callback_data=f"dng_enter_{uid}"),
             ]]))
@@ -11389,7 +11403,16 @@ def _get(table, user_id):
     return dict(row) if row else None
 
 def get_shadow(uid):   return _get("shadow_profiles", uid)
-def get_player(uid):   return _get("players", uid)
+
+def get_player(uid):
+    p = _get("players", uid)
+    if p is not None:
+        # Baseline for save_player's gold delta-merge: racing handlers each
+        # hold a snapshot, and writing gold back wholesale let the last save
+        # erase every other handler's purchases/payouts. Recording what this
+        # snapshot STARTED with lets the save write db_gold + own_delta.
+        p["_gold_baseline"] = safe_int(p.get("gold"))
+    return p
 
 def save_shadow(s):
     conn = _db(); c = conn.cursor()
@@ -11687,7 +11710,7 @@ def save_player(p):
     # on total_exp alone and missed the case where the stale snapshot had MORE
     # exp but hadn't seen the level-up — it erased the level anyway.)
     _cur_row = c.execute(
-        "SELECT tg_username, total_exp, exp, level, stat_points FROM players WHERE user_id=?",
+        "SELECT tg_username, total_exp, exp, level, stat_points, gold FROM players WHERE user_id=?",
         (p.get("user_id"),)).fetchone()
     if _cur_row:
         # Never wipe tg_username with NULL — preserve existing DB value
@@ -11702,6 +11725,13 @@ def save_player(p):
             p["stat_points"] = safe_int(_cur_row["stat_points"])
             p["max_hp"]      = calc_max_hp(p)
             p["hp"]          = min(safe_int(p.get("hp")), p["max_hp"])
+        # ── GOLD DELTA-MERGE ──────────────────────────────────────────────────
+        # Write db_gold + (this snapshot's own gold change), not the snapshot's
+        # absolute gold — so two racing handlers' purchases/payouts BOTH land.
+        if "_gold_baseline" in p:
+            _own_delta = safe_int(p.get("gold")) - safe_int(p.get("_gold_baseline"))
+            p["gold"] = max(0, safe_int(_cur_row["gold"]) + _own_delta)
+            p["_gold_baseline"] = p["gold"]  # rebase for repeat saves of this dict
     fields = [
         "user_id","username","hp","max_hp","exp","level","total_exp",
         "gold","wins","losses","quests_done","heals_given","dodges",
@@ -12714,7 +12744,7 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(InlineKeyboardButton(f"➡️ Page {page+1}", callback_data=f"rank_p_{page+1}"))
     markup = InlineKeyboardMarkup([keyboard]) if keyboard else None
 
-    await query.edit_message_text(
+    await _q_edit(query, 
         text="\n".join(lines)[:4096],
         parse_mode="Markdown",
         reply_markup=markup)
@@ -14029,7 +14059,7 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
     await query.answer()
     markup = _build_skill_picker_keyboard(pvp_skills, uid, 0, target_uid)
     try:
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🔮 *Choose a skill to use on {tp.get('username','?')}:*",
             parse_mode="Markdown", reply_markup=markup)
     except Exception:
@@ -15420,7 +15450,7 @@ async def class_pick_callback(update, context):
                   f"{skill_lines}\n\n"
                   f"At *Level 10*, use /prestige to choose your path (A or B).")
         try:
-            await query.edit_message_text(result, parse_mode="Markdown")
+            await _q_edit(query, result, parse_mode="Markdown")
         except Exception:
             pass
         try:
@@ -15575,7 +15605,7 @@ async def resetclass_callback(update, context):
             await query.answer("This isn't your reset button!", show_alert=True); return
         if action == "cancel":
             try:
-                await query.edit_message_text("❌ Class reset cancelled.", parse_mode="Markdown")
+                await _q_edit(query, "❌ Class reset cancelled.", parse_mode="Markdown")
             except Exception:
                 pass
             return
@@ -15605,7 +15635,7 @@ async def resetclass_callback(update, context):
                   f"Class bonuses from *{cls_name}* have been reversed.{gear_note}\n"
                   f"Use /class to choose a new class.")
         try:
-            await query.edit_message_text(result, parse_mode="Markdown")
+            await _q_edit(query, result, parse_mode="Markdown")
         except Exception:
             pass
     finally:
@@ -16129,7 +16159,7 @@ async def explore_zone_callback(update: Update, context: ContextTypes.DEFAULT_TY
     sr = int(_explore_success_rate(p, zone) * 100)
     await query.answer(f"Expedition started! ~{sr}% success. Returns in 1 hour.")
     try:
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🗺️ *Expedition Started!*\n\n"
             f"📍 {zone['emoji']} *{zone['name']}* ({zone['tier']})\n"
             f"🎯 Success chance: *{sr}%*\n"
@@ -16685,7 +16715,7 @@ async def unequip_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
     p["inventory"] = json.dumps(inv)
     save_player(p)
     slot_label = slot_key.replace("equipped_", "").capitalize()
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"✅ *{name}* unequipped from {slot_label} slot and moved to inventory.",
         parse_mode="Markdown")
 
@@ -16777,14 +16807,14 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 callback_data=f"useitem_{uid}_{_itm}")])
         btns.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"{msg}\n\n🧪 *Use another item:*",
                 parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(btns))
         except Exception:
             pass
     else:
         try:
-            await query.edit_message_text(f"{msg}\n\n_Bag empty._", parse_mode="Markdown")
+            await _q_edit(query, f"{msg}\n\n_Bag empty._", parse_mode="Markdown")
         except Exception:
             pass
 
@@ -16806,7 +16836,7 @@ async def settitle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("You haven't earned that title!", show_alert=True); return
     await query.answer(f"Title set to: {title}!")
     p["active_title"] = title; save_player(p)
-    await query.edit_message_text(f"🏅 Title set to *{title}*!", parse_mode="Markdown")
+    await _q_edit(query, f"🏅 Title set to *{title}*!", parse_mode="Markdown")
 
 async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle equip button: eqp_{uid}_{item_name}"""
@@ -16834,7 +16864,7 @@ async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if old: inv.append(old)
         p["inventory"] = json.dumps(inv); save_player(p)
         new_atk = get_weapon_atk(p)
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"⚔️ *Equipped {item_name}!*\n"
             f"Weapon ATK is now *{new_atk}*" + (f"\n_Unequipped {old}_" if old else ""),
             parse_mode="Markdown")
@@ -16847,7 +16877,7 @@ async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if old: inv.append(old)
         p["inventory"] = json.dumps(inv); save_player(p)
         new_def = get_armor_def(p)
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🛡️ *Equipped {item_name}!*\n"
             f"Armor DEF is now *{new_def}*" + (f"\n_Unequipped {old}_" if old else ""),
             parse_mode="Markdown")
@@ -16860,7 +16890,7 @@ async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if old: inv.append(old)
         p["inventory"] = json.dumps(inv); save_player(p)
         new_def = get_armor_def(p)
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🔰 *Equipped {item_name}!*\n"
             f"Shield DEF is now *{new_def}*" + (f"\n_Unequipped {old}_" if old else ""),
             parse_mode="Markdown")
@@ -16872,7 +16902,7 @@ async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         p["inventory"] = json.dumps(inv); save_player(p)
         acc = ACCESSORIES[item_name]
         slot_num = ("","2","3","4")[("equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4").index(slot)]
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"💍 *Equipped {item_name}*{f' (slot {slot_num})' if slot_num else ''}!\n_{acc['desc']}_"
             + (f"\n_Unequipped {old}_" if old else ""),
             parse_mode="Markdown")
@@ -16890,7 +16920,7 @@ async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if old: inv.append(old)
         p["inventory"] = json.dumps(inv); save_player(p)
         new_def = get_armor_def(p)
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"{emoji} *Equipped {item_name}!*\n"
             f"Total DEF is now *{new_def}*" + (f"\n_Unequipped {old}_" if old else ""),
             parse_mode="Markdown")
@@ -17109,7 +17139,7 @@ async def sell_browse_callback(update, context):
     if not p: return
     text, markup = _build_sell_browse(p, page)
     try:
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
 
@@ -17149,7 +17179,7 @@ async def sell_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Refresh the browse menu so player can keep selling
     text, markup = _build_sell_browse(p, page)
     try:
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"✅ *Sold {item_name}* for *{price}g!*  Balance: *{p['gold']}g*\n\n" + text,
             parse_mode="Markdown", reply_markup=markup)
     except Exception:
@@ -17372,7 +17402,7 @@ async def sell_rarity_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     save_player(p)
     label = rarity_filter.capitalize() if rarity_filter != "all" else "Everything"
     await query.answer(f"Sold {len(sold_items)} items for {total_gold}g!")
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"💰 *Sold {len(sold_items)} {label} item{'s' if len(sold_items)!=1 else ''}*\n"
         f"+*{total_gold:,}g* | Balance: *{p['gold']:,}g*",
         parse_mode="Markdown")
@@ -17423,7 +17453,7 @@ async def sell_offclass_callback(update, context):
     p["gold"] = p.get("gold", 0) + total_gold
     save_player(p)
     await query.answer(f"Sold {len(sold_items)} off-class items for {total_gold}g!")
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"⚔️ *Sold {len(sold_items)} off-class item{'s' if len(sold_items)!=1 else ''}*\n"
         f"+*{total_gold:,}g* | Balance: *{p['gold']:,}g*",
         parse_mode="Markdown")
@@ -17504,7 +17534,7 @@ async def boss_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         "card_msg_id": query.message.message_id,
     }
     try:
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🎱 *{bd['name']} HAS APPEARED!*\n\n_{bd['desc']}_\n\n"
             f"❤️ HP: {bd['max_hp']} | 💀 {bd['dmg_min']}–{bd['dmg_max']} dmg\n\n"
             f"*{query.from_user.first_name}* engaged! Use the buttons to fight.",
@@ -17896,7 +17926,7 @@ async def _alliance_main_menu(update_or_none, p, query=None):
               [InlineKeyboardButton("❌ Close", callback_data="allianceX")]]
     markup = InlineKeyboardMarkup(kb)
     if query:
-        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         except: pass
     else:
         await send_group(update_or_none, text, reply_markup=markup, permanent=True)
@@ -17961,35 +17991,35 @@ async def alliance_invite_callback(update: Update, context: ContextTypes.DEFAULT
 
     inv = pending_alliance_inv.get(inviter_id)
     if not inv:
-        await query.edit_message_text("⚔️ This invite has already expired.", parse_mode="Markdown"); return
+        await _q_edit(query, "⚔️ This invite has already expired.", parse_mode="Markdown"); return
     if datetime.now() > datetime.fromisoformat(inv["expires"]):
         pending_alliance_inv.pop(inviter_id, None)
-        await query.edit_message_text("⚔️ This invite has expired.", parse_mode="Markdown"); return
+        await _q_edit(query, "⚔️ This invite has expired.", parse_mode="Markdown"); return
     if query.from_user.id != inv["target_id"]:
         await query.answer("This invite isn't for you!", show_alert=True); return
 
     pending_alliance_inv.pop(inviter_id, None)
 
     if action == "decline":
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"❌ *{query.from_user.first_name}* declined the order invitation.",
             parse_mode="Markdown"); return
 
     tp = get_player(inv["target_id"])
     if not tp:
-        await query.edit_message_text("❌ Player data not found.", parse_mode="Markdown"); return
+        await _q_edit(query, "❌ Player data not found.", parse_mode="Markdown"); return
     if tp.get("alliance_id"):
-        await query.edit_message_text("❌ You're already in an order!", parse_mode="Markdown"); return
+        await _q_edit(query, "❌ You're already in an order!", parse_mode="Markdown"); return
 
     a = get_alliance(inv["alliance_id"])
     if not a:
-        await query.edit_message_text("❌ That order no longer exists.", parse_mode="Markdown"); return
+        await _q_edit(query, "❌ That order no longer exists.", parse_mode="Markdown"); return
 
     members = sjl(a.get("members"), [])
     if len(members) >= 30:
-        await query.edit_message_text("❌ That order is now full!", parse_mode="Markdown"); return
+        await _q_edit(query, "❌ That order is now full!", parse_mode="Markdown"); return
     if inv["target_id"] in members:
-        await query.edit_message_text("❌ You're already a member!", parse_mode="Markdown"); return
+        await _q_edit(query, "❌ You're already a member!", parse_mode="Markdown"); return
 
     members.append(inv["target_id"])
     a["members"] = json.dumps(members)
@@ -17997,7 +18027,7 @@ async def alliance_invite_callback(update: Update, context: ContextTypes.DEFAULT
     tp["alliance_id"] = inv["alliance_id"]
     save_player(tp)
 
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"⚔️ *{query.from_user.first_name}* joined *{a['name']}*!\n\n"
         f"_Welcome to the order, adventurer._",
         parse_mode="Markdown")
@@ -18028,7 +18058,7 @@ async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"{role} @{mp['username']}  •  {get_fame_tier(mp.get('influence',0))}")
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
                InlineKeyboardButton("❌ Close", callback_data="allianceX")]]
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb)); return
+        await _q_edit(query, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb)); return
 
     if data == "allianceP":
         if not a: await query.answer("Not in an order.", show_alert=True); return
@@ -18045,12 +18075,12 @@ async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      "Oracle's Eye — /secrets unlocks one extra tier")
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
                InlineKeyboardButton("❌ Close", callback_data="allianceX")]]
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb)); return
+        await _q_edit(query, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb)); return
 
     if data == "allianceFnd":
         if a: await query.answer("Already in an order.", show_alert=True); return
         context.user_data["awaiting_alliance_name"] = query.message.message_id
-        await query.edit_message_text(
+        await _q_edit(query, 
             "📜 *Found a Secret Order*\n\nReply to this DM with the name for your order _(max 20 chars, unique)_.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="allianceX")]])); return
@@ -18058,7 +18088,7 @@ async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "allianceBrw":
         alliances = get_all_alliances()
         if not alliances:
-            await query.edit_message_text("🔍 *Orders*\n\nNo orders founded yet. Be the first.",
+            await _q_edit(query, "🔍 *Orders*\n\nNo orders founded yet. Be the first.",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
                     InlineKeyboardButton("❌ Close", callback_data="allianceX")]])); return
@@ -18070,7 +18100,7 @@ async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 kb_rows.append([InlineKeyboardButton(f"Join {al['name']}", callback_data=f"allianceJn_{al['id']}")])
         kb_rows.append([InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
                         InlineKeyboardButton("❌ Close", callback_data="allianceX")])
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_rows)); return
+        await _q_edit(query, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_rows)); return
 
     if data.startswith("allianceJn_"):
         join_aid = data[len("allianceJn_"):]
@@ -18094,7 +18124,7 @@ async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "allianceDis":
         if not a or a.get("leader_id") != p["user_id"]: await query.answer("Leaders only.", show_alert=True); return
-        await query.edit_message_text(f"⚠️ *Disband {a['name']}?*\n\nThis removes all members and cannot be undone.",
+        await _q_edit(query, f"⚠️ *Disband {a['name']}?*\n\nThis removes all members and cannot be undone.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("💀 Yes, Disband", callback_data="allianceDis2"),
@@ -18124,7 +18154,7 @@ async def alliance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inv_kb.append([InlineKeyboardButton(f"+ @{pl['username']}", callback_data=f"allianceAdd_{pl['id']}")])
         inv_kb.append([InlineKeyboardButton("🔙 Back", callback_data="allianceBk"),
                        InlineKeyboardButton("❌ Close", callback_data="allianceX")])
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"📨 *Invite to {a['name']}* ({len(mbs_inv)}/30)\n\nSelect a player to add to the order:",
             parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inv_kb)); return
 
@@ -18286,7 +18316,7 @@ async def _show_secrets_page(update_or_query, p, page, is_callback=False):
         kb.append([InlineKeyboardButton("❌ Close", callback_data="secretsX")])
     markup = InlineKeyboardMarkup(kb)
     if is_callback:
-        try: await update_or_query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        try: await _q_edit(update_or_query, text, parse_mode="Markdown", reply_markup=markup)
         except: pass
     else:
         await send_group(update_or_query, text, reply_markup=markup, permanent=True)
@@ -18404,7 +18434,7 @@ async def _social_hub(update_or_none, p, query=None):
     text   = "\n".join(lines)
 
     if query:
-        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         except: pass
     else:
         await send_group(update_or_none, text, reply_markup=markup, permanent=True)
@@ -18461,7 +18491,7 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not party:
             await query.answer("You're not in a party.", show_alert=True); return
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 "📨 *Invite to Party*\n\n"
                 "To invite someone:\n"
                 "• *Reply* to their message with `/party`\n"
@@ -18479,7 +18509,7 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not party or party["leader_id"] != p["user_id"]:
             await query.answer("Only the party leader can rename.", show_alert=True); return
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 "✏️ *Rename Party*\n\nType in chat:\n`/partyname <new name>`",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[
@@ -18507,7 +18537,7 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 callback_data=f"social_party_kick_{mid}")])
         kb.append([InlineKeyboardButton("← Back", callback_data="social_party_view")])
         try:
-            await query.edit_message_text("\n".join(lines), parse_mode="Markdown",
+            await _q_edit(query, "\n".join(lines), parse_mode="Markdown",
                                           reply_markup=InlineKeyboardMarkup(kb))
         except Exception: pass
         return
@@ -18553,11 +18583,11 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             lines.append(f"{medals[i]} *{row['name']}*  Lv {safe_int(row['level'],1)} | {mcount} members")
             gj_kb.append([InlineKeyboardButton(f"Join {row['name']}", callback_data=f"guildjoin_{row['guild_id']}")])
         gj_kb.append([InlineKeyboardButton("🔙 Back", callback_data="social_hub")])
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown",
+        await _q_edit(query, "\n".join(lines), parse_mode="Markdown",
                                       reply_markup=InlineKeyboardMarkup(gj_kb)); return
 
     if data == "social_gcreate":
-        await query.edit_message_text(
+        await _q_edit(query, 
             "🏰 *Create a Guild*\n\nType in chat:\n`/guildcreate [name]`\n\n_Costs 100 gold._",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="social_hub")]])); return
@@ -18568,7 +18598,7 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data == "social_guildwar":
         if not p.get("guild_id") or str(p.get("guild_id")) in ("None", ""):
             await query.answer("You need a guild for guild wars.", show_alert=True); return
-        await query.edit_message_text(
+        await _q_edit(query, 
             "⚔️ Use `/guildwar` in chat to declare or check active wars.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="social_hub")]])); return
@@ -18634,35 +18664,35 @@ async def guild_invite_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     inv = pending_guild_inv.get(inviter_id)
     if not inv:
-        await query.edit_message_text("🏰 This invite has already expired.", parse_mode="Markdown"); return
+        await _q_edit(query, "🏰 This invite has already expired.", parse_mode="Markdown"); return
     if datetime.now() > datetime.fromisoformat(inv["expires"]):
         pending_guild_inv.pop(inviter_id, None)
-        await query.edit_message_text("🏰 This invite has expired.", parse_mode="Markdown"); return
+        await _q_edit(query, "🏰 This invite has expired.", parse_mode="Markdown"); return
     if query.from_user.id != inv["target_id"]:
         await query.answer("This invite isn't for you!", show_alert=True); return
 
     pending_guild_inv.pop(inviter_id, None)
 
     if action == "decline":
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"❌ *{query.from_user.first_name}* declined the guild invitation.",
             parse_mode="Markdown"); return
 
     tp = get_player(inv["target_id"])
     if not tp:
-        await query.edit_message_text("❌ Player data not found.", parse_mode="Markdown"); return
+        await _q_edit(query, "❌ Player data not found.", parse_mode="Markdown"); return
     if tp.get("guild_id") and str(tp.get("guild_id")) not in ("None", "", "0"):
-        await query.edit_message_text("❌ You're already in a guild!", parse_mode="Markdown"); return
+        await _q_edit(query, "❌ You're already in a guild!", parse_mode="Markdown"); return
 
     g = get_guild(inv["guild_id"])
     if not g:
-        await query.edit_message_text("❌ That guild no longer exists.", parse_mode="Markdown"); return
+        await _q_edit(query, "❌ That guild no longer exists.", parse_mode="Markdown"); return
 
     members = sjl(g.get("members"), [])
     if len(members) >= 50:
-        await query.edit_message_text("❌ That guild is now full!", parse_mode="Markdown"); return
+        await _q_edit(query, "❌ That guild is now full!", parse_mode="Markdown"); return
     if inv["target_id"] in members:
-        await query.edit_message_text("❌ You're already a member!", parse_mode="Markdown"); return
+        await _q_edit(query, "❌ You're already a member!", parse_mode="Markdown"); return
 
     members.append(inv["target_id"])
     g["members"] = json.dumps(members)
@@ -18670,7 +18700,7 @@ async def guild_invite_callback(update: Update, context: ContextTypes.DEFAULT_TY
     tp["guild_id"] = inv["guild_id"]
     save_player(tp)
 
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"🏰 *{query.from_user.first_name}* joined *{g['name']}*!\n\n"
         f"_Welcome to the guild, adventurer._",
         parse_mode="Markdown")
@@ -18726,7 +18756,7 @@ async def guildjoin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     asyncio.create_task(announce(context.bot, query.message.chat.id,
         f"🏰 *{user.first_name}* joined *{g['name']}*!"))
     await query.answer()
-    await query.edit_message_text(f"✅ You joined *{g['name']}*!", parse_mode="Markdown")
+    await _q_edit(query, f"✅ You joined *{g['name']}*!", parse_mode="Markdown")
 
 
 async def guildjoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -18828,7 +18858,7 @@ async def guildinfo_view_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.answer("Guild no longer exists.", show_alert=True); return
     text, markup = _build_guildinfo_overview(g, viewer_id=query.from_user.id)
     await query.answer()
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="Markdown")
+    await _q_edit(query, text, reply_markup=markup, parse_mode="Markdown")
 
 
 async def guildinfo_members_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -18864,7 +18894,7 @@ async def guildinfo_members_callback(update: Update, context: ContextTypes.DEFAU
         [InlineKeyboardButton("🔙 Back to Guild", callback_data=f"ginfo_{gid}")],
     ])
     await query.answer()
-    await query.edit_message_text("\n".join(lines), reply_markup=markup, parse_mode="Markdown")
+    await _q_edit(query, "\n".join(lines), reply_markup=markup, parse_mode="Markdown")
 
 
 async def guildinfo_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -18887,7 +18917,7 @@ async def guildinfo_list_callback(update: Update, context: ContextTypes.DEFAULT_
             f"🏰 {row['name']}", callback_data=f"ginfo_{row['guild_id']}")])
 
     await query.answer()
-    await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+    await _q_edit(query, "\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
 
 
 async def guildrename_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -18900,7 +18930,7 @@ async def guildrename_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     g = get_guild(gid)
     if not g or g["leader_id"] != user.id:
         await query.answer("Leaders only.", show_alert=True); return
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"✏️ *Rename {g['name']}*\n\nType in chat:\n`/guildrename [new name]`\n\n_(2–30 characters)_",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[
@@ -18987,7 +19017,7 @@ async def guilddonate_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     gmsgs = add_guild_exp(g, amount//10); save_guild(g); save_player(p)
     lv_note = (" ".join(gmsgs) + " ") if gmsgs else ""
     await query.answer(f"Donated {amount}g!")
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"💰 *{query.from_user.first_name}* donated *{amount}g* to *{g['name']}*!\n"
         f"Guild Bank: *{safe_int(g.get('bank'))}g* {lv_note}",
         parse_mode="Markdown")
@@ -19080,22 +19110,22 @@ async def guildkick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     p = get_player(uid)
     if not p:
-        await query.edit_message_text("Player not found."); return
+        await _q_edit(query, "Player not found."); return
     g = get_guild(p.get("guild_id")) if p.get("guild_id") else None
     if not g or g.get("leader_id") != uid:
-        await query.edit_message_text("Only the Guild leader can kick members."); return
+        await _q_edit(query, "Only the Guild leader can kick members."); return
 
     tp = get_player(target_uid)
     if not tp or str(tp.get("guild_id")) != str(g["guild_id"]):
-        await query.edit_message_text("That player is no longer in your guild."); return
+        await _q_edit(query, "That player is no longer in your guild."); return
     if target_uid == uid:
-        await query.edit_message_text("You can't kick yourself!"); return
+        await _q_edit(query, "You can't kick yourself!"); return
 
     members = sjl(g["members"], [])
     if target_uid in members: members.remove(target_uid)
     g["members"] = json.dumps(members); save_guild(g)
     tp["guild_id"] = None; tp["guild_stat_bonus"] = 0; save_player(tp)
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"🚫 *{tp['username']}* has been kicked from *{g['name']}*.",
         parse_mode="Markdown")
 
@@ -19163,7 +19193,7 @@ async def guilddisband_callback(update, context):
 
     if action == "cancel":
         try:
-            await query.edit_message_text("❌ Guild disband cancelled.", parse_mode="Markdown")
+            await _q_edit(query, "❌ Guild disband cancelled.", parse_mode="Markdown")
         except Exception:
             pass
         return
@@ -19184,7 +19214,7 @@ async def guilddisband_callback(update, context):
     conn.commit(); conn.close()
     p["guild_id"] = None; p["guild_stat_bonus"] = 0; save_player(p)
     try:
-        await query.edit_message_text(f"🏚️ *{guild_name}* has been disbanded.", parse_mode="Markdown")
+        await _q_edit(query, f"🏚️ *{guild_name}* has been disbanded.", parse_mode="Markdown")
     except Exception:
         pass
 
@@ -19416,7 +19446,7 @@ async def guildwar_declare_callback(update: Update, context: ContextTypes.DEFAUL
                     (g_gid, e_gid, query.from_user.first_name, datetime.now().isoformat(), expires))
         conn_w.commit(); conn_w.close()
         await query.answer()
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"⚔️ *WAR DECLARED!*\n\n"
             f"*{g['name']}* has declared war on *{enemy_g['name']}*!\n"
             f"Duration: 24 hours — most kills wins!\n"
@@ -19925,7 +19955,7 @@ async def skillpage_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         header = "🔮 Choose a skill to use:"
     markup = _build_skill_picker_keyboard(all_skills, uid, page, target_uid)
-    await query.edit_message_text(header, parse_mode="Markdown", reply_markup=markup)
+    await _q_edit(query, header, parse_mode="Markdown", reply_markup=markup)
 
 async def skill_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Guaranteed-unlock wrapper: the PvP branch of the skill handler acquires
@@ -19964,12 +19994,12 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
 
     p = get_player(uid)
     if not p:
-        await query.edit_message_text("Player not found!")
+        await _q_edit(query, "Player not found!")
         return
 
     all_skills = sjl(p.get("all_skills"), [])
     if skill_idx >= len(all_skills):
-        await query.edit_message_text("Invalid skill selection.")
+        await _q_edit(query, "Invalid skill selection.")
         return
 
     sk = all_skills[skill_idx]
@@ -19978,7 +20008,7 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
 
     async def send_result(text):
         try:
-            await query.edit_message_text(text[:4096], parse_mode="Markdown")
+            await _q_edit(query, text[:4096], parse_mode="Markdown")
         except Exception:
             await context.bot.send_message(chat_id, text[:4096], parse_mode="Markdown")
 
@@ -20046,7 +20076,7 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
         save_player(p)
         sr_markup = _build_sr_markup(uid) if raid_kind == "solo" and uid in active_soloraids else None
         try:
-            await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown", reply_markup=sr_markup)
+            await _q_edit(query, "\n".join(out)[:4096], parse_mode="Markdown", reply_markup=sr_markup)
         except Exception:
             await context.bot.send_message(chat_id, "\n".join(out)[:4096], parse_mode="Markdown")
         return
@@ -20152,7 +20182,7 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
                 add_exp(pp, _boss_exp, w_sk); save_player(pp)
                 out.append(f"✅ *{pp['username']}*  -  +{_boss_exp:,} EXP | +{data['gold']} Gold")
             try:
-                await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown")
+                await _q_edit(query, "\n".join(out)[:4096], parse_mode="Markdown")
             except Exception:
                 await context.bot.send_message(chat_id, "\n".join(out)[:4096], parse_mode="Markdown")
             return
@@ -20160,7 +20190,7 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
         save_player(p)
         summoner_id = boss_dict.get("summoner_id", uid)
         try:
-            await query.edit_message_text("\n".join(out)[:4096], parse_mode="Markdown", reply_markup=_build_boss_markup(summoner_id))
+            await _q_edit(query, "\n".join(out)[:4096], parse_mode="Markdown", reply_markup=_build_boss_markup(summoner_id))
         except Exception:
             await context.bot.send_message(chat_id, "\n".join(out)[:4096], parse_mode="Markdown")
         return
@@ -21940,7 +21970,7 @@ async def war_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "🔥 *8Ball World — War Board*\n\n" + _war_page_text(page)
     markup = _war_nav_markup(page)
     try:
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
 
@@ -22071,7 +22101,7 @@ async def forge_cat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not p: await query.answer("Player not found.", show_alert=True); return
     text, markup = _build_forge_view(p, uid, cat)
     try:
-        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
     await query.answer()
@@ -22120,7 +22150,7 @@ async def forge_craft_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     cat = rec.get("cat", "weapon")
     text, markup = _build_forge_view(p, uid, cat, craft_msg=f"✅ Crafted *{rec['name']}* → 🎉 *{result_item}*!")
     try:
-        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
 
@@ -22204,7 +22234,7 @@ async def perma_upgrade_callback(update: Update, context: ContextTypes.DEFAULT_T
     inv_ctr2 = Counter(sjl(p.get("inventory"), []))
     status = "✅ MAX" if current + 1 >= _PERMA_CAP else f"+{current + 1}/{_PERMA_CAP}"
     try:
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"⚔️ *Permanent Damage Upgrades*\n\n"
             f"Current bonus: *+{current + 1} ATK* per hit ({status})\n"
             f"Your gold: *{safe_int(p.get('gold', 0))}g* | Iron Shards: *{inv_ctr2.get('Iron Shard', 0)}*\n\n"
@@ -22326,11 +22356,11 @@ async def trade_cat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer()
     p = get_player(seller_uid)
     if not p:
-        await query.edit_message_text("Player not found."); return
+        await _q_edit(query, "Player not found."); return
     inv = sjl(p.get("inventory"), [])
     markup, text = _build_trade_menu(seller_uid, buyer_uid, inv, category, page)
     try:
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
 
@@ -22399,10 +22429,10 @@ async def trade_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     p = get_player(seller_uid)
     if not p:
-        await query.edit_message_text("Player not found."); return
+        await _q_edit(query, "Player not found."); return
     inv = sjl(p.get("inventory"), [])
     if item not in inv:
-        await query.edit_message_text(f"❌ You no longer have *{item}*.", parse_mode="Markdown"); return
+        await _q_edit(query, f"❌ You no longer have *{item}*.", parse_mode="Markdown"); return
 
     prices = [0, 100, 500, 1000, 2500, 5000]
     buttons = []
@@ -22418,7 +22448,7 @@ async def trade_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     markup = InlineKeyboardMarkup(buttons)
     wtag = _weapon_class_tag(item)
     tag_line = f"\n_{wtag}_" if wtag else ""
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"📦 *Trade: {item}*{tag_line}\n\nChoose a price to offer to the buyer:",
         parse_mode="Markdown", reply_markup=markup)
 
@@ -22437,10 +22467,10 @@ async def trade_price_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     p = get_player(seller_uid)
     if not p:
-        await query.edit_message_text("Player not found."); return
+        await _q_edit(query, "Player not found."); return
     inv = sjl(p.get("inventory"), [])
     if item not in inv:
-        await query.edit_message_text(f"❌ You no longer have *{item}*.", parse_mode="Markdown"); return
+        await _q_edit(query, f"❌ You no longer have *{item}*.", parse_mode="Markdown"); return
 
     # Look up buyer's username for the target check
     buyer_shadow = get_shadow(buyer_uid)
@@ -22458,7 +22488,7 @@ async def trade_price_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     price_str = "FREE" if price == 0 else f"{price:,}g"
     wtag = _weapon_class_tag(item)
     tag_str = f" ({wtag})" if wtag else ""
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"📦 *Trade Offer Posted!*\n\n"
         f"Item: *{item}*{tag_str}\nPrice: *{price_str}*\nFor: {buyer_name}\n\n"
         f"_{buyer_name} can type /accept to complete the trade. Expires in 30 min._",
@@ -22486,7 +22516,7 @@ async def trade_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     p = get_player(seller_uid)
     if not p:
-        await query.edit_message_text("Player not found."); return
+        await _q_edit(query, "Player not found."); return
     inv = sjl(p.get("inventory"), [])
     tradeable_pools = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES) | set(CONSUMABLES)
     trade_items = [(k, inv.count(k)) for k in dict.fromkeys(inv) if k in tradeable_pools]
@@ -22496,7 +22526,7 @@ async def trade_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         buttons.append([InlineKeyboardButton(label,
             callback_data=f"trdi_{seller_uid}_{buyer_uid}_{item}")])
     markup = InlineKeyboardMarkup(buttons)
-    await query.edit_message_text(
+    await _q_edit(query, 
         "📦 Select an item to offer:",
         parse_mode="Markdown", reply_markup=markup)
 
@@ -22701,19 +22731,19 @@ async def enhance_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
         set_enhancement(p, item_name, next_lv)
         bonus = get_enhance_bonus(p, item_name)
         save_player(p)
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"⚒️ *Enhancement Success!*\n\n*{item_name}* → *+{next_lv}* {'⭐' * next_lv}\n"
             f"+{bonus} {stat_label} total from enhancement\nUsed {cost} Iron Shard(s).",
             parse_mode="Markdown")
     else:
         if current >= 6:
             set_enhancement(p, item_name, current - 1); save_player(p)
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"💔 *Enhancement Failed!*\n\n*{item_name}* dropped from +{current} to +{current-1}!\n"
                 f"Used {cost} Iron Shard(s).", parse_mode="Markdown")
         else:
             save_player(p)
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"💔 *Enhancement Failed!*\n\n*{item_name}* stays at +{current}.\n"
                 f"Used {cost} Iron Shard(s).", parse_mode="Markdown")
 
@@ -22851,7 +22881,7 @@ async def enchant_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
     save_player(p)
     new_encs = get_enchant(p, slot_key)
     all_str = "\n".join(f"✨ {e['id'].capitalize()}  —  {e['desc']}" for e in new_encs)
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"✨ *Enchanted!*\n\n*{item_name}*  —  Enchants ({len(new_encs)}/3):\n{all_str}",
         parse_mode="Markdown")
 
@@ -23088,12 +23118,12 @@ async def bounty_amount_callback(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
     p = get_player(placer_uid); target = get_player(target_uid)
     if not p or not target:
-        await query.edit_message_text("Player not found."); return
+        await _q_edit(query, "Player not found."); return
 
     _, _, no_fee, _, max_contracts = _bounty_class_perks(p)
 
     if not no_fee and p.get("gold", 0) < amount:
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"❌ Not enough gold! Need *{amount}g*, have *{p.get('gold',0)}g*.",
             parse_mode="Markdown"); return
 
@@ -23106,7 +23136,7 @@ async def bounty_amount_callback(update: Update, context: ContextTypes.DEFAULT_T
         (target_uid, placer_uid, now_iso)).fetchone()
     if existing:
         bconn.close()
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"❌ You already have a *{existing['reward']}g* bounty on *{target['username']}*.",
             parse_mode="Markdown"); return
 
@@ -23116,7 +23146,7 @@ async def bounty_amount_callback(update: Update, context: ContextTypes.DEFAULT_T
         (placer_uid, now_iso)).fetchone()[0]
     if total_active >= max_contracts:
         bconn.close()
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"⚠️ You've hit your active contract limit ({max_contracts}).",
             parse_mode="Markdown"); return
 
@@ -23131,7 +23161,7 @@ async def bounty_amount_callback(update: Update, context: ContextTypes.DEFAULT_T
     else:
         cost_line = "_(No cost — class perk!)_"
 
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"🎯 *BOUNTY PLACED!*\n\n"
         f"Target: *{target['username']}*\n"
         f"Reward: *{amount:,}g*\n{cost_line}\n\n"
@@ -23434,7 +23464,7 @@ async def reinforce_item_callback(update: Update, context: ContextTypes.DEFAULT_
     )
     if entry["r"] == 20:
         msg += f"\n\n⭐ *Max reinforces!* Tap /reinforce again to Ascend!"
-    await query.edit_message_text(msg, parse_mode="Markdown")
+    await _q_edit(query, msg, parse_mode="Markdown")
 
 async def reinforce_asc_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle ascend button: rfasc_{uid}_{item_name}"""
@@ -23462,7 +23492,7 @@ async def reinforce_asc_callback(update: Update, context: ContextTypes.DEFAULT_T
     set_reinforce_data(p, rd)
     p["total_ascensions"] = safe_int(p.get("total_ascensions")) + 1
     check_titles(p); save_player(p)
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"🌟 *ASCENSION!*\n\n"
         f"*{item_name}* → {star_str(entry['s'])}\n"
         f"+5 permanent ATK/DEF bonus per star!\n"
@@ -23674,10 +23704,10 @@ async def marry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     proposal = pending_marriages.get(proposer_id)
     if not proposal:
-        await query.edit_message_text("💔 This proposal has already expired.", parse_mode="Markdown"); return
+        await _q_edit(query, "💔 This proposal has already expired.", parse_mode="Markdown"); return
     if datetime.now() > datetime.fromisoformat(proposal["expires"]):
         pending_marriages.pop(proposer_id, None)
-        await query.edit_message_text("💔 This proposal has expired.", parse_mode="Markdown"); return
+        await _q_edit(query, "💔 This proposal has expired.", parse_mode="Markdown"); return
     if query.from_user.id != proposal["target_id"]:
         await query.answer("This proposal isn't for you!", show_alert=True); return
 
@@ -23686,12 +23716,12 @@ async def marry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target   = get_player(proposal["target_id"])
 
     if action == "decline":
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"💔 *{query.from_user.first_name}* declined the proposal.",
             parse_mode="Markdown"); return
 
     if not proposer or not target:
-        await query.edit_message_text("❌ Player data not found.", parse_mode="Markdown"); return
+        await _q_edit(query, "❌ Player data not found.", parse_mode="Markdown"); return
 
     proposer_fee = proposal.get("proposer_fee", 1000)
     target_fee   = proposal.get("target_fee",   1000)
@@ -23700,11 +23730,11 @@ async def marry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_marriages   = _get_marriages(target)
 
     if any(m["id"] == target["user_id"] for m in proposer_marriages):
-        await query.edit_message_text("💔 You're already married to each other.", parse_mode="Markdown"); return
+        await _q_edit(query, "💔 You're already married to each other.", parse_mode="Markdown"); return
     if proposer.get("gold", 0) < proposer_fee:
-        await query.edit_message_text(f"💰 The proposer no longer has enough gold (need {proposer_fee:,}g)!", parse_mode="Markdown"); return
+        await _q_edit(query, f"💰 The proposer no longer has enough gold (need {proposer_fee:,}g)!", parse_mode="Markdown"); return
     if target.get("gold", 0) < target_fee:
-        await query.edit_message_text(f"💰 You don't have enough gold (need {target_fee:,}g)!", parse_mode="Markdown"); return
+        await _q_edit(query, f"💰 You don't have enough gold (need {target_fee:,}g)!", parse_mode="Markdown"); return
 
     now_str = datetime.now().isoformat()
     proposer["gold"] -= proposer_fee
@@ -23724,7 +23754,7 @@ async def marry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t_ord = ordinal(len(target_marriages))
     ord_note = f"_{proposer['username']}'s {p_ord} marriage · {target['username']}'s {t_ord} marriage_\n\n" if (len(proposer_marriages)>1 or len(target_marriages)>1) else ""
 
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"💍 *{proposer['username']}* and *{target['username']}* are now married!\n\n"
         f"{ord_note}"
         f"🏅 *Beloved* title awarded _(first-timers)_\n"
@@ -23772,7 +23802,7 @@ async def divorce_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("This isn't your divorce!", show_alert=True); return
 
     if action == "cancel":
-        await query.edit_message_text("_Divorce cancelled._", parse_mode="Markdown"); return
+        await _q_edit(query, "_Divorce cancelled._", parse_mode="Markdown"); return
 
     spouse_id = int(parts[3]) if len(parts) > 3 else None
     p = get_player(uid)
@@ -23780,7 +23810,7 @@ async def divorce_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     marriage  = next((m for m in marriages if m["id"] == spouse_id), None) if spouse_id else (marriages[0] if marriages else None)
 
     if not p or not marriage:
-        await query.edit_message_text("💔 That marriage record was not found.", parse_mode="Markdown"); return
+        await _q_edit(query, "💔 That marriage record was not found.", parse_mode="Markdown"); return
 
     spouse_name = marriage["name"]
     new_marriages = [m for m in marriages if m["id"] != marriage["id"]]
@@ -23795,7 +23825,7 @@ async def divorce_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     remaining = len(new_marriages)
     note = f"_You now have {remaining} remaining marriage{'s' if remaining!=1 else ''}._" if remaining else "_You are now single._"
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"💔 *{p['username']}* and *{spouse_name}* are now divorced.\n\n"
         f"_The +3% EXP bonus for this marriage has been removed._\n{note}",
         parse_mode="Markdown")
@@ -23862,7 +23892,7 @@ async def _party_menu(update_or_none, p, query=None):
         markup = InlineKeyboardMarkup(kb)
 
     if query:
-        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         except Exception: pass
     elif update_or_none:
         await send_group(update_or_none, text, reply_markup=markup, permanent=True)
@@ -24030,12 +24060,12 @@ async def party_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("SELECT id FROM parties WHERE id=?", (party_id,))
         if not c.fetchone():
             await query.answer()
-            await query.edit_message_text("❌ That party no longer exists."); return
+            await _q_edit(query, "❌ That party no longer exists."); return
         _join_party(party_id, uid)
         inviter_p = get_player(inviter_uid)
         inviter_name = inviter_p.get("username", "the party leader") if inviter_p else "the party leader"
         await query.answer()
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"✅ You joined *{inviter_name}*'s party!\n"
             f"You'll earn +25% EXP from all party encounter wins.",
             parse_mode="Markdown")
@@ -24052,7 +24082,7 @@ async def party_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if uid != target_uid:
             await query.answer("This invite isn't for you!", show_alert=True); return
         await query.answer()
-        await query.edit_message_text("❌ You declined the party invite.")
+        await _q_edit(query, "❌ You declined the party invite.")
         try:
             dp = get_player(uid)
             if dp:
@@ -24084,7 +24114,7 @@ async def _enc_edit(query, text, parse_mode="Markdown", reply_markup=None):
     """Edit the encounter card whether it's a text message or a photo card
     (photo cards carry the battle text as their caption, 1024-char limit)."""
     try:
-        await query.edit_message_text(text[:4096], parse_mode=parse_mode, reply_markup=reply_markup)
+        await _q_edit(query, text[:4096], parse_mode=parse_mode, reply_markup=reply_markup)
     except Exception:
         try:
             await query.edit_message_caption(caption=text[:1024], parse_mode=parse_mode,
@@ -25059,11 +25089,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 save_player(p)
                 context.user_data["encounter"] = enc
                 try:
-                    await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                    await _q_edit(query, _encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception:
                     try:
-                        await query.edit_message_text(_encounter_battle_card(enc),
+                        await _q_edit(query, _encounter_battle_card(enc),
                                                       reply_markup=_encounter_battle_markup(enc, p))
                     except Exception:
                         try:
@@ -25091,7 +25121,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!")
                     return
                 try:
-                    await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                    await _q_edit(query, _encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception: pass
                 return
@@ -25110,11 +25140,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             enc.setdefault("action_log",[]).append(mon_act)
             if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
             try:
-                await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                await _q_edit(query, _encounter_battle_card(enc), parse_mode="Markdown",
                                               reply_markup=_encounter_battle_markup(enc, p))
             except Exception:
                 try:
-                    await query.edit_message_text(_encounter_battle_card(enc),
+                    await _q_edit(query, _encounter_battle_card(enc),
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception:
                     try:
@@ -25171,11 +25201,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     await _end_encounter(f"💀 *{enc['e_name']}* broke free and knocked you out!")
                     return
                 try:
-                    await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+                    await _q_edit(query, _encounter_battle_card(enc), parse_mode="Markdown",
                                                   reply_markup=_encounter_battle_markup(enc, p))
                 except Exception:
                     try:
-                        await query.edit_message_text(_encounter_battle_card(enc),
+                        await _q_edit(query, _encounter_battle_card(enc),
                                                       reply_markup=_encounter_battle_markup(enc, p))
                     except Exception:
                         try:
@@ -25314,11 +25344,11 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         enc.setdefault("action_log",[]).append(mon_act)
         if len(enc["action_log"]) > 6: enc["action_log"] = enc["action_log"][-6:]
         try:
-            await query.edit_message_text(_encounter_battle_card(enc), parse_mode="Markdown",
+            await _q_edit(query, _encounter_battle_card(enc), parse_mode="Markdown",
                                           reply_markup=_encounter_battle_markup(enc, p))
         except Exception:
             try:
-                await query.edit_message_text(_encounter_battle_card(enc),
+                await _q_edit(query, _encounter_battle_card(enc),
                                               reply_markup=_encounter_battle_markup(enc, p))
             except Exception:
                 try:
@@ -25396,10 +25426,10 @@ async def holdhands_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     proposal = pending_holdhands.get(proposer_id)
     if not proposal:
-        await query.edit_message_text("🤝 This invitation already expired.", parse_mode="Markdown"); return
+        await _q_edit(query, "🤝 This invitation already expired.", parse_mode="Markdown"); return
     if datetime.now() > datetime.fromisoformat(proposal["expires"]):
         pending_holdhands.pop(proposer_id, None)
-        await query.edit_message_text("🤝 This invitation has expired.", parse_mode="Markdown"); return
+        await _q_edit(query, "🤝 This invitation has expired.", parse_mode="Markdown"); return
     if query.from_user.id != proposal["target_id"]:
         await query.answer("This invitation isn't for you!", show_alert=True); return
 
@@ -25408,18 +25438,18 @@ async def holdhands_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     target   = get_player(proposal["target_id"])
 
     if action == "decline":
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🙅 *{query.from_user.first_name}* pulls their hand away.",
             parse_mode="Markdown"); return
 
     if not proposer or not target:
-        await query.edit_message_text("❌ Player data not found.", parse_mode="Markdown"); return
+        await _q_edit(query, "❌ Player data not found.", parse_mode="Markdown"); return
 
     p_hands  = _get_holding_hands(proposer)
     tp_hands = _get_holding_hands(target)
 
     if any(h["id"] == target["user_id"] for h in p_hands):
-        await query.edit_message_text("🤝 You're already holding hands!", parse_mode="Markdown"); return
+        await _q_edit(query, "🤝 You're already holding hands!", parse_mode="Markdown"); return
 
     now_str = datetime.now().isoformat()
     p_hands.append( {"id": target["user_id"],   "name": target["username"],   "since": now_str})
@@ -25434,7 +25464,7 @@ async def holdhands_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if p_total > 1 or tp_total > 1:
         multi_note = f"\n_{proposer['username']} holds {p_total} hand{'s' if p_total>1 else ''} · {target['username']} holds {tp_total} hand{'s' if tp_total>1 else ''}_"
 
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"🤝 *{proposer['username']}* and *{target['username']}* are holding hands!{multi_note}\n\n"
         f"_Use /holdhands to check · /releasehands to let go._",
         parse_mode="Markdown")
@@ -25494,7 +25524,7 @@ async def _do_release_hands(update_or_query, p, user, hand_entry):
     if hasattr(update_or_query, "message"):
         await send_group(update_or_query, text, delay=30)
     else:
-        await update_or_query.edit_message_text(text, parse_mode="Markdown")
+        await _q_edit(update_or_query, text, parse_mode="Markdown")
 
 
 async def releasehands_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -25507,11 +25537,11 @@ async def releasehands_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Not your hands!", show_alert=True); return
     p = get_player(uid)
     if not p:
-        await query.edit_message_text("Player not found.", parse_mode="Markdown"); return
+        await _q_edit(query, "Player not found.", parse_mode="Markdown"); return
     hands = _get_holding_hands(p)
     hand_entry = next((h for h in hands if h["id"] == partner_id), None)
     if not hand_entry:
-        await query.edit_message_text("🤝 You're not holding that person's hand anymore.", parse_mode="Markdown"); return
+        await _q_edit(query, "🤝 You're not holding that person's hand anymore.", parse_mode="Markdown"); return
     await _do_release_hands(query, p, query.from_user, hand_entry)
 
 
@@ -25817,7 +25847,7 @@ async def bonds_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     rows = _bonds_fetch_rows()
     text = _bonds_build_page(rows, page)
     try:
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_bonds_markup(uid, page))
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=_bonds_markup(uid, page))
     except Exception:
         pass
 
@@ -26638,7 +26668,7 @@ async def petcatch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_pet(new_pet)
     rar_e = RARITY_EMOJI.get(sp["rarity"],""); elem_e = ELEMENT_EMOJI.get(sp["element"],"")
     shiny_line = " ✨ *SHINY!*" if is_shiny else ""
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"🥚 *Caught!*{shiny_line}\n\n"
         f"{sp['emoji']} *{sp['name']}* joined your team!\n"
         f"{rar_e} {sp['rarity'].capitalize()}  |  {elem_e} {sp['element'].capitalize()}\n\n"
@@ -26656,7 +26686,7 @@ async def petshop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "petshop":
         text, markup = _build_petshop_menu(p)
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         await query.answer()
         return
 
@@ -26672,7 +26702,7 @@ async def petshop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_player(p)
     await query.answer(f"✅ Bought {item_name}! Use /hatch to hatch eggs.")
     text, markup = _build_petshop_menu(p)
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+    await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
 
 async def hatch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -26825,16 +26855,16 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
                  InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
             ])
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         await query.answer(); return
 
     if data.startswith("petlist_"):
         page = int(data.split("_")[1])
         pets = get_all_pets(user.id)
         if not pets:
-            await query.edit_message_text("🐾 You have no pets yet!", reply_markup=_pet_main_markup())
+            await _q_edit(query, "🐾 You have no pets yet!", reply_markup=_pet_main_markup())
             await query.answer(); return
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🐾 *Your Pets* ({len(pets)} total)\nTap a pet to view or manage.",
             parse_mode="Markdown", reply_markup=_pet_list_markup(pets, page, uid=user.id))
         await query.answer(); return
@@ -26846,7 +26876,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
         pet = dict(row); _decay_pet(pet)
-        await query.edit_message_text(_build_pet_card(pet), parse_mode="Markdown",
+        await _q_edit(query, _build_pet_card(pet), parse_mode="Markdown",
             reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet))
         await query.answer(); return
 
@@ -26863,7 +26893,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pet = dict(row); _decay_pet(pet)
         sp = PET_SPECIES.get(pet["species"],{})
         await query.answer(f"✅ {sp.get('name','Pet')} is now your active companion!")
-        await query.edit_message_text(_build_pet_card(pet), parse_mode="Markdown",
+        await _q_edit(query, _build_pet_card(pet), parse_mode="Markdown",
             reply_markup=_pet_view_markup(pid, True, uid=user.id, pet=pet)); return
 
     if data.startswith("petfeed_"):
@@ -26893,7 +26923,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_pet(pet)
         feed_msg = PERSONALITY_FEED.get(pers, "eats happily.")
         await query.answer(f"🍖 Fed {pname}!")
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🍖 *{pname}* {feed_msg}\n{cost_note}\n\n" + _build_pet_card(pet),
             parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet)); return
 
@@ -26935,7 +26965,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         train_msg = PERSONALITY_TRAIN.get(pers, "trains diligently.")
         lvl_note = "".join(f"\n🎉 *Level Up!* {pname} is now level {l}!" for l in lvl_ups)
         await query.answer(f"🏋️ {pname} trained! +{gain} EXP")
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🏋️ *{pname}* {train_msg}\n+{gain} EXP gained!{lvl_note}\n\n" + _build_pet_card(pet),
             parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet)); return
 
@@ -26973,7 +27003,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         play_msg = play_msgs.get(pers, "plays happily!")
         await query.answer(f"🎮 Played with {pname}! +20 Mood +8 Bond")
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🎮 *{pname}* {play_msg}\n+20 Mood  |  +8 Bond\n\n" + _build_pet_card(pet),
             parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet)); return
 
@@ -26990,7 +27020,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("💔 Yes, release", callback_data=f"petrelease_confirm_{pid}"),
             InlineKeyboardButton("❌ Cancel",        callback_data=f"petview_{pid}"),
         ]])
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"⚠️ *Release {pname}?*\n\nThis is permanent. {pname} will be gone forever.",
             parse_mode="Markdown", reply_markup=markup)
         await query.answer(); return
@@ -27005,7 +27035,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pname = _pet_display_name(pet)
         c.execute("DELETE FROM pets WHERE pet_id=?", (pid,)); conn.commit(); conn.close()
         await query.answer(f"💔 {pname} has been released.")
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"💔 *{pname}* has been released into the wild.\n_Goodbye, old friend._",
             parse_mode="Markdown"); return
 
@@ -27026,7 +27056,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton(f"💰 Sell for {sell_price:,}g", callback_data=f"petsell_confirm_{pid}_{sell_price}"),
             InlineKeyboardButton("❌ Cancel", callback_data=f"petview_{pid}"),
         ]])
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"💰 *Sell {pname}?*\n\n"
             f"Rarity: {rarity.capitalize()} | Level {pet.get('level',1)}\n"
             f"Sell price: *{sell_price:,}g*\n\n"
@@ -27048,14 +27078,14 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             p["gold"] = safe_int(p.get("gold",0)) + sell_price
             save_player(p)
         await query.answer(f"💰 Sold {pname} for {sell_price:,}g!")
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"💰 *{pname}* sold for *{sell_price:,}g*!\n_The gold has been added to your wallet._",
             parse_mode="Markdown"); return
 
     if data == "petshop":
         p = get_player(user.id)
         text, markup = _build_petshop_menu(p)
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         await query.answer(); return
 
     if data.startswith("petrename_"):
@@ -27089,7 +27119,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🌙 8 Hours (+450 EXP)", callback_data=f"petadv_start_{pid}_8")],
             [InlineKeyboardButton("🔙 Back", callback_data=f"petview_{pid}")],
         ])
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🗺️ *Send {pname} on an Adventure?*\n\n"
             f"Your pet will venture out alone and return with EXP, bond points, and possibly rare items.\n\n"
             f"_Longer adventures yield better rewards!_",
@@ -27110,7 +27140,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_pet(pet)
         pname = _pet_display_name(pet)
         end_str = (datetime.now() + timedelta(hours=hours)).strftime("%H:%M")
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🗺️ *{pname} has set off on a {hours}-hour adventure!*\n\n"
             f"They'll return around *{end_str}*.\nUse /pet when they're back to claim rewards!",
             parse_mode="Markdown",
@@ -27150,7 +27180,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_pet(pet)
             lvl_txt = "".join(f"\n🎉 *Level Up!* {pname} is now level {l}!" for l in lvl_ups)
             loot_txt = f"\n🎁 Found: *{loot}*!" if loot else ""
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"🗺️ *{pname} returned from adventure!*\n\n"
                 f"⭐ +{adv_exp} EXP{lvl_txt}\n💞 +15 Bond{loot_txt}\n\n" + _build_pet_card(pet),
                 parse_mode="Markdown",
@@ -27199,7 +27229,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_pet(pet)
         lvl_txt = "".join(f"\n🎉 *Level Up!* {pname} is now level {l}!" for l in lvl_ups)
         loot_txt = f"\n🎁 Found: *{loot}*!" if loot else ""
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🗺️ *{pname} returned from a {hours}-hour adventure!*\n\n"
             f"⭐ +{adv_exp} EXP{lvl_txt}\n💞 +{hours*2+9} Bond{loot_txt}\n\n" + _build_pet_card(pet),
             parse_mode="Markdown",
@@ -27240,7 +27270,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{osp.get('emoji','🐾')} {oname} Lv{opp['level']}",
                 callback_data=f"petbattle_fight_{pid}_{opp['pet_id']}")])
         rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"petview_{pid}")])
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"⚔️ *{pname} wants to battle!*\n\nChoose an opponent:",
             parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
         await query.answer(); return
@@ -27301,7 +27331,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elem_note = ""
         if _my_mu.get("strong") == opp_elem:   elem_note = f"\n🔥 *Type advantage!* {my_elem.capitalize()} → {opp_elem.capitalize()} (+20%)"
         elif _my_mu.get("weak") == opp_elem:   elem_note = f"\n💧 *Type disadvantage!* {opp_elem.capitalize()} counters {my_elem.capitalize()} (-15%)"
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"⚔️ *Pet Battle!*\n\n"
             f"{my_e} *{my_pname}* (Score: {my_score})\nvs\n{opp_e} *{opp_pname}* (Score: {opp_score})\n{elem_note}\n"
             f"{result_txt}\n"
@@ -27337,7 +27367,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "A radiant transformation! Your pet has grown tremendously!",
             "The ultimate form — forged by an unbreakable soul bond!"
         ]
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🔮 *{pname} evolved to Stage {new_evo}!* {evo_labels[new_evo]}\n\n"
             f"_{evo_flavors[new_evo]}_\n\n"
             f"• +3 ATK per stage\n• +20 Bond\n\n" + _build_pet_card(pet),
@@ -27363,7 +27393,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Your pet is on an adventure!", show_alert=True); return
         pname = _pet_display_name(pet)
         sp = PET_SPECIES.get(pet["species"], {})
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"💼 *Send {pname} on a Job?*\n\n"
             f"Your pet earns gold while you're away. Longer jobs pay more!\n\n"
             f"🕐 *4 hours* — 200–400 gold\n"
@@ -27391,7 +27421,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn2.commit(); conn2.close()
         pet["job_ends_at"] = ends_at
         pname = _pet_display_name(pet)
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"💼 *{pname} is off to work!*\n\n"
             f"They'll be back in *{hours} hours*.\n"
             f"Come back to collect their earnings!",
@@ -27451,7 +27481,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pet["job_ends_at"] = None
         pname = _pet_display_name(pet)
         loot_line = f"\n🎒 Also found: *{loot_item}*!" if loot_item else ""
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"💼 *{pname} is back from work!*\n\n"
             f"💰 Earned: *{gold_earned} gold*{loot_line}\n"
             f"💞 +5 Bond",
@@ -27664,7 +27694,7 @@ async def pethub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not sids: continue
             got = sum(1 for s in sids if s in owned)
             lines.append(f"{RARITY_EMOJI.get(rar,'')} {rar.capitalize()}: {got}/{len(sids)}")
-        try: await query.edit_message_text("\n".join(lines), parse_mode="Markdown",
+        try: await _q_edit(query, "\n".join(lines), parse_mode="Markdown",
                                            reply_markup=query.message.reply_markup)
         except: pass
         return
@@ -27674,7 +27704,7 @@ async def pethub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("SELECT * FROM pets WHERE is_active=1 ORDER BY level DESC, bond_score DESC LIMIT 10")
         rows = [dict(r) for r in c.fetchall()]; conn.close()
         if not rows:
-            try: await query.edit_message_text("No active pets found.", reply_markup=query.message.reply_markup)
+            try: await _q_edit(query, "No active pets found.", reply_markup=query.message.reply_markup)
             except: pass
             return
         lines = ["🏆 *Pet Leaderboard* (Top 10 Active)\n"]
@@ -27687,7 +27717,7 @@ async def pethub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             own  = get_player(pet["owner_id"])
             oname = own["username"] if own else f"#{pet['owner_id']}"
             lines.append(f"{i}. {em} *{pn}*{evo} Lv{pet['level']} {re} — {oname}")
-        try: await query.edit_message_text("\n".join(lines), parse_mode="Markdown",
+        try: await _q_edit(query, "\n".join(lines), parse_mode="Markdown",
                                            reply_markup=query.message.reply_markup)
         except: pass
         return
@@ -27723,7 +27753,7 @@ async def petdaycare_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         pet["exp"] = pet.get("exp", 0) + bonus_exp
         save_pet(pet)
         pname = _pet_display_name(pet)
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🏠 *{pname}* was picked up from daycare!\n"
             f"They rested well — +{bonus_exp} pet EXP!",
             parse_mode="Markdown")
@@ -27741,7 +27771,7 @@ async def petdaycare_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     pname = _pet_display_name(pet)
     markup = InlineKeyboardMarkup([[
         InlineKeyboardButton("🏠 Pick Up Early", callback_data=f"petdaycare_pickup_{pid}")]])
-    await query.edit_message_text(
+    await _q_edit(query, 
         f"🏠 *{pname}* is now at the daycare for 8 hours!\n"
         f"Hunger and mood won't decay. Pick them up anytime for a bonus EXP reward.",
         parse_mode="Markdown", reply_markup=markup)
@@ -27779,7 +27809,7 @@ async def petretire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             InlineKeyboardButton("✅ Yes, Retire", callback_data=f"petretire_do_{pid}"),
             InlineKeyboardButton("❌ Cancel",      callback_data=f"close_msg_{uid}"),
         ]])
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🌟 *Retire {pname}?*\n\n"
             f"This will permanently release your pet and grant you:\n"
             f"⚔️ +{atk_bonus} permanent ATK\n"
@@ -27804,7 +27834,7 @@ async def petretire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         conn = _connect_db(); c = conn.cursor()
         c.execute("DELETE FROM pets WHERE pet_id=?", (pid,))
         conn.commit(); conn.close()
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🌟 *{pname} has been retired!*\n\n"
             f"Their spirit now lives within you permanently:\n"
             f"⚔️ +{atk_bonus} ATK  |  ❤️ +{hp_bonus} Max HP\n\n"
@@ -27831,7 +27861,7 @@ async def petbreed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']}",
                 callback_data=f"petbreed_sel1_{pt['pet_id']}")])
         rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
-        await query.edit_message_text("🔬 *Pet Breeding*\nSelect the first parent:",
+        await _q_edit(query, "🔬 *Pet Breeding*\nSelect the first parent:",
                                       parse_mode="Markdown",
                                       reply_markup=InlineKeyboardMarkup(rows))
         return
@@ -27848,7 +27878,7 @@ async def petbreed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']}",
                 callback_data=f"petbreed_start_{pid1}_{pt['pet_id']}")])
         rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
-        await query.edit_message_text("🔬 *Pet Breeding*\nSelect the second parent:",
+        await _q_edit(query, "🔬 *Pet Breeding*\nSelect the second parent:",
                                       parse_mode="Markdown",
                                       reply_markup=InlineKeyboardMarkup(rows))
         return
@@ -27897,7 +27927,7 @@ async def petbreed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         save_pet(new_pet)
         shiny_tag = " ✨ *SHINY!*" if is_shiny else ""
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🔬 *Breeding Complete!*{shiny_tag}\n\n"
             f"Parents: {pn1} × {pn2}\n\n"
             f"{offs_sp.get('emoji','🐾')} *{offs_sp.get('name','?')}* was born!\n"
@@ -27927,7 +27957,7 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']}",
                 callback_data=f"pettrade_offer_{pt['pet_id']}")])
         rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
-        await query.edit_message_text(
+        await _q_edit(query, 
             "🤝 *Pet Trade*\nSelect a pet to offer for trade.\n"
             "Your offer will be visible to the group for 5 minutes.",
             parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
@@ -27945,7 +27975,7 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("❌ Cancel Offer", callback_data=f"pettrade_cancel_{uid}")]])
         # Send offer visible to others
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"🤝 *Trade Offer!*\n\n"
                 f"*{query.from_user.first_name}* is offering:\n"
                 f"{sp.get('emoji','🐾')} *{pname}* | Lv {pet.get('level',1)} | "
@@ -27981,7 +28011,7 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']}",
                 callback_data=f"pettrade_complete_{offeror_uid}_{offered_pid}_{pt['pet_id']}")])
         rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
-        await query.edit_message_text("Choose a pet to offer back:",
+        await _q_edit(query, "Choose a pet to offer back:",
                                       parse_mode="Markdown",
                                       reply_markup=InlineKeyboardMarkup(rows))
         return
@@ -28006,7 +28036,7 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_pet(offeror_pet); save_pet(acceptor_pet)
         sp1 = PET_SPECIES.get(offeror_pet["species"],{})
         sp2 = PET_SPECIES.get(acceptor_pet["species"],{})
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🤝 *Trade Complete!*\n\n"
             f"{sp1.get('emoji','🐾')} *{_pet_display_name(offeror_pet)}* → "
             f"*{query.from_user.first_name}*\n"
@@ -28019,7 +28049,7 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if sub == "cancel":
         cancel_uid = int(parts[2]) if len(parts) > 2 else uid
         _pet_trade_offers.pop(cancel_uid, None)
-        await query.edit_message_text("🤝 Trade offer cancelled.")
+        await _q_edit(query, "🤝 Trade offer cancelled.")
 
 # ── PET DUEL ──────────────────────────────────────────────────────────────────
 async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -28048,7 +28078,7 @@ async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"⚔️ Challenge {r['username']}",
                 callback_data=f"petduel_challenge_{uid}_{r['user_id']}")])
         rows_btn.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
-        await query.edit_message_text("⚔️ *Pet Duel*\nChoose an opponent:",
+        await _q_edit(query, "⚔️ *Pet Duel*\nChoose an opponent:",
                                       parse_mode="Markdown",
                                       reply_markup=InlineKeyboardMarkup(rows_btn))
         return
@@ -28076,7 +28106,7 @@ async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("⚔️ Accept Duel!", callback_data=f"petduel_accept_{challenger_uid}_{target_uid}"),
             InlineKeyboardButton("❌ Decline",       callback_data=f"petduel_decline_{challenger_uid}"),
         ]])
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"⚔️ *Pet Duel Challenge!*\n\n"
             f"{c_sp.get('emoji','🐾')} *{c_name}* vs {t_sp.get('emoji','🐾')} *{t_name}*\n\n"
             f"<target player> — accept within 60 seconds!",
@@ -28087,7 +28117,7 @@ async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         challenger_uid = int(parts[2])
         duel_key = next((k for k in _active_pet_duels if challenger_uid in k), None)
         if duel_key: _active_pet_duels.pop(duel_key, None)
-        await query.edit_message_text("⚔️ Duel declined.")
+        await _q_edit(query, "⚔️ Duel declined.")
         return
 
     if sub == "accept":
@@ -28152,7 +28182,7 @@ async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.append(f"\n🏆 *{w_sp.get('emoji','🐾')} {winner_name}* wins!\n+{exp_gain} EXP | +{bond_gain} Bond")
         # Keep log to last 12 lines to fit in Telegram message
         display_log = log[:3] + ["..."] + log[-6:] if len(log) > 10 else log
-        await query.edit_message_text("\n".join(display_log), parse_mode="Markdown")
+        await _q_edit(query, "\n".join(display_log), parse_mode="Markdown")
 
 # ── /combat Hub ────────────────────────────────────────────────────────────────
 _COMBAT_HUB_PAGES = [
@@ -28234,7 +28264,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                   f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
                   f"⚡ CP: {cp:,}  |  {status}\n\n"
                   f"Page 1: Encounter & Combat  |  Page 2: War & Explore  |  Page 3: Info & Tools")
-        try: await query.edit_message_text(header, parse_mode="Markdown",
+        try: await _q_edit(query, header, parse_mode="Markdown",
                                            reply_markup=_combat_hub_markup(uid, page=page))
         except Exception: pass
         return
@@ -28270,20 +28300,20 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if action == "attack":
         if is_defeated(p):
-            try: await query.edit_message_text("⚔️ *Attack*\n\n💀 You're defeated — can't attack right now.",
+            try: await _q_edit(query, "⚔️ *Attack*\n\n💀 You're defeated — can't attack right now.",
                                                parse_mode="Markdown", reply_markup=back)
             except Exception: pass
         else:
             players, total = _get_attackable_players(uid, p.get("guild_id"), 0)
             if total == 0:
-                try: await query.edit_message_text(
+                try: await _q_edit(query, 
                     "⚔️ *Attack*\n\nNo players available right now.\n\n"
                     "_Targets must have been active in the last hour._",
                     parse_mode="Markdown", reply_markup=back)
                 except Exception: pass
             else:
                 markup = _build_target_picker_markup(uid, p.get("guild_id"), 0, "atk")
-                try: await query.edit_message_text(
+                try: await _q_edit(query, 
                     f"⚔️ *Choose a target to attack:*\n\n"
                     f"_{total} player{'s' if total != 1 else ''} available_",
                     parse_mode="Markdown", reply_markup=markup)
@@ -28292,28 +28322,28 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif action == "skill":
         cls = get_player_class(p)
         if not cls:
-            try: await query.edit_message_text("✨ *Use Skill*\n\nNo class yet — pick one at Level 5 with `/class`.",
+            try: await _q_edit(query, "✨ *Use Skill*\n\nNo class yet — pick one at Level 5 with `/class`.",
                                                parse_mode="Markdown", reply_markup=back)
             except Exception: pass
         elif is_defeated(p):
-            try: await query.edit_message_text("✨ *Use Skill*\n\n💀 You're defeated — can't use skills.",
+            try: await _q_edit(query, "✨ *Use Skill*\n\n💀 You're defeated — can't use skills.",
                                                parse_mode="Markdown", reply_markup=back)
             except Exception: pass
         elif not get_combat_skills(p):
-            try: await query.edit_message_text("✨ *Use Skill*\n\nNo skills unlocked yet. Level up!",
+            try: await _q_edit(query, "✨ *Use Skill*\n\nNo skills unlocked yet. Level up!",
                                                parse_mode="Markdown", reply_markup=back)
             except Exception: pass
         else:
             players, total = _get_attackable_players(uid, p.get("guild_id"), 0)
             if total == 0:
-                try: await query.edit_message_text(
+                try: await _q_edit(query, 
                     "✨ *Use Skill*\n\nNo players available to target right now.\n\n"
                     "_Targets must have been active in the last hour._",
                     parse_mode="Markdown", reply_markup=back)
                 except Exception: pass
             else:
                 markup = _build_target_picker_markup(uid, p.get("guild_id"), 0, "skl2")
-                try: await query.edit_message_text(
+                try: await _q_edit(query, 
                     f"✨ *Choose a target for your skill:*\n\n"
                     f"_{total} player{'s' if total != 1 else ''} available_",
                     parse_mode="Markdown", reply_markup=markup)
@@ -28346,7 +28376,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                    f"🛡️ Shield max: *{max_sh} HP* _(25% of max HP)_\n\n"
                    f"Type `/defend` in chat to raise your shield.\n"
                    f"Use `/defend core` to expand it with a Monster Core.")
-        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "heal":
@@ -28372,17 +28402,17 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             if total_pots == 0:
                 lines.append("\n_No potions — buy some at /shop!_")
         lines.append("\nType `/heal` in chat to heal yourself, or reply to a teammate.")
-        try: await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, "\n".join(lines), parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "encounter":
         if uid in active_encounters:
-            try: await query.edit_message_text(
+            try: await _q_edit(query, 
                 "⚠️ *Encounter in Progress*\n\nYou're already in an encounter — use the buttons to continue.",
                 parse_mode="Markdown", reply_markup=back)
             except Exception: pass
         elif is_defeated(p):
-            try: await query.edit_message_text(
+            try: await _q_edit(query, 
                 "🗡️ *Encounter*\n\n💀 You're defeated — recover before fighting.",
                 parse_mode="Markdown", reply_markup=back)
             except Exception: pass
@@ -28393,7 +28423,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 [InlineKeyboardButton("🏚️ Dungeon — JRPG turn-based, 4 difficulties", callback_data=f"enc_mode_{uid}_dungeon")],
                 [InlineKeyboardButton("← Back", callback_data=f"combathub_back_1_{uid}")],
             ])
-            try: await query.edit_message_text(
+            try: await _q_edit(query, 
                 "🗡️ *Encounter*\n\n"
                 "⚔️ *Battle* — fight NPCs for EXP and gear\n"
                 "🌿 *Hunt* — fight wild monsters; weaken them to catch for *Monster Cores*\n"
@@ -28419,7 +28449,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                      f"⚔️ *Damage:* {kc_k['stat']} × {kc_k['mult']}{extras_k}\n\n"
                      f"_Stack conditions via attacks & auto-afflictions._\n"
                      f"_When all met, ⚡ FINISHER appears on your PvP battle card._")
-        try: await query.edit_message_text(txt_k, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt_k, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "curepriority":
@@ -28429,7 +28459,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                   f"_Set:_ `/curepriority poison bleed stun hex`\n"
                   f"_Reset:_ `/curepriority reset`\n\n"
                   f"_One affliction stack is removed automatically each time you attack._")
-        try: await query.edit_message_text(txt_cp, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt_cp, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "cooldowns":
@@ -28451,7 +28481,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             mh, sh = divmod(int(diff_h.total_seconds()), 60); hh, mh = divmod(mh, 60)
             cd_lines.append(f"💀 Defeat:   {hh}h {mh}m remaining")
         txt_cd = f"⏳ *{p['username']}'s Cooldowns:*\n\n" + "\n".join(cd_lines)
-        try: await query.edit_message_text(txt_cd, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt_cd, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "war":
@@ -28474,7 +28504,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                            f"*{g['name']}* — No active war.\n\n"
                            f"Guild leaders can declare war on rival guilds.\n"
                            f"Both guilds battle for 24 hours over territory and glory.")
-        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "explore":
@@ -28490,7 +28520,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 txt = (f"🌍 *Explore*\n\n[{exp_bar}] {exp_count}/2 expeditions used today.\n\n"
                        f"✅ *Ready!* Head to the group chat and use the Explore action to go on a 1-hour expedition.\n"
                        f"Best loot in the game — rare items, monster encounters, and pet finds.")
-        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "dungeon":
@@ -28501,7 +28531,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                    "6 floors · 10 rooms each · real-time combat\n"
                    "Monsters, traps, NPCs, treasure, and a boss every floor.\n\n"
                    "_Use */dungeon* in the group chat to enter, or start one from */encounter*._")
-        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "soloraid":
@@ -28511,7 +28541,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             txt = ("⚔️ *Solo Raid*\n\n✅ *Available!*\n\n"
                    "Take on a raid boss alone for massive rewards.\n"
                    "_Use */soloraid* in the group chat to begin._")
-        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "petbattle":
@@ -28527,17 +28557,17 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             txt = (f"🐾 *Pet: {pname}*\n\n"
                    f"Level {plvl}  |  ⚔️ ATK {patk}  |  ❤️ HP {php}\n\n"
                    f"Your pet automatically battles alongside you in every attack and skill use — no action needed!")
-        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     else:
         tip = _TIPS.get(action)
         if tip:
             title, desc = tip
-            try: await query.edit_message_text(f"{title}\n\n{desc}", parse_mode="Markdown", reply_markup=back)
+            try: await _q_edit(query, f"{title}\n\n{desc}", parse_mode="Markdown", reply_markup=back)
             except Exception: pass
         else:
-            try: await query.edit_message_text(f"_{action}_ — use the command in chat.", parse_mode="Markdown", reply_markup=back)
+            try: await _q_edit(query, f"_{action}_ — use the command in chat.", parse_mode="Markdown", reply_markup=back)
             except Exception: pass
 
 # ── /social Hub ───────────────────────────────────────────────────────────────
@@ -28655,7 +28685,7 @@ async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"Page 1: Relationships  |  Page 2: Emotes\n"
             f"Page 3: Guilds  |  Page 4: Recognition"
         )
-        try: await query.edit_message_text(text, parse_mode="Markdown",
+        try: await _q_edit(query, text, parse_mode="Markdown",
                                            reply_markup=_social_hub_markup(uid, page=page))
         except: pass
         return
@@ -28676,10 +28706,10 @@ async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "← Back", callback_data=f"socialhub_back_{page}_{uid}")]])
 
     async def _show(text, page=1):
-        try: await query.edit_message_text(text[:4096], parse_mode="Markdown",
+        try: await _q_edit(query, text[:4096], parse_mode="Markdown",
                                            reply_markup=_back_markup(page))
         except Exception:
-            try: await query.edit_message_text(text[:4096], reply_markup=_back_markup(page))
+            try: await _q_edit(query, text[:4096], reply_markup=_back_markup(page))
             except Exception: pass
 
     # ── "info" sub-actions: show real content inline ─────────────────
@@ -28946,7 +28976,7 @@ async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if sub == "bonds":
         try:
             rows = _bonds_fetch_rows()
-            await query.edit_message_text(_bonds_build_page(rows, 1), parse_mode="Markdown",
+            await _q_edit(query, _bonds_build_page(rows, 1), parse_mode="Markdown",
                                           reply_markup=query.message.reply_markup)
         except Exception: pass
         return
@@ -28966,7 +28996,7 @@ async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 when = "recently"
             lines.append(f"• *{r['username']}* Lv{r['level']} — {when}")
         try:
-            await query.edit_message_text("\n".join(lines), parse_mode="Markdown",
+            await _q_edit(query, "\n".join(lines), parse_mode="Markdown",
                                           reply_markup=query.message.reply_markup)
         except Exception: pass
         return
@@ -28976,7 +29006,7 @@ async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         tier = ("🌑 Shadow" if inf < 10 else "🌟 Rising" if inf < 50 else
                 "⭐ Notable" if inf < 150 else "💫 Renowned" if inf < 300 else "🌠 Legendary")
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"🌟 *{p['username']}'s Influence: {inf}* — {tier}\n\n"
                 f"Earned through PvP wins, boss kills, bounty claims, and guild wars.",
                 parse_mode="Markdown", reply_markup=query.message.reply_markup)
@@ -28994,7 +29024,7 @@ async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             me = " ← you" if r["user_id"] == uid else ""
             lines.append(f"{medals.get(i,str(i)+'.')} *{r['username']}* — Lv {r['level']} | {r['wins']} wins{me}")
         try:
-            await query.edit_message_text("\n".join(lines), parse_mode="Markdown",
+            await _q_edit(query, "\n".join(lines), parse_mode="Markdown",
                                           reply_markup=query.message.reply_markup)
         except Exception: pass
         return
@@ -29092,7 +29122,7 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not p: return
         header = (f"⚙️ *{p['username']}'s Gear Hub*\n\n"
                   f"Page 1: Equipment  |  Page 2: Upgrades\nPage 3: Economy")
-        try: await query.edit_message_text(header, parse_mode="Markdown",
+        try: await _q_edit(query, header, parse_mode="Markdown",
                                            reply_markup=_gearhub_markup(uid, page=page))
         except Exception: pass
         return
@@ -29118,9 +29148,9 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         back_rows = [[InlineKeyboardButton("← Back", callback_data=f"gearhub_back_1_{uid}")]]
         await _send_inventory_section(query, p, section="Equipped", edit=True, uid=uid, back_rows=back_rows)
     elif action == "gear":
-        try: await query.edit_message_text(_build_gear_text(p)[:4096], parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, _build_gear_text(p)[:4096], parse_mode="Markdown", reply_markup=back)
         except Exception:
-            try: await query.edit_message_text(_build_gear_text(p)[:4096], reply_markup=back)
+            try: await _q_edit(query, _build_gear_text(p)[:4096], reply_markup=back)
             except Exception: pass
     elif action == "shop":
         discount = _shop_discount(p)
@@ -29128,13 +29158,13 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows = list(markup.inline_keyboard)
         rows.insert(-1, [InlineKeyboardButton("← Back to Gear Hub", callback_data=f"gearhub_back_1_{uid}")])
         markup = InlineKeyboardMarkup(rows)
-        try: await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        try: await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
         except Exception:
-            try: await query.edit_message_text(text[:4096], reply_markup=markup)
+            try: await _q_edit(query, text[:4096], reply_markup=markup)
             except Exception: pass
     elif action == "cp":
         cp = calc_combat_power(p)
-        try: await query.edit_message_text(
+        try: await _q_edit(query, 
             f"📊 *Combat Power*\n\n*{p['username']}*: *{cp:,} CP*\n\n"
             f"Higher CP = bigger damage multiplier.\n"
             f"Improve it by upgrading gear, enhancing items, and reinforcing.",
@@ -29147,17 +29177,17 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows.append([InlineKeyboardButton("← Back", callback_data=f"gearhub_back_1_{uid}")])
         txt = _build_gear_text(p) + ("\n\n_Select an item below to equip:_" if has_items
                                      else "\n\n_No equippable items in bag — visit Shop!_")
-        try: await query.edit_message_text(txt[:4096], parse_mode="Markdown",
+        try: await _q_edit(query, txt[:4096], parse_mode="Markdown",
                                            reply_markup=InlineKeyboardMarkup(rows))
         except Exception:
-            try: await query.edit_message_text(txt[:4096],
+            try: await _q_edit(query, txt[:4096],
                                                reply_markup=InlineKeyboardMarkup(rows))
             except Exception: pass
 
     elif action == "sell":
         inv = sjl(p.get("inventory"), [])
         if not inv:
-            try: await query.edit_message_text(
+            try: await _q_edit(query, 
                 "💰 *Sell*\n\nYour bag is empty.", parse_mode="Markdown", reply_markup=back)
             except Exception: pass
         else:
@@ -29170,7 +29200,7 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("⚔️ Sell Off-Class Items",             callback_data=f"selloffc_{uid}")],
                 [InlineKeyboardButton("← Back", callback_data=f"gearhub_back_1_{uid}")],
             ]
-            try: await query.edit_message_text(
+            try: await _q_edit(query, 
                 "💰 *Sell Items*\n\nBulk-sell by rarity, or clear off-class gear.\n"
                 "_Equipped gear and key materials are always protected._",
                 parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(sell_rows))
@@ -29184,7 +29214,7 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elapsed = (datetime.now() - datetime.fromisoformat(pool_ts)).total_seconds()
                 if elapsed < 3:
                     remaining = int(3 - elapsed)
-                    try: await query.edit_message_text(
+                    try: await _q_edit(query, 
                         f"🎱 *Pool*\n\n⏳ Cooldown: *{remaining}s*", parse_mode="Markdown", reply_markup=back)
                     except Exception: pass
                     return
@@ -29209,7 +29239,7 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   f"✨ +{exp_gain} EXP  |  💰 +{gold_gain}g")
         if item_found: result += f"  |  🎒 *{item_found}*!"
         if lmsgs: result += "\n\n" + "\n".join(lmsgs[:2])
-        try: await query.edit_message_text(result, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, result, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "unequip":
@@ -29230,7 +29260,7 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "_To unequip an item, use the Equip menu and select it again, or use /unequip in the chat._"
         ]
         txt_ue = "\n".join(l for l in lines_ue if l != "None" or True)
-        try: await query.edit_message_text(txt_ue, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt_ue, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action in ("enhance", "reinforce", "forge", "enchant", "perma"):
@@ -29249,7 +29279,7 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                    f"*Currently equipped:*\n"
                    f"⚔️ {weap_cur}  |  🛡️ {armr_cur}\n\n"
                    f"_Use the upgrade commands in the group chat to apply upgrades._")
-        try: await query.edit_message_text(txt_upg, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt_upg, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action in ("trade", "accept", "decline"):
@@ -29263,7 +29293,7 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             txt_tr = "✅ *Accept Trade*\n\nIf someone has offered you a trade, use /accept in the group chat to confirm it."
         elif action == "decline":
             txt_tr = "❌ *Decline Trade*\n\nUse /decline to reject a pending trade offer."
-        try: await query.edit_message_text(txt_tr, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt_tr, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action in ("deposit", "withdraw"):
@@ -29278,17 +29308,17 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                       f"💰 Bank balance: *{balance:,}g*\n"
                       f"👤 Your gold: *{yours:,}g*\n\n"
                       f"{'Deposit into the guild bank or withdraw with the bank commands in the group chat.' if action=='deposit' else 'Withdraw from the guild bank using the bank commands in the group chat.'}")
-        try: await query.edit_message_text(txt_bk, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt_bk, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     else:
         tip = _GEAR_HUB_TIPS.get(action)
         if tip:
             title, desc = tip
-            try: await query.edit_message_text(f"{title}\n\n{desc}", parse_mode="Markdown", reply_markup=back)
+            try: await _q_edit(query, f"{title}\n\n{desc}", parse_mode="Markdown", reply_markup=back)
             except Exception: pass
         else:
-            try: await query.edit_message_text(f"_{action}_ — use the command in chat.", parse_mode="Markdown", reply_markup=back)
+            try: await _q_edit(query, f"_{action}_ — use the command in chat.", parse_mode="Markdown", reply_markup=back)
             except Exception: pass
 
 # ── ACTIVITIES HUB ────────────────────────────────────────────────────────────
@@ -29382,7 +29412,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         if not p: return
         header = (f"🌍 *{p['username']}'s Activities Hub*\n\n"
                   f"Page 1: Daily  |  Page 2: Challenges\nPage 3: Character")
-        try: await query.edit_message_text(header, parse_mode="Markdown",
+        try: await _q_edit(query, header, parse_mode="Markdown",
                                            reply_markup=_activities_hub_markup(uid, page=page))
         except Exception: pass
         return
@@ -29405,7 +29435,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
     back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"acthub_back_{page}_{uid}")]])
 
     async def _show(text):
-        try: await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     # ── Hustle: run all ready cooldowns inline ──────────────────────
@@ -29703,7 +29733,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
             txt = ("📜 *Quest*\n\n"
                    "✅ No active quest — you're free to take one!\n\n"
                    "_Quests give EXP, gold, and rare loot. Head to the group chat to start one._")
-        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "explore":
@@ -29718,7 +29748,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
             else:
                 txt = (f"🌍 *Explore*\n\n[{exp_bar}] {exp_count}/2 used today.\n\n"
                        f"✅ *Ready!* Best loot in the game — head to the group chat to explore.")
-        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action in ("dungeon", "dungeonhard", "dungeonleg"):
@@ -29732,7 +29762,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
             txt = f"{_dem2} *{_dname2}*\n\n⏳ Ready in: *{time_remaining(p.get('last_dungeon'), 86400)}*"
         else:
             txt = f"{_dem2} *{_dname2}*\n\n✅ *Ready!* Head to the group chat to start your run."
-        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     elif action == "oracle":
@@ -29763,7 +29793,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
                    f"_{shot['text'][:120]}_\n\n"
                    f"✨ +{exp_gain} EXP  |  💰 +{gold_gain}g{loot_note}")
             if lmsgs_ora: txt += "\n\n" + "\n".join(lmsgs_ora[:2])
-        try: await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back)
+        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     # ── All other actions: show tip panel ────────────────────────────
@@ -29830,7 +29860,7 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text, markup = _build_empire_stats(p, uid)
         else:
             return
-        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         except Exception: pass
         return
 
@@ -29848,7 +29878,7 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.answer("Nothing to collect yet — buildings generate resources over time.", show_alert=True)
         text, markup = _build_empire_overview(p, uid)
-        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         except Exception: pass
         return
 
@@ -29892,7 +29922,7 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_player(p)
         await query.answer(f"{b['name']} upgraded to Lv {cur_lvl + 1}! 🏗️", show_alert=True)
         text, markup = _build_empire_build(p, uid)
-        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         except Exception: pass
         return
 
@@ -29908,21 +29938,21 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if hub == "combat":
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"⚔️ *{p['username']}'s Combat Hub*\n\nPage 1: Encounter & Combat  |  Page 2: War & Explore\nPage 3: Dungeons",
                 parse_mode="Markdown", reply_markup=_combat_hub_markup(uid, page=1))
         except Exception: pass
 
     elif hub == "activities":
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"🌍 *{p['username']}'s Activities Hub*\n\nPage 1: Daily  |  Page 2: Challenges\nPage 3: Character",
                 parse_mode="Markdown", reply_markup=_activities_hub_markup(uid, page=1))
         except Exception: pass
 
     elif hub == "gear":
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"⚙️ *{p['username']}'s Gear Hub*\n\nPage 1: Equipment  |  Page 2: Upgrades\nPage 3: Economy",
                 parse_mode="Markdown", reply_markup=_gearhub_markup(uid, page=1))
         except Exception: pass
@@ -29943,21 +29973,21 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Page 3: Guilds & Alliances  |  Page 4: Recognition"
         )
         try:
-            await query.edit_message_text(text, parse_mode="Markdown",
+            await _q_edit(query, text, parse_mode="Markdown",
                                           reply_markup=_social_hub_markup(uid, page=1))
         except Exception: pass
 
     elif hub == "pethub":
         try:
             pet = get_active_pet_record(uid)
-            await query.edit_message_text(
+            await _q_edit(query, 
                 "🐾 *Pet Hub* — All things pets.\n_Page 1: Manage  |  Page 2: Care & Breeding  |  Page 3: Community_",
                 parse_mode="Markdown", reply_markup=_pethub_markup(uid, pet, page=1))
         except Exception: pass
 
     elif hub == "home":
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"🌌 *{p['username']}'s Empire*\n\nYour command center. Choose a hub:",
                 parse_mode="Markdown", reply_markup=_empire_markup(uid))
         except Exception: pass
@@ -30898,7 +30928,7 @@ async def resetstats_callback(update, context):
             await query.answer("This isn't your reset button!", show_alert=True); return
         if action == "cancel":
             try:
-                await query.edit_message_text("❌ Stat reset cancelled.", parse_mode="Markdown")
+                await _q_edit(query, "❌ Stat reset cancelled.", parse_mode="Markdown")
             except Exception:
                 pass
             return
@@ -30920,7 +30950,7 @@ async def resetstats_callback(update, context):
                   f"INT:{new_stats['INT']} WIS:{new_stats['WIS']} "
                   f"DEX:{new_stats['DEX']} LUK:{new_stats['LUK']}")
         try:
-            await query.edit_message_text(result, parse_mode="Markdown")
+            await _q_edit(query, result, parse_mode="Markdown")
         except Exception:
             pass
     finally:
@@ -31207,7 +31237,7 @@ async def ban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     # ── Cancel ────────────────────────────────────────────────────────────────
     if data == "banpick_cancel":
         await query.answer()
-        try: await query.edit_message_text("Cancelled.")
+        try: await _q_edit(query, "Cancelled.")
         except Exception: pass
         return
 
@@ -31216,7 +31246,7 @@ async def ban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer()
         page = int(data.split("_")[2])
         text, markup = _build_ban_picker(page)
-        try: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         except Exception: pass
         return
 
@@ -31228,7 +31258,7 @@ async def ban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         c.execute("SELECT username, level FROM players WHERE user_id=?", (tid,))
         row = c.fetchone(); conn.close()
         if not row:
-            try: await query.edit_message_text("❌ Player not found.")
+            try: await _q_edit(query, "❌ Player not found.")
             except Exception: pass
             return
         tname, lvl = row
@@ -31237,7 +31267,7 @@ async def ban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             [InlineKeyboardButton("◀️ Back",          callback_data="banpick_pg_0")],
         ])
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"Ban <b>{tname}</b>  |  Lv {lvl}  |  ID <code>{tid}</code>\n\n"
                 f"This wipes all their data and blocks them permanently.",
                 parse_mode="HTML", reply_markup=markup)
@@ -31266,7 +31296,7 @@ async def ban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             pass
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"🔨 <b>{tname}</b> (ID <code>{tid}</code>) banned and wiped.",
                 parse_mode="HTML")
         except Exception as e:
@@ -31348,7 +31378,7 @@ async def unban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     if data == "unbanpick_cancel":
         await query.answer()
-        try: await query.edit_message_text("Cancelled.")
+        try: await _q_edit(query, "Cancelled.")
         except Exception: pass
         return
 
@@ -31359,7 +31389,7 @@ async def unban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TY
         c.execute("SELECT username, banned_at FROM banned_users WHERE user_id=?", (tid,))
         row = c.fetchone(); conn.close()
         if not row:
-            try: await query.edit_message_text("❌ User not found in ban list.")
+            try: await _q_edit(query, "❌ User not found in ban list.")
             except Exception: pass
             return
         uname, banned_at = row
@@ -31372,7 +31402,7 @@ async def unban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("◀️ Back",            callback_data="unbanpick_back")],
         ])
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"Unban <b>{uname}</b>?\nBanned on: {dt}\n\n"
                 f"Their stats and progress are fully restored.",
                 parse_mode="HTML", reply_markup=markup)
@@ -31385,11 +31415,11 @@ async def unban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         rows = _build_unban_picker()
         if not rows:
-            try: await query.edit_message_text("No banned players.")
+            try: await _q_edit(query, "No banned players.")
             except Exception: pass
             return
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 "🔓 *Unban Player — Select a player to unban*",
                 parse_mode="Markdown", reply_markup=_build_unban_markup(rows))
         except Exception: pass
@@ -31403,7 +31433,7 @@ async def unban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TY
         row = c.fetchone()
         if not row:
             conn.close()
-            try: await query.edit_message_text("❌ Already unbanned or not found.")
+            try: await _q_edit(query, "❌ Already unbanned or not found.")
             except Exception: pass
             return
         uname = row[0]
@@ -31415,7 +31445,7 @@ async def unban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception:
             pass
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"✅ <b>{uname}</b> has been unbanned.",
                 parse_mode="HTML")
         except Exception as e:
@@ -31788,7 +31818,7 @@ async def admingivexp_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     data = query.data
 
     if data == "agivexp_cancel":
-        try: await query.edit_message_text("_Cancelled._", parse_mode="Markdown")
+        try: await _q_edit(query, "_Cancelled._", parse_mode="Markdown")
         except: pass
         return
 
@@ -31797,11 +31827,11 @@ async def admingivexp_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         target_uid = int(parts[1])
         exp_amount = int(parts[2])
     except (IndexError, ValueError):
-        await query.edit_message_text("Invalid callback data."); return
+        await _q_edit(query, "Invalid callback data."); return
 
     p = get_player(target_uid)
     if not p:
-        await query.edit_message_text("Player not found."); return
+        await _q_edit(query, "Player not found."); return
 
     old_level = p["level"]
     add_exp(p, exp_amount)
@@ -31810,7 +31840,7 @@ async def admingivexp_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     level_note = f" _(levelled up: {old_level} → {new_level})_" if new_level != old_level else ""
 
     try:
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"✅ Gave *{exp_amount:,} EXP* to *{p['username']}*{level_note}\n"
             f"New level: *{new_level}*  |  EXP: *{p['exp']:,}*",
             parse_mode="Markdown"
@@ -32711,7 +32741,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
         sr = active_soloraids[uid]
         if len(all_skills) > 1:
             markup = _build_skill_picker_keyboard(all_skills, uid, 0, show_close=False)
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"🔮 *vs {sr['enemy']['name']}* — choose a skill:",
                 parse_mode="Markdown", reply_markup=markup)
             return
@@ -32757,7 +32787,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{exp_r:,} EXP | +{gold_r}g")
                 save_player(p)
                 try:
-                    await query.edit_message_text(text="\n".join(out)[:4096], parse_mode="Markdown")
+                    await _q_edit(query, text="\n".join(out)[:4096], parse_mode="Markdown")
                 except Exception: pass
                 return
         else:
@@ -32766,14 +32796,14 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 active_soloraids.pop(uid, None)
                 save_player(p)
                 try:
-                    await query.edit_message_text(text="\n".join(out)[:4096], parse_mode="Markdown")
+                    await _q_edit(query, text="\n".join(out)[:4096], parse_mode="Markdown")
                 except Exception:
                     pass
                 return
 
         save_player(p)
         try:
-            await query.edit_message_text(text="\n".join(out)[:4096], parse_mode="Markdown", reply_markup=_build_sr_markup(uid))
+            await _q_edit(query, text="\n".join(out)[:4096], parse_mode="Markdown", reply_markup=_build_sr_markup(uid))
         except Exception: pass
         return
 
@@ -32783,7 +32813,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
         sr["player_hp"] = min(sr["player_max_hp"], sr["player_hp"] + heal_amt)
         save_player(p)
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"🩺 *{user.first_name}* rests and recovers *{heal_amt} HP!*\n"
                 f"❤️ HP: {sr['player_hp']}/{sr['player_max_hp']} | "
                 f"Enemy HP: {sr['enemy_hp']}/{sr['enemy_max_hp']}",
@@ -32795,7 +32825,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
         active_soloraids.pop(uid, None)
         save_player(p)
         try:
-            await query.edit_message_text("🏃 *You fled from the solo raid!*", parse_mode="Markdown")
+            await _q_edit(query, "🏃 *You fled from the solo raid!*", parse_mode="Markdown")
         except Exception: pass
         return
 
@@ -32853,7 +32883,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
             lines.append(f"✅ +{exp_r:,} EXP | +{gold_r}g{loot_line}")
             save_player(p)
             try:
-                await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
+                await _q_edit(query, text="\n".join(lines)[:4096], parse_mode="Markdown")
             except Exception: pass
             return
     else:
@@ -32881,7 +32911,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     save_player(p)
                     lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6min defeat. -{exp_loss} EXP.")
                     try:
-                        await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
+                        await _q_edit(query, text="\n".join(lines)[:4096], parse_mode="Markdown")
                     except Exception: pass
                     return
                 else:
@@ -32892,7 +32922,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     save_player(p)
     try:
-        await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=_build_sr_markup(uid))
+        await _q_edit(query, text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=_build_sr_markup(uid))
     except Exception: pass
 
 
@@ -32943,7 +32973,7 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             boss_dict["player_max_hp"][uid] = mhp
         if len(all_skills) > 1:
             markup = _build_skill_picker_keyboard(all_skills, uid, 0, show_close=False)
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"🔮 *vs {boss_dict['data']['name']}* — choose a skill:",
                 parse_mode="Markdown", reply_markup=markup)
             return
@@ -33051,13 +33081,13 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 save_player(pp)
                 lines.append(f"✅ *{pp['username']}*  -  +{_braid_exp:,} EXP | +{data['gold']} Gold")
             try:
-                await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
+                await _q_edit(query, text="\n".join(lines)[:4096], parse_mode="Markdown")
             except Exception: pass
             return
 
         save_player(p)
         try:
-            await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=_build_boss_markup(uid))
+            await _q_edit(query, text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=_build_boss_markup(uid))
         except Exception: pass
         return
 
@@ -33075,7 +33105,7 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         heal_amt = round(max_hp * 0.25)
         boss_dict["player_hp"][uid] = min(max_hp, cur_hp + heal_amt)
         try:
-            await query.edit_message_text(
+            await _q_edit(query, 
                 f"🩺 *{user.first_name}* recovers *{heal_amt} HP!*\n"
                 f"❤️ Your HP: {boss_dict['player_hp'][uid]}/{max_hp}\n"
                 f"💀 Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}",
@@ -33090,11 +33120,11 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not boss_dict["participants"]:
             active_bosses.pop(chat_id, None); secret_boss_active.pop(chat_id, None)
             try:
-                await query.edit_message_text("🏃 *All players fled! The boss vanishes.*", parse_mode="Markdown")
+                await _q_edit(query, "🏃 *All players fled! The boss vanishes.*", parse_mode="Markdown")
             except Exception: pass
         else:
             try:
-                await query.edit_message_text(
+                await _q_edit(query, 
                     f"🏃 *{user.first_name}* fled!\n"
                     f"💀 Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}",
                     parse_mode="Markdown", reply_markup=_build_boss_markup(uid))
@@ -33162,7 +33192,7 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("💀 *ALL PLAYERS DEFEATED!* The boss wins...")
         save_player(p)
         try:
-            await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
+            await _q_edit(query, text="\n".join(lines)[:4096], parse_mode="Markdown")
         except Exception: pass
         return
 
@@ -33187,13 +33217,13 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             add_exp(pp, _braid_exp, w2); save_player(pp)
             lines.append(f"✅ *{pp['username']}*  -  +{_braid_exp:,} EXP | +{data['gold']} Gold")
         try:
-            await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown")
+            await _q_edit(query, text="\n".join(lines)[:4096], parse_mode="Markdown")
         except Exception: pass
         return
 
     save_player(p)
     try:
-        await query.edit_message_text(text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=_build_boss_markup(uid))
+        await _q_edit(query, text="\n".join(lines)[:4096], parse_mode="Markdown", reply_markup=_build_boss_markup(uid))
     except Exception: pass
 
 
@@ -33264,7 +33294,7 @@ async def prestige_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
            f"📜 Your journey: {path_names}\n\n"
            f"_Your class evolves automatically at Levels 30, 60, and 100. Level cap: 250._")
     try:
-        await query.edit_message_text(msg, parse_mode="Markdown")
+        await _q_edit(query, msg, parse_mode="Markdown")
     except Exception:
         pass
 
@@ -33287,7 +33317,7 @@ async def shop_tab_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     discount = _shop_discount(p)
     text, markup = _build_shop_view(p, tab, uid, discount)
     try:
-        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
     await query.answer()
@@ -33324,7 +33354,7 @@ async def shop_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Rebuild the tab view with updated gold
     text, markup = _build_shop_view(p, tab, uid, discount)
     try:
-        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
 
@@ -33362,7 +33392,7 @@ async def shopbulk_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer(f"✅ Bought {qty}× {entry['item']} for {total_price:,}g!")
     text, markup = _build_shop_view(p, tab, uid, discount)
     try:
-        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
 
@@ -33397,7 +33427,7 @@ async def shopreroll_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     text, markup = _build_shop_view(p, tab, uid, discount)
     await query.answer(f"Shop rerolled! ({reroll_count + 1}/3 today)")
     try:
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
 
@@ -33465,7 +33495,7 @@ async def allocate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rows.append(row)
     markup = InlineKeyboardMarkup(rows) if rows else None
     try:
-        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
 
@@ -33978,7 +34008,7 @@ async def crate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     names = ", ".join(f"*{n}*" for _, n in st["claimed"])
     left = 3 - len(st["claimed"])
     try:
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"📦 *A supply crate crashed onto the table!*\n\n"
             f"Grabbed by: {names}\n" +
             (f"_{left} share{'s' if left != 1 else ''} left — be quick!_" if left else "_Emptied!_"),
@@ -34055,7 +34085,7 @@ async def bet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer(f"💰 {_BET_AMOUNT}g on {st['names'].get(side,'?')}!")
     n_bets = len(st["bets"])
     try:
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"⚔️ *FIGHT!*  *{st['names'][au]}*  vs  *{st['names'][du]}*\n\n"
             f"💰 {n_bets} bet{'s' if n_bets != 1 else ''} placed — "
             f"_{_BET_AMOUNT}g a seat, 2x payout, window closes fast!_",
@@ -34319,7 +34349,7 @@ async def heist_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer(f"🥷 You're in! Crew odds: {int(odds*100)}%")
     names = ", ".join(f"*{n}*" for _, n in st["crew"])
     try:
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🏦 *THE VAULT IS OPEN!*\n\n"
             f"Crew ({len(st['crew'])}): {names}\n"
             f"📈 Success odds: *{int(odds*100)}%*  ·  Buy-in {_HEIST_BUYIN}g\n"
@@ -34493,7 +34523,7 @@ async def coinflip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loser["gold"] = max(0, loser.get("gold", 0) - amt)
     save_player(winner); save_player(loser)
     try:
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"🪙 *THE COIN LANDS...*\n\n"
             f"🏆 *{winner['username']}* wins *{amt:,}g* from *{loser['username']}*!",
             parse_mode="Markdown")
@@ -34721,7 +34751,7 @@ async def roulette_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("💀 Seated. Good luck.")
     names = ", ".join(f"*{n}*" for _, n in st["players"])
     try:
-        await query.edit_message_text(
+        await _q_edit(query, 
             f"💀 *RUSSIAN ROULETTE* — buy-in *{st['buyin']}g*\n\n"
             f"Players ({len(st['players'])}): {names}\n"
             f"_Last one standing takes *{st['buyin']*len(st['players']):,}g*!_",
@@ -34995,7 +35025,7 @@ async def firststeps_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     text = f"✅ *Claimed: +{total_exp:,} EXP!*" + ("".join(f"\n{e}" for e in extras)) + "\n\n" + text
     if lmsgs: text += "\n\n" + "\n".join(lmsgs)
     try:
-        await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=markup)
+        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
     except Exception:
         pass
 
@@ -35048,7 +35078,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     async def _show(text, markup_rows):
         try:
-            await query.edit_message_text(text[:4096], parse_mode="Markdown",
+            await _q_edit(query, text[:4096], parse_mode="Markdown",
                                           reply_markup=InlineKeyboardMarkup(markup_rows))
         except Exception:
             pass
@@ -35060,7 +35090,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💰 {p.get('gold',0):,}g  |  🌍 {w['name']}\n\n"
                 f"_Where to?_")
         try:
-            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_menu_markup(uid, p))
+            await _q_edit(query, text, parse_mode="Markdown", reply_markup=_menu_markup(uid, p))
         except Exception:
             pass
         return
