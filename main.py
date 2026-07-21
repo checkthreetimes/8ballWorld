@@ -84,6 +84,7 @@ CHANGELOG = [
         "FOUR NEW PVP MODES: /royale (group battle royale, winner takes the pot), /quickdraw (reaction duel), /russian (1v1 six-shooter), /standoff (split-or-steal)",
         "Guide fully updated: 3 new pages (PvP Modes & Rules, Group Games & Casino, Healing & Potions)",
         "More targets to fight: auto-revive at 50% HP when your defeat timer ends, attackable window widened to 8h, /attack now explains WHY the pool is empty",
+        "Oracle quests fixed: assignments can't be erased by racing saves; saying the phrase without aiming it now DMs you a hint instead of failing silently",
         "Full audit: all 138 commands smoke-tested clean, all 230 button types verified wired to handlers",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
@@ -11821,7 +11822,8 @@ def save_player(p):
     # on total_exp alone and missed the case where the stale snapshot had MORE
     # exp but hadn't seen the level-up — it erased the level anyway.)
     _cur_row = c.execute(
-        "SELECT tg_username, total_exp, exp, level, stat_points, gold FROM players WHERE user_id=?",
+        "SELECT tg_username, total_exp, exp, level, stat_points, gold, active_quest, last_quest_ts "
+        "FROM players WHERE user_id=?",
         (p.get("user_id"),)).fetchone()
     if _cur_row:
         # Never wipe tg_username with NULL — preserve existing DB value
@@ -11836,6 +11838,11 @@ def save_player(p):
             p["stat_points"] = safe_int(_cur_row["stat_points"])
             p["max_hp"]      = calc_max_hp(p)
             p["hp"]          = min(safe_int(p.get("hp")), p["max_hp"])
+        # Never let a stale snapshot erase a NEWER oracle quest: if the DB row
+        # carries a quest assigned after this snapshot was loaded, keep it.
+        if safe_int(_cur_row["last_quest_ts"]) > safe_int(p.get("last_quest_ts")):
+            p["last_quest_ts"] = safe_int(_cur_row["last_quest_ts"])
+            p["active_quest"]  = _cur_row["active_quest"]
         # ── GOLD DELTA-MERGE ──────────────────────────────────────────────────
         # Write db_gold + (this snapshot's own gold change), not the snapshot's
         # absolute gold — so two racing handlers' purchases/payouts BOTH land.
@@ -18089,8 +18096,22 @@ async def _try_complete_quest_phrase(p, text, reply_to_id, bot):
         if _phrase_matches(q.get("phrase",""), text): matched = True
     elif qtype == "targeted":
         phrase = q.get("phrase",""); tname = q.get("target_name","").lower(); tid = q.get("target_id")
-        if _phrase_matches(phrase, text) and (tname in text_l or (reply_to_id and reply_to_id == tid)):
-            matched = True
+        if _phrase_matches(phrase, text):
+            if _phrase_norm(tname) in _phrase_norm(text) or (reply_to_id and reply_to_id == tid):
+                matched = True
+            elif not q.get("nudged"):
+                # Right words, wrong aim — tell them instead of failing silently
+                q["nudged"] = True
+                p["active_quest"] = json.dumps(q); save_player(p)
+                try:
+                    await bot.send_message(p["user_id"],
+                        f"🎱 _The oracle heard you… but the words weren't aimed._\n\n"
+                        f"Say it *to {q.get('target_name','them')}*: **reply to one of their "
+                        f"messages**, or include their name in your message. The task is still open.",
+                        parse_mode="Markdown")
+                except Exception:
+                    pass
+                return
     if not matched: return
     inf_r = q.get("reward_inf", 50)
     exp_r = exp_share(p["level"], min(0.15, q.get("reward_exp", 800) / 900 * 0.15))
