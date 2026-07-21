@@ -77,6 +77,10 @@ CHANGELOG = [
         "POTION REVAMP: all HP/MP potions now heal a % of YOUR max (25/50/75/100%) — meaningful at every level",
         "New ❤️‍🩹 HEAL TO FULL button in /use — auto-drinks the right potions with no waste",
         "MP potions repriced sanely (400g-4000g, was up to 120,000g); Minor MP Tonic merged into MP Tonic",
+        "PVP FAIRNESS PACK: idle fights auto-draw after 5 min (bets refunded, statuses cleared)",
+        "🏳️ Surrender button on the fight card — concede for -5% EXP instead of being stuck",
+        "Newbie Protection: under level 10 can't be attacked unless they strike first",
+        "No-honor rule: kills 30+ levels down pay 10% EXP; can't attack players mid-dungeon/encounter",
         "Full audit: all 138 commands smoke-tested clean, all 230 button types verified wired to handlers",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
@@ -438,6 +442,7 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
 _pvp_card_ts = {}     # uid -> last card send time (per-player pacing)
 _pvp_render_seq = {}  # uid -> latest render sequence (stale renders are dropped)
 _pvp_card_locks = {}  # uid -> asyncio.Lock serializing card delivery per viewer
+_pvp_last_action = {} # pair -> time.time() of last combat action (idle-draw watchdog)
 
 async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
     """Deliver a PvP turn as a FRESH card to each player (send new → delete
@@ -452,6 +457,7 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
     like it never applied. Each render takes a sequence number; superseded
     renders are dropped instead of sent."""
     _pvp_cards.setdefault(pair, {})
+    _pvp_last_action[pair] = time.time()  # fight is alive — reset idle-draw clock
     async def _upd_card(viewer_uid, viewer_p, opp_uid, opp_p):
         try:
             card = _pvp_fight_card(viewer_p, opp_p, action_text, pair=pair)
@@ -553,6 +559,7 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
     _pvp_battle_logs.pop(pair, None)
     _pvp_cur_page.pop(pair, None)
     _pvp_origin_chat.pop(pair, None)
+    _pvp_last_action.pop(pair, None)
     _cancel_card_timer(pair)  # cancel, don't just drop — or the pending
                               # auto-delete later removes the final result card
     if len(pair) == 2:
@@ -640,6 +647,47 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
         _pvp_miss_streaks.pop((pair[0], pair[1]), None)
         _pvp_miss_streaks.pop((pair[1], pair[0]), None)
 
+
+async def _pvp_idle_watch_loop(bot):
+    """Fights with no action for 5 minutes end in a DRAW: statuses cleared,
+    spectator bets refunded, cards closed. Before this, abandoned fights just
+    lingered forever with live buttons and sticky status effects."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            now = time.time()
+            for pair in list(_pvp_origin_chat.keys()):
+                last = _pvp_last_action.get(pair)
+                if last and now - last > 300:
+                    try:
+                        await _finalize_pvp(pair,
+                            "🏳️ *DRAW* — the fight fizzled out (no actions for 5 minutes).\n"
+                            "_Status effects cleared; spectator bets refunded._",
+                            bot, winner_id=None)
+                    except Exception:
+                        logger.error("idle-draw finalize failed for %s", pair, exc_info=True)
+                        _pvp_last_action.pop(pair, None)
+        except Exception:
+            logger.error("pvp idle watch error", exc_info=True)
+
+def _pvp_attack_allowed(a, d):
+    """Gate for STARTING a PvP attack. Returns (True, '') or (False, reason).
+    Counterattacks inside an existing fight are always allowed."""
+    auid, duid = safe_int(a.get("user_id")), safe_int(d.get("user_id"))
+    pair = _pvp_pair_key(auid, duid)
+    in_fight = pair in _pvp_origin_chat
+    if not in_fight and safe_int(d.get("level"), 1) < 10 and safe_int(a.get("level"), 1) >= 10:
+        return (False, f"🐣 *{d.get('username','?')}* is under *Newbie Protection* (below level 10) — "
+                       "they can't be attacked unless they strike first.")
+    if duid in active_dungeons:
+        return (False, f"🏚️ *{d.get('username','?')}* is deep in a dungeon — you can't reach them.")
+    if duid in active_encounters:
+        return (False, f"⚔️ *{d.get('username','?')}* is mid-encounter — you can't reach them.")
+    if auid in active_dungeons:
+        return (False, "🏚️ You're in a dungeon — finish or flee before starting PvP.")
+    if auid in active_encounters:
+        return (False, "⚔️ You're mid-encounter — finish it before starting PvP.")
+    return (True, "")
 
 def _reset_card_timer(pair, bot, chat_id, mid, seconds=20):
     """Cancel any existing auto-delete task for this card and schedule a fresh one."""
@@ -12872,7 +12920,52 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
                 ))
     for i in range(0, len(skill_btns), 2):
         rows.append(skill_btns[i:i+2])
+    rows.append([InlineKeyboardButton("🏳️ Surrender", callback_data=f"pvpyield_{player_uid}_{opp_uid}")])
     return InlineKeyboardMarkup(rows)
+
+async def pvp_yield_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🏳️ Surrender: concede the fight — opponent wins (bets pay out), yielder
+    loses 5% of current-level EXP. No kill credit / streak / wanted marks: a
+    concession is not a kill."""
+    query = update.callback_query
+    try:
+        _, uid_s, opp_s = query.data.split("_")
+        uid, opp_uid = int(uid_s), int(opp_s)
+    except (ValueError, IndexError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your fight card!", show_alert=True); return
+    pair = _pvp_pair_key(uid, opp_uid)
+    if pair not in _pvp_origin_chat:
+        await query.answer("No active fight to surrender.", show_alert=True); return
+    _tok = _cb_lock(uid)
+    if not _tok:
+        await query.answer("⏳ One moment..."); return
+    try:
+        a = get_player(uid); d = get_player(opp_uid)
+        if not a or not d:
+            await query.answer("Fight data missing.", show_alert=True); return
+        loss = max(0, round(safe_int(a.get("exp")) * 0.05))
+        if loss:
+            _exp_penalty(a, loss)
+        a["losses"] = safe_int(a.get("losses")) + 1
+        d["wins"]   = safe_int(d.get("wins")) + 1
+        _yield_exp = exp_share(d.get("level", 1), 0.02)
+        add_exp(d, _yield_exp)
+        save_player(a); save_player(d)
+        await query.answer("🏳️ You surrendered.")
+        _grp = _pvp_origin_chat.get(pair)  # grab before finalize pops it
+        _cb_unlock(uid, _tok)
+        await _finalize_pvp(pair,
+            f"🏳️ *{a['username']} SURRENDERS!*\n"
+            f"🏆 *{d['username']}* takes the win (+{_yield_exp} EXP)."
+            + (f"\n💔 {a['username']} forfeits {loss} EXP." if loss else ""),
+            context.bot, winner_id=opp_uid)
+        if _grp:
+            asyncio.create_task(announce(context.bot, _grp,
+                f"🏳️ *{a['username']}* surrendered to *{d['username']}*!", delay=30))
+    finally:
+        _cb_unlock(uid, _tok)
 
 
 
@@ -13055,6 +13148,10 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             for _desc, _exp, _gold in track_objective(a, "pvp_win"):
                 a["gold"] = a.get("gold", 0) + _gold; add_exp(a, _exp)
             exp_gain = _pvp_kill_exp(a, d)
+            _lvl_gap = safe_int(a.get("level"), 1) - safe_int(d.get("level"), 1)
+            if _lvl_gap >= 30:
+                exp_gain = max(1, round(exp_gain * 0.10))
+                action += f"\n😒 _No honor in stomping someone {_lvl_gap} levels down — EXP slashed._"
             if _d_was_wanted:
                 wanted_gold = 250; wanted_exp = round(exp_gain * 0.5)
                 a["gold"] = a.get("gold", 0) + wanted_gold
@@ -13880,6 +13977,9 @@ def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=3)
         if tp.get("hp", 1) <= 0: continue   # expired defeat timer but never revived
         if is_defeated(tp): continue
         if is_invincible(tp): continue
+        if safe_int(tp.get("level"), 1) < 10: continue  # Newbie Protection
+        if safe_int(tp.get("user_id")) in active_dungeons: continue   # unreachable mid-dungeon
+        if safe_int(tp.get("user_id")) in active_encounters: continue # unreachable mid-encounter
         if attacker_guild_id and tp.get("guild_id") and \
            str(tp.get("guild_id")) == str(attacker_guild_id): continue
         # Exclude players inactive for more than 1 hour (same rule as reply-based attack)
@@ -13979,6 +14079,11 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer(d.get("username","?") + " is already defeated!", show_alert=True); return
         if is_invincible(d):
             await query.answer(d.get("username","?") + " is invincible!", show_alert=True); return
+        _pk_a = get_player(uid)
+        if _pk_a:
+            _pk_ok, _pk_why = _pvp_attack_allowed(_pk_a, d)
+            if not _pk_ok:
+                await query.answer(_pk_why.replace("*", "").replace("_", "")[:190], show_alert=True); return
 
         # Delete the picker message
         try:
@@ -14036,6 +14141,9 @@ async def pvp_rematch_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if is_invincible(d):
         await query.answer(f"{d['username']} is invincible right now — wait for their grace "
                            f"period to end!", show_alert=True); return
+    _rm_ok, _rm_why = _pvp_attack_allowed(a, d)
+    if not _rm_ok:
+        await query.answer(_rm_why.replace("*", "").replace("_", "")[:190], show_alert=True); return
     _tok = _cb_lock(uid)
     if not _tok:
         await query.answer("⏳ Still processing!"); return
@@ -14218,6 +14326,9 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, f"\U0001f480 {d['username']} is already defeated!", delay=9); return
     if is_invincible(d):
         await send_group(update, f"\U0001f6e1\ufe0f {d['username']} is *Still Recovering*  -  invincible for now.", delay=9); return
+    _atk_ok, _atk_why = _pvp_attack_allowed(a, d)
+    if not _atk_ok:
+        await send_group(update, _atk_why, delay=9); return
     raid_d, kind_d = in_active_raid(du_id, chat)
     if raid_d:
         await send_group(update, f"\u2694\ufe0f *{d['username']}* is in a raid right now  -  can't be targeted!", delay=9); return
@@ -35306,6 +35417,7 @@ async def _post_init(application):
     asyncio.create_task(_engagement_loop(application.bot))
     asyncio.create_task(_revive_watch_loop(application.bot))
     asyncio.create_task(_daily_digest_loop(application.bot))
+    asyncio.create_task(_pvp_idle_watch_loop(application.bot))
     # Telegram "/" command menu — discoverability for every command that matters
     try:
         from telegram import BotCommand
@@ -35386,6 +35498,7 @@ def main():
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
     app.add_handler(CallbackQueryHandler(firststeps_callback, pattern="^fsteps_claim_"))
     app.add_handler(CallbackQueryHandler(pvp_rematch_callback, pattern="^pvprematch_"))
+    app.add_handler(CallbackQueryHandler(pvp_yield_callback, pattern="^pvpyield_"))
     app.add_handler(CallbackQueryHandler(crate_callback, pattern="^crate_"))
     app.add_handler(CallbackQueryHandler(bet_callback, pattern="^bet_"))
     app.add_handler(CallbackQueryHandler(world_event_button_callback, pattern="^wev_"))
