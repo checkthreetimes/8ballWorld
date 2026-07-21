@@ -74,6 +74,9 @@ CHANGELOG = [
         "Gold changes merge additively on save — racing purchases/payouts can no longer erase each other",
         "All 299 card-edit sites tolerate Telegram's 'message is not modified' (pet feed at full hunger etc. no longer errors)",
         "Tapping a button on an expired (auto-deleted) card now shows a friendly toast instead of erroring",
+        "POTION REVAMP: all HP/MP potions now heal a % of YOUR max (25/50/75/100%) — meaningful at every level",
+        "New ❤️‍🩹 HEAL TO FULL button in /use — auto-drinks the right potions with no waste",
+        "MP potions repriced sanely (400g-4000g, was up to 120,000g); Minor MP Tonic merged into MP Tonic",
         "Full audit: all 138 commands smoke-tested clean, all 230 button types verified wired to handlers",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
@@ -3778,17 +3781,16 @@ def _pet_main_markup():
 
 # Items that can be found in game
 CONSUMABLES = {
-    # Healing
-    "Health Potion":          {"desc":"Restores 250 HP.","sell":75},
-    "Greater Health Potion":  {"desc":"Restores 500 HP.","sell":200},
-    "Grand Restorative Flask":    {"desc":"Restores 1500 HP.",  "sell":450},
-    "Supreme Restorative Flask":  {"desc":"Restores 5000 HP.",  "sell":1200},
-    "Ultimate Vitality Draught":  {"desc":"Restores 15000 HP.", "sell":3500},
-    # MP
-    "MP Tonic":          {"desc":"Restores 30 MP.", "sell":100},
-    "Minor MP Tonic":    {"desc":"Restores 30 MP.", "sell":4500},
-    "Major MP Elixir":   {"desc":"Restores 80 MP.", "sell":12000},
-    "Grand Mana Crystal":{"desc":"Fully restores all MP.", "sell":35000},
+    # Healing — PERCENTAGE of max HP, so potions stay meaningful at every level
+    "Health Potion":          {"desc":"Restores 25% of your max HP.","sell":75},
+    "Greater Health Potion":  {"desc":"Restores 50% of your max HP.","sell":200},
+    "Grand Restorative Flask":    {"desc":"Restores 75% of your max HP.",  "sell":450},
+    "Supreme Restorative Flask":  {"desc":"Fully restores HP.",  "sell":1200},
+    "Ultimate Vitality Draught":  {"desc":"FULL RESTORE — fully restores HP and MP.", "sell":3500},
+    # MP — percentage of max MP
+    "MP Tonic":          {"desc":"Restores 35% of your max MP.", "sell":100},
+    "Major MP Elixir":   {"desc":"Restores 75% of your max MP.", "sell":1200},
+    "Grand Mana Crystal":{"desc":"Fully restores all MP.", "sell":3500},
     # Revive
     "Scroll of Revival":      {"desc":"Revive a defeated player.","sell":750},
     # Skill items
@@ -3814,6 +3816,42 @@ CONSUMABLES = {
     "Monster Core (Void)":      {"desc":"A strange core from a void monster. Used for crafting.","sell":200},
     "Rare Monster Core":        {"desc":"A powerful core from a rare or higher monster. Used for crafting.","sell":400},
 }
+
+# ── POTION ENGINE ─────────────────────────────────────────────────────────────
+# Heals are a % of max HP/MP: a Health Potion is worth drinking at level 5 AND
+# level 150. One shared engine — every /use, /heal, menu, and battle heal
+# button routes through here instead of carrying its own flat-number table.
+_HP_POTION_PCT = {"Health Potion": 0.25, "Greater Health Potion": 0.50,
+                  "Grand Restorative Flask": 0.75, "Supreme Restorative Flask": 1.00,
+                  "Ultimate Vitality Draught": 1.00}
+_MP_POTION_PCT = {"MP Tonic": 0.35, "Major MP Elixir": 0.75, "Grand Mana Crystal": 1.00}
+
+def _potion_heal_amount(p, item):
+    """HP a potion restores for THIS player (percentage of their real max)."""
+    return max(1, round(calc_max_hp(p) * _HP_POTION_PCT.get(item, 0)))
+
+def _apply_potion(p, item):
+    """Apply an HP/MP potion to p. Returns (status, note):
+    'ok' — applied, note describes the effect; 'defeated' — HP potion refused
+    (defeated players can't drink); 'notpotion' — item isn't a potion."""
+    if item in _HP_POTION_PCT:
+        if is_defeated(p):
+            return ("defeated", "")
+        mx = calc_max_hp(p)
+        before = max(0, safe_int(p.get("hp")))
+        p["hp"] = min(mx, before + _potion_heal_amount(p, item))
+        note = f"❤️ +{p['hp'] - before:,} HP ({p['hp']:,}/{mx:,})"
+        if item == "Ultimate Vitality Draught":
+            p["mp"] = safe_int(p.get("max_mp")) or calc_max_mp(p)
+            note += f"  💙 MP fully restored ({p['mp']})"
+        return ("ok", note)
+    if item in _MP_POTION_PCT:
+        mxm = safe_int(p.get("max_mp")) or calc_max_mp(p)
+        before = max(0, safe_int(p.get("mp")))
+        gain = max(1, round(mxm * _MP_POTION_PCT[item]))
+        p["mp"] = min(mxm, before + gain)
+        return ("ok", f"💙 +{p['mp'] - before} MP ({p['mp']}/{mxm})")
+    return ("notpotion", "")
 
 # ── DEF GEAR SLOTS ────────────────────────────────────────────────────────────
 HATS = {
@@ -4376,9 +4414,9 @@ _FORGE_CAT_LABELS = {
 _FORGE_CATS = ["weapon", "armor", "acc", "consumable"]
 
 SHOP_POOL = [  # kept for legacy compat
-    {"item":"Health Potion","price":300,"desc":"Restores 250 HP."},
-    {"item":"Greater Health Potion","price":750,"desc":"Restores 500 HP."},
-    {"item":"Grand Restorative Flask","price":1800,"desc":"Restores 1500 HP."},
+    {"item":"Health Potion","price":300,"desc":"Restores 25% max HP."},
+    {"item":"Greater Health Potion","price":750,"desc":"Restores 50% max HP."},
+    {"item":"Grand Restorative Flask","price":1800,"desc":"Restores 75% max HP."},
     {"item":"Scroll of Revival","price":2500,"desc":"Revive a defeated player."},
     {"item":"Iron Shard","price":300,"desc":"Crafting material."},
     {"item":"Enchanting Scroll","price":500,"desc":"Enchant gear."},
@@ -4388,14 +4426,14 @@ _RARITY_PRICES = {"common":350,"uncommon":950,"rare":2800,"epic":7000}
 
 _SHOP_STATIC_TABS = {
     "pot": [
-        {"item":"Health Potion",              "price":300,   "desc":"Restores 250 HP.",   "bulk":True},
-        {"item":"Greater Health Potion",      "price":750,   "desc":"Restores 500 HP.",   "bulk":True},
-        {"item":"Grand Restorative Flask",    "price":1800,  "desc":"Restores 1500 HP.",  "bulk":True},
-        {"item":"Supreme Restorative Flask",  "price":4500,  "desc":"Restores 5000 HP.",  "bulk":True},
-        {"item":"Ultimate Vitality Draught",  "price":12000, "desc":"Restores 15000 HP.", "bulk":True},
-        {"item":"Minor MP Tonic",             "price":18000, "desc":"Restores 30 MP.",    "bulk":True},
-        {"item":"Major MP Elixir",            "price":45000, "desc":"Restores 80 MP.",    "bulk":True},
-        {"item":"Grand Mana Crystal",         "price":120000,"desc":"Fully restores all MP.", "bulk":True},
+        {"item":"Health Potion",              "price":300,   "desc":"Restores 25% max HP.",  "bulk":True},
+        {"item":"Greater Health Potion",      "price":750,   "desc":"Restores 50% max HP.",  "bulk":True},
+        {"item":"Grand Restorative Flask",    "price":1800,  "desc":"Restores 75% max HP.",  "bulk":True},
+        {"item":"Supreme Restorative Flask",  "price":4500,  "desc":"Fully restores HP.",    "bulk":True},
+        {"item":"Ultimate Vitality Draught",  "price":9000,  "desc":"FULL RESTORE: HP + MP.","bulk":True},
+        {"item":"MP Tonic",                   "price":400,   "desc":"Restores 35% max MP.",  "bulk":True},
+        {"item":"Major MP Elixir",            "price":1500,  "desc":"Restores 75% max MP.",  "bulk":True},
+        {"item":"Grand Mana Crystal",         "price":4000,  "desc":"Fully restores MP.",    "bulk":True},
         {"item":"Scroll of Revival",          "price":2500,  "desc":"Revive a defeated player."},
     ],
     "mat": [
@@ -8370,11 +8408,18 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
     if data.startswith("dng_heal_"):
         inv = sjl(p.get("inventory"), [])
         potion, heal = None, 0
-        if "Ultimate Vitality Draught" in inv:  potion, heal = "Ultimate Vitality Draught", 15000
-        elif "Supreme Restorative Flask" in inv: potion, heal = "Supreme Restorative Flask", 5000
-        elif "Grand Restorative Flask" in inv:   potion, heal = "Grand Restorative Flask", 1500
-        elif "Greater Health Potion" in inv:     potion, heal = "Greater Health Potion", 500
-        elif "Health Potion" in inv:             potion, heal = "Health Potion", 250
+        # Smallest potion that still fills the gap; else the biggest owned
+        _dng_missing = state["p_max_hp"] - state["p_hp"]
+        _dng_owned = [pn for pn in ("Health Potion", "Greater Health Potion",
+                      "Grand Restorative Flask", "Supreme Restorative Flask",
+                      "Ultimate Vitality Draught") if pn in inv]
+        for _pn in _dng_owned:
+            _amt = max(1, round(state["p_max_hp"] * _HP_POTION_PCT[_pn]))
+            if _amt >= _dng_missing:
+                potion, heal = _pn, _amt; break
+        if not potion and _dng_owned:
+            _pn = _dng_owned[-1]
+            potion, heal = _pn, max(1, round(state["p_max_hp"] * _HP_POTION_PCT[_pn]))
         if not potion:
             state.setdefault("combat_log",[]).append("🧪 No potions!")
             await _dng_edit(uid, context.bot, _dng_combat_card(state), _dng_combat_markup(uid, state)); return
@@ -8389,10 +8434,13 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
     if data.startswith("dng_mp_"):
         inv = sjl(p.get("inventory"), [])
         _mp_item = None; _mp_gain = 0
-        for iname, igain in [("Grand Mana Crystal", -1), ("Major MP Elixir", 80),
-                              ("Minor MP Tonic", 30), ("MP Tonic", 30)]:
+        _dng_mmax = state.get("p_max_mp", 10)
+        for iname in ("MP Tonic", "Minor MP Tonic", "Major MP Elixir", "Grand Mana Crystal"):
             if iname in inv:
-                _mp_item = iname; _mp_gain = igain; break
+                _mp_item = iname
+                _pctk = "MP Tonic" if iname == "Minor MP Tonic" else iname
+                _mp_gain = max(1, round(_dng_mmax * _MP_POTION_PCT.get(_pctk, 0.35)))
+                break
         if not _mp_item:
             state.setdefault("combat_log",[]).append("💙 No MP potions!")
             await _dng_edit(uid, context.bot, _dng_combat_card(state), _dng_combat_markup(uid, state)); return
@@ -11454,6 +11502,8 @@ def save_shadow(s):
 
 # Normalizes pool-hall item names → RPG names at save time (catches loot drops too)
 _ITEM_RENAME = {
+    # Minor MP Tonic merged into MP Tonic (identical effect, wildly different price)
+    "Minor MP Tonic":           "MP Tonic",
     # Consumable renames (pool-hall → RPG)
     "Custom Tip Scroll":        "Enchanting Scroll",
     "The Custom Tip Scroll":    "Enchanting Scroll",
@@ -14320,10 +14370,13 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception: pass
             inv = sjl(a.get("inventory"), [])
             _mp_item = None; _mp_gain = 0
-            for iname, igain in [("Grand Mana Crystal", -1), ("Major MP Elixir", 80),
-                                  ("Minor MP Tonic", 30), ("MP Tonic", 30)]:
+            _pvp_mmax = safe_int(a.get("max_mp")) or calc_max_mp(a)
+            for iname in ("MP Tonic", "Minor MP Tonic", "Major MP Elixir", "Grand Mana Crystal"):
                 if iname in inv:
-                    _mp_item = iname; _mp_gain = igain; break
+                    _mp_item = iname
+                    _pctk = "MP Tonic" if iname == "Minor MP Tonic" else iname
+                    _mp_gain = max(1, round(_pvp_mmax * _MP_POTION_PCT.get(_pctk, 0.35)))
+                    break
             if not _mp_item:
                 no_mp_entry = f"💙 *{a['username']}* reaches for a mana potion — *none left!*"
                 _pvp_log_append(pair, no_mp_entry)
@@ -14609,18 +14662,14 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if get_player_class(h) and get_player_class(h).get("passive_key") == "mending_aura":
             heal_amount = round(heal_amount * 1.25)
     else:
-        # Non-priest  -  requires potion
-        if "Ultimate Vitality Draught" in inv:
-            potion = "Ultimate Vitality Draught"; heal_amount = 15000
-        elif "Supreme Restorative Flask" in inv:
-            potion = "Supreme Restorative Flask"; heal_amount = 5000
-        elif "Grand Restorative Flask" in inv:
-            potion = "Grand Restorative Flask"; heal_amount = 1500
-        elif "Greater Health Potion" in inv:
-            potion = "Greater Health Potion"; heal_amount = 500
-        elif "Health Potion" in inv:
-            potion = "Health Potion"; heal_amount = 250
-        else:
+        # Non-priest — requires potion; heals a % of the TARGET's max HP
+        for _hn in ("Ultimate Vitality Draught", "Supreme Restorative Flask",
+                    "Grand Restorative Flask", "Greater Health Potion", "Health Potion"):
+            if _hn in inv:
+                potion = _hn
+                heal_amount = max(1, round(calc_max_hp(t) * _HP_POTION_PCT[_hn]))
+                break
+        if not potion:
             await send_group(update,
                 "❌ You need a Health Potion to heal someone!\n"
                 "Chalkers can heal for free with /skill.", delay=9); return
@@ -16729,6 +16778,47 @@ async def unequip_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
         f"✅ *{name}* unequipped from {slot_label} slot and moved to inventory.",
         parse_mode="Markdown")
 
+async def use_full_heal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """One-tap 'Heal to FULL': drinks HP potions until full — smallest potion
+    that closes the gap first (no waste), biggest owned as fallback."""
+    query = update.callback_query
+    try:
+        uid = int(query.data.split("_")[1])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your inventory!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if is_defeated(p):
+        await query.answer("You're defeated — potions won't help!", show_alert=True); return
+    inv = sjl(p.get("inventory"), [])
+    mx = calc_max_hp(p)
+    _order = ("Health Potion", "Greater Health Potion", "Grand Restorative Flask",
+              "Supreme Restorative Flask", "Ultimate Vitality Draught")
+    used = []
+    for _ in range(30):
+        if p["hp"] >= mx: break
+        owned = [pn for pn in _order if pn in inv]
+        if not owned: break
+        missing = mx - p["hp"]
+        pick = next((pn for pn in owned if _potion_heal_amount(p, pn) >= missing), owned[-1])
+        inv.remove(pick)
+        _apply_potion(p, pick)
+        used.append(pick)
+    if not used:
+        await query.answer("Already at full HP!" if p["hp"] >= mx
+                           else "No HP potions in your bag — visit /shop!", show_alert=True)
+        return
+    p["inventory"] = json.dumps(inv)
+    save_player(p)
+    counts = ", ".join(f"{n} ×{c}" if c > 1 else n for n, c in Counter(used).items())
+    await query.answer("❤️ Fully healed!" if p["hp"] >= mx else "Drank everything you had!")
+    await _q_edit(query,
+        f"🧪 *Heal to Full*\nUsed: {counts}\n❤️ *{p['hp']:,}/{mx:,} HP*",
+        parse_mode="Markdown")
+
 async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /use button: useitem_{uid}_{item_name}"""
     query = update.callback_query
@@ -16748,24 +16838,12 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(f"{item_name} not in your bag!", show_alert=True); return
     inv.remove(item_name); p["inventory"] = json.dumps(inv)
     msg = f"✅ Used *{item_name}*. "
-    if item_name in ("Health Potion", "Greater Health Potion", "Grand Restorative Flask",
-                     "Supreme Restorative Flask", "Ultimate Vitality Draught"):
-        if is_defeated(p):
+    if item_name in _HP_POTION_PCT or item_name in _MP_POTION_PCT:
+        _pstatus, _pnote = _apply_potion(p, item_name)
+        if _pstatus == "defeated":
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
             await query.answer("You're defeated — potions won't help!", show_alert=True); return
-        hp_gain = {"Health Potion": 250, "Greater Health Potion": 500, "Grand Restorative Flask": 1500,
-                   "Supreme Restorative Flask": 5000, "Ultimate Vitality Draught": 15000}.get(item_name, 250)
-        p["hp"] = min(calc_max_hp(p), p["hp"] + hp_gain)
-        msg += f"❤️ +{hp_gain} HP ({p['hp']}/{calc_max_hp(p)})"
-    elif item_name in ("MP Tonic", "Minor MP Tonic", "Major MP Elixir", "Grand Mana Crystal"):
-        _mp_gain = {"MP Tonic": 30, "Minor MP Tonic": 30, "Major MP Elixir": 80}.get(item_name)
-        _mp_max = safe_int(p.get("max_mp")) or calc_max_mp(p)
-        if _mp_gain:
-            p["mp"] = min(_mp_max, safe_int(p.get("mp", 0)) + _mp_gain)
-        else:  # Grand Mana Crystal — full restore
-            p["mp"] = _mp_max
-            _mp_gain = _mp_max
-        msg += f"💙 +{_mp_gain} MP ({p['mp']}/{_mp_max})"
+        msg += _pnote
     elif item_name == "Scroll of Revival":
         if not is_defeated(p):
             inv.append(item_name); p["inventory"] = json.dumps(inv); save_player(p)
@@ -16810,6 +16888,9 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     remaining = [(k, inv_after.count(k)) for k in dict.fromkeys(inv_after) if k in CONSUMABLES]
     if remaining:
         btns = []
+        if safe_int(p.get("hp")) < calc_max_hp(p) and any(pn in inv_after for pn in _HP_POTION_PCT):
+            btns.append([InlineKeyboardButton(
+                "❤️‍🩹 HEAL TO FULL — auto-use potions", callback_data=f"usefull_{uid}")])
         for _itm, _cnt in remaining:
             _dc = CONSUMABLES[_itm]
             btns.append([InlineKeyboardButton(
@@ -16970,6 +17051,9 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update, "🧪 *Use Item*\n\nNo consumables in your bag.", delay=12); return
         uid = user.id
         buttons = []
+        if safe_int(p.get("hp")) < calc_max_hp(p) and any(pn in inv for pn in _HP_POTION_PCT):
+            buttons.append([InlineKeyboardButton(
+                "❤️‍🩹 HEAL TO FULL — auto-use potions", callback_data=f"usefull_{uid}")])
         for item, count in consumables_in_bag:
             d_c = CONSUMABLES[item]
             buttons.append([InlineKeyboardButton(
@@ -17000,33 +17084,16 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     inv.remove(item); p["inventory"] = json.dumps(inv)
     msg = f"✅ Used *{item}*. "
-    if item == "Health Potion":
-        if is_defeated(p):
+    if item in _HP_POTION_PCT or item in _MP_POTION_PCT:
+        _pstatus, _pnote = _apply_potion(p, item)
+        if _pstatus == "defeated":
             inv.append(item); p["inventory"] = json.dumps(inv)
             save_player(p)
             await send_group(update,
                 "❌ You're defeated  -  potions won't help.\n"
                 "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
             return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+250);  msg += f"❤️ +250 HP ({p['hp']:,}/{calc_max_hp(p):,})"
-    elif item == "Greater Health Potion":
-        if is_defeated(p):
-            inv.append(item); p["inventory"] = json.dumps(inv)
-            save_player(p)
-            await send_group(update,
-                "❌ You're defeated  -  potions won't help.\n"
-                "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
-            return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+500);  msg += f"❤️ +500 HP ({p['hp']:,}/{calc_max_hp(p):,})"
-    elif item == "Grand Restorative Flask":
-        if is_defeated(p):
-            inv.append(item); p["inventory"] = json.dumps(inv)
-            save_player(p)
-            await send_group(update,
-                "❌ You're defeated  -  potions won't help.\n"
-                "Use a *Scroll of Revival* to revive yourself, or wait for a Priest.", delay=9)
-            return
-        p["hp"] = min(calc_max_hp(p), p["hp"]+1500);  msg += f"❤️ +1500 HP ({p['hp']:,}/{calc_max_hp(p):,})"
+        msg += _pnote
     elif item == "Scroll of Revival":
         if not is_defeated(p):
             inv.append(item); p["inventory"] = json.dumps(inv)
@@ -24797,9 +24864,12 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         elif data == f"enc_heal_{uid}":
             _inv = sjl(p.get("inventory"), [])
             _potion, _heal = None, 0
-            if "Grand Restorative Flask" in _inv:   _potion, _heal = "Grand Restorative Flask", 1500
-            elif "Greater Health Potion" in _inv:   _potion, _heal = "Greater Health Potion", 500
-            elif "Health Potion" in _inv:           _potion, _heal = "Health Potion", 250
+            for _pn in ("Grand Restorative Flask", "Greater Health Potion", "Health Potion",
+                        "Supreme Restorative Flask", "Ultimate Vitality Draught"):
+                if _pn in _inv:
+                    _potion = _pn
+                    _heal = max(1, round(enc.get("p_max_hp", calc_max_hp(p)) * _HP_POTION_PCT[_pn]))
+                    break
             if not _potion:
                 _nopot_npc = _enc_npc_attack(enc, p)
                 _nopot_dot = _apply_dot_tick(enc)
@@ -25117,9 +25187,12 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         elif data == f"enc_heal_{uid}":
             _inv = sjl(p.get("inventory"), [])
             _potion, _heal = None, 0
-            if "Grand Restorative Flask" in _inv:   _potion, _heal = "Grand Restorative Flask", 1500
-            elif "Greater Health Potion" in _inv:   _potion, _heal = "Greater Health Potion", 500
-            elif "Health Potion" in _inv:           _potion, _heal = "Health Potion", 250
+            for _pn in ("Grand Restorative Flask", "Greater Health Potion", "Health Potion",
+                        "Supreme Restorative Flask", "Ultimate Vitality Draught"):
+                if _pn in _inv:
+                    _potion = _pn
+                    _heal = max(1, round(enc.get("p_max_hp", calc_max_hp(p)) * _HP_POTION_PCT[_pn]))
+                    break
             if not _potion:
                 _nopot_mon = _enc_monster_attack(enc)
                 _nopot_dot = _apply_dot_tick(enc)
@@ -28391,11 +28464,9 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     elif action == "heal":
         inv = Counter(sjl(p.get("inventory"), []))
-        potions = {
-            "Health Potion":          (inv.get("Health Potion", 0),          200),
-            "Greater Health Potion":  (inv.get("Greater Health Potion", 0),  500),
-            "Grand Restorative Flask":(inv.get("Grand Restorative Flask", 0),1000),
-        }
+        potions = {pn: (inv.get(pn, 0), _potion_heal_amount(p, pn))
+                   for pn in ("Health Potion", "Greater Health Potion", "Grand Restorative Flask",
+                              "Supreme Restorative Flask", "Ultimate Vitality Draught")}
         total_pots = sum(c for c, _ in potions.values())
         hp_pct = p.get("hp", 1) / max(1, p.get("max_hp", 1))
         hp_bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
@@ -35559,6 +35630,7 @@ def main():
     app.add_handler(CallbackQueryHandler(equip_item_callback,   pattern="^eqp_"))
     app.add_handler(CallbackQueryHandler(unequip_slot_callback, pattern="^uneqp_"))
     app.add_handler(CallbackQueryHandler(use_item_callback,     pattern="^useitem_"))
+    app.add_handler(CallbackQueryHandler(use_full_heal_callback, pattern="^usefull_"))
     app.add_handler(CallbackQueryHandler(settitle_callback,     pattern="^settitle_"))
     app.add_handler(CallbackQueryHandler(reinforce_item_callback, pattern="^rf_"))
     app.add_handler(CallbackQueryHandler(reinforce_asc_callback,  pattern="^rfasc_"))
