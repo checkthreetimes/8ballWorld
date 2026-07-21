@@ -82,6 +82,8 @@ CHANGELOG = [
         "Newbie Protection: under level 10 can't be attacked unless they strike first",
         "No-honor rule: kills 30+ levels down pay 10% EXP; can't attack players mid-dungeon/encounter",
         "FOUR NEW PVP MODES: /royale (group battle royale, winner takes the pot), /quickdraw (reaction duel), /russian (1v1 six-shooter), /standoff (split-or-steal)",
+        "Guide fully updated: 3 new pages (PvP Modes & Rules, Group Games & Casino, Healing & Potions)",
+        "More targets to fight: auto-revive at 50% HP when your defeat timer ends, attackable window widened to 8h, /attack now explains WHY the pool is empty",
         "Full audit: all 138 commands smoke-tested clean, all 230 button types verified wired to handlers",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
@@ -13966,32 +13968,50 @@ _CURE_ALIAS = {entry[0]: entry[1] for entry in _CURABLE_AFFLICTIONS}
 _CURE_EMOJI  = {entry[0]: entry[2] for entry in _CURABLE_AFFLICTIONS}
 _DEFAULT_CURE_PRIORITY = ["poison","bleed","stun","hex","weaken","expose","distract","silence","freeze"]
 
+_PVP_ACTIVE_WINDOW = 8 * 3600   # attackable if seen within 8h (was 1h — starved small groups)
+_last_pool_exclusions = {}      # attacker_uid -> {reason: count} for the empty-pool message
+
+def _auto_recover(p):
+    """A player whose defeat timer expired but who never healed sits at 0 HP
+    forever — invisible to attackers and a free one-hit kill if targeted
+    directly. Once the timer lapses they're back on their feet at 50% HP."""
+    if safe_int(p.get("hp")) <= 0 and not is_defeated(p):
+        p["hp"] = max(1, round(calc_max_hp(p) * 0.50))
+        p["defeated_until"] = None
+        save_player(p)
+        return True
+    return False
+
 def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=3):
     """Return (page_list, total) of players attackable right now."""
     c = _db().cursor()
     c.execute("SELECT * FROM players WHERE user_id != ?", (attacker_uid,))
     rows = c.fetchall()
     results = []
+    excl = {"recovering": 0, "protected": 0, "busy": 0, "guild": 0, "offline": 0}
     _now = datetime.now()
     for row in rows:
         tp = dict(row)
-        if tp.get("hp", 1) <= 0: continue   # expired defeat timer but never revived
-        if is_defeated(tp): continue
-        if is_invincible(tp): continue
-        if safe_int(tp.get("level"), 1) < 10: continue  # Newbie Protection
-        if safe_int(tp.get("user_id")) in active_dungeons: continue   # unreachable mid-dungeon
-        if safe_int(tp.get("user_id")) in active_encounters: continue # unreachable mid-encounter
+        if tp.get("hp", 1) <= 0:
+            if is_defeated(tp):
+                excl["recovering"] += 1; continue
+            _auto_recover(tp)  # timer expired, never healed — stand them back up
+        if is_defeated(tp): excl["recovering"] += 1; continue
+        if is_invincible(tp): excl["recovering"] += 1; continue
+        if safe_int(tp.get("level"), 1) < 10: excl["protected"] += 1; continue  # Newbie Protection
+        if safe_int(tp.get("user_id")) in active_dungeons: excl["busy"] += 1; continue
+        if safe_int(tp.get("user_id")) in active_encounters: excl["busy"] += 1; continue
         if attacker_guild_id and tp.get("guild_id") and \
-           str(tp.get("guild_id")) == str(attacker_guild_id): continue
-        # Exclude players inactive for more than 1 hour (same rule as reply-based attack)
+           str(tp.get("guild_id")) == str(attacker_guild_id): excl["guild"] += 1; continue
         _shadow = get_shadow(tp["user_id"])
         if _shadow and _shadow.get("last_seen"):
             try:
-                if (_now - datetime.fromisoformat(_shadow["last_seen"])).total_seconds() > 3600:
-                    continue
+                if (_now - datetime.fromisoformat(_shadow["last_seen"])).total_seconds() > _PVP_ACTIVE_WINDOW:
+                    excl["offline"] += 1; continue
             except Exception:
                 pass
         results.append(tp)
+    _last_pool_exclusions[attacker_uid] = excl
     results.sort(key=lambda x: (-safe_int(x.get("is_wanted", 0)),
                                  -x.get("level", 1),
                                  x.get("username", "")))
@@ -14311,7 +14331,17 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # No target specified — show inline target picker
         players, total = _get_attackable_players(au.id, a.get("guild_id"))
         if not players:
-            await send_group(update, "⚔️ No players available to attack right now.", delay=9); return
+            _ex = _last_pool_exclusions.get(au.id, {})
+            _ex_bits = []
+            if _ex.get("offline"):    _ex_bits.append(f"{_ex['offline']} away >8h")
+            if _ex.get("recovering"): _ex_bits.append(f"{_ex['recovering']} recovering")
+            if _ex.get("protected"):  _ex_bits.append(f"{_ex['protected']} newbie-protected")
+            if _ex.get("busy"):       _ex_bits.append(f"{_ex['busy']} in a dungeon")
+            if _ex.get("guild"):      _ex_bits.append(f"{_ex['guild']} guildmates")
+            _ex_note = ("\n_Hidden: " + ", ".join(_ex_bits) + "._") if _ex_bits else ""
+            await send_group(update,
+                "⚔️ No players available to attack right now." + _ex_note +
+                "\n_Try /royale, /quickdraw or an /encounter instead!_", delay=15); return
         markup = _build_target_picker_markup(au.id, a.get("guild_id"), 0, "atk")
         await send_group(update,
             f"⚔️ *Choose a target* ({total} available)",
@@ -14325,6 +14355,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, f"{du_name} hasn't ascended yet!", delay=9); return
     if is_defeated(d):
         await send_group(update, f"\U0001f480 {d['username']} is already defeated!", delay=9); return
+    _auto_recover(d)  # timer expired at 0 HP \u2014 stand them up instead of a free one-hit kill
     if is_invincible(d):
         await send_group(update, f"\U0001f6e1\ufe0f {d['username']} is *Still Recovering*  -  invincible for now.", delay=9); return
     _atk_ok, _atk_why = _pvp_attack_allowed(a, d)
@@ -14347,7 +14378,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if target_last_seen:
         try:
             away_secs = (datetime.now() - datetime.fromisoformat(target_last_seen)).total_seconds()
-            if away_secs > 3600:
+            if away_secs > _PVP_ACTIVE_WINDOW:
                 away_str = f"{int(away_secs // 60)} min" if away_secs < 7200 else f"{int(away_secs // 3600)}h"
                 await send_group(update, f"\U0001f4a4 *{d['username']}* stepped away *(last seen {away_str} ago)*  -  can't attack offline players.", delay=9)
                 try:
@@ -26058,7 +26089,7 @@ async def rankwins_cmd(update, context):
 GUIDE_PAGES = [
     # Page 1 - Getting Started
     (
-        "🎱 *8Ball World  -  Getting Started* (1/14)\n"
+        "🎱 *8Ball World  -  Getting Started*\n"
         "\n"
         "Welcome to 8Ball World  -  a fantasy RPG built inside Telegram.\n"
         "\n"
@@ -26077,7 +26108,7 @@ GUIDE_PAGES = [
     ),
     # Page 2 - Character Building
     (
-        "🎱 *8Ball World  -  Building Your Character* (2/14)\n"
+        "🎱 *8Ball World  -  Building Your Character*\n"
         "\n"
         "Use /class at Level 5 to pick your starting class. Browse with arrows to see each class's Path A and Path B.\n"
         "\n"
@@ -26123,7 +26154,7 @@ GUIDE_PAGES = [
     ),
     # Page 3 - Daily Activities
     (
-        "🎱 *8Ball World  -  Daily Activities* (3/14)\n"
+        "🎱 *8Ball World  -  Daily Activities*\n"
         "\n"
         "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
         "💡 */activities* — Open the Activities Hub for a button menu covering every daily activity, challenge, and character command.\n"
@@ -26152,7 +26183,7 @@ GUIDE_PAGES = [
     ),
     # Page 4 - Combat & Raids
     (
-        "🎱 *8Ball World  -  Combat & Raids* (4/14)\n"
+        "🎱 *8Ball World  -  Combat & Raids*\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
         "Reply to any player's message and use /attack to fight them. Or use /attack with no target to open a live player picker and choose who to hit. Winners steal gold and EXP. Losers are defeated for 6m and lose 10% EXP.\n"
@@ -26208,7 +26239,7 @@ GUIDE_PAGES = [
     ),
     # Page 5 - Gear & Economy
     (
-        "🎱 *8Ball World  -  Gear & Economy* (5/14)\n"
+        "🎱 *8Ball World  -  Gear & Economy*\n"
         "\n"
         "💡 */gearhub* — One hub for all gear commands: equipment, upgrades, and economy (3 pages).\n"
         "\n"
@@ -26256,7 +26287,7 @@ GUIDE_PAGES = [
     ),
     # Page 6 - Command Reference (Core)
     (
-        "🎱 *8Ball World  -  Commands: Core* (6/14)\n"
+        "🎱 *8Ball World  -  Commands: Core*\n"
         "\n"
         "*⚡ Command Hubs*\n"
         "/empire  -  Master hub + idle building system (collect resources, upgrade buildings, earn passive stat bonuses)\n"
@@ -26326,7 +26357,7 @@ GUIDE_PAGES = [
     ),
     # Page 7 - Command Reference (Social)
     (
-        "🎱 *8Ball World  -  Commands: Social* (7/14)\n"
+        "🎱 *8Ball World  -  Commands: Social*\n"
         "\n"
         "*Guilds & Orders*\n"
         "/guild  -  Social hub — your guild + secret order together\n"
@@ -26378,7 +26409,7 @@ GUIDE_PAGES = [
     ),
     # Page 7 - Guilds & Advanced
     (
-        "🎱 *8Ball World  -  Guilds & Advanced Systems* (8/14)\n"
+        "🎱 *8Ball World  -  Guilds & Advanced Systems*\n"
         "\n"
         "*Social Hub*\n"
         "/guild — Opens your combined Social Standing card showing your Guild and Secret Order in one view. Use this as your main social dashboard.\n"
@@ -26422,7 +26453,7 @@ GUIDE_PAGES = [
     ),
     # Page 8 - Pets
     (
-        "🎱 *8Ball World  -  Pets & Pet Hub* (9/14)\n"
+        "🎱 *8Ball World  -  Pets & Pet Hub*\n"
         "\n"
         "*Central Hub: /pethub*\n"
         "Access every pet feature from one place. All actions, info, and management in a single menu.\n"
@@ -26474,7 +26505,7 @@ GUIDE_PAGES = [
     ),
     # Page 9 - Marriage & Social
     (
-        "🎱 *8Ball World  -  Marriage & Social* (10/14)\n"
+        "🎱 *8Ball World  -  Marriage & Social*\n"
         "\n"
         "*Getting Married*\n"
         "Reply to any player's message and type /marry to propose.\n"
@@ -26520,7 +26551,7 @@ GUIDE_PAGES = [
 
     # Page 10 - Encounters & Monsters
     (
-        "🎱 *8Ball World  -  Encounters & Monsters* (11/14)\n"
+        "🎱 *8Ball World  -  Encounters & Monsters*\n"
         "\n"
         "Use /encounter to begin. Choose *Battle*, *Hunt*, or *Dungeon*.\n"
         "\n"
@@ -26555,7 +26586,7 @@ GUIDE_PAGES = [
     ),
     # Page 11 - Influence & Fame
     (
-        "🎱 *8Ball World  -  Influence & Fame* (12/14)\n"
+        "🎱 *8Ball World  -  Influence & Fame*\n"
         "\n"
         "Influence is a silent measure of your standing in the order. It grows through kindness, shrinks through cruelty, and tells the world exactly how you carry yourself.\n"
         "\n"
@@ -26590,7 +26621,7 @@ GUIDE_PAGES = [
     ),
     # Page 12 - Secret Orders
     (
-        "🎱 *8Ball World  -  Secret Orders* (13/14)\n"
+        "🎱 *8Ball World  -  Secret Orders*\n"
         "\n"
         "Orders are cross-guild alliances of up to 30 members — a tier above Guilds. They span multiple guilds, operate in the shadows, share an influence pool, and unlock perks that grow over time.\n"
         "\n"
@@ -26625,7 +26656,7 @@ GUIDE_PAGES = [
         "🎱 _The ball knows. The order watches. Act accordingly._"
     ),
     (
-        "🎱 *8Ball World  -  The Dungeon* (14/14)\n"
+        "🎱 *8Ball World  -  The Dungeon*\n"
         "\n"
         "Access via `/dungeon` or `/encounter` → 🏚️ *Dungeon*\n"
         "\n"
@@ -26662,7 +26693,7 @@ GUIDE_PAGES = [
     ),
     # Page 15 - Empire & Idle System
     (
-        "🎱 *8Ball World  -  Empire & Idle System* (15/15)\n"
+        "🎱 *8Ball World  -  Empire & Idle System*\n"
         "\n"
         "*/empire* — Your idle command center. Resources generate while you're offline and are collected when you return.\n"
         "\n"
@@ -26698,9 +26729,98 @@ GUIDE_PAGES = [
         "\n"
         "🏰 _Your empire grows whether you're here or not._"
     ),
+    # Page 16 - PvP Modes & Arena Rules
+    (
+        "🎱 *8Ball World  -  PvP Modes & Arena Rules*\n"
+        "\n"
+        "*Direct Combat:*\n"
+        "/attack (reply or pick a target) — real-time fight on live battle cards in your DMs.\n"
+        "Cards have ⚔️ Attack, 🛡️ Defend, ✨ Skills, 🧪 Potion, 💙 MP and 🏳️ Surrender buttons.\n"
+        "⚡ FINISHER appears when your class kill-condition is met on the target.\n"
+        "\n"
+        "*Wager Game Modes (all consensual — reply to challenge):*\n"
+        "⚔️ /royale — group Battle Royale! 100g entry, 60s to join, narrated eliminations, "
+        "winner takes the WHOLE pot. Level & stats give a small survival edge.\n"
+        "🤠 /quickdraw [wager] — reaction duel. Wait for 🔫 DRAW!, first shot wins the pot "
+        "(your reaction time in ms is shown). Fire early = misfire = instant loss.\n"
+        "🔫 /russian [wager] — six chambers, one bullet, alternating pulls. Loser pays the pot "
+        "and is defeated for 3 minutes. Go quiet on your turn = forfeit.\n"
+        "🤝 /standoff [wager] — split-or-steal. Both pick in secret DM: "
+        "Split/Split = +25% each · Steal/Split = thief takes all · Steal/Steal = pot BURNS.\n"
+        "\n"
+        "*Spectators:* every /attack fight opens a 💰 betting window in the group — "
+        "100g on your pick, 2x payout, refunds if the fight ends without a winner.\n"
+        "\n"
+        "*Arena Rules:*\n"
+        "🐣 Newbie Protection — under level 10 can't be attacked (unless they strike first)\n"
+        "🏳️ Surrender — concede for −5% EXP; opponent takes the win\n"
+        "⏳ Idle fights auto-DRAW after 5 minutes (statuses cleared, bets refunded)\n"
+        "😒 No-honor rule — kills 30+ levels down pay 10% EXP, publicly\n"
+        "🏚️ Players mid-dungeon/encounter can't be attacked\n"
+        "❤️‍🩹 When your defeat timer ends you stand back up at 50% HP automatically\n"
+        "👑 King of the Table — earned by kills, +5% damage while you hold it\n"
+        "\n"
+        "⚔️ _Fight loud. The whole table is watching._"
+    ),
+    # Page 17 - Group Games & Casino
+    (
+        "🎱 *8Ball World  -  Group Games & Casino*\n"
+        "\n"
+        "*Chat spawns (appear on their own while the group talks):*\n"
+        "🐾 Wild pets — first to catch keeps it (or its core)\n"
+        "📦 Supply crates — first tap loots gold/items\n"
+        "🎲 Word scrambles — first correct answer in chat wins the prize\n"
+        "🌤️ Weather changes — buffs/debuffs announced as they roll in\n"
+        "⚡ Random events with one-tap action buttons (fight the bandit, greet the traveler...)\n"
+        "\n"
+        "*Casino & risk:*\n"
+        "🎰 /slots — spin for gold\n"
+        "🪙 /coinflip — 50/50 vs another player, double or nothing\n"
+        "💀 /roulette — group Russian roulette lobby (last one standing takes the pot)\n"
+        "🎟️ /lottery — daily ticket; the pot draws every evening in the digest\n"
+        "🕶️ /rob (reply) — steal gold; fail and pay damages + get marked\n"
+        "🏦 /heist — crew up to rob the vault; more crew = better odds, split take\n"
+        "\n"
+        "*Progress & bragging:*\n"
+        "📔 /collection — your collection log (pets, gear, cores — completion %)\n"
+        "🎯 Weekly Group Goal — the whole chat grinds one target for a shared reward\n"
+        "📊 Daily Digest at 20:00 — top players, biggest fights, lottery draw, weather\n"
+        "\n"
+        "🎲 _The table always has a game running. Sit down._"
+    ),
+    # Page 18 - Healing & Potions
+    (
+        "🎱 *8Ball World  -  Healing & Potions*\n"
+        "\n"
+        "All potions heal a *percentage of YOUR max HP/MP* — they matter at every level.\n"
+        "\n"
+        "*HP Potions (shop → 🧪 Potions tab):*\n"
+        "🧪 Health Potion — 25% max HP _(300g)_\n"
+        "🧪 Greater Health Potion — 50% _(750g)_\n"
+        "🧪 Grand Restorative Flask — 75% _(1,800g)_\n"
+        "🧪 Supreme Restorative Flask — FULL heal _(4,500g)_\n"
+        "✨ Ultimate Vitality Draught — FULL RESTORE, HP *and* MP _(9,000g)_\n"
+        "\n"
+        "*MP Potions:*\n"
+        "💙 MP Tonic — 35% max MP _(400g)_\n"
+        "💙 Major MP Elixir — 75% _(1,500g)_\n"
+        "💎 Grand Mana Crystal — full MP _(4,000g)_\n"
+        "\n"
+        "*Ways to heal:*\n"
+        "• /use — item menu with the ❤️‍🩹 *HEAL TO FULL* button: one tap drinks exactly "
+        "what's needed, never wasting a big flask on a scratch\n"
+        "• /use <potion name> — drink a specific one\n"
+        "• /heal (reply) — heal a teammate with your potion (heals % of THEIR max HP); "
+        "Chalkers heal for free\n"
+        "• 🧪 button on dungeon/encounter/PvP cards — smart-picks the smallest sufficient potion\n"
+        "• 💀 Defeated? Potions won't work — you need a *Scroll of Revival* (2,500g) or a priest, "
+        "or wait out the timer (you revive at 50% HP automatically)\n"
+        "\n"
+        "❤️ _Stock up before the dungeon, not during the funeral._"
+    ),
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands: Core", "Commands: Social", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders", "The Dungeon", "Empire & Idle"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands: Core", "Commands: Social", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders", "The Dungeon", "Empire & Idle", "PvP Modes & Rules", "Group Games & Casino", "Healing & Potions"]
 
 async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
     total = len(GUIDE_PAGES)
@@ -35662,6 +35782,15 @@ async def _revive_watch_loop(bot):
                 if _revive_pinged.get(uid) == du:
                     continue  # already pinged for this defeat
                 _revive_pinged[uid] = du
+                # Stand them back up at 50% HP — without this, players who never
+                # manually healed sat at 0 HP forever, invisible to attackers
+                # and shrinking everyone's target pool.
+                try:
+                    _rv_p = get_player(uid)
+                    if _rv_p:
+                        _auto_recover(_rv_p)
+                except Exception:
+                    pass
                 if is_banned(uid):
                     continue
                 _by = row["last_defeated_by"] or "your rival"
