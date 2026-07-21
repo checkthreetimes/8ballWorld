@@ -91,6 +91,9 @@ CHANGELOG = [
         "New 📖 Bestiary (/bestiary): collect all 85 species, +3% pet ATK per species (Collector's Bond), milestone rewards at 10/25/45/65/85",
         "New 💰 Bulk Sell for pets: clear duplicates in one tap, always protects your active pet, shinies, and best-of-species",
         "Selling a pet never loses collection progress; shinies now +15% ATK and 2.5x sell value",
+        "FIGHT CARD 2.0: end-of-fight recap posted to the group (damage totals, biggest hit, MVP, actions/duration)",
+        "Best-of-3 PvP series: rematches track a running score, live on the fight card, with a SERIES WON announcement at 2 wins",
+        "Live damage tally shown on the battle card during the fight",
         "Full audit: all 138 commands smoke-tested clean, all 230 button types verified wired to handlers",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
@@ -226,6 +229,82 @@ _pvp_dm_last_msg   = {}   # uid -> (chat_id, message_id) — last DM battle card
 _pvp_origin_chat   = {}   # pair -> group chat_id for kill announcements
 _pvp_log_msg       = {}   # uid -> (chat_id, message_id) — separate live battle log message
 _bot_ref           = None  # set after app is built; used for async tasks from sync code
+_pvp_stats         = {}   # pair -> {"turns":int,"start":ts, uid:{"dmg","biggest","hits","name"}}
+_pvp_series        = {}   # frozenset({u1,u2}) -> {"score":{uid:int},"name":{uid:str}}
+_PVP_SERIES_TARGET = 2    # best-of-3: first to 2 wins the series
+
+def _pvp_stats_init(pair, a, d):
+    """Start fresh damage accounting for a fight."""
+    _pvp_stats[pair] = {
+        "turns": 0, "start": time.time(),
+        a["user_id"]: {"dmg": 0, "biggest": 0, "hits": 0, "name": a.get("username", "?")},
+        d["user_id"]: {"dmg": 0, "biggest": 0, "hits": 0, "name": d.get("username", "?")},
+    }
+
+def _pvp_stats_record(pair, attacker_uid, dmg):
+    """Accumulate one action's damage for the post-fight recap."""
+    st = _pvp_stats.get(pair)
+    if not st:
+        return
+    st["turns"] = st.get("turns", 0) + 1
+    ps = st.get(attacker_uid)
+    if ps is None:
+        return
+    dmg = max(0, safe_int(dmg))
+    ps["dmg"] += dmg
+    if dmg > 0:
+        ps["hits"] += 1
+    if dmg > ps["biggest"]:
+        ps["biggest"] = dmg
+
+def _pvp_summary_text(pair, winner_id):
+    """Build the end-of-fight group recap: damage totals, biggest hit, MVP."""
+    st = _pvp_stats.get(pair)
+    if not st or len(pair) != 2:
+        return ""
+    u1, u2 = pair
+    s1, s2 = st.get(u1), st.get(u2)
+    if not s1 or not s2:
+        return ""
+    dur = int(time.time() - st.get("start", time.time()))
+    dur_str = f"{dur // 60}m {dur % 60}s" if dur >= 60 else f"{dur}s"
+    def _line(uid, s):
+        crown = "👑 " if uid == winner_id else ""
+        return (f"{crown}*{s['name']}* — {fmt_num(s['dmg'])} dmg "
+                f"({s['hits']} hits, biggest {fmt_num(s['biggest'])})")
+    top = max((s1, s2), key=lambda s: s["dmg"])
+    lines = [
+        "📊 *FIGHT RECAP*",
+        _line(u1, s1),
+        _line(u2, s2),
+        f"⏱️ {st.get('turns', 0)} actions · {dur_str}",
+        f"🏅 Most damage: *{top['name']}* ({fmt_num(top['dmg'])})",
+    ]
+    return "\n".join(lines)
+
+def _pvp_series_key(au, du):
+    return frozenset((au, du))
+
+def _pvp_series_bump(au, du, winner_id, a_name, d_name):
+    """Record a fight result in the best-of-3 series. Returns (score_str,
+    series_over, series_winner_name) or (None, False, None) if no winner."""
+    if winner_id is None:
+        return None, False, None
+    key = _pvp_series_key(au, du)
+    ser = _pvp_series.get(key)
+    if not ser:
+        ser = {"score": {au: 0, du: 0}, "name": {au: a_name, du: d_name}}
+        _pvp_series[key] = ser
+    ser["name"][au] = a_name
+    ser["name"][du] = d_name
+    ser["score"][winner_id] = ser["score"].get(winner_id, 0) + 1
+    sa, sd = ser["score"].get(au, 0), ser["score"].get(du, 0)
+    score_str = f"{ser['name'][au]} *{sa}* — *{sd}* {ser['name'][du]}"
+    if max(sa, sd) >= _PVP_SERIES_TARGET:
+        win_name = ser["name"][winner_id]
+        _pvp_series.pop(key, None)
+        return score_str, True, win_name
+    return score_str, False, None
 
 async def _auto_delete_pvp_card(bot, uid, chat_id, msg_id, delay=300):
     """Delete a PvP battle card after `delay` seconds if it hasn't been replaced."""
@@ -422,7 +501,14 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     o_sh_str = f"  🛡️{o_shield}" if o_shield > 0 else ""
     v_mp = safe_int(viewer_p.get("mp")); v_mxmp = safe_int(viewer_p.get("max_mp")) or calc_max_mp(viewer_p)
     o_mp = safe_int(opp_p.get("mp"));   o_mxmp = safe_int(opp_p.get("max_mp")) or calc_max_mp(opp_p)
-    lines = [
+    lines = []
+    # Best-of-3 series header (only if a series is in progress between these two)
+    _vu, _ou = viewer_p.get("user_id"), opp_p.get("user_id")
+    _ser = _pvp_series.get(_pvp_series_key(_vu, _ou)) if (_vu and _ou) else None
+    if _ser:
+        _vs = _ser["score"].get(_vu, 0); _os = _ser["score"].get(_ou, 0)
+        lines.append(f"🎯 Series *{_vs}—{_os}* _(first to {_PVP_SERIES_TARGET})_")
+    lines += [
         f"👤 *{vn}*  Lv{v_lvl}",
         f"`{_bar(v_hp, v_mx)}`  {v_pct}%{v_sh_str}",
         f"💙 {v_mp}/{v_mxmp} MP",
@@ -435,6 +521,11 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     lines.append(f"💙 {o_mp}/{o_mxmp} MP")
     if o_status:
         lines.append(f"↳ {o_status}")
+    # Live damage tally
+    if pair is not None:
+        _dst = _pvp_stats.get(pair)
+        if _dst and _vu in _dst and _ou in _dst:
+            lines.append(f"⚔️ Dmg: you *{fmt_num(_dst[_vu]['dmg'])}* · them *{fmt_num(_dst[_ou]['dmg'])}*")
     # On-card battle log (replaces the separate log message — halves API calls)
     if pair is not None:
         logs = _pvp_battle_logs.get(pair, [])
@@ -565,6 +656,28 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
         await _resolve_fight_bets(bot, pair, winner_id, result_text)
     except Exception:
         pass
+    # ── FIGHT CARD 2.0: group recap + best-of-3 series ──────────────────────
+    _grp_recap = _pvp_origin_chat.get(pair)
+    if _grp_recap and len(pair) == 2:
+        try:
+            _recap = _pvp_summary_text(pair, winner_id)
+            _u1, _u2 = pair
+            _n1 = _pvp_stats.get(pair, {}).get(_u1, {}).get("name", "?")
+            _n2 = _pvp_stats.get(pair, {}).get(_u2, {}).get("name", "?")
+            _score_str, _series_over, _series_win = _pvp_series_bump(
+                _u1, _u2, winner_id, _n1, _n2)
+            _extra = []
+            if _score_str:
+                if _series_over:
+                    _extra.append(f"🏆 *SERIES WON by {_series_win}!*  ({_score_str})")
+                else:
+                    _extra.append(f"🎯 *Series:* {_score_str}  _(first to {_PVP_SERIES_TARGET})_")
+            _full_recap = _recap + (("\n\n" + "\n".join(_extra)) if _extra else "")
+            if _full_recap.strip():
+                asyncio.create_task(announce(bot, _grp_recap, _full_recap, delay=45))
+        except Exception:
+            logger.error("fight recap failed", exc_info=True)
+    _pvp_stats.pop(pair, None)
     _pvp_cards.pop(pair, None)
     _pvp_battle_logs.pop(pair, None)
     _pvp_cur_page.pop(pair, None)
@@ -13966,6 +14079,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
     if extra_notes:
         action += "\n" + "\n".join(extra_notes)
         extra_notes.clear()
+
+    # Fight Card 2.0 damage accounting (lazy-init on first hit of the fight)
+    _stat_pair = _pvp_pair_key(au_id, du_id)
+    if _stat_pair not in _pvp_stats:
+        _pvp_stats_init(_stat_pair, a, d)
+    _pvp_stats_record(_stat_pair, au_id, max(0, _d_hp_before_attack - d["hp"]))
 
     check_titles(a); check_titles(d)
     # Save on the event-loop thread: a WAL write is ~1ms, and pushing it to a
