@@ -86,6 +86,7 @@ CHANGELOG = [
         "More targets to fight: auto-revive at 50% HP when your defeat timer ends, attackable window widened to 8h, /attack now explains WHY the pool is empty",
         "Oracle quests fixed: assignments can't be erased by racing saves; saying the phrase without aiming it now DMs you a hint instead of failing silently",
         "GOLD FLOORS: every gold reward now scales with your level (min 25+5/level) — daily, quests, objectives, encounters, dungeon, chat drips. No more 5g rewards",
+        "EXP numbers display compactly everywhere: 3,766,666,666,667 now shows as 3.77T (K/M/B/T/Q suffixes) — same EXP, readable numbers",
         "Full audit: all 138 commands smoke-tested clean, all 230 button types verified wired to handlers",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
@@ -940,6 +941,24 @@ def exp_share(level, pct):
     Keeps every reward meaningful at any level instead of a flat number
     that is huge at level 1 and irrelevant at level 50."""
     return max(1, round(exp_for_level(max(1, min(250, safe_int(level, 1)))) * pct))
+
+def fmt_num(n):
+    """Compact display for big numbers: 12.5K, 3.4M, 2.1B, 3.77T, 1.2Q.
+    Values under 10,000 show in full. Display only — stored values unchanged."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return str(n)
+    neg = "-" if n < 0 else ""
+    a = abs(n)
+    if a < 10000:
+        return f"{neg}{a:,}"
+    for div, suf in ((10**15, "Q"), (10**12, "T"), (10**9, "B"), (10**6, "M"), (10**3, "K")):
+        if a >= div:
+            v = a / div
+            s = f"{v:.2f}".rstrip("0").rstrip(".") if v < 100 else f"{round(v):,}"
+            return f"{neg}{s}{suf}"
+    return f"{neg}{a:,}"
 
 def gold_floor(level, amount):
     """Floor for a NONZERO gold reward — no award is ever pocket lint.
@@ -5174,7 +5193,7 @@ async def _party_exp_bonus(bot, active_uid, exp_gained, source_name):
             await bot.send_message(
                 mid,
                 f"⚔️ *{active_name}* fought {source_name} — "
-                f"you earned *+{bonus} EXP* as a party bonus!",
+                f"you earned *+{fmt_num(bonus)} EXP* as a party bonus!",
                 parse_mode="Markdown")
         except Exception:
             pass
@@ -7380,7 +7399,7 @@ def _dng_combat_card(state):
         f"👤 *{state.get('p_name','You')}*{p_s}",
         f"`{p_bar}`  {state['p_hp']}/{state['p_max_hp']} HP",
         f"`{mp_bar}`  {state.get('p_mp',0)}/{state.get('p_max_mp',1)} MP",
-        f"💰 +{state.get('s_gold',0):,}g  ⭐ +{state.get('s_exp',0):,} EXP",
+        f"💰 +{fmt_num(state.get('s_gold',0))}g  ⭐ +{fmt_num(state.get('s_exp',0))} EXP",
     ]
     log = state.get("combat_log", [])
     if log:
@@ -7574,7 +7593,7 @@ async def _dng_award_and_extract(uid, bot, p, state, narr_key="extract"):
         f"🏚️ *Dungeon Complete — Floor {state['floor']}*\n\n"
         f"_{narr}_\n\n"
         f"💰 *+{state.get('s_gold',0):,} gold*\n"
-        f"⭐ *+{state.get('s_exp',0):,} EXP*"
+        f"⭐ *+{fmt_num(state.get('s_exp',0))} EXP*"
         f"{items_txt}{comp_txt}"
     )
     await _dng_final_card(bot, state["chat_id"], state["msg_id"], text)
@@ -7841,7 +7860,7 @@ async def _dng_enter_room(uid, bot, state):
             state["s_exp"] = state.get("s_exp", 0) + exp_bonus
             room_text = (f"_{narr}_\n\n⚠️ *{trap['name']}!*\n\n"
                          f"✅ *{trap['stat']} check passed!*\n_{trap['avoid']}_\n_{_dng_roll_narration('trap_avoided')}_\n\n"
-                         f"⭐ +{exp_bonus:,} EXP")
+                         f"⭐ +{fmt_num(exp_bonus)} EXP")
         else:
             dmg = max(1, int(state["p_max_hp"] * trap["dmg_pct"] * (0.75 + floor * 0.04)))
             state["p_hp"] = max(1, state["p_hp"] - dmg)
@@ -7883,7 +7902,7 @@ async def _dng_enter_room(uid, bot, state):
             f"🏚️ *Floor {floor} — Room {room}/{total_rooms}*\n\n"
             f"_{_dng_roll_narration('room_approach')}_\n\n"
             f"💎 *Treasure!*\n_{_dng_roll_narration('room_treasure')}_\n\n"
-            f"💰 *+{gold:,} gold* | ⭐ *+{exp:,} EXP*\n🎁 {r_emoji} *{item}*\n\n"
+            f"💰 *+{fmt_num(gold)} gold* | ⭐ *+{fmt_num(exp)} EXP*\n🎁 {r_emoji} *{item}*\n\n"
             f"❤️ {state['p_hp']}/{state['p_max_hp']} HP"
         )
         markup = _dng_continue_markup(uid) if room < total_rooms else _dng_floor_done_markup(uid, floor, diff)
@@ -7902,7 +7921,7 @@ async def _dng_enter_room(uid, bot, state):
             f"🏚️ *Floor {floor} — Room {room}/{total_rooms}*\n\n"
             f"_{_dng_roll_narration('room_approach')}_\n\n"
             f"🏕️ *Rest Site*\n_{_dng_roll_narration('room_rest')}_\n\n"
-            f"❤️ *+{heal} HP* | 💙 *+{mp_restore} MP* | ⭐ *+{exp_bonus:,} EXP*\n\n"
+            f"❤️ *+{heal} HP* | 💙 *+{mp_restore} MP* | ⭐ *+{fmt_num(exp_bonus)} EXP*\n\n"
             f"HP: {state['p_hp']}/{state['p_max_hp']}  MP: {state.get('p_mp',0)}/{state.get('p_max_mp',1)}"
         )
         markup = _dng_continue_markup(uid) if room < total_rooms else _dng_floor_done_markup(uid, floor, diff)
@@ -7931,7 +7950,7 @@ async def _dng_enter_room(uid, bot, state):
         full_text = (
             f"🏚️ *Floor {floor} — Room {room}/{total_rooms}*\n\n"
             f"✨ *Random Event!*\n_Something unusual happens in the dungeon..._\n\n"
-            f"💰 *+{gold_bonus:,} gold* | ⭐ *+{exp_bonus:,} EXP*\n\n"
+            f"💰 *+{fmt_num(gold_bonus)} gold* | ⭐ *+{fmt_num(exp_bonus)} EXP*\n\n"
             f"❤️ {state['p_hp']}/{state['p_max_hp']} HP"
         )
         markup = _dng_continue_markup(uid) if room < total_rooms else _dng_floor_done_markup(uid, floor, diff)
@@ -8020,7 +8039,7 @@ async def _dng_on_enemy_killed(uid, bot, p, state):
     text = (
         f"🏚️ *Floor {floor} — Room {state['room']}/{total_rooms}*\n\n"
         f"{victory_header}\n_{narr}_\n\n"
-        f"💰 *+{gold:,} gold* | ⭐ *+{exp:,} EXP*"
+        f"💰 *+{fmt_num(gold)} gold* | ⭐ *+{fmt_num(exp)} EXP*"
         f"{items_txt}{extra_txt}"
     )
 
@@ -8291,7 +8310,7 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
         if state["room"] > total_rooms:
             narr = _dng_roll_narration("floor_clear", floor=state["floor"])
             text = (f"🏚️ *Floor {state['floor']} — Cleared!*\n\n_{narr}_\n\n"
-                    f"💰 +{state.get('s_gold',0):,}g | ⭐ +{state.get('s_exp',0):,} EXP\n"
+                    f"💰 +{fmt_num(state.get('s_gold',0))}g | ⭐ +{fmt_num(state.get('s_exp',0))} EXP\n"
                     f"❤️ {state['p_hp']}/{state['p_max_hp']} HP  💙 {state.get('p_mp',0)}/{state.get('p_max_mp',1)} MP")
             await _dng_edit(uid, context.bot, text, _dng_floor_done_markup(uid, state["floor"], diff))
         else:
@@ -8322,7 +8341,7 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
             f"{mod_line}\n\n"
             f"❤️ {state['p_hp']}/{state['p_max_hp']} HP (+{regen_on_descend})  "
             f"💙 {state.get('p_mp',0)}/{state.get('p_max_mp',1)} MP (+{mp_regen_descend})\n"
-            f"💰 +{state.get('s_gold',0):,}g  ⭐ +{state.get('s_exp',0):,} EXP"
+            f"💰 +{fmt_num(state.get('s_gold',0))}g  ⭐ +{fmt_num(state.get('s_exp',0))} EXP"
         )
         await _dng_edit(uid, context.bot, intro_text,
             InlineKeyboardMarkup([[InlineKeyboardButton("➡️ Enter Floor", callback_data=f"dng_enter_{uid}")]])); return
@@ -8422,7 +8441,7 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
             death_text = (
                 f"🏚️ *Floor {state['floor']} — Room {state['room']}*\n\n"
                 f"💀 *You were defeated by {e.get('name','???')}!*\n\n_{narr}_\n\n"
-                f"_All session rewards lost: {state.get('s_gold',0):,}g, {state.get('s_exp',0):,} EXP_"
+                f"_All session rewards lost: {fmt_num(state.get('s_gold',0))}g, {fmt_num(state.get('s_exp',0))} EXP_"
             )
             await _dng_final_card(context.bot, state["chat_id"], state["msg_id"], death_text)
             return
@@ -10308,7 +10327,7 @@ def raid_enemy_counter(p, raid_state, lines):
         exp_loss = apply_pvp_death(p, killer_name=enemy["name"], cause="Solo Raid")
         lines.append(
             f"💀 *{enemy['name']}* kills *{p['username']}*! "
-            f"Defeated 6min. -{exp_loss} EXP.")
+            f"Defeated 6min. -{fmt_num(exp_loss)} EXP.")
         return True
     else:
         lines.append(
@@ -10471,7 +10490,7 @@ async def _enemy_phase(bot, chat_id, raid_state):
         if php == 0:
             exp_loss = apply_pvp_death(p, killer_name=enemy["name"], cause="Raid")
             save_player(p)
-            lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6min defeat. -{exp_loss} EXP.")
+            lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6min defeat. -{fmt_num(exp_loss)} EXP.")
         else:
             lines.append(f"🩸 *{p['username']}* takes *{edm} dmg!* ({php}/{pmhp} HP)")
             if php <= round(pmhp * 0.30):
@@ -10559,7 +10578,7 @@ async def _handle_wave_clear(bot, chat_id, raid_state, p=None):
             if u == raid_state["party"][0] and award_title(pp,"Break Leader"):
                 lines.append(f"🏅 *{pp['username']}* earned: *Break Leader*!")
             add_exp(pp, exp_r, w2); save_player(pp)
-            lines.append(f"✅ *{pp['username']}* ({int(share*100)}% dmg)  -  +{exp_r:,} EXP | +{gold_r}g")
+            lines.append(f"✅ *{pp['username']}* ({int(share*100)}% dmg)  -  +{fmt_num(exp_r)} EXP | +{gold_r}g")
         await bot.send_message(chat_id=chat_id, text="\n".join(lines)[:4096], parse_mode="Markdown")
 
 _pvp_miss_streaks = {}  # (attacker_id, defender_id) -> consecutive misses
@@ -12986,8 +13005,8 @@ async def pvp_yield_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         _cb_unlock(uid, _tok)
         await _finalize_pvp(pair,
             f"🏳️ *{a['username']} SURRENDERS!*\n"
-            f"🏆 *{d['username']}* takes the win (+{_yield_exp} EXP)."
-            + (f"\n💔 {a['username']} forfeits {loss} EXP." if loss else ""),
+            f"🏆 *{d['username']}* takes the win (+{fmt_num(_yield_exp)} EXP)."
+            + (f"\n💔 {a['username']} forfeits {fmt_num(loss)} EXP." if loss else ""),
             context.bot, winner_id=opp_uid)
         if _grp:
             asyncio.create_task(announce(context.bot, _grp,
@@ -13189,7 +13208,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
                     f"🔴 *{a['username']}* brought down the WANTED *{d['username']}*! +{wanted_gold}g reward!", delay=5))
             lmsgs, leveled = add_exp(a, exp_gain, w); lvl_msgs = lmsgs
             _defeat_timer_ks = time_until(d.get("defeated_until")) or "6m"
-            action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_ks}*."
+            action += f"\n💀 *{d['username']}* DEFEATED! +{fmt_num(exp_gain)} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_ks}*."
             if leveled and a["level"] % 10 == 0:
                 asyncio.create_task(announce(bot, chat_id,
                     f"🎉 *{a['username']}* reached *Level {a['level']}*! ⚔️", delay=30))
@@ -13838,7 +13857,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
             mfd_bonus = round((d.get("gold", 0) * 0.05 + 25) * 0.25)
             a["gold"] = a.get("gold", 0) + mfd_bonus
         _defeat_timer_pvp = time_until(d.get("defeated_until")) or "6m"
-        action += f"\n💀 *{d['username']}* DEFEATED! +{exp_gain} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_pvp}*."
+        action += f"\n💀 *{d['username']}* DEFEATED! +{fmt_num(exp_gain)} EXP to {a['username']}.\n⏳ *{d['username']}* back in *{_defeat_timer_pvp}*."
         if leveled:
             _lvl_grp = _pvp_origin_chat.get((au_id, du_id)) or _pvp_origin_chat.get((du_id, au_id)) or chat_id
             asyncio.create_task(announce(bot, _lvl_grp,
@@ -14942,7 +14961,7 @@ def _exp_bar(current, needed, length=10):
     pct    = min(1.0, current / max(1, needed))
     filled = round(pct * length)
     bar    = "█" * filled + "░" * (length - filled)
-    return f"✨ [{bar}] {current:,}/{needed:,} EXP ({int(pct*100)}%)"
+    return f"✨ [{bar}] {fmt_num(current)}/{fmt_num(needed)} EXP ({int(pct*100)}%)"
 
 def get_fame_tier(n):
     tiers = [
@@ -15263,8 +15282,8 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update,
             f"👤 *{s['username']}*  -  Shadow Profile\n\n"
             f"{tier['emoji']} Level *{s['level']}*\n"
-            f"✨ EXP: {s['exp']:,}/{exp_for_level(s['level']):,}\n"
-            f"🏆 Lifetime: *{safe_int(s.get('total_exp')):,}* EXP\n"
+            f"✨ EXP: {fmt_num(s['exp'])}/{fmt_num(exp_for_level(s['level']))}\n"
+            f"🏆 Lifetime: *{fmt_num(safe_int(s.get('total_exp')))}* EXP\n"
             f"💬 Messages: {s.get('message_count',0):,}\n\n"
             f"_Send /ascend in a private chat to enter the RPG!_",
             permanent=False, delay=9); return
@@ -16046,7 +16065,7 @@ async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     daily_exp = exp_share(p["level"], 0.10)
     lmsgs, leveled = add_exp(p, daily_exp)
     save_player(p)
-    msg = f"🎁 *Daily Reward!*\n\n✨ +{daily_exp} EXP | 💰 +{gold} Gold"
+    msg = f"🎁 *Daily Reward!*\n\n✨ +{fmt_num(daily_exp)} EXP | 💰 +{gold} Gold"
     if item: msg += f" | 🎒 *{item}* (lucky drop!)"
     else:    msg += f"\n_(Nothing extra today  -  check the /shop)_"
     if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
@@ -16095,7 +16114,7 @@ async def train_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             base = round(base*1.15); note = f"\n✨ *{cls['name']}* wisdom bonus! +15%"
     lmsgs, leveled = add_exp(p, base); save_player(p)
     flavor = random.choice(TRAIN_MESSAGES)
-    msg = f"🏋️ *Training Session*\n\n_{flavor}_\n\n✨ +{base} EXP{note}"
+    msg = f"🏋️ *Training Session*\n\n_{flavor}_\n\n✨ +{fmt_num(base)} EXP{note}"
     if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
     if leveled and p["level"] % 10 == 0:
         asyncio.create_task(announce(context.bot, update.effective_chat.id,
@@ -16141,7 +16160,7 @@ async def quest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _q_exp = exp_share(p["level"], {"Easy": 0.03, "Medium": 0.05, "Hard": 0.08}.get(q["tier"], 0.03))
     lmsgs, leveled = add_exp(p, _q_exp, w)
     new_t = check_titles(p); save_player(p)
-    msg = f"🗺️ *Quest  -  {q['tier']}*\n\n{q['text']}\n\n✨ +{_q_exp:,} EXP | 💰 +{gold} Gold | +{_q_inf} Influence | 🧪 {_q_potion}"
+    msg = f"🗺️ *Quest  -  {q['tier']}*\n\n{q['text']}\n\n✨ +{fmt_num(_q_exp)} EXP | 💰 +{gold} Gold | +{_q_inf} Influence | 🧪 {_q_potion}"
     if item_found:
         rarity = ""
         for pool2 in [WEAPONS,ARMORS,ACCESSORIES,CONSUMABLES]:
@@ -16251,7 +16270,7 @@ async def _run_expedition(bot, chat_id, uid, zone):
 
         msg = (f"🗺️ *{pp['username']}* returns from *{zone['emoji']} {zone['name']}*!\n\n"
                f"✅ *Expedition successful!*\n"
-               f"✨ +{exp} EXP  |  💰 +{gold} gold")
+               f"✨ +{fmt_num(exp)} EXP  |  💰 +{gold} gold")
         if item_found: msg += f"\n🎒 Found: {rarity} *{item_display}*!"
         if extra_notes: msg += "\n" + "\n".join(extra_notes)
         if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
@@ -16440,7 +16459,7 @@ async def _handle_drake_strike(update: Update, context: ContextTypes.DEFAULT_TYP
                 loot = roll_loot_table([(n,c) for n,c in drake.get("loot_table",[])])
             if loot: add_item(fp, loot)
             lmsgs, leveled = add_exp(fp, exp); save_player(fp)
-            lines.append(f"✅ *{fp['username']}*  -  {int(share*100)}% dmg | +{exp:,} EXP"
+            lines.append(f"✅ *{fp['username']}*  -  {int(share*100)}% dmg | +{fmt_num(exp)} EXP"
                          + (f" | 🎒 {loot}" if loot else ""))
             if leveled and fp["level"] % 10 == 0:
                 asyncio.create_task(announce(context.bot, chat_id,
@@ -17884,7 +17903,7 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
                     exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
                     asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                     save_player(tp)
-                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 30min defeat. -{exp_loss} EXP.")
+                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 30min defeat. -{fmt_num(exp_loss)} EXP.")
                 else:
                     lines.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for *{edm}!* ({php}/{pmhp} HP)")
                 save_player(tp)
@@ -17923,7 +17942,7 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
             add_exp(pp, _braid_exp, w2)
             _add_influence(pp, 3)
             save_player(pp)
-            lines.append(f"✅ *{pp['username']}*  -  +{_braid_exp:,} EXP | +{data['gold']} Gold")
+            lines.append(f"✅ *{pp['username']}*  -  +{fmt_num(_braid_exp)} EXP | +{data['gold']} Gold")
 
     # Delete the /attack command message, then edit the boss card in place
     try: await update.message.delete()
@@ -18070,7 +18089,7 @@ async def _dispatch_secret_quest(uid: int, bot):
               f"messages, or include their name:_\n\n"
               f"*\"{phrase}\"*\n\n"
               f"⏳ _Expires in 24 hours_\n"
-              f"💫 Reward: *{_exp_preview:,} EXP + {inf_r} Influence + Health Potion*")
+              f"💫 Reward: *{fmt_num(_exp_preview)} EXP + {inf_r} Influence + Health Potion*")
     else:
         phrase, exp_r, inf_r = random.choice(_CHAT_QUEST_TPL)
         quest = {"type":"chat","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
@@ -18079,7 +18098,7 @@ async def _dispatch_secret_quest(uid: int, bot):
               f"_Say this in the group:_\n\n"
               f"*\"{phrase}\"*\n\n"
               f"⏳ _Expires in 24 hours_\n"
-              f"💫 Reward: *{_exp_preview:,} EXP + {inf_r} Influence + Health Potion*")
+              f"💫 Reward: *{fmt_num(_exp_preview)} EXP + {inf_r} Influence + Health Potion*")
     p["active_quest"] = json.dumps(quest); p["last_quest_ts"] = int(time.time()); save_player(p)
     try: await bot.send_message(uid, dm, parse_mode="Markdown")
     except: pass
@@ -18093,7 +18112,7 @@ async def _try_complete_quest_social(p, action, target_id, bot):
     exp_r = exp_share(p["level"], min(0.15, q.get("reward_exp", 200) / 900 * 0.15))
     add_exp(p, exp_r); _add_influence(p, inf_r)
     p["active_quest"] = None; save_player(p)
-    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r:,} EXP  +{inf_r} Influence", parse_mode="Markdown")
+    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{fmt_num(exp_r)} EXP  +{inf_r} Influence", parse_mode="Markdown")
     except: pass
 
 def _phrase_norm(s):
@@ -18136,7 +18155,7 @@ async def _try_complete_quest_phrase(p, text, reply_to_id, bot):
     add_exp(p, exp_r); _add_influence(p, inf_r)
     add_item(p, "Greater Health Potion")
     p["active_quest"] = None; save_player(p)
-    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{exp_r:,} EXP | +{inf_r} Influence | 🧪 Greater Health Potion", parse_mode="Markdown")
+    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{fmt_num(exp_r)} EXP | +{inf_r} Influence | 🧪 Greater Health Potion", parse_mode="Markdown")
     except: pass
 
 async def _try_complete_broadcast_quest(p, text, bot):
@@ -18153,7 +18172,7 @@ async def _try_complete_broadcast_quest(p, text, bot):
     _broadcast_claims.add(uid)
     try:
         await bot.send_message(uid,
-            f"✅ *Quest Complete!*\n\n_{_broadcast_quest['phrase']}_\n\n+{exp} EXP rewarded!",
+            f"✅ *Quest Complete!*\n\n_{_broadcast_quest['phrase']}_\n\n+{fmt_num(exp)} EXP rewarded!",
             parse_mode="Markdown")
     except: pass
 
@@ -19921,7 +19940,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     w2 = get_weather()
                     _raid_exp = _scaled_raid_exp(p["level"], exp_reward)
                     add_exp(p, _raid_exp, w2)
-                    out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{_raid_exp:,} EXP | +{gold_reward}g")
+                    out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{fmt_num(_raid_exp)} EXP | +{gold_reward}g")
         else:
             # Enemy still alive  -  counter-attack
             killed = raid_enemy_counter(p, raid_state, out)
@@ -20091,7 +20110,7 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _boss_exp = _scaled_boss_exp(pp["level"], data["exp"])
                 lmsgs, leveled = add_exp(pp, _boss_exp, w2)
                 save_player(pp)
-                lines.append(f"✅ *{pp['username']}*  -  +{_boss_exp:,} EXP | +{data['gold']} Gold")
+                lines.append(f"✅ *{pp['username']}*  -  +{fmt_num(_boss_exp)} EXP | +{data['gold']} Gold")
                 if leveled and pp["level"] % 10 == 0:
                     asyncio.create_task(announce(context.bot, chat_id,
                         f"🎉 *{pp['username']}* reached *Level {pp['level']}*! 🏆",
@@ -20327,7 +20346,7 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
                         out.append(f"🎒 Found: {r} *{loot_display}*!")
                     _raid_exp = _scaled_raid_exp(p["level"], exp_reward)
                     add_exp(p, _raid_exp, w)
-                    out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{_raid_exp:,} EXP | +{gold_reward}g")
+                    out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{fmt_num(_raid_exp)} EXP | +{gold_reward}g")
         else:
             killed = raid_enemy_counter(p, raid_state, out)
             if killed and raid_kind == "solo":
@@ -20410,7 +20429,7 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
                         if php == 0:
                             exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
                             save_player(tp)
-                            out.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! -{exp_loss} EXP.")
+                            out.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! -{fmt_num(exp_loss)} EXP.")
                         else:
                             out.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for *{edm}!* ({php}/{pmhp} HP)")
                         save_player(tp)
@@ -20439,7 +20458,7 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
                     out.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
                 _boss_exp = _scaled_boss_exp(pp["level"], data["exp"])
                 add_exp(pp, _boss_exp, w_sk); save_player(pp)
-                out.append(f"✅ *{pp['username']}*  -  +{_boss_exp:,} EXP | +{data['gold']} Gold")
+                out.append(f"✅ *{pp['username']}*  -  +{fmt_num(_boss_exp)} EXP | +{data['gold']} Gold")
             try:
                 await _q_edit(query, "\n".join(out)[:4096], parse_mode="Markdown")
             except Exception:
@@ -21148,7 +21167,7 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
                 p["gold"] = p.get("gold", 0) + _g; add_exp(p, _e)
             _sk_exp = _pvp_kill_exp(p, tp)
             add_exp(p, _sk_exp, w)
-            out.append(f"✨ +{_sk_exp:,} EXP")
+            out.append(f"✨ +{fmt_num(_sk_exp)} EXP")
             check_titles(p); check_titles(tp)
         save_player(p); save_player(tp)
         _sk_result_text = "\n".join(out)
@@ -21870,7 +21889,7 @@ async def _execute_skill(update, context, p, sk):
         _fire(check_and_claim_bounty(context.bot, p, d, chat_id))
         exp_gain = _pvp_kill_exp(p, d)
         lmsgs, leveled = add_exp(p, exp_gain, w); lvl_msgs = lmsgs
-        lines.append(f"\n💀 *{d['username']}* defeated by *{sk['name']}*! +{exp_gain:,} EXP")
+        lines.append(f"\n💀 *{d['username']}* defeated by *{sk['name']}*! +{fmt_num(exp_gain)} EXP")
         if leveled and p["level"] % 10 == 0:
             asyncio.create_task(announce(context.bot, chat_id,
                 f"🎉 *{p['username']}* reached *Level {p['level']}* via {sk['name']}! ⚡",
@@ -23776,7 +23795,7 @@ async def objectives_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         done  = obj.get("done", False)
         bar   = "█" * prog + "░" * (tgt - prog)
         check = "✅" if done else "🔲"
-        reward = f"+{obj['reward_exp']} EXP, +{obj['reward_gold']}g"
+        reward = f"+{fmt_num(obj['reward_exp'])} EXP, +{obj['reward_gold']}g"
         lines.append(
             f"{check} *{obj['desc']}*\n"
             f"   Progress: {bar} ({prog}/{tgt})\n"
@@ -24556,7 +24575,7 @@ async def enc_next_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = [f"🏁 *{mode_label} Session Complete!*", ""]
         lines.append(f"⚔️ Wins: *{wins}*  |  💀 Losses: *{losses}*")
         if g_total: lines.append(f"💰 Gold earned: *+{g_total:,}*")
-        if e_total: lines.append(f"⭐ EXP earned:  *+{e_total:,}*")
+        if e_total: lines.append(f"⭐ EXP earned:  *+{fmt_num(e_total)}*")
         if items:
             lines.append("")
             lines.append("*🎒 Items Collected:*")
@@ -24698,14 +24717,14 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             try:
                 await _enc_edit(query, 
                     f"💀 *CURSED CHEST!*\n_{td['emoji']} The chest springs a trap!_\n"
-                    f"Lost *{gold_penalty} gold* and *{exp_penalty} EXP*! Watch your greed...",
+                    f"Lost *{gold_penalty} gold* and *{fmt_num(exp_penalty)} EXP*! Watch your greed...",
                     parse_mode="Markdown", reply_markup=result_markup)
             except Exception: pass
             return
         # Normal rewards
         p["gold"] = safe_int(p.get("gold", 0)) + gold_found
         add_exp(p, exp_found)
-        loot_lines = [f"💰 +{gold_found} gold", f"⭐ +{exp_found} EXP"]
+        loot_lines = [f"💰 +{gold_found} gold", f"⭐ +{fmt_num(exp_found)} EXP"]
         gear_drop = None
         if random.random() < td["gear_chance"]:
             p_lv = p.get("level", 1)
@@ -24772,7 +24791,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if _r < 0.50:
                 exp_bonus = exp_share(p.get("level", 1), random.uniform(0.01, 0.02))
                 add_exp(p, exp_bonus)
-                result_text = f"🗿 *The shrine glows warmly.*\n+{exp_bonus:,} EXP blessed upon you!"
+                result_text = f"🗿 *The shrine glows warmly.*\n+{fmt_num(exp_bonus)} EXP blessed upon you!"
             elif _r < 0.75:
                 hp_restore = round(calc_max_hp(p) * 0.30)
                 p["hp"] = min(calc_max_hp(p), safe_int(p.get("hp", 0)) + hp_restore)
@@ -25219,7 +25238,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if loot_item:            loot_line += f"\n📦 *{loot_item}*"
             await _end_encounter(
                 f"✅ *Victory!*\n*{enc['e_name']}* was defeated!{close_bonus}\n"
-                f"💰 +{gold:,} gold | ⭐ +{exp:,} EXP{loot_line}")
+                f"💰 +{fmt_num(gold)} gold | ⭐ +{fmt_num(exp)} EXP{loot_line}")
             return
 
         # NPC attacks back
@@ -25235,7 +25254,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             _dot_gold = round((_dot_e_lvl * 20 + random.randint(5, 15) * 4) * enc.get("reward_mult", 1.0))
             _dot_exp  = round((exp_for_level(max(1, _dot_e_lvl)) // 8) * enc.get("reward_mult", 1.0))
             add_exp(p, _dot_exp); p["gold"] = safe_int(p.get("gold", 0)) + _dot_gold; save_player(p)
-            await _end_encounter(f"☠️ *{enc['e_name']}* was defeated by status effects!\n✅ *Victory!*\n💰 +{_dot_gold:,} gold | ⭐ +{_dot_exp:,} EXP")
+            await _end_encounter(f"☠️ *{enc['e_name']}* was defeated by status effects!\n✅ *Victory!*\n💰 +{fmt_num(_dot_gold)} gold | ⭐ +{fmt_num(_dot_exp)} EXP")
             return
         # Check player dead
         if enc["p_hp"] <= 0:
@@ -25456,7 +25475,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await _end_encounter(
                     f"🎯 *Caught!* *{enc['e_name']}* {elem_e}\n"
                     f"📦 Received: {_core_str}{_bonus_str}\n"
-                    f"💰 +{gold_gain} gold | ⭐ +{exp_gain} EXP")
+                    f"💰 +{gold_gain} gold | ⭐ +{fmt_num(exp_gain)} EXP")
             else:
                 mon_act = _enc_monster_attack(enc)
                 enc.setdefault("action_log",[]).append(f"*{enc['e_name']}* broke free!")
@@ -25576,7 +25595,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 _pet_owner = get_active_pet_record(uid)
                 if _pet_owner:
                     pet_exp = enc["e_level"] * 12; give_pet_exp(uid, pet_exp)
-                    pet_exp_txt = f"\n🐾 *{pet_info['name']}* +{pet_exp} EXP"
+                    pet_exp_txt = f"\n🐾 *{pet_info['name']}* +{fmt_num(pet_exp)} EXP"
             _sess = _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})
             _sess["gold"] = _sess.get("gold", 0) + gold_gain; _sess["exp"] = _sess.get("exp", 0) + exp_gain
             loot_txt = ""
@@ -25585,7 +25604,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             loot_txt += f"\n✨ *{hunt_loot}*"
             await _end_encounter(
                 f"⚔️ *{enc['e_name']}* {elem_e} defeated!{close_bonus}\n"
-                f"💰 +{gold_gain:,} gold | ⭐ +{exp_gain:,} EXP{loot_txt}{pet_exp_txt}")
+                f"💰 +{fmt_num(gold_gain)} gold | ⭐ +{fmt_num(exp_gain)} EXP{loot_txt}{pet_exp_txt}")
             return
 
         # Monster attacks back
@@ -25600,7 +25619,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             _hdot_gold = round((_hdot_e_lvl * 28) * enc.get("reward_mult", 1.0))
             _hdot_exp  = round((exp_for_level(max(1, _hdot_e_lvl)) // 8) * enc.get("reward_mult", 1.0))
             add_exp(p, _hdot_exp); p["gold"] = safe_int(p.get("gold", 0)) + _hdot_gold; save_player(p)
-            await _end_encounter(f"☠️ *{enc['e_name']}* was defeated by status effects!\n✅ *Victory!*\n💰 +{_hdot_gold:,} gold | ⭐ +{_hdot_exp:,} EXP")
+            await _end_encounter(f"☠️ *{enc['e_name']}* was defeated by status effects!\n✅ *Victory!*\n💰 +{fmt_num(_hdot_gold)} gold | ⭐ +{fmt_num(_hdot_exp)} EXP")
             return
         if enc["p_hp"] <= 0:
             await _end_encounter(f"💀 *{enc['e_name']}* knocked you out!")
@@ -27318,9 +27337,9 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_pet(pet)
         train_msg = PERSONALITY_TRAIN.get(pers, "trains diligently.")
         lvl_note = "".join(f"\n🎉 *Level Up!* {pname} is now level {l}!" for l in lvl_ups)
-        await query.answer(f"🏋️ {pname} trained! +{gain} EXP")
+        await query.answer(f"🏋️ {pname} trained! +{fmt_num(gain)} EXP")
         await _q_edit(query, 
-            f"🏋️ *{pname}* {train_msg}\n+{gain} EXP gained!{lvl_note}\n\n" + _build_pet_card(pet),
+            f"🏋️ *{pname}* {train_msg}\n+{fmt_num(gain)} EXP gained!{lvl_note}\n\n" + _build_pet_card(pet),
             parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet)); return
 
     if data.startswith("petplay_"):
@@ -27536,7 +27555,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             loot_txt = f"\n🎁 Found: *{loot}*!" if loot else ""
             await _q_edit(query, 
                 f"🗺️ *{pname} returned from adventure!*\n\n"
-                f"⭐ +{adv_exp} EXP{lvl_txt}\n💞 +15 Bond{loot_txt}\n\n" + _build_pet_card(pet),
+                f"⭐ +{fmt_num(adv_exp)} EXP{lvl_txt}\n💞 +15 Bond{loot_txt}\n\n" + _build_pet_card(pet),
                 parse_mode="Markdown",
                 reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet))
             await query.answer("🎉 Adventure complete!"); return
@@ -27585,7 +27604,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         loot_txt = f"\n🎁 Found: *{loot}*!" if loot else ""
         await _q_edit(query, 
             f"🗺️ *{pname} returned from a {hours}-hour adventure!*\n\n"
-            f"⭐ +{adv_exp} EXP{lvl_txt}\n💞 +{hours*2+9} Bond{loot_txt}\n\n" + _build_pet_card(pet),
+            f"⭐ +{fmt_num(adv_exp)} EXP{lvl_txt}\n💞 +{hours*2+9} Bond{loot_txt}\n\n" + _build_pet_card(pet),
             parse_mode="Markdown",
             reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet))
         await query.answer("🎉 Adventure rewards claimed!"); return
@@ -27689,7 +27708,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚔️ *Pet Battle!*\n\n"
             f"{my_e} *{my_pname}* (Score: {my_score})\nvs\n{opp_e} *{opp_pname}* (Score: {opp_score})\n{elem_note}\n"
             f"{result_txt}\n"
-            f"⭐ +{my_exp_gain} EXP  |  💞 +{my_bond_gain} Bond",
+            f"⭐ +{fmt_num(my_exp_gain)} EXP  |  💞 +{my_bond_gain} Bond",
             parse_mode="Markdown",
             reply_markup=_pet_view_markup(my_pid, bool(my_pet.get("is_active")), uid=user.id, pet=my_pet))
         await query.answer(result_txt.replace("*","")); return
@@ -28533,7 +28552,7 @@ async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         winner_pet["bond_score"] = winner_pet.get("bond_score",0) + bond_gain
         loser_pet["bond_score"]  = loser_pet.get("bond_score",0) + 3
         save_pet(winner_pet); save_pet(loser_pet)
-        log.append(f"\n🏆 *{w_sp.get('emoji','🐾')} {winner_name}* wins!\n+{exp_gain} EXP | +{bond_gain} Bond")
+        log.append(f"\n🏆 *{w_sp.get('emoji','🐾')} {winner_name}* wins!\n+{fmt_num(exp_gain)} EXP | +{bond_gain} Bond")
         # Keep log to last 12 lines to fit in Telegram message
         display_log = log[:3] + ["..."] + log[-6:] if len(log) > 10 else log
         await _q_edit(query, "\n".join(display_log), parse_mode="Markdown")
@@ -29588,7 +29607,7 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lmsgs, _ = add_exp(p, exp_gain); save_player(p)
         result = (f"{rarity_prefix} *Pool Shot — {shot['rarity'].capitalize()}*\n\n"
                   f"_{shot['text']}_\n\n"
-                  f"✨ +{exp_gain} EXP  |  💰 +{gold_gain}g")
+                  f"✨ +{fmt_num(exp_gain)} EXP  |  💰 +{gold_gain}g")
         if item_found: result += f"  |  🎒 *{item_found}*!"
         if lmsgs: result += "\n\n" + "\n".join(lmsgs[:2])
         try: await _q_edit(query, result, parse_mode="Markdown", reply_markup=back)
@@ -29800,7 +29819,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
             gold = scaled_gold(p["level"], 100); p["gold"] = p.get("gold", 0) + gold
             daily_exp = exp_share(p["level"], 0.10)
             lmsgs, _ = add_exp(p, daily_exp)
-            entry = f"🎁 Daily: +{daily_exp} EXP, +{gold}g"
+            entry = f"🎁 Daily: +{fmt_num(daily_exp)} EXP, +{gold}g"
             if random.random() < 0.10:
                 item = random.choice(["Health Potion","Greater Health Potion","Grand Restorative Flask"])
                 add_item(p, item); entry += f", *{item}*"
@@ -29818,7 +29837,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
                             "eagle_eye","trailblazer","natures_bond","guardian_stance","pathfinder"):    base = round(base*1.35)
                 elif pk in ("mending_aura","divine_grace","sacred_ground","resurrection","divine_presence",
                             "dark_sense","purge","judgement","wrath_of_the_righteous"):                 base = round(base*1.15)
-            lmsgs, _ = add_exp(p, base); ran.append(f"🏋️ Train: +{base} EXP")
+            lmsgs, _ = add_exp(p, base); ran.append(f"🏋️ Train: +{fmt_num(base)} EXP")
         else: skipped.append(f"🏋️ Train — {time_remaining(p.get('last_train'), 1800)}")
         today = now.strftime("%Y-%m-%d"); yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         last_claim = p.get("last_claim")
@@ -29844,7 +29863,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
             p["gold"] = p.get("gold",0)+gold_gain; p["last_pool"] = now.isoformat()
             if s_cd: s_cd["last_pool"] = p["last_pool"]; save_shadow(s_cd)
             lmsgs, _ = add_exp(p, exp_gain)
-            entry = f"🎱 Pool ({shot['rarity']}): +{exp_gain} EXP, +{gold_gain}g"
+            entry = f"🎱 Pool ({shot['rarity']}): +{fmt_num(exp_gain)} EXP, +{gold_gain}g"
             if shot.get("loot"):
                 loot = roll_loot_table(shot["loot"])
                 if loot: add_item(p, loot); entry += f", *{loot}*"
@@ -29893,7 +29912,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
                 add_item(p, item)
             daily_exp = exp_share(p["level"], 0.10)
             lmsgs, _ = add_exp(p, daily_exp); save_player(p)
-            text = f"🎁 *Daily Reward!*\n\n✨ +{daily_exp} EXP | 💰 +{gold} Gold"
+            text = f"🎁 *Daily Reward!*\n\n✨ +{fmt_num(daily_exp)} EXP | 💰 +{gold} Gold"
             if item: text += f" | 🎒 *{item}*"
             if lmsgs: text += "\n\n" + "\n".join(lmsgs[:3])
             await _show(text)
@@ -29921,7 +29940,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
                             "dark_sense","purge","judgement","wrath_of_the_righteous"):
                     base = round(base*1.15); note = f"\n✨ *{cls['name']}* wisdom bonus! +15%"
             lmsgs, _ = add_exp(p, base); save_player(p)
-            text = f"🏋️ *Training Session*\n\n_{random.choice(TRAIN_MESSAGES)}_\n\n✨ +{base} EXP{note}"
+            text = f"🏋️ *Training Session*\n\n_{random.choice(TRAIN_MESSAGES)}_\n\n✨ +{fmt_num(base)} EXP{note}"
             if lmsgs: text += "\n\n" + "\n".join(lmsgs[:3])
             await _show(text)
 
@@ -29954,7 +29973,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
             done = prog >= tgt; chk = "✅" if done else "⬜"
             fill = round(min(prog, tgt) / tgt * 8)
             bar = "█" * fill + "░" * (8 - fill)
-            lines.append(f"{chk} *{obj['desc']}*\n`{bar}` {prog}/{tgt}  ·  +{obj.get('reward_exp',0)} EXP, {obj.get('reward_gold',0)}g")
+            lines.append(f"{chk} *{obj['desc']}*\n`{bar}` {prog}/{tgt}  ·  +{fmt_num(obj.get('reward_exp',0))} EXP, {obj.get('reward_gold',0)}g")
         lines.append(f"\n📊 Completed today: {safe_int(p.get('objectives_completed'))}")
         await _show("\n\n".join(lines))
 
@@ -30143,7 +30162,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
                 if loot_item: add_item(p, loot_item); save_player(p); loot_note = f"\n🎒 *{loot_item}*"
             txt = (f"🔮 *Oracle — {shot['rarity'].title()}*\n\n"
                    f"_{shot['text'][:120]}_\n\n"
-                   f"✨ +{exp_gain} EXP  |  💰 +{gold_gain}g{loot_note}")
+                   f"✨ +{fmt_num(exp_gain)} EXP  |  💰 +{gold_gain}g{loot_note}")
             if lmsgs_ora: txt += "\n\n" + "\n".join(lmsgs_ora[:2])
         try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
         except Exception: pass
@@ -30934,7 +30953,7 @@ async def pool_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     flavor_suffix = f" {flavor.strip()}" if flavor else ""
     lines = [f"{rarity_prefix} *{user.first_name}* — _{shot['text']}{flavor_suffix}_"]
     reward_parts = []
-    if exp_gain > 0:  reward_parts.append(f"✨ +{exp_gain} EXP")
+    if exp_gain > 0:  reward_parts.append(f"✨ +{fmt_num(exp_gain)} EXP")
     if gold_gain > 0: reward_parts.append(f"💰 +{gold_gain}g")
     if reward_parts:  lines.append("  •  ".join(reward_parts))
     if item_found:
@@ -31000,7 +31019,7 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             add_item(p, item)
         daily_exp = exp_share(p["level"], 0.10)
         lmsgs, _ = add_exp(p, daily_exp)
-        entry = f"🎁 *Daily:* +{daily_exp} EXP, +{gold}g"
+        entry = f"🎁 *Daily:* +{fmt_num(daily_exp)} EXP, +{gold}g"
         if item: entry += f", *{item}*!"
         ran.append(entry)
         if lmsgs: ran.extend(f"  {m}" for m in lmsgs)
@@ -31025,7 +31044,7 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "dark_sense","purge","judgement","wrath_of_the_righteous"):
                 base = round(base * 1.15)
         lmsgs, _ = add_exp(p, base)
-        ran.append(f"🏋️ *Train:* +{base} EXP")
+        ran.append(f"🏋️ *Train:* +{fmt_num(base)} EXP")
         if lmsgs: ran.extend(f"  {m}" for m in lmsgs)
     else:
         skipped.append(f"🏋️ Train  -  {time_remaining(p.get('last_train'), 1800)}")
@@ -31046,7 +31065,7 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _q_exp = exp_share(p["level"], {"Easy": 0.03, "Medium": 0.05, "Hard": 0.08}.get(q["tier"], 0.03))
         lmsgs, _ = add_exp(p, _q_exp, w)
         check_titles(p)
-        entry = f"🗺️ *Quest:* +{_q_exp:,} EXP, +{gold}g"
+        entry = f"🗺️ *Quest:* +{fmt_num(_q_exp)} EXP, +{gold}g"
         if item_found: entry += f", *{item_found}*!"
         ran.append(entry)
         if lmsgs: ran.extend(f"  {m}" for m in lmsgs)
@@ -31077,7 +31096,7 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if bonus_item: add_item(p, bonus_item)
         lmsgs, _ = add_exp(p, exp_gain)
         rarity_prefix = {"common":"🎱","uncommon":"🎯","rare":"🔵","epic":"🟣","legendary":"🟡","mythic":"🔴"}.get(shot["rarity"],"🎱")
-        entry = f"{rarity_prefix} *Pool:* +{exp_gain} EXP"
+        entry = f"{rarity_prefix} *Pool:* +{fmt_num(exp_gain)} EXP"
         if gold_gain: entry += f", +{gold_gain}g"
         if item_found: entry += f", *{item_found}*!"
         if bonus_item: entry += f"\n  🎱 Table drop: *{bonus_item}*!"
@@ -31161,7 +31180,7 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             break
                 msg = (f"🗺️ *{pp['username']}* returns from *{_zone_ref['name']}*!\n\n"
                        f"✅ Expedition successful!\n"
-                       f"✨ +{exp} EXP | 💰 +{gold} Gold")
+                       f"✨ +{fmt_num(exp)} EXP | 💰 +{gold} Gold")
                 if item_found: msg += f"\n🎒 Found: {rarity} *{item_found}*!"
                 if lmsgs: msg += "\n\n" + "\n".join(lmsgs)
             else:
@@ -31391,7 +31410,7 @@ async def sendquest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📜 *Special Quest*\n\n"
         f"Say this phrase in the group chat to earn your reward:\n\n"
         f"*\"{phrase}\"*\n\n"
-        f"💫 Reward: *{exp} EXP*\n"
+        f"💫 Reward: *{fmt_num(exp)} EXP*\n"
         f"⏳ Expires in 24 hours"
     )
 
@@ -31408,7 +31427,7 @@ async def sendquest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(
             f"✅ *Quest sent!*\n\n"
             f"Phrase: *\"{phrase}\"*\n"
-            f"Reward: *{exp} EXP*\n\n"
+            f"Reward: *{fmt_num(exp)} EXP*\n\n"
             f"📨 Delivered: *{sent}* | ❌ Failed: *{failed}*\n"
             f"_Use /cancelquest to end it early._",
             parse_mode="Markdown"
@@ -32140,8 +32159,8 @@ async def admingivexp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         level_note = f" _(levelled up: {old_level} → {new_level})_" if new_level != old_level else ""
         handle = f" (@{matches[0]['tg_username']})" if matches[0].get("tg_username") else ""
         await update.message.reply_text(
-            f"✅ Gave *{exp_amount:,} EXP* to *{p['username']}*{handle}{level_note}\n"
-            f"New level: *{new_level}*  |  EXP: *{p['exp']:,}*",
+            f"✅ Gave *{fmt_num(exp_amount)} EXP* to *{p['username']}*{handle}{level_note}\n"
+            f"New level: *{new_level}*  |  EXP: *{fmt_num(p['exp'])}*",
             parse_mode="Markdown"
         )
         return
@@ -32156,7 +32175,7 @@ async def admingivexp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows.append([InlineKeyboardButton("❌ Cancel", callback_data="agivexp_cancel")])
     await update.message.reply_text(
         f"Found *{len(matches)}* players matching *'{search}'*.\n"
-        f"Select who should receive *{exp_amount:,} EXP*:",
+        f"Select who should receive *{fmt_num(exp_amount)} EXP*:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(rows)
     )
@@ -32193,8 +32212,8 @@ async def admingivexp_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         await _q_edit(query, 
-            f"✅ Gave *{exp_amount:,} EXP* to *{p['username']}*{level_note}\n"
-            f"New level: *{new_level}*  |  EXP: *{p['exp']:,}*",
+            f"✅ Gave *{fmt_num(exp_amount)} EXP* to *{p['username']}*{level_note}\n"
+            f"New level: *{new_level}*  |  EXP: *{fmt_num(p['exp'])}*",
             parse_mode="Markdown"
         )
     except Exception: pass
@@ -32421,7 +32440,7 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
         emp_line = ""
         if empire_notes:
             emp_line = "\n\n🏰 *Empire production waiting:*\n" + "\n".join(f"  {n}" for n in empire_notes[:6])
-        exp_line = (f"💫 Idle reward: *+{idle_exp:,} EXP*\n"
+        exp_line = (f"💫 Idle reward: *+{fmt_num(idle_exp)} EXP*\n"
                     f"_(Scales with your level — the higher your level, the more you earn)_"
                     if idle_exp > 0 else "")
         try:
@@ -32751,7 +32770,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _stk_exp = exp_share(p["level"], 0.10)
                 rpg_exp += _stk_exp
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🔥 *{user.first_name}* hit a *50 message streak!* +{_stk_exp:,} EXP!",
+                f"🔥 *{user.first_name}* hit a *50 message streak!* +{fmt_num(_stk_exp)} EXP!",
                 delay=8))
         if dm >= 100 and not cds_s.get("streak_100"):
             cds_s["streak_100"] = True; rpg_gold += 100
@@ -32761,7 +32780,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _stk_exp = exp_share(p["level"], 0.25)
                 rpg_exp += _stk_exp
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🔥 *{user.first_name}* hit a *100 message streak!* +{_stk_exp:,} EXP!",
+                f"🔥 *{user.first_name}* hit a *100 message streak!* +{fmt_num(_stk_exp)} EXP!",
                 delay=8))
         if dm >= 500 and not cds_s.get("streak_500"):
             cds_s["streak_500"] = True
@@ -32771,7 +32790,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _stk_exp = exp_share(p["level"], 1.00)
                 rpg_exp += _stk_exp
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🏆 *{user.first_name}* hit a *500 message streak!* +{_stk_exp:,} EXP! 🎱",
+                f"🏆 *{user.first_name}* hit a *500 message streak!* +{fmt_num(_stk_exp)} EXP! 🎱",
                 delay=8))
 
     # Apply shadow EXP
@@ -32850,7 +32869,7 @@ def _drake_hit(bot, chat_id, p, display_name):
             if loot: add_item(fp, loot)
             lmsgs, leveled = add_exp(fp, _drake_exp)
             save_player(fp)
-            lines.append(f"✅ *{fp['username']}*  -  +{_drake_exp:,} EXP"
+            lines.append(f"✅ *{fp['username']}*  -  +{fmt_num(_drake_exp)} EXP"
                          + (f" | 🎒 *{loot}*!" if loot else ""))
             if leveled and fp["level"] % 10 == 0:
                 asyncio.create_task(announce(bot, chat_id,
@@ -32926,11 +32945,11 @@ async def greet_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if loot: add_item(p, loot)
             _trav_exp = exp_share(p["level"], 0.05)
             lmsgs, leveled = add_exp(p, _trav_exp); save_player(p)
-            msg = f"🧙 *{user.first_name}* greets the traveler! +{_trav_exp:,} EXP"
+            msg = f"🧙 *{user.first_name}* greets the traveler! +{fmt_num(_trav_exp)} EXP"
             if loot: msg += f" | 🎒 *{loot}*!"
         else:
             lmsgs, leveled = add_shadow_exp(s, event["exp"]); save_shadow(s)
-            msg = f"🧙 *{user.first_name}* greets the traveler! +{event['exp']} EXP"
+            msg = f"🧙 *{user.first_name}* greets the traveler! +{fmt_num(event['exp'])} EXP"
         await send_group(update, msg, delay=15)
     elif event["key"] == "merchant":
         if p:
@@ -32965,11 +32984,11 @@ async def fight_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
             exp_prize = exp_share(p["level"], _prize_pct)
             p["gold"] = p.get("gold", 0) + gold_prize
             add_exp(p, exp_prize); save_player(p)
-            lines.append(f"💰 +{gold_prize} gold | ✨ +{exp_prize:,} EXP")
+            lines.append(f"💰 +{gold_prize} gold | ✨ +{fmt_num(exp_prize)} EXP")
         elif s:
             exp_prize = exp_share(s["level"], _prize_pct)
             add_shadow_exp(s, exp_prize); save_shadow(s)
-            lines.append(f"✨ +{exp_prize:,} EXP")
+            lines.append(f"✨ +{fmt_num(exp_prize)} EXP")
         await send_group(update, "\n".join(lines), delay=20)
         return
 
@@ -33136,7 +33155,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                         if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), ""); break
                     out.append(f"🎒 Found: {r} *{loot}*!")
                 add_exp(p, exp_r, get_weather())
-                out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{exp_r:,} EXP | +{gold_r}g")
+                out.append(f"\n🏆 *SOLO RAID COMPLETE!* +{fmt_num(exp_r)} EXP | +{gold_r}g")
                 save_player(p)
                 try:
                     await _q_edit(query, text="\n".join(out)[:4096], parse_mode="Markdown")
@@ -33232,7 +33251,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 loot_line = f"\n🎒 Found: {r} *{loot}*!"
             add_exp(p, exp_r, get_weather())
             lines.append(f"\n🏆 *SOLO RAID COMPLETE  -  {tier['name']}!*")
-            lines.append(f"✅ +{exp_r:,} EXP | +{gold_r}g{loot_line}")
+            lines.append(f"✅ +{fmt_num(exp_r)} EXP | +{gold_r}g{loot_line}")
             save_player(p)
             try:
                 await _q_edit(query, text="\n".join(lines)[:4096], parse_mode="Markdown")
@@ -33261,7 +33280,7 @@ async def soloraid_act_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     asyncio.create_task(_notify_defeat(context.bot, p, enemy["name"] + " (Solo Raid)"))
                     active_soloraids.pop(uid, None)
                     save_player(p)
-                    lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6min defeat. -{exp_loss} EXP.")
+                    lines.append(f"💀 *{enemy['name']}* kills *{p['username']}*! 6min defeat. -{fmt_num(exp_loss)} EXP.")
                     try:
                         await _q_edit(query, text="\n".join(lines)[:4096], parse_mode="Markdown")
                     except Exception: pass
@@ -33406,7 +33425,7 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
                     asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                     save_player(tp)
-                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 30min defeat. -{exp_loss} EXP.")
+                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 30min defeat. -{fmt_num(exp_loss)} EXP.")
                 else:
                     lines.append(f"💥 Boss hits *{target['name']}* for *{bdmg}!* ({php}/{pmhp} HP)")
                 save_player(tp)
@@ -33431,7 +33450,7 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _braid_exp = exp_share(pp["level"], 0.10)
                 add_exp(pp, _braid_exp, w2)
                 save_player(pp)
-                lines.append(f"✅ *{pp['username']}*  -  +{_braid_exp:,} EXP | +{data['gold']} Gold")
+                lines.append(f"✅ *{pp['username']}*  -  +{fmt_num(_braid_exp)} EXP | +{data['gold']} Gold")
             try:
                 await _q_edit(query, text="\n".join(lines)[:4096], parse_mode="Markdown")
             except Exception: pass
@@ -33531,7 +33550,7 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
                     asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
                     save_player(tp)
-                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 30min defeat. -{exp_loss} EXP.")
+                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 30min defeat. -{fmt_num(exp_loss)} EXP.")
                 else:
                     lines.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for *{edm}!* ({php}/{pmhp} HP)")
                 save_player(tp)
@@ -33567,7 +33586,7 @@ async def boss_act_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
             _braid_exp = exp_share(pp["level"], 0.10)
             add_exp(pp, _braid_exp, w2); save_player(pp)
-            lines.append(f"✅ *{pp['username']}*  -  +{_braid_exp:,} EXP | +{data['gold']} Gold")
+            lines.append(f"✅ *{pp['username']}*  -  +{fmt_num(_braid_exp)} EXP | +{data['gold']} Gold")
         try:
             await _q_edit(query, text="\n".join(lines)[:4096], parse_mode="Markdown")
         except Exception: pass
@@ -33924,7 +33943,7 @@ async def _send_random_dm_event(bot, uid, p):
             add_exp(p, exp)
             save_player(p)
             await bot.send_message(uid,
-                f"📜 *A traveling merchant rewards you for a good deed!*\n+*{exp:,} EXP*",
+                f"📜 *A traveling merchant rewards you for a good deed!*\n+*{fmt_num(exp)} EXP*",
                 parse_mode="Markdown")
         else:  # ambush — tough, interactive fight with extreme rewards on a win
             await _send_ambush_event(bot, uid, p)
@@ -34036,7 +34055,7 @@ async def _winback_sweep(bot, max_sends=20):
                     idle_secs = (now - datetime.fromisoformat(row["last_seen"])).total_seconds()
                     idle_exp = _calc_idle_exp(idle_secs, p.get("level", 1))
                     if idle_exp > 0:
-                        hooks.append(f"✨ *{idle_exp:,} idle EXP* is waiting for you")
+                        hooks.append(f"✨ *{fmt_num(idle_exp)} idle EXP* is waiting for you")
                 except Exception:
                     pass
                 try:
@@ -34120,7 +34139,7 @@ async def _post_daily_digest(bot):
             lines.append("🏆 *Top grinders today:*")
             medals = ["🥇", "🥈", "🥉"]
             for i, (r, eg, _) in enumerate(gainers):
-                lines.append(f"{medals[i]} *{r['username']}* (Lv {r['level']}) — +{eg:,} EXP")
+                lines.append(f"{medals[i]} *{r['username']}* (Lv {r['level']}) — +{fmt_num(eg)} EXP")
             lines.append("")
         if fighters:
             r, _, wg = fighters[0]
@@ -34356,7 +34375,7 @@ async def crate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_item(p, item)
     add_exp(p, exp)
     save_player(p)
-    await query.answer(f"📦 +{gold}g, +{exp:,} EXP, {item}!")
+    await query.answer(f"📦 +{gold}g, +{fmt_num(exp)} EXP, {item}!")
     names = ", ".join(f"*{n}*" for _, n in st["claimed"])
     left = 3 - len(st["claimed"])
     try:
@@ -34644,7 +34663,7 @@ async def _royale_run(bot, chat_id):
             save_player(wp)
         await announce(bot, chat_id,
             f"👑 *BATTLE ROYALE CHAMPION: {winner_name}!*\n"
-            f"💰 Takes the *{st['pot']}g* pot" + (f"  •  ✨ +{_br_exp} EXP" if _br_exp else "") + "\n"
+            f"💰 Takes the *{st['pot']}g* pot" + (f"  •  ✨ +{fmt_num(_br_exp)} EXP" if _br_exp else "") + "\n"
             f"_{len(st['players'])} entered. One walked out._",
             permanent=True)
     except Exception:
@@ -35257,7 +35276,7 @@ async def _spawn_heist(bot, chat_id):
                 cp["gold"] = cp.get("gold", 0) + share
                 add_exp(cp, _hx)
                 save_player(cp)
-                lines.append(f"💰 *{nm}* — +{share}g, +{_hx:,} EXP")
+                lines.append(f"💰 *{nm}* — +{share}g, +{fmt_num(_hx)} EXP")
             txt = "\n".join(lines)
         else:
             txt = (f"🚨 *HEIST FAILED!* The vault alarm screamed. ({int(odds*100)}% odds)\n"
@@ -35587,12 +35606,12 @@ async def _check_scramble_answer(update, context, chat_id, text):
     try:
         await context.bot.edit_message_text(chat_id=chat_id, message_id=st["msg_id"],
             text=f"🔤 *{p['username']}* unscrambled it — *{st['item']}*!\n"
-                 f"🎒 Item + {_sc_exp:,} EXP claimed!", parse_mode="Markdown")
+                 f"🎒 Item + {fmt_num(_sc_exp)} EXP claimed!", parse_mode="Markdown")
     except Exception:
         pass
     try:
         await update.message.reply_text(
-            f"🏆 Correct! *{st['item']}* is yours, +{_sc_exp:,} EXP!", parse_mode="Markdown")
+            f"🏆 Correct! *{st['item']}* is yours, +{fmt_num(_sc_exp)} EXP!", parse_mode="Markdown")
     except Exception:
         pass
     return True
@@ -35754,7 +35773,7 @@ async def collection_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _ms_gold = ms * 20
                 add_exp(p, _ms_exp)
                 p["gold"] = p.get("gold", 0) + _ms_gold
-                rewards.append(f"🏅 *{cat} {ms}%* — +{_ms_exp:,} EXP, +{_ms_gold}g")
+                rewards.append(f"🏅 *{cat} {ms}%* — +{fmt_num(_ms_exp)} EXP, +{_ms_gold}g")
         claimed[cat] = cat_claimed
     overall = round(total_have / max(1, total_all) * 100)
     lines.append(f"\n*Overall:* {total_have}/{total_all} ({overall}%)")
@@ -35925,8 +35944,8 @@ def _build_first_steps(p, uid):
         lines.append(f"{mark} {label}")
     lines.append("")
     step_exp = exp_share(p["level"], _FSTEP_PCT)
-    lines.append(f"_Each step pays *{step_exp:,} EXP*. Finish all {len(_FIRST_STEPS)} for a "
-                 f"*bonus {exp_share(p['level'], _FSTEP_BONUS):,} EXP + 500g + Greater Health Potion*!_")
+    lines.append(f"_Each step pays *{fmt_num(step_exp)} EXP*. Finish all {len(_FIRST_STEPS)} for a "
+                 f"*bonus {fmt_num(exp_share(p['level'], _FSTEP_BONUS))} EXP + 500g + Greater Health Potion*!_")
     if claimable:
         lines.append(f"\n🎉 *{len(claimable)} reward{'s' if len(claimable)!=1 else ''} ready to claim!*")
     rows = []
@@ -35974,9 +35993,9 @@ async def firststeps_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     p["passive_cooldowns"] = json.dumps(cds)
     lmsgs, _ = add_exp(p, total_exp)
     save_player(p)
-    await query.answer(f"Claimed +{total_exp:,} EXP!")
+    await query.answer(f"Claimed +{fmt_num(total_exp)} EXP!")
     text, markup = _build_first_steps(get_player(uid), uid)
-    text = f"✅ *Claimed: +{total_exp:,} EXP!*" + ("".join(f"\n{e}" for e in extras)) + "\n\n" + text
+    text = f"✅ *Claimed: +{fmt_num(total_exp)} EXP!*" + ("".join(f"\n{e}" for e in extras)) + "\n\n" + text
     if lmsgs: text += "\n\n" + "\n".join(lmsgs)
     try:
         await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
