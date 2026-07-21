@@ -81,6 +81,7 @@ CHANGELOG = [
         "🏳️ Surrender button on the fight card — concede for -5% EXP instead of being stuck",
         "Newbie Protection: under level 10 can't be attacked unless they strike first",
         "No-honor rule: kills 30+ levels down pay 10% EXP; can't attack players mid-dungeon/encounter",
+        "FOUR NEW PVP MODES: /royale (group battle royale, winner takes the pot), /quickdraw (reaction duel), /russian (1v1 six-shooter), /standoff (split-or-steal)",
         "Full audit: all 138 commands smoke-tested clean, all 230 button types verified wired to handlers",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
@@ -34319,6 +34320,599 @@ async def _resolve_fight_bets(bot, pair, winner_id, result_text=""):
     except Exception:
         pass
 
+# ── PVP GAME MODES: ROYALE / QUICKDRAW / RUSSIAN / STANDOFF ──────────────────
+# Four consensual, wager-based PvP mini-modes. All state is per-chat and
+# in-memory; stakes are deducted at accept time (gold is race-safe via the
+# delta-merge) and refunded on cancel/expiry.
+
+_royales    = {}   # chat_id -> {"players":{uid:name},"pot":int,"msg_id":int,"state":"join"}
+_quickdraws = {}   # chat_id -> quickdraw state
+_russians   = {}   # chat_id -> russian roulette state
+_standoffs  = {}   # chat_id -> standoff state
+_ROYALE_FEE = 100
+
+def _wager_from_args(args, default=100, lo=10, hi=100000):
+    for a in (args or []):
+        try:
+            return max(lo, min(hi, int(a)))
+        except ValueError:
+            continue
+    return default
+
+def _take_gold(uid, amount):
+    """Deduct gold if the player can afford it. Returns the player dict or None."""
+    p = get_player(uid)
+    if not p or safe_int(p.get("gold")) < amount:
+        return None
+    p["gold"] -= amount
+    save_player(p)
+    return p
+
+def _give_gold(uid, amount):
+    p = get_player(uid)
+    if p:
+        p["gold"] = safe_int(p.get("gold")) + amount
+        save_player(p)
+
+# ── 1) BATTLE ROYALE ─────────────────────────────────────────────────────────
+_BR_KILL_LINES = [
+    "⚔️ *{k}* ambushes *{v}* behind the pool hall!",
+    "🔪 *{v}* trusted *{k}*. Mistake.",
+    "🏹 *{k}* snipes *{v}* clean off the fence!",
+    "💥 *{v}* steps on a trap laid by *{k}*!",
+    "🪓 *{k}* kicks *{v}* into the void pocket!",
+    "🐍 *{k}* poisons *{v}*'s drink at the bar!",
+    "🌩️ *{k}* calls down thunder on *{v}*!",
+    "🕳️ *{v}* falls into a pit while running from *{k}*!",
+    "🎱 *{k}* breaks the rack — *{v}* goes down with it!",
+    "👻 *{v}* is never seen again. *{k}* whistles innocently.",
+]
+
+async def royale_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    if chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("⚔️ Battle Royale runs in the group chat!"); return
+    if chat.id in _royales:
+        await send_group(update, "⚔️ A Battle Royale is already forming/running here!", delay=9); return
+    p = _take_gold(user.id, _ROYALE_FEE)
+    if not p:
+        await send_group(update, f"⚔️ Battle Royale entry costs *{_ROYALE_FEE}g* — you can't cover it!", delay=9); return
+    st = {"players": {user.id: p["username"]}, "pot": _ROYALE_FEE, "msg_id": None, "state": "join"}
+    _royales[chat.id] = st
+    try:
+        msg = await context.bot.send_message(chat.id,
+            f"⚔️ *BATTLE ROYALE FORMING!*\n\n"
+            f"*{p['username']}* threw down {_ROYALE_FEE}g!\n"
+            f"💰 Pot: *{st['pot']}g*  •  👥 1 fighter\n\n"
+            f"_60 seconds to join — {_ROYALE_FEE}g entry, winner takes ALL._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                f"⚔️ JOIN ({_ROYALE_FEE}g)", callback_data=f"br_join_{chat.id}")]]))
+        st["msg_id"] = msg.message_id
+    except Exception:
+        _royales.pop(chat.id, None); _give_gold(user.id, _ROYALE_FEE); return
+    _t = asyncio.create_task(_royale_run(context.bot, chat.id))
+    _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+async def royale_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try:
+        chat_id = int(query.data.split("_")[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    st = _royales.get(chat_id)
+    if not st or st["state"] != "join":
+        await query.answer("Too late — the royale already started!", show_alert=True); return
+    uid = query.from_user.id
+    if uid in st["players"]:
+        await query.answer("You're already in!"); return
+    p = _take_gold(uid, _ROYALE_FEE)
+    if not p:
+        await query.answer(f"Need {_ROYALE_FEE}g to enter (and an /ascend-ed character)!", show_alert=True); return
+    st["players"][uid] = p["username"]
+    st["pot"] += _ROYALE_FEE
+    await query.answer(f"⚔️ You're in! Pot: {st['pot']}g")
+    try:
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=st["msg_id"],
+            text=(f"⚔️ *BATTLE ROYALE FORMING!*\n\n"
+                  f"💰 Pot: *{st['pot']}g*  •  👥 {len(st['players'])} fighters\n"
+                  f"{', '.join(list(st['players'].values())[:12])}\n\n"
+                  f"_Join before the gate closes!_"),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                f"⚔️ JOIN ({_ROYALE_FEE}g)", callback_data=f"br_join_{chat_id}")]]))
+    except Exception:
+        pass
+
+async def _royale_run(bot, chat_id):
+    await asyncio.sleep(60)
+    st = _royales.get(chat_id)
+    if not st:
+        return
+    if len(st["players"]) < 2:
+        # not enough fighters — refund
+        for uid in st["players"]:
+            _give_gold(uid, _ROYALE_FEE)
+        try:
+            await bot.edit_message_text(chat_id=chat_id, message_id=st["msg_id"],
+                text="⚔️ *Battle Royale cancelled* — nobody else dared to enter. Entry refunded.",
+                parse_mode="Markdown", reply_markup=None)
+        except Exception:
+            pass
+        _royales.pop(chat_id, None)
+        return
+    st["state"] = "running"
+    try:
+        await bot.edit_message_text(chat_id=chat_id, message_id=st["msg_id"],
+            text=f"⚔️ *THE GATES CLOSE!* {len(st['players'])} fighters — 💰 *{st['pot']}g* pot.\n_Last one standing takes it all…_",
+            parse_mode="Markdown", reply_markup=None)
+    except Exception:
+        pass
+    alive = dict(st["players"])
+    # survival weight: level + stats give an edge, but anyone can win
+    def _weight(uid):
+        pl = get_player(uid)
+        if not pl:
+            return 100.0
+        return 100.0 + safe_int(pl.get("level"), 1) + sum(safe_stats(pl).values()) / 5.0
+    weights = {uid: _weight(uid) for uid in alive}
+    try:
+        while len(alive) > 1:
+            await asyncio.sleep(10)
+            kills_this_round = 2 if len(alive) > 8 else 1
+            round_lines = []
+            for _ in range(kills_this_round):
+                if len(alive) <= 1:
+                    break
+                uids = list(alive.keys())
+                inv_w = [1.0 / max(1.0, weights[u]) for u in uids]
+                victim = random.choices(uids, weights=inv_w, k=1)[0]
+                killers = [u for u in uids if u != victim]
+                killer = random.choices(killers, weights=[weights[u] for u in killers], k=1)[0]
+                line = random.choice(_BR_KILL_LINES).format(k=alive[killer], v=alive[victim])
+                del alive[victim]
+                round_lines.append(f"{line}\n☠️ *{len(alive)}* remain.")
+            if round_lines:
+                await announce(bot, chat_id, "\n\n".join(round_lines), delay=90)
+        winner_uid, winner_name = next(iter(alive.items()))
+        _give_gold(winner_uid, st["pot"])
+        wp = get_player(winner_uid)
+        _br_exp = 0
+        if wp:
+            _br_exp = exp_share(wp.get("level", 1), 0.10)
+            add_exp(wp, _br_exp)
+            save_player(wp)
+        await announce(bot, chat_id,
+            f"👑 *BATTLE ROYALE CHAMPION: {winner_name}!*\n"
+            f"💰 Takes the *{st['pot']}g* pot" + (f"  •  ✨ +{_br_exp} EXP" if _br_exp else "") + "\n"
+            f"_{len(st['players'])} entered. One walked out._",
+            permanent=True)
+    except Exception:
+        logger.error("royale error in chat %s", chat_id, exc_info=True)
+    finally:
+        _royales.pop(chat_id, None)
+
+# ── 2) WILD WEST QUICKDRAW ───────────────────────────────────────────────────
+async def quickdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    if chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("🤠 Quickdraw duels happen in the group!"); return
+    if chat.id in _quickdraws:
+        await send_group(update, "🤠 A quickdraw is already underway here!", delay=9); return
+    if not (update.message and update.message.reply_to_message):
+        await send_group(update, "🤠 *Quickdraw*: reply to someone with `/quickdraw [wager]` to challenge them.\n"
+                                 "First to tap 🔫 after the DRAW signal wins the pot. Tap early = misfire = lose.", delay=15); return
+    tu = update.message.reply_to_message.from_user
+    if tu.id == user.id or tu.is_bot:
+        await send_group(update, "🤠 Pick a real opponent.", delay=9); return
+    if not get_player(tu.id):
+        await send_group(update, f"🤠 *{tu.first_name}* hasn't ascended yet!", delay=9); return
+    wager = _wager_from_args(context.args, default=50)
+    st = {"a": user.id, "a_name": user.first_name, "b": tu.id, "b_name": tu.first_name,
+          "wager": wager, "state": "challenge", "msg_id": None, "armed_at": None}
+    _quickdraws[chat.id] = st
+    try:
+        msg = await context.bot.send_message(chat.id,
+            f"🤠 *QUICKDRAW!*  *{user.first_name}* challenges *{tu.first_name}* — 💰 {wager}g each.\n"
+            f"_Wait for 🔫 DRAW! First shot wins. Shoot early and you lose._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "🎯 Accept the duel", callback_data=f"qd_accept_{chat.id}")]]))
+        st["msg_id"] = msg.message_id
+    except Exception:
+        _quickdraws.pop(chat.id, None); return
+    async def _qd_expire(cid=chat.id, mid=st["msg_id"]):
+        await asyncio.sleep(90)
+        s2 = _quickdraws.get(cid)
+        if s2 and s2["state"] == "challenge" and s2["msg_id"] == mid:
+            _quickdraws.pop(cid, None)
+            try:
+                await bot_edit_challenge_expired(context.bot, cid, mid)
+            except Exception:
+                pass
+    _t = asyncio.create_task(_qd_expire())
+    _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+async def bot_edit_challenge_expired(bot, chat_id, msg_id):
+    try:
+        await bot.edit_message_text(chat_id=chat_id, message_id=msg_id,
+            text="⌛ _The challenge expired unanswered._", parse_mode="Markdown", reply_markup=None)
+    except Exception:
+        pass
+
+async def quickdraw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    action, chat_id = parts[1], int(parts[2])
+    st = _quickdraws.get(chat_id)
+    uid = query.from_user.id
+    if not st:
+        await query.answer("This duel is over.", show_alert=True); return
+    if action == "accept":
+        if uid != st["b"]:
+            await query.answer("This challenge isn't for you!", show_alert=True); return
+        if st["state"] != "challenge":
+            await query.answer(); return
+        pa = _take_gold(st["a"], st["wager"])
+        if not pa:
+            _quickdraws.pop(chat_id, None)
+            await query.answer(f"{st['a_name']} can't cover the wager — duel off!", show_alert=True); return
+        pb = _take_gold(st["b"], st["wager"])
+        if not pb:
+            _give_gold(st["a"], st["wager"])
+            _quickdraws.pop(chat_id, None)
+            await query.answer(f"You can't cover the {st['wager']}g wager!", show_alert=True); return
+        st["state"] = "steady"
+        await query.answer("🤠 Duel on!")
+        await _q_edit(query,
+            f"🌵 *{st['a_name']}* vs *{st['b_name']}* — 💰 {st['wager'] * 2}g pot\n\n"
+            f"*Steady…* wait for the signal.\n_Shooting early is an instant loss._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "🔫 FIRE", callback_data=f"qd_fire_{chat_id}")]]))
+        async def _arm(cid=chat_id):
+            await asyncio.sleep(random.uniform(3.0, 8.0))
+            s2 = _quickdraws.get(cid)
+            if not s2 or s2["state"] != "steady":
+                return
+            s2["state"] = "armed"; s2["armed_at"] = time.time()
+            try:
+                await context.bot.edit_message_text(chat_id=cid, message_id=s2["msg_id"],
+                    text=f"🔫 *DRAW!!!*  — 💰 {s2['wager'] * 2}g pot\n_FIRST SHOT WINS!_",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                        "🔫 FIRE", callback_data=f"qd_fire_{cid}")]]))
+            except Exception:
+                pass
+            await asyncio.sleep(30)
+            s3 = _quickdraws.get(cid)
+            if s3 and s3["state"] == "armed":
+                _quickdraws.pop(cid, None)
+                _give_gold(s3["a"], s3["wager"]); _give_gold(s3["b"], s3["wager"])
+                try:
+                    await context.bot.edit_message_text(chat_id=cid, message_id=s3["msg_id"],
+                        text="🌵 _Neither gunslinger fired. Wagers returned. The tumbleweed wins._",
+                        parse_mode="Markdown", reply_markup=None)
+                except Exception:
+                    pass
+        _t = asyncio.create_task(_arm())
+        _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+        return
+    if action == "fire":
+        if uid not in (st["a"], st["b"]):
+            await query.answer("You're a spectator — enjoy the show!", show_alert=True); return
+        me = st["a_name"] if uid == st["a"] else st["b_name"]
+        opp_uid = st["b"] if uid == st["a"] else st["a"]
+        opp = st["b_name"] if uid == st["a"] else st["a_name"]
+        if st["state"] == "steady":
+            # misfire — instant loss
+            _quickdraws.pop(chat_id, None)
+            _give_gold(opp_uid, st["wager"] * 2)
+            await query.answer("💥 You fired EARLY!", show_alert=True)
+            await _q_edit(query,
+                f"💥 *MISFIRE!* *{me}* shot before the signal!\n"
+                f"🏆 *{opp}* wins the *{st['wager'] * 2}g* pot without drawing.",
+                parse_mode="Markdown")
+            return
+        if st["state"] == "armed":
+            _quickdraws.pop(chat_id, None)
+            reaction_ms = int((time.time() - st["armed_at"]) * 1000)
+            _give_gold(uid, st["wager"] * 2)
+            wp = get_player(uid)
+            if wp:
+                add_exp(wp, exp_share(wp.get("level", 1), 0.03)); save_player(wp)
+            await query.answer(f"🔫 {reaction_ms}ms — you win!")
+            await _q_edit(query,
+                f"🔫 *BANG!* *{me}* draws in *{reaction_ms}ms*!\n"
+                f"🏆 Takes the *{st['wager'] * 2}g* pot. *{opp}* eats dust.",
+                parse_mode="Markdown")
+            return
+        await query.answer()
+
+# ── 3) RUSSIAN ROULETTE (VERSUS) ─────────────────────────────────────────────
+async def russian_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    if chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("🔫 Russian Roulette is played in the group!"); return
+    if chat.id in _russians:
+        await send_group(update, "🔫 A game is already in progress here!", delay=9); return
+    if not (update.message and update.message.reply_to_message):
+        await send_group(update, "🔫 *Russian Roulette*: reply to someone with `/russian [wager]`.\n"
+                                 "Six chambers, one bullet, alternating pulls. Loser pays.", delay=15); return
+    tu = update.message.reply_to_message.from_user
+    if tu.id == user.id or tu.is_bot:
+        await send_group(update, "🔫 You need a living opponent.", delay=9); return
+    if not get_player(tu.id):
+        await send_group(update, f"🔫 *{tu.first_name}* hasn't ascended yet!", delay=9); return
+    wager = _wager_from_args(context.args, default=100)
+    st = {"a": user.id, "a_name": user.first_name, "b": tu.id, "b_name": tu.first_name,
+          "wager": wager, "state": "challenge", "msg_id": None,
+          "chambers": 6, "turn": None, "deadline": None}
+    _russians[chat.id] = st
+    try:
+        msg = await context.bot.send_message(chat.id,
+            f"🔫 *RUSSIAN ROULETTE*  —  *{user.first_name}* challenges *{tu.first_name}*\n"
+            f"💰 {wager}g each  •  6 chambers  •  1 bullet\n_Winner takes the pot. Loser is defeated 3 minutes._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "😤 Accept", callback_data=f"rr2_accept_{chat.id}")]]))
+        st["msg_id"] = msg.message_id
+    except Exception:
+        _russians.pop(chat.id, None); return
+    async def _rr_expire(cid=chat.id, mid=st["msg_id"]):
+        await asyncio.sleep(90)
+        s2 = _russians.get(cid)
+        if s2 and s2["state"] == "challenge" and s2["msg_id"] == mid:
+            _russians.pop(cid, None)
+            await bot_edit_challenge_expired(context.bot, cid, mid)
+    _t = asyncio.create_task(_rr_expire())
+    _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+def _rr_card(st):
+    turn_name = st["a_name"] if st["turn"] == st["a"] else st["b_name"]
+    fired = 6 - st["chambers"]
+    dots = "⚫" * fired + "🔘" * st["chambers"]
+    return (f"🔫 *RUSSIAN ROULETTE* — 💰 {st['wager'] * 2}g pot\n"
+            f"{dots}  _({st['chambers']} chambers left)_\n\n"
+            f"👉 *{turn_name}*, the revolver is in your hand.")
+
+async def russian_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    action, chat_id = parts[1], int(parts[2])
+    st = _russians.get(chat_id)
+    uid = query.from_user.id
+    if not st:
+        await query.answer("This game is over.", show_alert=True); return
+    if action == "accept":
+        if uid != st["b"]:
+            await query.answer("This challenge isn't for you!", show_alert=True); return
+        if st["state"] != "challenge":
+            await query.answer(); return
+        pa = _take_gold(st["a"], st["wager"])
+        if not pa:
+            _russians.pop(chat_id, None)
+            await query.answer(f"{st['a_name']} can't cover the wager — game off!", show_alert=True); return
+        pb = _take_gold(st["b"], st["wager"])
+        if not pb:
+            _give_gold(st["a"], st["wager"])
+            _russians.pop(chat_id, None)
+            await query.answer(f"You can't cover the {st['wager']}g wager!", show_alert=True); return
+        st["state"] = "playing"
+        st["turn"] = random.choice([st["a"], st["b"]])
+        st["deadline"] = time.time() + 60
+        await query.answer("🔫 The cylinder spins...")
+        await _q_edit(query, _rr_card(st), parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "🔫 Pull the trigger", callback_data=f"rr2_pull_{chat_id}")]]))
+        async def _rr_watch(cid=chat_id):
+            while True:
+                await asyncio.sleep(15)
+                s2 = _russians.get(cid)
+                if not s2 or s2["state"] != "playing":
+                    return
+                if time.time() > s2["deadline"]:
+                    # turn holder chickened out — forfeits
+                    loser = s2["turn"]
+                    winner = s2["b"] if loser == s2["a"] else s2["a"]
+                    l_name = s2["a_name"] if loser == s2["a"] else s2["b_name"]
+                    w_name = s2["b_name"] if loser == s2["a"] else s2["a_name"]
+                    _russians.pop(cid, None)
+                    _give_gold(winner, s2["wager"] * 2)
+                    try:
+                        await context.bot.edit_message_text(chat_id=cid, message_id=s2["msg_id"],
+                            text=f"🐔 *{l_name}* couldn't pull the trigger — *forfeits!*\n"
+                                 f"🏆 *{w_name}* takes the {s2['wager'] * 2}g pot.",
+                            parse_mode="Markdown", reply_markup=None)
+                    except Exception:
+                        pass
+                    return
+        _t = asyncio.create_task(_rr_watch())
+        _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+        return
+    if action == "pull":
+        if st["state"] != "playing":
+            await query.answer(); return
+        if uid != st["turn"]:
+            await query.answer("Not your turn — or not your game!", show_alert=True); return
+        me = st["a_name"] if uid == st["a"] else st["b_name"]
+        opp_uid = st["b"] if uid == st["a"] else st["a"]
+        opp_name = st["b_name"] if uid == st["a"] else st["a_name"]
+        bang = random.randint(1, st["chambers"]) == 1
+        if bang:
+            _russians.pop(chat_id, None)
+            _give_gold(opp_uid, st["wager"] * 2)
+            lp = get_player(uid)
+            if lp:
+                lp["hp"] = 0
+                lp["defeated_until"] = (datetime.now() + timedelta(minutes=3)).isoformat()
+                lp["last_defeated_by"] = "Russian Roulette"
+                save_player(lp)
+            wp = get_player(opp_uid)
+            if wp:
+                add_exp(wp, exp_share(wp.get("level", 1), 0.04)); save_player(wp)
+            await query.answer("💥 BANG.", show_alert=True)
+            await _q_edit(query,
+                f"💥 *BANG!* The chamber wasn't empty.\n"
+                f"☠️ *{me}* hits the floor — defeated for 3 minutes.\n"
+                f"🏆 *{opp_name}* takes the *{st['wager'] * 2}g* pot.",
+                parse_mode="Markdown")
+            return
+        st["chambers"] -= 1
+        st["turn"] = opp_uid
+        st["deadline"] = time.time() + 60
+        await query.answer("…click.")
+        await _q_edit(query, _rr_card(st) + "\n\n_…click. Nothing. The revolver changes hands._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "🔫 Pull the trigger", callback_data=f"rr2_pull_{chat_id}")]]))
+        return
+
+# ── 4) GOLD STANDOFF (split-or-steal) ────────────────────────────────────────
+async def standoff_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    if chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("🤝 Standoffs happen in the group!"); return
+    if chat.id in _standoffs:
+        await send_group(update, "🤝 A standoff is already underway here!", delay=9); return
+    if not (update.message and update.message.reply_to_message):
+        await send_group(update, "🤝 *Gold Standoff*: reply to someone with `/standoff [wager]`.\n"
+                                 "Both secretly pick 🤝 SPLIT or 🗡️ STEAL.\n"
+                                 "Split/Split: both profit +25%. Steal/Split: thief takes all. Steal/Steal: pot burns.", delay=20); return
+    tu = update.message.reply_to_message.from_user
+    if tu.id == user.id or tu.is_bot:
+        await send_group(update, "🤝 Find a real partner-in-crime.", delay=9); return
+    if not get_player(tu.id):
+        await send_group(update, f"🤝 *{tu.first_name}* hasn't ascended yet!", delay=9); return
+    wager = _wager_from_args(context.args, default=100)
+    st = {"a": user.id, "a_name": user.first_name, "b": tu.id, "b_name": tu.first_name,
+          "wager": wager, "state": "challenge", "msg_id": None, "picks": {}}
+    _standoffs[chat.id] = st
+    try:
+        msg = await context.bot.send_message(chat.id,
+            f"🤝 *GOLD STANDOFF*  —  *{user.first_name}* ⚡ *{tu.first_name}*\n"
+            f"💰 {wager}g each on the table.\n"
+            f"_Split/Split: +25% each  •  Steal/Split: thief takes all  •  Steal/Steal: pot BURNS_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "⚡ Accept the standoff", callback_data=f"so_accept_{chat.id}")]]))
+        st["msg_id"] = msg.message_id
+    except Exception:
+        _standoffs.pop(chat.id, None); return
+    async def _so_expire(cid=chat.id, mid=st["msg_id"]):
+        await asyncio.sleep(90)
+        s2 = _standoffs.get(cid)
+        if s2 and s2["state"] == "challenge" and s2["msg_id"] == mid:
+            _standoffs.pop(cid, None)
+            await bot_edit_challenge_expired(context.bot, cid, mid)
+    _t = asyncio.create_task(_so_expire())
+    _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+async def _standoff_resolve(bot, chat_id):
+    st = _standoffs.pop(chat_id, None)
+    if not st:
+        return
+    w = st["wager"]
+    pa = st["picks"].get(st["a"], "split")
+    pb = st["picks"].get(st["b"], "split")
+    an, bn = st["a_name"], st["b_name"]
+    _ic = {"split": "🤝 SPLIT", "steal": "🗡️ STEAL"}
+    if pa == "split" and pb == "split":
+        bonus = round(w * 0.25)
+        _give_gold(st["a"], w + bonus); _give_gold(st["b"], w + bonus)
+        result = (f"🤝🤝 *HONOR AMONG THIEVES!* Both chose SPLIT.\n"
+                  f"💰 Each walks away with *{w + bonus}g* (+{bonus} bonus).")
+    elif pa == "steal" and pb == "steal":
+        result = (f"🗡️🗡️ *DOUBLE CROSS!* Both tried to STEAL.\n"
+                  f"🔥 The *{w * 2}g* pot burns in the crossfire. Nobody gets anything.")
+    else:
+        thief = st["a"] if pa == "steal" else st["b"]
+        thief_name = an if pa == "steal" else bn
+        mark_name = bn if pa == "steal" else an
+        _give_gold(thief, w * 2)
+        result = (f"🗡️ *BETRAYAL!* *{thief_name}* stole the pot while *{mark_name}* offered the split.\n"
+                  f"💰 *{thief_name}* rides off with *{w * 2}g*.")
+    try:
+        await bot.edit_message_text(chat_id=chat_id, message_id=st["msg_id"],
+            text=(f"🤝 *STANDOFF RESOLVED*\n"
+                  f"*{an}*: {_ic[pa]}   •   *{bn}*: {_ic[pb]}\n\n{result}"),
+            parse_mode="Markdown", reply_markup=None)
+    except Exception:
+        pass
+
+async def standoff_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    action, chat_id = parts[1], int(parts[2])
+    st = _standoffs.get(chat_id)
+    uid = query.from_user.id
+    if not st:
+        await query.answer("This standoff is over.", show_alert=True); return
+    if action == "accept":
+        if uid != st["b"]:
+            await query.answer("This challenge isn't for you!", show_alert=True); return
+        if st["state"] != "challenge":
+            await query.answer(); return
+        pa = _take_gold(st["a"], st["wager"])
+        if not pa:
+            _standoffs.pop(chat_id, None)
+            await query.answer(f"{st['a_name']} can't cover the wager!", show_alert=True); return
+        pb = _take_gold(st["b"], st["wager"])
+        if not pb:
+            _give_gold(st["a"], st["wager"])
+            _standoffs.pop(chat_id, None)
+            await query.answer(f"You can't cover the {st['wager']}g wager!", show_alert=True); return
+        st["state"] = "picking"
+        # secret pick buttons via DM — if either DM fails, cancel and refund
+        _pick_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🤝 SPLIT", callback_data=f"so_pick-split_{chat_id}"),
+            InlineKeyboardButton("🗡️ STEAL", callback_data=f"so_pick-steal_{chat_id}"),
+        ]])
+        try:
+            for _uid, _opp in ((st["a"], st["b_name"]), (st["b"], st["a_name"])):
+                await context.bot.send_message(_uid,
+                    f"🤝 *Standoff vs {_opp}* — {st['wager']}g on the table.\n"
+                    f"Choose in secret. 45 seconds. No pick = SPLIT.",
+                    parse_mode="Markdown", reply_markup=_pick_kb)
+        except Exception:
+            _give_gold(st["a"], st["wager"]); _give_gold(st["b"], st["wager"])
+            _standoffs.pop(chat_id, None)
+            await query.answer("Couldn't DM both players (start a chat with the bot first). Refunded.", show_alert=True)
+            return
+        await query.answer("⚡ Standoff on — check your DMs!")
+        await _q_edit(query,
+            f"🤝 *STANDOFF!*  *{st['a_name']}* ⚡ *{st['b_name']}* — 💰 {st['wager'] * 2}g\n\n"
+            f"🕶️ _Both are choosing in secret… 45 seconds._",
+            parse_mode="Markdown")
+        async def _so_timer(cid=chat_id):
+            await asyncio.sleep(45)
+            s2 = _standoffs.get(cid)
+            if s2 and s2["state"] == "picking":
+                await _standoff_resolve(context.bot, cid)
+        _t = asyncio.create_task(_so_timer())
+        _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+        return
+    if action.startswith("pick-"):
+        choice = action.split("-")[1]
+        if st["state"] != "picking" or uid not in (st["a"], st["b"]):
+            await query.answer("Not your standoff!", show_alert=True); return
+        if uid in st["picks"]:
+            await query.answer("You already chose — no take-backs."); return
+        st["picks"][uid] = choice
+        await query.answer("🕶️ Choice locked.")
+        try:
+            await _q_edit(query, f"🕶️ *Choice locked in: {'🤝 SPLIT' if choice == 'split' else '🗡️ STEAL'}*\n_Now we wait…_",
+                          parse_mode="Markdown")
+        except Exception:
+            pass
+        if len(st["picks"]) == 2:
+            await _standoff_resolve(context.bot, chat_id)
+        return
+
 # ── WEATHER CHANGE ANNOUNCEMENTS ─────────────────────────────────────────────
 _last_weather_announced = {"name": None}
 
@@ -35449,6 +36043,10 @@ async def _post_init(application):
             BotCommand("coinflip",  "🪙 Wager vs a player (reply)"),
             BotCommand("lottery",   "🎟️ Buy a lottery ticket"),
             BotCommand("roulette",  "💀 Russian roulette lobby"),
+            BotCommand("royale",    "⚔️ Battle Royale — group deathmatch, winner takes the pot"),
+            BotCommand("quickdraw", "🤠 Reaction duel — reply to challenge, first shot wins"),
+            BotCommand("russian",   "🔫 1v1 Russian roulette — reply to challenge"),
+            BotCommand("standoff",  "🤝 Split-or-steal showdown — reply to challenge"),
             BotCommand("rob",       "🕶️ Rob a player (reply, risky)"),
             BotCommand("help",      "❓ How to play"),
             BotCommand("ping",      "🏓 Bot health check"),
@@ -35502,6 +36100,14 @@ def main():
     app.add_handler(CallbackQueryHandler(crate_callback, pattern="^crate_"))
     app.add_handler(CallbackQueryHandler(bet_callback, pattern="^bet_"))
     app.add_handler(CallbackQueryHandler(world_event_button_callback, pattern="^wev_"))
+    app.add_handler(CommandHandler("royale",       royale_cmd))
+    app.add_handler(CommandHandler("quickdraw",    quickdraw_cmd))
+    app.add_handler(CommandHandler("russian",      russian_cmd))
+    app.add_handler(CommandHandler("standoff",     standoff_cmd))
+    app.add_handler(CallbackQueryHandler(royale_join_callback, pattern="^br_join_"))
+    app.add_handler(CallbackQueryHandler(quickdraw_callback,   pattern="^qd_"))
+    app.add_handler(CallbackQueryHandler(russian_callback,     pattern="^rr2_"))
+    app.add_handler(CallbackQueryHandler(standoff_callback,    pattern="^so_"))
     app.add_handler(CommandHandler("rob",          rob_cmd))
     app.add_handler(CommandHandler("slots",        slots_cmd))
     app.add_handler(CommandHandler("coinflip",     coinflip_cmd))
