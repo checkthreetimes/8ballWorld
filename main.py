@@ -94,6 +94,9 @@ CHANGELOG = [
         "FIGHT CARD 2.0: end-of-fight recap posted to the group (damage totals, biggest hit, MVP, actions/duration)",
         "Best-of-3 PvP series: rematches track a running score, live on the fight card, with a SERIES WON announcement at 2 wins",
         "Live damage tally shown on the battle card during the fight",
+        "PVP RATING SYSTEM: ELO-style rating on every fight (8 rank tiers, Bronze->Grandmaster), shown in fight recaps",
+        "New /pvp hub: rating, W/L, streak, king status, revenge, bounties, cooldowns in one card; /pvptop leaderboard",
+        "Weekly PvP Champion: highest-rated fighter each week wins the PvP Champion title + 100k gold, announced in the digest",
         "Full audit: all 138 commands smoke-tested clean, all 230 button types verified wired to handlers",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
@@ -305,6 +308,44 @@ def _pvp_series_bump(au, du, winner_id, a_name, d_name):
         _pvp_series.pop(key, None)
         return score_str, True, win_name
     return score_str, False, None
+
+# ── PVP RATING (ELO-STYLE) ────────────────────────────────────────────────────
+_PVP_RATING_BASE = 1000
+def _pvp_rating(p):
+    return safe_int(p.get("pvp_rating"), _PVP_RATING_BASE) or _PVP_RATING_BASE
+
+def _pvp_rank_name(rating):
+    if rating >= 1600: return "🔱 Grandmaster"
+    if rating >= 1450: return "💎 Master"
+    if rating >= 1300: return "🥇 Diamond"
+    if rating >= 1180: return "🥈 Platinum"
+    if rating >= 1080: return "🥉 Gold"
+    if rating >= 980:  return "⚔️ Silver"
+    if rating >= 880:  return "🛡️ Bronze"
+    return "🔰 Unranked"
+
+def _apply_pvp_rating(winner_id, loser_id):
+    """Symmetric ELO update on a decisive PvP finish. K-factor 32, floored so a
+    win always nets at least +5 and a loss never drops you below 100. Updates
+    peak. Returns (winner_delta, loser_delta, new_w_rating, new_l_rating) or
+    None if either side isn't a real distinct player."""
+    if not winner_id or not loser_id or winner_id == loser_id:
+        return None
+    wp = get_player(winner_id); lp = get_player(loser_id)
+    if not wp or not lp:
+        return None
+    rw, rl = _pvp_rating(wp), _pvp_rating(lp)
+    exp_w = 1.0 / (1.0 + 10 ** ((rl - rw) / 400.0))
+    K = 32
+    dw = max(5, round(K * (1.0 - exp_w)))
+    dl = max(5, round(K * exp_w))
+    new_w = rw + dw
+    new_l = max(100, rl - dl)
+    wp["pvp_rating"] = new_w
+    wp["pvp_peak_rating"] = max(safe_int(wp.get("pvp_peak_rating"), new_w), new_w)
+    lp["pvp_rating"] = new_l
+    save_player(wp); save_player(lp)
+    return dw, -(rl - new_l), new_w, new_l
 
 async def _auto_delete_pvp_card(bot, uid, chat_id, msg_id, delay=300):
     """Delete a PvP battle card after `delay` seconds if it hasn't been replaced."""
@@ -656,6 +697,19 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
         await _resolve_fight_bets(bot, pair, winner_id, result_text)
     except Exception:
         pass
+    # ── RATING: ELO update on a decisive finish (before recap, so we can show it)
+    _rating_line = ""
+    if winner_id and len(pair) == 2:
+        try:
+            _loser_id = pair[0] if pair[1] == winner_id else pair[1]
+            _elo = _apply_pvp_rating(winner_id, _loser_id)
+            if _elo:
+                _dw, _dl, _nw, _nl = _elo
+                _wp = get_player(winner_id)
+                _rating_line = (f"📈 *{(_wp or {}).get('username','?')}* +{_dw} rating "
+                                f"→ {_nw} ({_pvp_rank_name(_nw)})")
+        except Exception:
+            logger.error("elo update failed", exc_info=True)
     # ── FIGHT CARD 2.0: group recap + best-of-3 series ──────────────────────
     _grp_recap = _pvp_origin_chat.get(pair)
     if _grp_recap and len(pair) == 2:
@@ -667,6 +721,8 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
             _score_str, _series_over, _series_win = _pvp_series_bump(
                 _u1, _u2, winner_id, _n1, _n2)
             _extra = []
+            if _rating_line:
+                _extra.append(_rating_line)
             if _score_str:
                 if _series_over:
                     _extra.append(f"🏆 *SERIES WON by {_series_win}!*  ({_score_str})")
@@ -11373,6 +11429,9 @@ def init_db():
         ("players", "collection_log",     "TEXT DEFAULT NULL"),
         # Bestiary: every species ever owned, persists after selling/releasing
         ("players", "pet_dex",             "TEXT DEFAULT NULL"),
+        # PvP ELO-style rating (default 1000) + peak tracking
+        ("players", "pvp_rating",          "INTEGER DEFAULT 1000"),
+        ("players", "pvp_peak_rating",     "INTEGER DEFAULT 1000"),
         # Immortal Coils 1h survive cooldown — MUST persist or the Ancient
         # Serpent survives every fatal blow forever (each handler loads a
         # fresh row and never sees the in-memory timestamp)
@@ -12134,7 +12193,7 @@ def save_player(p):
         "poison_pct","bleed_pct","burn_pct",
         "empire_buildings","empire_resources","empire_last_collect",
         "mp","max_mp","dng_companions","dodge_momentum","collection_log",
-        "serpent_revive_used","pet_dex",
+        "serpent_revive_used","pet_dex","pvp_rating","pvp_peak_rating",
     ]
     # dng_companions is held as a list in memory; store as JSON text
     if isinstance(p.get("dng_companions"), list):
@@ -14533,6 +14592,125 @@ def _resolve_pvp_group_chat(uid: int, fallback: int) -> int:
     return grp or fallback
 
 # ── ATTACK ────────────────────────────────────────────────────────────────────
+async def pvp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """PvP hub: rating, record, streak, king, revenge, bounties, cooldowns."""
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    rating = _pvp_rating(p)
+    peak = max(safe_int(p.get("pvp_peak_rating"), rating), rating)
+    wins = safe_int(p.get("wins")); losses = safe_int(p.get("losses"))
+    total = wins + losses
+    wr = round(wins / total * 100) if total else 0
+    ks = safe_int(p.get("kill_streak")); mks = safe_int(p.get("max_kill_streak"))
+    lines = [
+        f"⚔️ *{p['username']}'s PvP Hub*",
+        f"{_pvp_rank_name(rating)}  ·  *{rating}* rating  _(peak {peak})_",
+        f"📊 Record: *{wins}W* / *{losses}L*  ({wr}% win rate)",
+        f"🔥 Streak: *{ks}*  (best {mks})",
+    ]
+    if _is_king(p):
+        _k = _get_king()
+        lines.append("👑 *You hold the King of the Table crown!* (+5% damage)")
+    else:
+        _k = _get_king()
+        if _k:
+            lines.append(f"👑 King: *{_k['name']}* — dethrone them for the crown")
+    # revenge
+    rt = safe_int(p.get("revenge_target"))
+    if rt and _ts_active(p, "revenge_expires"):
+        rtp = get_player(rt)
+        if rtp:
+            lines.append(f"🗡️ *Revenge available* vs *{rtp['username']}* — bonus EXP if you strike back")
+    # wanted
+    if safe_int(p.get("is_wanted")):
+        lines.append("🔴 *You are WANTED* — bonus bounty for whoever takes you down")
+    # bounties
+    try:
+        c = _db().cursor()
+        now = datetime.now().isoformat()
+        on_me = c.execute("SELECT COUNT(*), COALESCE(SUM(reward),0) FROM bounties "
+                          "WHERE target_id=? AND claimed_by IS NULL AND expires_at > ?",
+                          (user.id, now)).fetchone()
+        by_me = c.execute("SELECT COUNT(*) FROM bounties WHERE placer_id=? "
+                          "AND claimed_by IS NULL AND expires_at > ?", (user.id, now)).fetchone()
+        if on_me and on_me[0]:
+            lines.append(f"🎯 *{on_me[0]} bounty(ies) on your head* — total {fmt_num(on_me[1])}g")
+        if by_me and by_me[0]:
+            lines.append(f"📌 You've placed *{by_me[0]}* active bounty(ies)")
+    except Exception:
+        pass
+    # status / cooldown
+    if is_defeated(p):
+        lines.append(f"💀 *Defeated* — back in {time_until(p.get('defeated_until')) or 'soon'}")
+    elif is_invincible(p):
+        lines.append(f"🛡️ *Recovering* (invincible) — {time_until(p.get('invincible_until')) or 'soon'}")
+    else:
+        lines.append("✅ *Ready to fight!*")
+    lines.append("")
+    lines.append("_/attack · /royale · /quickdraw · /russian · /standoff · /pvptop_")
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⚔️ Find a target", callback_data=f"pvphub_attack_{user.id}"),
+        InlineKeyboardButton("🏆 Leaderboard", callback_data="pvphub_top"),
+    ]])
+    await send_group(update, "\n".join(lines), permanent=True, reply_markup=markup)
+
+async def pvptop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Top 10 players by PvP rating."""
+    p = get_player(update.effective_user.id)
+    try:
+        c = _db().cursor()
+        rows = c.execute("SELECT username, pvp_rating, wins, losses FROM players "
+                         "WHERE pvp_rating IS NOT NULL ORDER BY pvp_rating DESC LIMIT 10").fetchall()
+    except Exception:
+        rows = []
+    if not rows:
+        await send_group(update, "🏆 No rated fighters yet — win a PvP fight to get on the board!", delay=12); return
+    lines = ["🏆 *PvP LEADERBOARD*  _(by rating)_", ""]
+    medals = ["🥇", "🥈", "🥉"] + ["▫️"] * 7
+    for i, r in enumerate(rows):
+        rt = safe_int(r["pvp_rating"], 1000)
+        lines.append(f"{medals[i]} *{r['username']}* — {rt} {_pvp_rank_name(rt)}  "
+                     f"_({safe_int(r['wins'])}W/{safe_int(r['losses'])}L)_")
+    champ = _ws_get("pvp_champion")
+    if champ:
+        lines.append("")
+        lines.append(f"👑 *Reigning Weekly Champion:* {champ.get('name','?')} ({champ.get('rating','?')})")
+    await send_group(update, "\n".join(lines), permanent=True, delay=60)
+
+async def pvphub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    if data == "pvphub_top":
+        p = get_player(query.from_user.id)
+        try:
+            c = _db().cursor()
+            rows = c.execute("SELECT username, pvp_rating, wins, losses FROM players "
+                             "WHERE pvp_rating IS NOT NULL ORDER BY pvp_rating DESC LIMIT 10").fetchall()
+        except Exception:
+            rows = []
+        lines = ["🏆 *PvP LEADERBOARD*", ""]
+        medals = ["🥇", "🥈", "🥉"] + ["▫️"] * 7
+        for i, r in enumerate(rows):
+            rt = safe_int(r["pvp_rating"], 1000)
+            lines.append(f"{medals[i]} *{r['username']}* — {rt} {_pvp_rank_name(rt)}")
+        await _q_edit(query, "\n".join(lines) if rows else "No rated fighters yet!",
+                      parse_mode="Markdown")
+        await query.answer(); return
+    if data.startswith("pvphub_attack_"):
+        uid = int(data.split("_")[2])
+        if query.from_user.id != uid:
+            await query.answer("Not your hub!", show_alert=True); return
+        a = get_player(uid)
+        players, total = _get_attackable_players(uid, a.get("guild_id") if a else None)
+        if not players:
+            await query.answer("No targets available right now — try /royale!", show_alert=True); return
+        markup = _build_target_picker_markup(uid, a.get("guild_id") if a else None, 0, "atk")
+        await _q_edit(query, f"⚔️ *Choose a target* ({total} available)",
+                      parse_mode="Markdown", reply_markup=markup)
+        await query.answer(); return
+
 async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     au = update.effective_user
     a  = get_player(au.id)
@@ -34530,6 +34708,40 @@ async def _post_daily_digest(bot):
         win_gain = max(0, safe_int(r["wins"]) - old[1]) if old else 0
         per_group.setdefault(r["home_group"], []).append((r, exp_gain, win_gain))
     w = get_weather()
+    # ── WEEKLY PVP CHAMPION ──────────────────────────────────────────────────
+    # Once every 7 days, crown the highest-rated fighter: title + gold prize,
+    # announced in every group's digest. Rating itself is never reset.
+    _champ_line = ""
+    try:
+        _last_crown = _ws_get("pvp_champion_ts", 0)
+        if time.time() - safe_int(_last_crown) >= 7 * 86400:
+            _tc = _db().cursor()
+            _top = _tc.execute("SELECT user_id, username, pvp_rating FROM players "
+                               "WHERE pvp_rating IS NOT NULL AND pvp_rating > 1000 "
+                               "ORDER BY pvp_rating DESC LIMIT 1").fetchone()
+            if _top:
+                _champ_p = get_player(_top["user_id"])
+                if _champ_p:
+                    _prize = 100000
+                    _champ_p["gold"] = safe_int(_champ_p.get("gold")) + _prize
+                    award_title(_champ_p, "PvP Champion")
+                    save_player(_champ_p)
+                    _ws_set("pvp_champion", {"uid": _top["user_id"], "name": _top["username"],
+                                            "rating": safe_int(_top["pvp_rating"]), "ts": time.time()})
+                    _ws_set("pvp_champion_ts", time.time())
+                    _champ_line = (f"👑🏆 *WEEKLY PVP CHAMPION: {_top['username']}!*\n"
+                                   f"Rating {safe_int(_top['pvp_rating'])} {_pvp_rank_name(safe_int(_top['pvp_rating']))} "
+                                   f"— awarded the *PvP Champion* title + {fmt_num(_prize)}g!")
+                    try:
+                        await bot.send_message(_top["user_id"],
+                            f"👑 *You are this week's PvP Champion!*\n\n"
+                            f"Top rating at *{safe_int(_top['pvp_rating'])}*. Prize: *{fmt_num(_prize)}g* "
+                            f"and the *PvP Champion* title. Defend your throne!",
+                            parse_mode="Markdown")
+                    except Exception:
+                        pass
+    except Exception:
+        logger.error("weekly champion crown failed", exc_info=True)
     for g in groups:
         entries = per_group.get(g, [])
         gainers  = sorted([e for e in entries if e[1] > 0], key=lambda e: -e[1])[:3]
@@ -34552,6 +34764,9 @@ async def _post_daily_digest(bot):
             lines.append("")
         if streaker:
             lines.append(f"🔥 *Kill streak:* {streaker['username']} ×{streaker['kill_streak']} — someone stop them!")
+            lines.append("")
+        if _champ_line:
+            lines.append(_champ_line)
             lines.append("")
         _king = _get_king()
         if _king:
@@ -36632,6 +36847,8 @@ async def _post_init(application):
             BotCommand("objectives","📋 Daily objectives"),
             BotCommand("collection","📖 Your collection log"),
             BotCommand("bestiary",  "🐾 Pet bestiary — collect all 85 species"),
+            BotCommand("pvp",       "⚔️ Your PvP hub — rating, record, streak, bounties"),
+            BotCommand("pvptop",    "🏆 PvP rating leaderboard"),
             BotCommand("slots",     "🎰 Spin the slots"),
             BotCommand("coinflip",  "🪙 Wager vs a player (reply)"),
             BotCommand("lottery",   "🎟️ Buy a lottery ticket"),
@@ -36828,6 +37045,10 @@ def main():
 
     # Combat & Dungeons
     app.add_handler(CommandHandler("attack",     attack_cmd))
+    app.add_handler(CommandHandler("pvp",        pvp_cmd))
+    app.add_handler(CommandHandler("pvptop",     pvptop_cmd))
+    app.add_handler(CommandHandler("rating",     pvp_cmd))
+    app.add_handler(CallbackQueryHandler(pvphub_callback, pattern="^pvphub_"))
     app.add_handler(CallbackQueryHandler(attack_picker_callback,       pattern="^atk_"))
     app.add_handler(CallbackQueryHandler(skill_target_picker_callback, pattern="^skl2_"))
     app.add_handler(CallbackQueryHandler(pvp_card_callback,  pattern="^pvpcard_"))
