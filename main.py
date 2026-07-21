@@ -87,6 +87,10 @@ CHANGELOG = [
         "Oracle quests fixed: assignments can't be erased by racing saves; saying the phrase without aiming it now DMs you a hint instead of failing silently",
         "GOLD FLOORS: every gold reward now scales with your level (min 25+5/level) — daily, quests, objectives, encounters, dungeon, chat drips. No more 5g rewards",
         "EXP numbers display compactly everywhere: 3,766,666,666,667 now shows as 3.77T (K/M/B/T/Q suffixes) — same EXP, readable numbers",
+        "PET REVAMP: damage & effects boosted big; defensive abilities (Intercept/Counter/Venom/Stun/Life Drain/Aura Shield) hit harder in PvP",
+        "New 📖 Bestiary (/bestiary): collect all 85 species, +3% pet ATK per species (Collector's Bond), milestone rewards at 10/25/45/65/85",
+        "New 💰 Bulk Sell for pets: clear duplicates in one tap, always protects your active pet, shinies, and best-of-species",
+        "Selling a pet never loses collection progress; shinies now +15% ATK and 2.5x sell value",
         "Full audit: all 138 commands smoke-tested clean, all 230 button types verified wired to handlers",
     ]},
     {"version": "v1.5", "date": "2026-07-14", "changes": [
@@ -3387,12 +3391,12 @@ PET_SPECIES = {
 
 # Defensive ability definitions
 PET_DEF_ABILITIES = {
-    "intercept":  {"name":"Intercept",     "emoji":"🛡️","desc":"Jumps in front of the attack, absorbing damage for you.",     "proc_base":0.20},
-    "counter":    {"name":"Counter Strike","emoji":"⚔️","desc":"Retaliates instantly with a fierce counter attack.",           "proc_base":0.18},
-    "poison":     {"name":"Venom Bite",    "emoji":"🐍","desc":"Sinks fangs into the attacker, applying poison.",             "proc_base":0.16},
-    "stun":       {"name":"Stunning Blow", "emoji":"⚡","desc":"Delivers a blow that stuns the attacker (miss next attack).", "proc_base":0.14},
-    "lifesteal":  {"name":"Life Drain",    "emoji":"💜","desc":"Drains 20–32% of incoming damage as HP for you (scales with pet level).", "proc_base":0.16},
-    "shield":     {"name":"Aura Shield",   "emoji":"✨","desc":"Projects a protective aura that reduces incoming damage.",    "proc_base":0.22},
+    "intercept":  {"name":"Intercept",     "emoji":"🛡️","desc":"Jumps in front of the attack, absorbing most of the damage for you.", "proc_base":0.28},
+    "counter":    {"name":"Counter Strike","emoji":"⚔️","desc":"Retaliates instantly with a fierce counter attack.",           "proc_base":0.26},
+    "poison":     {"name":"Venom Bite",    "emoji":"🐍","desc":"Sinks fangs into the attacker, applying stacking poison.",     "proc_base":0.24},
+    "stun":       {"name":"Stunning Blow", "emoji":"⚡","desc":"Delivers a blow that stuns the attacker (miss next attack).", "proc_base":0.22},
+    "lifesteal":  {"name":"Life Drain",    "emoji":"💜","desc":"Drains 30–45% of incoming damage as HP for you (scales with pet level).", "proc_base":0.24},
+    "shield":     {"name":"Aura Shield",   "emoji":"✨","desc":"Projects a protective aura that heavily reduces incoming damage.",    "proc_base":0.30},
 }
 
 PERSONALITY_DEFEND = {
@@ -3411,17 +3415,17 @@ def pet_exp_for_level(lvl): return lvl * 50 + (lvl * lvl * 5)
 
 # Passive bonus unlocks by pet level
 PET_LEVEL_PASSIVES = {
-    5:   {"atk_flat": 2},
-    10:  {"atk_flat": 5},
-    15:  {"atk_flat": 5,  "crit_bonus": 0.03},
-    20:  {"atk_flat": 8,  "crit_bonus": 0.05},
-    25:  {"atk_flat": 10, "crit_bonus": 0.05, "dodge_bonus": 0.03},
-    30:  {"atk_flat": 12, "crit_bonus": 0.08, "dodge_bonus": 0.05},
-    40:  {"atk_flat": 15, "crit_bonus": 0.10, "dodge_bonus": 0.05, "lifesteal_flat": 5},
-    50:  {"atk_flat": 20, "crit_bonus": 0.12, "dodge_bonus": 0.08, "lifesteal_flat": 10},
-    60:  {"atk_flat": 26, "crit_bonus": 0.14, "dodge_bonus": 0.10, "lifesteal_flat": 13},
-    75:  {"atk_flat": 33, "crit_bonus": 0.17, "dodge_bonus": 0.13, "lifesteal_flat": 17},
-    100: {"atk_flat": 42, "crit_bonus": 0.22, "dodge_bonus": 0.17, "lifesteal_flat": 22},
+    5:   {"atk_flat": 4},
+    10:  {"atk_flat": 9},
+    15:  {"atk_flat": 12, "crit_bonus": 0.04},
+    20:  {"atk_flat": 16, "crit_bonus": 0.06},
+    25:  {"atk_flat": 22, "crit_bonus": 0.07, "dodge_bonus": 0.04},
+    30:  {"atk_flat": 28, "crit_bonus": 0.10, "dodge_bonus": 0.06},
+    40:  {"atk_flat": 36, "crit_bonus": 0.13, "dodge_bonus": 0.07, "lifesteal_flat": 8},
+    50:  {"atk_flat": 48, "crit_bonus": 0.16, "dodge_bonus": 0.10, "lifesteal_flat": 16},
+    60:  {"atk_flat": 62, "crit_bonus": 0.19, "dodge_bonus": 0.13, "lifesteal_flat": 22},
+    75:  {"atk_flat": 80, "crit_bonus": 0.23, "dodge_bonus": 0.17, "lifesteal_flat": 30},
+    100: {"atk_flat": 105, "crit_bonus": 0.28, "dodge_bonus": 0.22, "lifesteal_flat": 40},
 }
 
 def get_pet_passives(pet_level):
@@ -3558,17 +3562,17 @@ def _hatch_species(egg_name):
 def get_pet_atk_bonus(pet):
     """Raw ATK a pet contributes per attack. Bonus when well-fed and happy; penalty when neglected."""
     sp = PET_SPECIES.get(pet.get("species"), {})
-    base = sp.get("base_atk", 0) * 2 + pet.get("level", 1) * 10  # doubled base, 10x level (was ×4)
+    base = sp.get("base_atk", 0) * 3 + pet.get("level", 1) * 16  # boosted: 3x base, 16x level
     passives = get_pet_passives(pet.get("level", 1))
     base += passives.get("atk_flat", 0) * 2
     base += _get_bond_atk_bonus(pet) * 2
     evo = pet.get("evolution_stage", 0)
-    if evo > 0: base += evo * 25  # was ×8
+    if evo > 0: base += evo * 40
     # Personality modifier
     pers = sp.get("personality", "calm")
     base = round(base * PERSONALITY_ATK_MOD.get(pers, 1.0))
-    # Shiny bonus: +10% ATK
-    if pet.get("is_shiny"): base = round(base * 1.10)
+    # Shiny bonus: +15% ATK
+    if pet.get("is_shiny"): base = round(base * 1.15)
     hunger = pet.get("hunger", 100)
     mood   = pet.get("mood", 100)
     # Well-fed AND happy: +25% bonus (reward for good care)
@@ -3585,7 +3589,59 @@ def get_pet_atk_bonus(pet):
         base = round(base * 0.30)
     elif mood < 40:
         base = round(base * 0.60)
+    # Collector's Bond — owning more of the bestiary makes your active pet fiercer
+    _owner = pet.get("owner_id")
+    if _owner:
+        base = round(base * (1.0 + _collector_atk_pct(_owner)))
     return max(1, base)
+
+# ── BESTIARY / COLLECTOR SYSTEM ───────────────────────────────────────────────
+_ALL_SPECIES_COUNT = len(PET_SPECIES)
+# Milestones: unique species owned -> (permanent global reward, one-time claim reward)
+_BESTIARY_MILESTONES = [
+    (10, "+3% gold from all sources",      {"gold": 5000}),
+    (25, "+5% gold, +2 stat points",       {"gold": 15000, "stat_points": 2, "item": "Rare Egg"}),
+    (45, "+8% gold, +5% EXP",              {"gold": 50000, "stat_points": 3, "item": "Dragon Egg"}),
+    (65, "+12% gold, +8% EXP, +3 stats",   {"gold": 150000, "stat_points": 5, "item": "Mythic Egg"}),
+    (85, "MASTER COLLECTOR — +20% gold, +12% EXP", {"gold": 500000, "stat_points": 10, "item": "Mythic Egg"}),
+]
+
+def _pet_dex(p):
+    """Set of species keys this player has EVER owned (persists after selling).
+    Seeds from currently-owned pets so pre-feature players get credit."""
+    dex = set(sjl(p.get("pet_dex"), []))
+    for pt in get_all_pets(p.get("user_id")):
+        if pt.get("species"): dex.add(pt["species"])
+    return {s for s in dex if s in PET_SPECIES}
+
+def _record_dex(p, species):
+    """Add a species to the player's permanent bestiary. Returns True if new."""
+    if species not in PET_SPECIES: return False
+    dex = sjl(p.get("pet_dex"), [])
+    if species in dex: return False
+    dex.append(species)
+    p["pet_dex"] = json.dumps(dex)
+    return True
+
+def _dex_count(owner_id):
+    p = get_player(owner_id)
+    return len(_pet_dex(p)) if p else 0
+
+def _collector_atk_pct(owner_id):
+    """+3% pet ATK per unique species collected (capped +150%) — the core
+    reason to catch them all. Full 85-species dex hits the cap comfortably."""
+    return min(1.50, _dex_count(owner_id) * 0.03)
+
+def _collector_global(p):
+    """Permanent global bonuses unlocked by bestiary milestones reached."""
+    n = len(_pet_dex(p))
+    gold_pct = exp_pct = 0.0
+    if n >= 10: gold_pct = 0.03
+    if n >= 25: gold_pct = 0.05
+    if n >= 45: gold_pct, exp_pct = 0.08, 0.05
+    if n >= 65: gold_pct, exp_pct = 0.12, 0.08
+    if n >= 85: gold_pct, exp_pct = 0.20, 0.12
+    return {"gold_pct": gold_pct, "exp_pct": exp_pct}
 
 def pet_status_tag(pet):
     """Short status summary for a pet."""
@@ -3632,6 +3688,12 @@ def get_all_pets(owner_id):
     return rows
 
 def save_pet(pet):
+    # First time this pet is written (creation) — stamp its species into the
+    # owner's permanent bestiary so it counts forever, even if sold/released.
+    if pet.get("pet_id") is None and pet.get("species") in PET_SPECIES:
+        _dex_owner = get_player(pet.get("owner_id"))
+        if _dex_owner and _record_dex(_dex_owner, pet["species"]):
+            save_player(_dex_owner)
     conn = _connect_db(); c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO pets
         (pet_id,owner_id,species,nickname,level,exp,hunger,mood,last_fed,last_trained,
@@ -3779,6 +3841,12 @@ def _build_pet_card(pet):
                 lines.append(f"\n🗺️ *On Adventure* — returns in {rm}")
         except Exception:
             pass
+    # Collector's Bond — shown on the active pet since it's what's boosting ATK
+    _own = pet.get("owner_id")
+    if _own:
+        _cpct = _collector_atk_pct(_own)
+        if _cpct > 0:
+            lines.append(f"📖 _Collector's Bond: +{round(_cpct*100)}% ATK from your bestiary_")
     return "\n".join(lines)
 
 def _get_bond_tier(bond_score):
@@ -3818,6 +3886,8 @@ def _pet_list_markup(pets, page=0, page_size=5, uid=0):
     if page > 0:    nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"petlist_{page-1}"))
     if start+page_size < len(pets): nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"petlist_{page+1}"))
     if nav: rows.append(nav)
+    rows.append([InlineKeyboardButton("📖 Bestiary", callback_data="bestiary_0"),
+                 InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu")])
     close_cb = f"close_msg_{uid}" if uid else "close_msg"
     rows.append([InlineKeyboardButton("🔙 Back", callback_data="petmain"),
                  InlineKeyboardButton("❌ Close", callback_data=close_cb)])
@@ -3860,11 +3930,23 @@ def _pet_view_markup(pet_id, is_active, uid=0, pet=None):
     rows.append([InlineKeyboardButton("❌ Close", callback_data=close_cb)])
     return InlineKeyboardMarkup(rows)
 
+_PET_SELL_BASE    = {"common":500,"uncommon":1000,"rare":2500,"epic":5000,"legendary":15000,"mythic":50000}
+_PET_SELL_PER_LVL = {"common":100,"uncommon":150,"rare":200,"epic":300,"legendary":500,"mythic":1000}
+
+def _pet_sell_price(pet):
+    sp = PET_SPECIES.get(pet.get("species"), {})
+    rar = sp.get("rarity", "common")
+    price = _PET_SELL_BASE.get(rar, 500) + safe_int(pet.get("level"), 1) * _PET_SELL_PER_LVL.get(rar, 100)
+    if pet.get("is_shiny"):
+        price = round(price * 2.5)   # shinies are worth far more
+    return price
+
 def _pet_main_markup():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 My Pets",  callback_data="petlist_0"),
          InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")],
-        [InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
+        [InlineKeyboardButton("📖 Bestiary", callback_data="bestiary_0"),
+         InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
         [InlineKeyboardButton("❌ Close",     callback_data="close_msg")],
     ])
 
@@ -11176,6 +11258,8 @@ def init_db():
         ("players", "guild_stat_bonus",   "INTEGER DEFAULT 0"),
         ("players", "dodge_momentum",     "INTEGER DEFAULT 0"),
         ("players", "collection_log",     "TEXT DEFAULT NULL"),
+        # Bestiary: every species ever owned, persists after selling/releasing
+        ("players", "pet_dex",             "TEXT DEFAULT NULL"),
         # Immortal Coils 1h survive cooldown — MUST persist or the Ancient
         # Serpent survives every fatal blow forever (each handler loads a
         # fresh row and never sees the in-memory timestamp)
@@ -11937,7 +12021,7 @@ def save_player(p):
         "poison_pct","bleed_pct","burn_pct",
         "empire_buildings","empire_resources","empire_last_collect",
         "mp","max_mp","dng_companions","dodge_momentum","collection_log",
-        "serpent_revive_used",
+        "serpent_revive_used","pet_dex",
     ]
     # dng_companions is held as a list in memory; store as JSON text
     if isinstance(p.get("dng_companions"), list):
@@ -12165,6 +12249,10 @@ def add_exp(p, amount, weather=None):
     _emp_exp_pct = _empire_stat_bonuses(p).get("exp_bonus_pct", 0)
     if _emp_exp_pct > 0:
         amount = round(amount * (1 + _emp_exp_pct))
+    # Collector's bestiary EXP bonus
+    _coll_exp = _collector_global(p).get("exp_pct", 0)
+    if _coll_exp > 0:
+        amount = round(amount * (1 + _coll_exp))
     msgs = []; leveled_up = False
     amount = min(max(0, safe_int(amount)), _EXP_REQ_CEIL)  # one grant ≤ one max level
     # ── ATOMIC EXP BANKING ────────────────────────────────────────────────────
@@ -26521,10 +26609,19 @@ GUIDE_PAGES = [
         "\n"
         "*Pet Combat (Automatic)*\n"
         "Active pet auto-attacks alongside you every /attack, /skill, arena turn, and boss strike.\n"
+        "• Boosted damage: pets now hit HARD and scale steeply with level\n"
+        "• 🛡️ Defensive abilities (Lv 10+): when YOU'RE attacked your pet can Intercept, Counter, Venom Bite, Stun, Life Drain, or Aura Shield — big PvP value\n"
         "• Elemental matchup: your pet's element vs defender's pet — 🌟 +25% strong / resisted -25% weak\n"
-        "• Lv 10+: Pet learns a combat skill (Ember Blast, Thunder Strike, Void Tear, etc.) — 15–25% proc chance\n"
         "• Well-fed (hunger > 70, mood > 70): +25% ATK; neglected (< 40): severely reduced\n"
-        "• ✨ Shiny pets: +10% ATK and displayed with ✨ in all battle text\n"
+        "• ✨ Shiny pets: +15% ATK and worth 2.5× when sold\n"
+        "\n"
+        "*📖 Bestiary & Collector's Bond — /bestiary or /dex*\n"
+        "85 species to collect across dogs, cats, dragons and more. Every unique species you've EVER owned counts forever — selling never loses progress.\n"
+        "• *Collector's Bond:* +3% pet ATK per unique species (up to +150%) — the reason to catch every wild spawn\n"
+        "• Milestone rewards at 10/25/45/65/85 species: big gold, stat points, rare eggs, and permanent +gold%/+EXP% perks\n"
+        "\n"
+        "*💰 Bulk Sell — /pethub → Bulk Sell*\n"
+        "Clear out duplicates in one tap. Always protects your active pet, every shiny, and the highest-level copy of each species. Sell by 'duplicates', 'up to uncommon', or 'up to rare'.\n"
         "\n"
         "*Evolution — /pethub → My Pet → Evolve*\n"
         "Pets evolve at Lv 15 (✦), 30 (✦✦), 50 (✦✦✦). Each stage gives a new name and stat boost.\n"
@@ -27173,6 +27270,194 @@ async def hatch_egg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         chat_id=query.message.chat.id, text=text, parse_mode="Markdown")
     asyncio.create_task(_auto_delete(context.bot, query.message.chat.id, msg.message_id, 60))
 
+_RARITY_ORDER = ["common", "uncommon", "rare", "epic", "legendary", "mythic"]
+
+def _bulk_sellable(owner_id, mode):
+    """Return (list_of_pets_to_sell, total_gold) for a bulk-sell mode.
+    Never sells the active pet, shinies, or the highest-level copy of a species.
+    mode: 'dupes' (extra copies of a species) or a rarity floor name."""
+    pets = get_all_pets(owner_id)
+    # best copy per species is protected (keeps your prize of each kind)
+    best_of = {}
+    for pt in pets:
+        s = pt.get("species")
+        if s not in best_of or safe_int(pt.get("level")) > safe_int(best_of[s].get("level")):
+            best_of[s] = pt
+    sell = []
+    for pt in pets:
+        if pt.get("is_active"): continue
+        if pt.get("is_shiny"): continue          # never bulk-sell a shiny
+        if best_of.get(pt.get("species")) is pt: continue  # keep the best of each species
+        rar = PET_SPECIES.get(pt.get("species"), {}).get("rarity", "common")
+        if mode == "dupes":
+            sell.append(pt)
+        elif mode in _RARITY_ORDER:
+            # sell everything at or below the chosen rarity floor
+            if _RARITY_ORDER.index(rar) <= _RARITY_ORDER.index(mode):
+                sell.append(pt)
+    total = sum(_pet_sell_price(pt) for pt in sell)
+    return sell, total
+
+def _bulk_sell_menu(owner_id):
+    dupes, dupes_g = _bulk_sellable(owner_id, "dupes")
+    unc, unc_g = _bulk_sellable(owner_id, "uncommon")
+    rare, rare_g = _bulk_sellable(owner_id, "rare")
+    lines = [
+        "💰 *Bulk Sell Pets*\n",
+        "_Protected always: your active pet, every shiny, and the highest-level copy of each species._\n",
+        f"🔁 *Duplicates:* {len(dupes)} pets → *{dupes_g:,}g*",
+        f"⚪ *Common+Uncommon dupes:* {len(unc)} → *{unc_g:,}g*",
+        f"🔵 *Up to Rare dupes:* {len(rare)} → *{rare_g:,}g*",
+    ]
+    rows = []
+    if dupes:
+        rows.append([InlineKeyboardButton(f"🔁 Sell {len(dupes)} duplicates ({dupes_g:,}g)",
+                     callback_data="petbulk_do_dupes")])
+    if unc:
+        rows.append([InlineKeyboardButton(f"⚪ Sell common+uncommon dupes ({unc_g:,}g)",
+                     callback_data="petbulk_do_uncommon")])
+    if rare:
+        rows.append([InlineKeyboardButton(f"🔵 Sell up to rare dupes ({rare_g:,}g)",
+                     callback_data="petbulk_do_rare")])
+    if not rows:
+        lines.append("\n_No duplicate pets to sell — every species is unique in your kennel._")
+    rows.append([InlineKeyboardButton("🔙 All Pets", callback_data="petlist_0")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+async def petbulk_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    data = query.data
+    if data == "petbulk_menu":
+        text, markup = _bulk_sell_menu(user.id)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+        await query.answer(); return
+    if data.startswith("petbulk_do_"):
+        mode = data.split("_", 2)[2]
+        sell, total = _bulk_sellable(user.id, mode)
+        if not sell:
+            await query.answer("Nothing to sell in that group anymore.", show_alert=True)
+            text, markup = _bulk_sell_menu(user.id)
+            await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+        conn = _connect_db(); c = conn.cursor()
+        ids = [safe_int(pt.get("pet_id")) for pt in sell if pt.get("pet_id") is not None]
+        c.executemany("DELETE FROM pets WHERE pet_id=? AND owner_id=?",
+                      [(pid, user.id) for pid in ids])
+        conn.commit(); conn.close()
+        p = get_player(user.id)
+        if p:
+            p["gold"] = safe_int(p.get("gold")) + total
+            save_player(p)
+        await query.answer(f"💰 Sold {len(ids)} pets for {total:,}g!")
+        await _q_edit(query,
+            f"💰 *Bulk sale complete!*\n\nSold *{len(ids)}* pets for *{total:,}g*.\n"
+            f"_Your bestiary records are untouched — every species you've owned still counts._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📋 All Pets", callback_data="petlist_0"),
+                InlineKeyboardButton("📖 Bestiary", callback_data="bestiary_0")]]))
+        return
+
+def _bestiary_page(p, page=0):
+    dex = _pet_dex(p)
+    n = len(dex)
+    pct = round(n / max(1, _ALL_SPECIES_COUNT) * 100)
+    cds = safe_cds(p)
+    claimed = set(cds.get("bestiary_claimed") or [])
+    lines = [f"📖 *{p['username']}'s Bestiary*",
+             f"Collected *{n}/{_ALL_SPECIES_COUNT}* species  ({pct}%)",
+             f"⚔️ Collector's Bond: *+{round(_collector_atk_pct(p['user_id'])*100)}% pet ATK*"]
+    glob = _collector_global(p)
+    if glob["gold_pct"] or glob["exp_pct"]:
+        lines.append(f"🌟 Perks: +{round(glob['gold_pct']*100)}% gold, +{round(glob['exp_pct']*100)}% EXP")
+    # milestone claim status
+    claim_rows = []
+    lines.append("")
+    for idx, (need, perk, reward) in enumerate(_BESTIARY_MILESTONES):
+        key = str(need)
+        if n >= need and key not in claimed:
+            lines.append(f"🎁 *{need} species — CLAIM READY!* ({perk})")
+            claim_rows.append([InlineKeyboardButton(f"🎁 Claim {need}-species reward",
+                               callback_data=f"bestiary_claim_{need}")])
+        elif n >= need:
+            lines.append(f"✅ {need} species — {perk} _(claimed)_")
+        else:
+            lines.append(f"🔒 {need} species — {perk}  _({need - n} to go)_")
+    # species checklist by rarity, paged
+    lines.append("")
+    per_page = 3  # rarities per page
+    rar_slice = _RARITY_ORDER[page*per_page:(page+1)*per_page]
+    for rar in rar_slice:
+        species = [(k, v) for k, v in PET_SPECIES.items() if v.get("rarity") == rar]
+        got = sum(1 for k, _ in species if k in dex)
+        lines.append(f"{RARITY_EMOJI.get(rar,'')} *{rar.capitalize()}* ({got}/{len(species)})")
+        row = []
+        for k, v in species:
+            mark = v.get("emoji", "🐾") if k in dex else "❓"
+            row.append(mark)
+        lines.append("  " + " ".join(row))
+    rows = list(claim_rows)
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"bestiary_{page-1}"))
+    if (page+1)*per_page < len(_RARITY_ORDER):
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"bestiary_{page+1}"))
+    if nav: rows.append(nav)
+    rows.append([InlineKeyboardButton("📋 My Pets", callback_data="petlist_0"),
+                 InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+async def bestiary_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    text, markup = _bestiary_page(p, 0)
+    await send_group(update, text, permanent=True, reply_markup=markup)
+
+async def bestiary_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    p = get_player(user.id)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    data = query.data
+    if data.startswith("bestiary_claim_"):
+        need = int(data.split("_")[2])
+        milestone = next((m for m in _BESTIARY_MILESTONES if m[0] == need), None)
+        if not milestone:
+            await query.answer(); return
+        n = len(_pet_dex(p))
+        cds = safe_cds(p)
+        claimed = cds.get("bestiary_claimed") or []
+        if n < need:
+            await query.answer(f"You need {need} species first!", show_alert=True); return
+        if str(need) in claimed:
+            await query.answer("Already claimed!"); return
+        _, perk, reward = milestone
+        parts = []
+        if reward.get("gold"):
+            p["gold"] = safe_int(p.get("gold")) + reward["gold"]; parts.append(f"+{reward['gold']:,}g")
+        if reward.get("stat_points"):
+            p["stat_points"] = safe_int(p.get("stat_points")) + reward["stat_points"]
+            parts.append(f"+{reward['stat_points']} stat points")
+        if reward.get("item"):
+            add_item(p, reward["item"]); parts.append(f"🥚 {reward['item']}")
+        claimed.append(str(need)); cds["bestiary_claimed"] = claimed
+        p["passive_cooldowns"] = json.dumps(cds)
+        save_player(p)
+        await query.answer(f"🎁 Claimed! {', '.join(parts)}")
+        text, markup = _bestiary_page(p, 0)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+        return
+    try:
+        page = int(data.split("_")[1])
+    except (IndexError, ValueError):
+        page = 0
+    text, markup = _bestiary_page(p, page)
+    await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+    await query.answer()
+
 async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles petmain, petlist_N, petview_ID, petactivate_ID, petfeed_ID, pettrain_ID, petrelease_ID"""
     query = update.callback_query
@@ -27225,6 +27510,8 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [job_btn],
                 [InlineKeyboardButton("📝 Rename",  callback_data=f"petrename_{pid}"),
                  InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")],
+                [InlineKeyboardButton("📖 Bestiary", callback_data="bestiary_0"),
+                 InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu")],
                 [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
                  InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
             ])
@@ -27422,18 +27709,17 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pet = dict(row); sp = PET_SPECIES.get(pet["species"],{})
         pname = _pet_display_name(pet)
         rarity = sp.get("rarity","common")
-        _sell_base = {"common":500,"uncommon":1000,"rare":2500,"epic":5000,"legendary":15000,"mythic":50000}
-        _sell_per_lvl = {"common":100,"uncommon":150,"rare":200,"epic":300,"legendary":500,"mythic":1000}
-        sell_price = _sell_base.get(rarity,500) + pet.get("level",1) * _sell_per_lvl.get(rarity,100)
+        sell_price = _pet_sell_price(pet)
+        _shiny_note = " ✨(2.5× shiny value)" if pet.get("is_shiny") else ""
         markup = InlineKeyboardMarkup([[
             InlineKeyboardButton(f"💰 Sell for {sell_price:,}g", callback_data=f"petsell_confirm_{pid}_{sell_price}"),
             InlineKeyboardButton("❌ Cancel", callback_data=f"petview_{pid}"),
         ]])
-        await _q_edit(query, 
+        await _q_edit(query,
             f"💰 *Sell {pname}?*\n\n"
-            f"Rarity: {rarity.capitalize()} | Level {pet.get('level',1)}\n"
+            f"Rarity: {rarity.capitalize()} | Level {pet.get('level',1)}{_shiny_note}\n"
             f"Sell price: *{sell_price:,}g*\n\n"
-            f"This is permanent.",
+            f"_Your bestiary keeps the record — selling never loses collection progress._",
             parse_mode="Markdown", reply_markup=markup)
         await query.answer(); return
 
@@ -36226,6 +36512,7 @@ async def _post_init(application):
             BotCommand("party",     "👥 Party up"),
             BotCommand("objectives","📋 Daily objectives"),
             BotCommand("collection","📖 Your collection log"),
+            BotCommand("bestiary",  "🐾 Pet bestiary — collect all 85 species"),
             BotCommand("slots",     "🎰 Spin the slots"),
             BotCommand("coinflip",  "🪙 Wager vs a player (reply)"),
             BotCommand("lottery",   "🎟️ Buy a lottery ticket"),
@@ -36551,6 +36838,10 @@ def main():
     app.add_handler(CallbackQueryHandler(explore_zone_callback, pattern="^explore_"))
     app.add_handler(CallbackQueryHandler(guilddonate_callback,  pattern="^gdonate_"))
     # ── Pets ──────────────────────────────────────────────────────────────────
+    app.add_handler(CommandHandler("bestiary",    bestiary_cmd))
+    app.add_handler(CommandHandler("dex",         bestiary_cmd))
+    app.add_handler(CallbackQueryHandler(bestiary_callback,   pattern="^bestiary_"))
+    app.add_handler(CallbackQueryHandler(petbulk_callback,    pattern="^petbulk_"))
     app.add_handler(CallbackQueryHandler(petshop_callback,    pattern="^(petshop|pbuy_)"))
     app.add_handler(CallbackQueryHandler(hatch_egg_callback,  pattern="^hatch_egg$"))
     app.add_handler(CallbackQueryHandler(petcatch_callback,   pattern="^petcatch_"))
