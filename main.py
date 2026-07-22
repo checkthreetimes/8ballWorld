@@ -13296,6 +13296,170 @@ def _pvp_log_append(pair, entry):
     _pvp_cur_page[pair] = max(0, (total - 1) // ROUNDS_PER_PAGE)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# SIMPLIFIED COMBAT KITS (Phase 1: PvP) — each class line has ONE main attack
+# skill + TWO support skills, on top of the free Attack button. Effects reuse
+# the existing status machinery (poison_stacks/pct, bleed, stun_turns,
+# shield_charges, weakened_hits, exposed_hits, regen_charges/amt, vanish_turns)
+# so they integrate with combat processing automatically. Cooldowns are
+# per-fight and tracked in _pvp_battle_state[uid]["kit_cd"].
+#
+# Skill schema:
+#   name, emoji, mp, cd (turns), kind:
+#     "strike"  — damage skill, threaded through _execute_pvp_hit. Params:
+#                 mult (dmg multiplier), rider (optional on-hit effect dict).
+#     "support" — self/target effect, no full attack. Params: effect(list of ops).
+#   effect ops (applied by _kit_apply_support): each is (target, field, op, val)
+#     target: "self"|"foe"; op: "add"(charges)|"set_status"(secs)|"heal_pct"|"buff"
+# ══════════════════════════════════════════════════════════════════════════════
+CLASS_KITS = {
+    "warrior": {
+        "main": {"name":"Execute","emoji":"🗡️","mp":20,"cd":2,"kind":"strike","mult":2.0,
+                 "rider":{"execute":0.30},"desc":"STR×2.0. DOUBLE damage vs foes under 30% HP."},
+        "s1":   {"name":"Bulwark","emoji":"🛡️","mp":15,"cd":3,"kind":"support",
+                 "heal_pct":0.15,"effect":[("self","shield_charges","add",2)],
+                 "desc":"Brace: halve the next 2 hits against you, heal 15% HP."},
+        "s2":   {"name":"War Cry","emoji":"📣","mp":15,"cd":2,"kind":"support",
+                 "effect":[("self","warcry_stacks","add",1)],
+                 "desc":"+15% damage per stack (stacks all fight)."},
+    },
+    "mage": {
+        "main": {"name":"Arcane Blast","emoji":"🔮","mp":22,"cd":2,"kind":"strike","mult":2.2,
+                 "rider":{"pierce":0.5},"desc":"INT×2.2. Ignores 50% of the target's defense."},
+        "s1":   {"name":"Mana Ward","emoji":"✨","mp":15,"cd":3,"kind":"support",
+                 "effect":[("self","shield_charges","add",2),("self","regen_charges","add",2),("self","regen_amt","setmax",0.08)],
+                 "desc":"Shield 2 hits + regen 8% HP for 2 turns."},
+        "s2":   {"name":"Frost Lock","emoji":"❄️","mp":20,"cd":3,"kind":"support",
+                 "effect":[("foe","stun_turns","add",1)],
+                 "desc":"Freeze the foe — they lose their next attack."},
+    },
+    "thief": {
+        "main": {"name":"Backstab","emoji":"🗡️","mp":18,"cd":2,"kind":"strike","mult":1.8,
+                 "rider":{"crit":0.5},"desc":"AGI×1.8 with +50% crit chance."},
+        "s1":   {"name":"Vanish","emoji":"💨","mp":15,"cd":3,"kind":"support",
+                 "effect":[("self","vanish_turns","add",1),("self","empower_next","set",0.5)],
+                 "desc":"Dodge the next hit; your next attack deals +50%."},
+        "s2":   {"name":"Toxin","emoji":"🧪","mp":15,"cd":2,"kind":"support",
+                 "effect":[("foe","poison_stacks","add",3),("foe","poison_pct","setmax",12)],
+                 "desc":"Coat your blade: Poison ×3 (12% max HP/turn)."},
+    },
+    "archer": {
+        "main": {"name":"Aimed Shot","emoji":"🏹","mp":18,"cd":2,"kind":"strike","mult":1.7,
+                 "rider":{"focus":True},"desc":"DEX×1.7, +25% per Focus stack from Attacks."},
+        "s1":   {"name":"Evasive Roll","emoji":"🤸","mp":15,"cd":3,"kind":"support",
+                 "effect":[("self","vanish_turns","add",2)],
+                 "desc":"Dodge the next 2 hits against you."},
+        "s2":   {"name":"Cripple","emoji":"🎯","mp":15,"cd":2,"kind":"support",
+                 "effect":[("foe","weakened_hits","add",3)],
+                 "desc":"Cripple the foe: −25% damage for their next 3 hits."},
+    },
+    "priest": {
+        "main": {"name":"Smite","emoji":"🌟","mp":20,"cd":2,"kind":"strike","mult":1.6,
+                 "rider":{"lifesteal":0.25},"desc":"WIS×1.6 holy. Heal 25% of damage dealt."},
+        "s1":   {"name":"Divine Shield","emoji":"🛡️","mp":18,"cd":3,"kind":"support",
+                 "effect":[("self","shield_charges","add",3)],
+                 "desc":"Halve the next 3 hits against you."},
+        "s2":   {"name":"Renew","emoji":"💚","mp":18,"cd":3,"kind":"support",
+                 "heal_pct":0.20,"cleanse":True,
+                 "effect":[("self","regen_charges","add",3),("self","regen_amt","setmax",0.10)],
+                 "desc":"Heal 20% + regen 10%/turn (3t) + cleanse debuffs."},
+    },
+    "botanist": {
+        "main": {"name":"Thorn Lash","emoji":"🌿","mp":18,"cd":2,"kind":"strike","mult":1.6,
+                 "rider":{"bleed":3},"desc":"WIS×1.6 + Bleed ×3."},
+        "s1":   {"name":"Regrowth","emoji":"🍃","mp":15,"cd":3,"kind":"support",
+                 "heal_pct":0.12,"effect":[("self","regen_charges","add",3),("self","regen_amt","setmax",0.10)],
+                 "desc":"Heal 12% + regen 10%/turn for 3 turns."},
+        "s2":   {"name":"Entangle","emoji":"🌱","mp":18,"cd":3,"kind":"support",
+                 "effect":[("foe","entangle_turns","add",2),("foe","weakened_hits","add",2)],
+                 "desc":"Root the foe: −damage and can't escape for 2 turns."},
+    },
+    "enchantress": {
+        "main": {"name":"Hex Bolt","emoji":"🔯","mp":18,"cd":2,"kind":"strike","mult":1.6,
+                 "rider":{"expose":2},"desc":"INT×1.6. Exposes the foe: +damage taken for 2 hits."},
+        "s1":   {"name":"Mirror Veil","emoji":"🪞","mp":18,"cd":3,"kind":"support",
+                 "effect":[("self","def_reflect_hits","add",1),("self","shield_charges","add",1)],
+                 "desc":"Reflect the next hit back and soften it."},
+        "s2":   {"name":"Curse","emoji":"💀","mp":18,"cd":3,"kind":"support",
+                 "effect":[("foe","weakened_hits","add",3),("foe","silence_turns","add",1)],
+                 "desc":"−damage (3 hits) and Silence 1 turn (no skills)."},
+    },
+    "valkyrie": {
+        "main": {"name":"Valkyrie Strike","emoji":"⚡","mp":20,"cd":2,"kind":"strike","mult":1.9,
+                 "rider":{"laststand":True},"desc":"STR×1.9. Hits harder the lower YOUR HP."},
+        "s1":   {"name":"Aegis","emoji":"🛡️","mp":18,"cd":3,"kind":"support",
+                 "effect":[("self","shield_charges","add",3)],
+                 "desc":"Halve the next 3 hits against you."},
+        "s2":   {"name":"Warhorn","emoji":"📯","mp":15,"cd":2,"kind":"support",
+                 "heal_pct":0.10,"effect":[("self","warcry_stacks","add",1)],
+                 "desc":"Heal 10% + +15% damage per stack (all fight)."},
+    },
+    "phantom_dancer": {
+        "main": {"name":"Blade Waltz","emoji":"🌀","mp":18,"cd":2,"kind":"strike","mult":1.5,
+                 "rider":{"momentum":True},"desc":"AGI×1.5, +8% per Momentum (from dodges)."},
+        "s1":   {"name":"Phantom Step","emoji":"👻","mp":15,"cd":3,"kind":"support",
+                 "effect":[("self","vanish_turns","add",2),("self","dodge_momentum","add",2)],
+                 "desc":"Dodge the next 2 hits and gain Momentum."},
+        "s2":   {"name":"Crescendo","emoji":"🎭","mp":15,"cd":2,"kind":"support",
+                 "effect":[("self","empower_next","set",0.6)],
+                 "desc":"Your next attack deals +60% damage."},
+    },
+    "serpent": {
+        "main": {"name":"Venom Fang","emoji":"🐍","mp":18,"cd":2,"kind":"strike","mult":1.6,
+                 "rider":{"poison":4},"desc":"STR×1.6 + heavy Poison ×4."},
+        "s1":   {"name":"Coil","emoji":"🌀","mp":15,"cd":3,"kind":"support",
+                 "effect":[("self","shield_charges","add",2)],
+                 "desc":"Coil tight: halve the next 2 hits against you."},
+        "s2":   {"name":"Constrict","emoji":"🪢","mp":18,"cd":3,"kind":"support",
+                 "effect":[("foe","entangle_turns","add",2),("foe","poison_stacks","add",2),("foe","poison_pct","setmax",12)],
+                 "desc":"Constrict + envenom: root 2 turns, Poison ×2."},
+    },
+}
+
+def _kit_for(p):
+    """Return the class-line kit dict {main, s1, s2} or None (no class yet)."""
+    return CLASS_KITS.get(get_class_line(p) or "")
+
+def _kit_cd_state(uid):
+    st = _pvp_battle_state.setdefault(uid, {})
+    return st.setdefault("kit_cd", {})
+
+def _kit_on_cd(uid, slot):
+    return safe_int(_kit_cd_state(uid).get(slot)) > 0
+
+def _kit_tick_cds(uid):
+    """Decrement all of a player's kit cooldowns by 1 (called after their action)."""
+    cds = _kit_cd_state(uid)
+    for k in list(cds.keys()):
+        cds[k] = max(0, safe_int(cds[k]) - 1)
+
+def _kit_set_cd(uid, slot, turns):
+    _kit_cd_state(uid)[slot] = turns
+
+def _kit_apply_support(a, d, skill):
+    """Apply a support skill's effects to a (self) / d (foe). Returns log text."""
+    notes = []
+    if skill.get("heal_pct"):
+        mx = calc_max_hp(a); healed = round(mx * skill["heal_pct"])
+        a["hp"] = min(mx, safe_int(a.get("hp")) + healed)
+        notes.append(f"💚 +{fmt_num(healed)} HP")
+    if skill.get("cleanse"):
+        for _f in ("poison_stacks","bleed_stacks","burn_stacks","weakened_hits",
+                   "exposed_hits","stun_turns","silence_turns","entangle_turns","hex_turns"):
+            a[_f] = 0
+        notes.append("🧼 Debuffs cleansed")
+    for (tgt, field, op, val) in skill.get("effect", []):
+        obj = a if tgt == "self" else d
+        if op == "add":
+            add_charges(obj, field, val)
+        elif op == "set":
+            obj[field] = val
+        elif op == "setmax":
+            obj[field] = max(safe_int(obj.get(field)), val) if not isinstance(val, float) else max(float(obj.get(field) or 0), val)
+        elif op == "set_status":
+            set_status(obj, field, val)
+    return "  ".join(notes) if notes else ""
+
 def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
     """Action buttons for PvP card — Attack, Defend, Skills, Potion, Finisher."""
     inv = sjl(player_p.get("inventory"), [])
@@ -13327,23 +13491,27 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
             _pot_row.append(InlineKeyboardButton(f"💙 MP ({_mp_pots})",
                             callback_data=f"pvpcard_mp_{player_uid}_{opp_uid}"))
         rows.append(_pot_row)
-    # Class combat skills inline — 2 per row
-    p_skills = get_combat_skills(player_p)
-    all_sk_by_name = {sk.get("name"): i for i, sk in enumerate(all_skills)}
+    # ── Simplified kit: 1 main + 2 support skills (class-line based) ──────────
+    kit = _kit_for(player_p)
     p_mp = safe_int(player_p.get("mp"))
-    skill_btns = []
-    for sk in p_skills:
-        idx = all_sk_by_name.get(sk.get("name"), -1)
-        if idx >= 0:
-            cost = _dng_skill_mp_cost(sk)
-            can = p_mp >= cost
-            label = f"{'✅' if can else '❌'} {sk.get('name','Skill')} ({cost}MP)"
-            if can:
-                skill_btns.append(InlineKeyboardButton(
-                    label, callback_data=f"skillpick_{player_uid}_{idx}_{opp_uid}"
-                ))
-    for i in range(0, len(skill_btns), 2):
-        rows.append(skill_btns[i:i+2])
+    if kit:
+        _silenced = is_silenced(player_p)
+        for slot in ("main", "s1", "s2"):
+            sk = kit[slot]
+            cost = sk.get("mp", 0)
+            cd_left = safe_int(_kit_cd_state(player_uid).get(slot))
+            if _silenced:
+                label = f"🤐 {sk['name']} (silenced)"; usable = False
+            elif cd_left > 0:
+                label = f"⏳ {sk['name']} ({cd_left}t)"; usable = False
+            elif p_mp < cost:
+                label = f"❌ {sk['emoji']} {sk['name']} ({cost}MP)"; usable = False
+            else:
+                label = f"{sk['emoji']} {sk['name']} ({cost}MP)"; usable = True
+            if usable:
+                rows.append([InlineKeyboardButton(label, callback_data=f"kitsk_{player_uid}_{slot}_{opp_uid}")])
+            else:
+                rows.append([InlineKeyboardButton(label, callback_data=f"kitnope_{player_uid}_{slot}")])
     rows.append([InlineKeyboardButton("🏳️ Surrender", callback_data=f"pvpyield_{player_uid}_{opp_uid}")])
     return InlineKeyboardMarkup(rows)
 
@@ -13425,11 +13593,14 @@ def _pvp_kill_exp(a, d):
     return max(1, round(base * mult))
 
 
-async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
+async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, kit_skill=None):
     """
     Full PvP combat resolution. Modifies a and d in-place and saves them.
     Returns (action_text, lvl_msgs, result_type) where result_type is
     'miss', 'hit', or 'defeat'.
+
+    kit_skill (optional): a CLASS_KITS 'strike' skill dict — applies its damage
+    multiplier and on-hit riders on top of the normal attack pipeline.
     """
     lvl_msgs = []
 
@@ -13639,10 +13810,52 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     crit_forced = safe_cds(a).pop("next_crit_skill", None)
     if crit_forced: a["passive_cooldowns"] = json.dumps(safe_cds(a))
-    if crit_forced or check_crit(a):
+    # Backstab-style forced crit chance
+    _kit_crit = kit_skill and random.random() < kit_skill.get("rider", {}).get("crit", 0) if kit_skill else False
+    if crit_forced or _kit_crit or check_crit(a):
         dmg = apply_crit(a, dmg); crit_note = " 💥 CRIT!"
     else:
         crit_note = ""
+
+    # ── KIT MAIN SKILL + universal self-buffs (empower/warcry) ────────────────
+    _kit_notes = []
+    # War Cry stacks — +15% damage each, persist all fight (any attack)
+    _wc = safe_int(a.get("warcry_stacks"))
+    if _wc > 0:
+        dmg = round(dmg * (1 + 0.15 * _wc))
+        _kit_notes.append(f"📣 War Cry ×{_wc}")
+    # Empowered next attack (Vanish / Crescendo) — consumed on any attack
+    _emp = float(a.get("empower_next") or 0)
+    if _emp > 0:
+        dmg = round(dmg * (1 + _emp)); a["empower_next"] = 0
+        _kit_notes.append(f"✨ Empowered +{round(_emp*100)}%")
+    if kit_skill and kit_skill.get("kind") == "strike":
+        rider = kit_skill.get("rider", {})
+        dmg = round(dmg * kit_skill.get("mult", 1.0))
+        if rider.get("pierce"):
+            dmg = round(dmg * 1.25)          # proxy for ignoring part of DEF
+        if rider.get("focus"):
+            dmg = round(dmg * 1.25)
+        if rider.get("execute"):
+            if d.get("max_hp") and d["hp"] / max(1, calc_max_hp(d)) < rider["execute"]:
+                dmg *= 2; _kit_notes.append("💀 Execute!")
+        if rider.get("laststand"):
+            _hp_ratio = a["hp"] / max(1, calc_max_hp(a))
+            dmg = round(dmg * (1 + (1 - _hp_ratio) * 0.5))
+        if rider.get("lifesteal"):
+            _ls = round(dmg * rider["lifesteal"])
+            a["hp"] = min(calc_max_hp(a), a["hp"] + _ls); _kit_notes.append(f"🩸 Lifesteal +{fmt_num(_ls)}")
+        if rider.get("bleed"):
+            add_charges(d, "bleed_stacks", rider["bleed"]); d["bleed_pct"] = max(safe_int(d.get("bleed_pct")), 10)
+            _kit_notes.append(f"🩸 Bleed ×{rider['bleed']}")
+        if rider.get("poison"):
+            add_charges(d, "poison_stacks", rider["poison"]); d["poison_pct"] = max(safe_int(d.get("poison_pct")), 12)
+            _kit_notes.append(f"🧪 Poison ×{rider['poison']}")
+        if rider.get("expose"):
+            add_charges(d, "exposed_hits", rider["expose"]); _kit_notes.append(f"🎯 Exposed ×{rider['expose']}")
+        _kit_notes.insert(0, f"{kit_skill.get('emoji','✨')} *{kit_skill['name']}!*")
+    if _kit_notes:
+        extra_notes.extend(_kit_notes)
 
     cds_a = safe_cds(a)
     if cds_a.get("shadowstep_primed"):
@@ -15219,6 +15432,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Initialize dungeon item battle state on first hit
         if uid not in _pvp_battle_state: _dng_pvp_init(uid, a)
         if target_id not in _pvp_battle_state: _dng_pvp_init(target_id, d)
+        _kit_tick_cds(uid)  # a basic attack also advances kit cooldowns
         result_text, lvl_msgs, result_type = await _execute_pvp_hit(
             a, d, uid, target_id, w, chat_id, context.bot)
 
@@ -15241,6 +15455,106 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     finally:
         _cb_unlock(uid, _tok)  # token-checked: can't release a newer tap's lock
+
+
+async def kit_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """PvP fight-card kit skills: kitsk_{uid}_{slot}_{opp} (use) and
+    kitnope_{uid}_{slot} (unavailable — explain why)."""
+    query = update.callback_query
+    data = query.data
+    parts = data.split("_")
+    if data.startswith("kitnope_"):
+        try:
+            uid = int(parts[1]); slot = parts[2]
+        except (IndexError, ValueError):
+            await query.answer(); return
+        if query.from_user.id != uid:
+            await query.answer("Not your card!", show_alert=True); return
+        p = get_player(uid); kit = _kit_for(p) if p else None
+        sk = kit.get(slot) if kit else None
+        if not sk:
+            await query.answer(); return
+        cd = safe_int(_kit_cd_state(uid).get(slot))
+        if is_silenced(p):
+            await query.answer(f"🤐 Silenced — can't use {sk['name']}!", show_alert=True)
+        elif cd > 0:
+            await query.answer(f"⏳ {sk['name']} on cooldown ({cd} turn{'s' if cd!=1 else ''}).", show_alert=True)
+        else:
+            await query.answer(f"❌ Need {sk.get('mp',0)} MP for {sk['name']}.", show_alert=True)
+        return
+    # kitsk_
+    try:
+        uid = int(parts[1]); slot = parts[2]; target_id = int(parts[3])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("These aren't your buttons!", show_alert=True); return
+    pair = _pvp_pair_key(uid, target_id)
+    if pair not in _pvp_cards:
+        await query.answer("This fight has already ended.", show_alert=True); return
+    _tok = _cb_lock(uid)
+    if not _tok:
+        await query.answer("⏳ Still processing — one tap at a time!"); return
+    try:
+        a = get_player(uid); d = get_player(target_id)
+        if not a or not d:
+            await query.answer(); return
+        kit = _kit_for(a)
+        sk = kit.get(slot) if kit else None
+        if not sk:
+            await query.answer("You don't have that skill."); return
+        if is_defeated(a) or is_invincible(a):
+            await query.answer("You can't act right now!", show_alert=True); return
+        if is_silenced(a):
+            await query.answer(f"🤐 Silenced — can't use {sk['name']}!", show_alert=True); return
+        if _kit_on_cd(uid, slot):
+            await query.answer(f"⏳ {sk['name']} is on cooldown.", show_alert=True); return
+        cost = sk.get("mp", 0)
+        if safe_int(a.get("mp")) < cost:
+            await query.answer(f"❌ Need {cost} MP.", show_alert=True); return
+        _cc = _consume_cc(a)
+        if _cc:
+            await query.answer(_cc, show_alert=True); return
+        # Pay MP, advance cooldowns, set this skill's cooldown
+        a["mp"] = safe_int(a.get("mp")) - cost
+        _kit_tick_cds(uid)
+        _kit_set_cd(uid, slot, sk.get("cd", 0))
+        if uid not in _pvp_battle_state: _dng_pvp_init(uid, a)
+        if target_id not in _pvp_battle_state: _dng_pvp_init(target_id, d)
+
+        if sk.get("kind") == "strike":
+            try: await query.answer(f"{sk['emoji']} {sk['name']}!")
+            except Exception: pass
+            w = get_weather()
+            chat_id = _pvp_origin_chat.get(pair) or query.message.chat_id
+            save_player(a)  # persist MP/cd before the hit pipeline re-reads? hit uses a in-memory
+            result_text, lvl_msgs, result_type = await _execute_pvp_hit(
+                a, d, uid, target_id, w, chat_id, context.bot, kit_skill=sk)
+            _pvp_log_append(pair, result_text)
+            if result_type == "defeat":
+                _grp = _pvp_origin_chat.get(pair) or _megaphone_state.get("group") or uid
+                _wa = get_player(uid) or a; _wd = get_player(target_id) or d
+                asyncio.create_task(announce(context.bot, _grp,
+                    f"💀 *{_wa.get('username','?')}* defeated *{_wd.get('username','?')}*!", permanent=True))
+                _cb_unlock(uid, _tok)
+                await _finalize_pvp(pair, result_text, context.bot, winner_id=uid)
+                return
+            fresh_a = get_player(uid) or a; fresh_d = get_player(target_id) or d
+            _cb_unlock(uid, _tok)
+            await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, result_text, context.bot)
+        else:
+            # Support skill — apply effects, no attack
+            try: await query.answer(f"{sk['emoji']} {sk['name']}!")
+            except Exception: pass
+            notes = _kit_apply_support(a, d, sk)
+            save_player(a); save_player(d)
+            entry = f"{sk['emoji']} *{a['username']}* uses *{sk['name']}!*" + (f"\n{notes}" if notes else "")
+            _pvp_log_append(pair, entry)
+            fresh_a = get_player(uid) or a; fresh_d = get_player(target_id) or d
+            _cb_unlock(uid, _tok)
+            await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, entry, context.bot)
+    finally:
+        _cb_unlock(uid, _tok)
 
 
 # ── DEFEND (damage-absorbing shield) ─────────────────────────────────────────
@@ -37316,6 +37630,7 @@ def main():
     app.add_handler(CallbackQueryHandler(attack_picker_callback,       pattern="^atk_"))
     app.add_handler(CallbackQueryHandler(skill_target_picker_callback, pattern="^skl2_"))
     app.add_handler(CallbackQueryHandler(pvp_card_callback,  pattern="^pvpcard_"))
+    app.add_handler(CallbackQueryHandler(kit_card_callback,  pattern="^(kitsk_|kitnope_)"))
     app.add_handler(CommandHandler("heal",         heal_cmd))
     app.add_handler(CommandHandler("defend",       defend_cmd))
     app.add_handler(CommandHandler("curepriority",   curepriority_cmd))
