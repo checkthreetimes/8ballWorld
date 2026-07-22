@@ -4325,9 +4325,9 @@ EMPIRE_BUILDINGS = {
         "name": "Homestead",     "emoji": "🏠",
         "desc": "Your base of operations. Generates Timber and permanently raises Max HP.",
         "requires": None,         "max_level": 10,
-        "generates": {"timber": 1.5},
+        "generates": {"timber": 2.5},
         "stat_bonus": {"max_hp": 600},
-        "base_cost": {"gold": 500_000},
+        "base_cost": {"gold": 2000},
         "flavor": [
             "Stone walls rise around your plot.",
             "A proper roof. You sleep better already.",
@@ -4340,9 +4340,9 @@ EMPIRE_BUILDINGS = {
         "name": "Barracks",      "emoji": "⚔️",
         "desc": "Trains fighters. Generates Stone. Permanently raises ATK.",
         "requires": ("homestead", 2), "max_level": 10,
-        "generates": {"stone": 0.8},
+        "generates": {"stone": 1.5},
         "stat_bonus": {"atk_flat": 50},
-        "base_cost": {"gold": 750_000, "timber": 50},
+        "base_cost": {"gold": 3500, "timber": 30},
         "flavor": [
             "Soldiers drill from dawn to dusk.",
             "War drums echo through the yard.",
@@ -4355,9 +4355,9 @@ EMPIRE_BUILDINGS = {
         "name": "Tavern",        "emoji": "🍺",
         "desc": "Hub of rumor and trade. Generates Gold. Permanently raises LUK.",
         "requires": ("homestead", 3), "max_level": 10,
-        "generates": {"gold": 18},
+        "generates": {"gold": 120},
         "stat_bonus": {"LUK": 15},
-        "base_cost": {"gold": 900_000, "timber": 60, "stone": 30},
+        "base_cost": {"gold": 5000, "timber": 40, "stone": 20},
         "flavor": [
             "Travelers stop. Stories spread.",
             "The tap never runs dry.",
@@ -4370,9 +4370,9 @@ EMPIRE_BUILDINGS = {
         "name": "Library",       "emoji": "📚",
         "desc": "Knowledge compounds. Generates Crystals. Permanently grants +2% EXP per level.",
         "requires": ("barracks", 2), "max_level": 10,
-        "generates": {"crystal": 0.18},
+        "generates": {"crystal": 0.7},
         "stat_bonus": {"exp_bonus_pct": 0.08},
-        "base_cost": {"gold": 1_200_000, "timber": 80, "stone": 60},
+        "base_cost": {"gold": 7000, "timber": 50, "stone": 35},
         "flavor": [
             "Scribes copy the old texts.",
             "A second wing opens. Rare tomes arrive.",
@@ -4385,9 +4385,9 @@ EMPIRE_BUILDINGS = {
         "name": "Forge",         "emoji": "⚒️",
         "desc": "Master craft. Generates Iron Shards. Permanently raises DEF.",
         "requires": ("barracks", 3), "max_level": 10,
-        "generates": {"iron_shard": 0.35},
+        "generates": {"iron_shard": 0.7},
         "stat_bonus": {"DEF": 35},
-        "base_cost": {"gold": 1_500_000, "timber": 70, "stone": 100},
+        "base_cost": {"gold": 9000, "timber": 45, "stone": 50},
         "flavor": [
             "Hammer strikes echo through the night.",
             "Molten iron pours steady. Waste drops to near zero.",
@@ -4400,9 +4400,9 @@ EMPIRE_BUILDINGS = {
         "name": "Garden",        "emoji": "🌿",
         "desc": "Nature's bounty. Generates Health Potions. Grants +1% HP regen per turn in PvP per level.",
         "requires": ("homestead", 5), "max_level": 10,
-        "generates": {"health_potion": 0.12},
+        "generates": {"health_potion": 0.4},
         "stat_bonus": {"pvp_regen_pct": 0.04},
-        "base_cost": {"gold": 2_000_000, "timber": 100, "stone": 50, "crystal": 5},
+        "base_cost": {"gold": 11000, "timber": 60, "stone": 40, "crystal": 6},
         "flavor": [
             "Seeds planted in good soil. Patience.",
             "Healing herbs bloom in every season.",
@@ -4415,9 +4415,9 @@ EMPIRE_BUILDINGS = {
         "name": "Void Shrine",   "emoji": "🕳️",
         "desc": "Channels void energy. Generates Crystals. Permanently raises INT and WIS per level.",
         "requires": ("library", 3), "max_level": 10,
-        "generates": {"crystal": 0.45},
+        "generates": {"crystal": 1.8},
         "stat_bonus": {"INT": 20, "WIS": 20},
-        "base_cost": {"gold": 3_000_000, "stone": 150, "crystal": 15},
+        "base_cost": {"gold": 18000, "stone": 70, "crystal": 15},
         "flavor": [
             "The foundation cracks with purpose. Something answers.",
             "Offerings vanish at midnight.",
@@ -4453,7 +4453,7 @@ def _empire_upgrade_cost(bkey, current_level):
     nxt = current_level + 1
     cost = {}
     for res, base in b["base_cost"].items():
-        cost[res] = max(1, round(base * (nxt ** 1.55)))
+        cost[res] = max(1, round(base * (nxt ** 1.35)))
     return cost
 
 def _empire_stat_bonuses(p):
@@ -4626,23 +4626,31 @@ def _build_empire_build(p, uid):
         cost_str = "  ".join(
             f"{_EMPIRE_RES_EMOJI.get(r, r)} {v:,}" for r, v in cost.items()
         )
-        # Check affordability
-        can_afford = True
+        # Check affordability + compute exactly what's short
+        short = []
         for r, v in cost.items():
             have = p.get("gold", 0) if r == "gold" else res.get(r, 0)
-            if have < v: can_afford = False; break
-        action = "Build" if cur_lvl == 0 else f"Upgrade to Lv {nxt}"
-        icon = "✅" if can_afford else "🔒"
+            if have < v:
+                short.append(f"{_EMPIRE_RES_EMOJI.get(r, r)} {v - have:,.0f} more")
+        can_afford = not short
+        action = "Build" if cur_lvl == 0 else f"Upgrade → Lv {nxt}"
+        icon = "✅" if can_afford else "⏳"
         lines.append(f"{icon} {b['emoji']} *{b['name']}* (Lv {cur_lvl}→{nxt})  —  _{b['desc']}_")
         lines.append(f"   Cost: {cost_str}")
-        if can_afford:
-            buttons.append([InlineKeyboardButton(
-                f"{b['emoji']} {action}: {b['name']}",
-                callback_data=f"empire_build_{uid}_{bkey}")])
+        if short:
+            lines.append(f"   _Need: {'  '.join(short)}_")
+        # Always show the button — tapping when short tells you exactly what's
+        # missing, so resources never feel like a dead end.
+        buttons.append([InlineKeyboardButton(
+            f"{'✅' if can_afford else '🔒'} {action}: {b['name']}",
+            callback_data=f"empire_build_{uid}_{bkey}")])
 
+    if not buttons:
+        lines.append("\n_All buildings maxed — your empire is complete!_ 👑")
     markup = InlineKeyboardMarkup(buttons + [
-        [InlineKeyboardButton("🏰 Overview", callback_data=f"empire_tab_{uid}_overview"),
-         InlineKeyboardButton("❌ Close",    callback_data=f"close_msg_{uid}")],
+        [InlineKeyboardButton("📦 Collect", callback_data=f"empire_collect_{uid}"),
+         InlineKeyboardButton("🏰 Overview", callback_data=f"empire_tab_{uid}_overview")],
+        [InlineKeyboardButton("❌ Close",    callback_data=f"close_msg_{uid}")],
     ])
     return "\n".join(lines), markup
 
@@ -27238,7 +27246,7 @@ GUIDE_PAGES = [
         "🧪 Health Potions — Added to your inventory for use in combat.\n"
         "\n"
         "*Upgrade costs*\n"
-        "Each upgrade costs gold + resources. Cost scales with level (~level^1.55). Higher-level buildings need Stone and Crystal in addition to gold.\n"
+        "Each upgrade costs gold + the resources you collect. The Build/Upgrade tab always shows every building with its exact cost and — if you're short — precisely what you still need (e.g. '🪵 20 more'). Tap the upgrade to spend your stockpile. Costs scale gently, and your generation rate rises with each building level, so upgrades stay reachable.\n"
         "\n"
         "*Stat bonuses*\n"
         "Every building level grants a permanent passive bonus — Max HP, ATK, DEF, INT, WIS, LUK, EXP gain, or PvP regen. View your current bonuses on the 📊 Stat Bonuses tab.\n"
