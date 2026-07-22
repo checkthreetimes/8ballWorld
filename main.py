@@ -952,6 +952,15 @@ async def _q_edit(query, *args, **kwargs):
             except Exception:
                 pass
             return None
+        if "parse entities" in _el or "can't find end of the entity" in _el:
+            # Dynamic content (an item name, username, etc.) contained a stray
+            # markdown character. Retry WITHOUT parse_mode so the edit lands as
+            # plain text instead of crashing the handler.
+            _kw = dict(kwargs); _kw.pop("parse_mode", None)
+            try:
+                return await query.edit_message_text(*args, **_kw)
+            except Exception:
+                return None
         raise
 
 async def _auto_delete(bot, chat_id, msg_id, delay):
@@ -961,11 +970,18 @@ async def _auto_delete(bot, chat_id, msg_id, delay):
     except Exception:
         pass
 
+def _md_escape(s):
+    """Escape Telegram-Markdown special chars in dynamic text (usernames, item
+    names) so a stray * _ ` [ can't break the whole message's parsing."""
+    return re.sub(r"([_*`\[])", r"\\\1", str(s))
+
 async def send_group(update: Update, text: str, parse_mode="Markdown",
                      permanent=False, delay=9, reply_markup=None):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
-    name_hdr = f"👤 *{update.effective_user.first_name}*\n"
+    # Escape the display name — Telegram names can contain * _ ` [ which would
+    # otherwise break Markdown parsing for the entire message.
+    name_hdr = f"👤 *{_md_escape(update.effective_user.first_name)}*\n"
     text = name_hdr + text
     key     = (chat_id, user_id)
     old_id  = last_bot_message.get(key)
@@ -980,12 +996,19 @@ async def send_group(update: Update, text: str, parse_mode="Markdown",
     )
     new_msg = results[0]
     if isinstance(new_msg, Exception):
+        # Retry — and if it was a Markdown parse failure, drop parse_mode so the
+        # message lands as plain text instead of vanishing.
+        _pm = None if "parse entities" in str(new_msg).lower() else parse_mode
         try:
             new_msg = await update.get_bot().send_message(
                 chat_id=chat_id, text=text[:4096],
-                parse_mode=parse_mode, reply_markup=reply_markup)
+                parse_mode=_pm, reply_markup=reply_markup)
         except Exception:
-            return None
+            try:
+                new_msg = await update.get_bot().send_message(
+                    chat_id=chat_id, text=text[:4096], reply_markup=reply_markup)
+            except Exception:
+                return None
     if not permanent:
         last_bot_message[key] = new_msg.message_id
         asyncio.create_task(_auto_delete(
@@ -997,11 +1020,19 @@ async def announce(bot, chat_id: int, text: str,
     try:
         msg = await bot.send_message(
             chat_id=chat_id, text=text[:4096], parse_mode=parse_mode)
-        if not permanent:
-            asyncio.create_task(_auto_delete(bot, chat_id, msg.message_id, delay))
-        return msg
+    except BadRequest as e:
+        if "parse entities" in str(e).lower():
+            try:
+                msg = await bot.send_message(chat_id=chat_id, text=text[:4096])  # plain
+            except Exception:
+                return None
+        else:
+            return None
     except Exception:
         return None
+    if not permanent:
+        asyncio.create_task(_auto_delete(bot, chat_id, msg.message_id, delay))
+    return msg
 
 async def reply_to_dm(update, context, text: str, parse_mode="Markdown"):
     """Send text to the user's DM. If in a group, delete command and post brief notice."""
@@ -17385,8 +17416,8 @@ async def unequip_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
     p["inventory"] = json.dumps(inv)
     save_player(p)
     slot_label = slot_key.replace("equipped_", "").capitalize()
-    await _q_edit(query, 
-        f"✅ *{name}* unequipped from {slot_label} slot and moved to inventory.",
+    await _q_edit(query,
+        f"✅ *{_md_escape(name)}* unequipped from {slot_label} slot and moved to inventory.",
         parse_mode="Markdown")
 
 async def use_full_heal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
