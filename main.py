@@ -8648,15 +8648,29 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
 
     # ── DESCEND ────────────────────────────────────────────────────────────────
     if data.startswith("dng_descend_"):
+        # A stale/re-tapped descend card would over-increment the floor
+        if state.get("msg_id") and query.message and query.message.message_id != state["msg_id"]:
+            await query.answer("🕰️ That's an old card — use /dungeon to resume your run.", show_alert=True)
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            return
+        # Descend only from a genuinely cleared final room; never past the last floor
+        if state["floor"] >= cfg["floors"]:
+            await query.answer("You've reached the bottom — Extract to bank your rewards!", show_alert=True); return
         await query.answer()
         state["floor"] += 1
         state["room"] = 1
         state.pop("floor_buff", None)
         state["floor_modifier"] = _dng_roll_floor_modifier(state["floor"], diff)
         narr = _dng_roll_narration("floor_deeper", floor=state["floor"])
-        themes = state.get("themes", DNG_THEMES)
-        theme_idx = min(state["floor"] - 1, len(themes) - 1)
-        theme = themes[theme_idx]
+        # Bulletproof theme lookup: fall back to DNG_THEMES if state's theme
+        # list is missing/empty, and clamp the index so it can never go
+        # negative (an empty list made min(floor-1,-1) == -1 → IndexError).
+        themes = state.get("themes") or DNG_THEMES
+        theme_idx = max(0, min(state["floor"] - 1, len(themes) - 1))
+        theme = themes[theme_idx] if themes else {"name": "The Depths", "emoji": "🏚️", "desc": "Darkness stretches endlessly."}
         mod = state["floor_modifier"]
         mod_line = f"\n⚠️ *{mod['emoji']} {mod['name']}* — _{mod['desc']}_" if mod else ""
         # Partial HP regen on descend
