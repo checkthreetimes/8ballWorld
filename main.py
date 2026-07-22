@@ -3799,14 +3799,20 @@ def _hatch_species(egg_name):
     return random.choice(candidates) if candidates else None
 
 def get_pet_atk_bonus(pet):
-    """Raw ATK a pet contributes per attack. Bonus when well-fed and happy; penalty when neglected."""
+    """Raw ATK a pet contributes per attack. Bonus when well-fed and happy;
+    penalty when neglected. This is the pet's POTENTIAL — in combat it's
+    additionally bounded to a fraction of the owner's own hit (see
+    _pet_combat_atk) so a pet supplements the player instead of replacing them.
+    Scaling is deliberately gentler than the player's (level×2 vs the player's
+    level×4) so pet quality/investment scales UP toward the cap without ever
+    dwarfing the owner's build."""
     sp = PET_SPECIES.get(pet.get("species"), {})
-    base = sp.get("base_atk", 0) * 3 + pet.get("level", 1) * 16  # boosted: 3x base, 16x level
+    base = sp.get("base_atk", 0) * 1.0 + pet.get("level", 1) * 2.0
     passives = get_pet_passives(pet.get("level", 1))
-    base += passives.get("atk_flat", 0) * 2
-    base += _get_bond_atk_bonus(pet) * 2
+    base += passives.get("atk_flat", 0) * 0.5
+    base += _get_bond_atk_bonus(pet)
     evo = pet.get("evolution_stage", 0)
-    if evo > 0: base += evo * 40
+    if evo > 0: base += evo * 15
     # Personality modifier
     pers = sp.get("personality", "calm")
     base = round(base * PERSONALITY_ATK_MOD.get(pers, 1.0))
@@ -3832,7 +3838,26 @@ def get_pet_atk_bonus(pet):
     _owner = pet.get("owner_id")
     if _owner:
         base = round(base * (1.0 + _collector_atk_pct(_owner)))
-    return max(1, base)
+    return max(1, round(base))
+
+_PET_DMG_CAP = 0.65   # a pet strike may not exceed this fraction of the owner's own hit
+
+def _pet_combat_atk(pet, owner):
+    """Pet damage for a real combat strike: the pet's potential (get_pet_atk_bonus)
+    bounded to _PET_DMG_CAP of the owner's own attack. Weak pets fall under the
+    cap (so leveling/collecting them scales toward it — investment matters),
+    while a maxed pet/collector tops out at ~65% of your hit. The player's own
+    build always remains the majority of a turn's output. Skill procs and
+    elemental multipliers still apply ON TOP of this at the call site, so a
+    proc can still burst above the cap as a rewarded moment."""
+    raw = get_pet_atk_bonus(pet)
+    if not owner:
+        return raw
+    try:
+        owner_hit = calc_attack_damage(owner)
+    except Exception:
+        return raw
+    return max(1, min(raw, round(owner_hit * _PET_DMG_CAP)))
 
 # ── BESTIARY / COLLECTOR SYSTEM ───────────────────────────────────────────────
 _ALL_SPECIES_COUNT = len(PET_SPECIES)
@@ -14037,7 +14062,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot):
 
     active_pet = get_active_pet_record(au_id)
     if active_pet:
-        pet_atk    = get_pet_atk_bonus(active_pet)
+        pet_atk    = _pet_combat_atk(active_pet, a)
         sp_pet     = PET_SPECIES.get(active_pet.get("species"), {})
         pname      = _pet_display_name(active_pet)
         pers       = sp_pet.get("personality", "calm")
@@ -18344,7 +18369,7 @@ async def _attack_boss(update, context, p, boss_dict, chat_id):
     # Pet attacks alongside player (with skill proc)
     _boss_pet = get_active_pet_record(user.id)
     if _boss_pet:
-        _pet_atk    = get_pet_atk_bonus(_boss_pet)
+        _pet_atk    = _pet_combat_atk(_boss_pet, p)
         _sp_pet     = PET_SPECIES.get(_boss_pet.get("species"), {})
         _pname      = _pet_display_name(_boss_pet)
         _pers       = _sp_pet.get("personality", "calm")
@@ -24930,7 +24955,7 @@ async def _start_encounter_battle(query, uid, p):
             "pet_id": _enc_pet["pet_id"],
             "name": _enc_pet.get("nickname") or _sp.get("name","Pet"),
             "level": _enc_pet.get("level",1),
-            "atk": get_pet_atk_bonus(_enc_pet),
+            "atk": _pet_combat_atk(_enc_pet, p),
             "bond_label": _bond_label,
             "species": _enc_pet.get("species"),
             "def_ability": _sp.get("def_ability"),
@@ -24979,7 +25004,7 @@ async def _start_encounter_hunt(query, uid, p):
             "pet_id": _enc_pet["pet_id"],
             "name": _enc_pet.get("nickname") or _sp.get("name","Pet"),
             "level": _enc_pet.get("level",1),
-            "atk": get_pet_atk_bonus(_enc_pet),
+            "atk": _pet_combat_atk(_enc_pet, p),
             "bond_label": _bond_label,
             "species": _enc_pet.get("species"),
             "def_ability": _sp.get("def_ability"),
@@ -34574,7 +34599,7 @@ async def _send_ambush_event(bot, uid, p):
             "pet_id": _amb_pet["pet_id"],
             "name": _amb_pet.get("nickname") or _sp.get("name", "Pet"),
             "level": _amb_pet.get("level", 1),
-            "atk": get_pet_atk_bonus(_amb_pet),
+            "atk": _pet_combat_atk(_amb_pet, p),
             "bond_label": _bond_label,
             "species": _amb_pet.get("species"),
             "def_ability": _sp.get("def_ability"),
@@ -36067,8 +36092,6 @@ async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     p = get_player(uid)
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
-    if len(get_all_pets(uid)) >= 12:
-        await query.answer("🐾 Your kennel is full (12 pets)! Release one first.", show_alert=True); return
     _wild_spawns.pop(chat_id, None)  # claimed — race is over
     sp = PET_SPECIES[st["species"]]
     pet = {"pet_id": None, "owner_id": uid, "species": st["species"],
