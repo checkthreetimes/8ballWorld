@@ -1065,12 +1065,51 @@ def resolve_item_ci(typed, collection):
 WORLD_NAME = "The World of 8Ball"
 
 WEATHER_TABLE = [
-    {"name":"Clear Skies",         "desc":"The air is sharp and alive. Everything moves exactly as it should.",  "exp_mod":1.20,"dmg_mod":1.00},
-    {"name":"Heavy Rain",          "desc":"A cold downpour slows everything down. Movement is sluggish.",          "exp_mod":1.00,"dmg_mod":0.90},
-    {"name":"Perfect Conditions",  "desc":"The world is in balance. Ideal for battle and glory alike.",             "exp_mod":1.10,"dmg_mod":1.10},
-    {"name":"Arcane Mist",         "desc":"Arcane energy warps the air. Reality flickers. Trust your instincts.",  "exp_mod":0.90,"dmg_mod":1.15},
-    {"name":"Blood Moon",          "desc":"Something ancient awakens. The air crackles with power. High stakes incoming.", "exp_mod":1.30,"dmg_mod":1.20,"secret_eligible":True},
-    {"name":"Cursed Fog",          "desc":"A thick haze clings to everything. Nothing moves as it should.",         "exp_mod":0.85,"dmg_mod":0.85},
+    {"name":"Clear Skies", "emoji":"☀️", "exp_mod":1.20,"dmg_mod":1.00,
+     "flavors":["The air is sharp and alive. Everything moves exactly as it should.",
+                "Golden light pours over the table. A good day to be great.",
+                "Not a cloud in sight. The felt seems to glow with possibility.",
+                "Crisp, clean, endless. Days like this make legends."]},
+    {"name":"Heavy Rain", "emoji":"🌧️", "exp_mod":1.00,"dmg_mod":0.90,
+     "flavors":["A cold downpour slows everything down. Movement is sluggish.",
+                "Rain hammers the roof. Every strike lands a half-beat late.",
+                "The world is grey and heavy. Blades feel weighted with water.",
+                "Puddles swallow the light. Caution rules the day."]},
+    {"name":"Perfect Conditions", "emoji":"🌤️", "exp_mod":1.10,"dmg_mod":1.10,
+     "flavors":["The world is in balance. Ideal for battle and glory alike.",
+                "Everything aligns. Warriors and shot-makers both feel it.",
+                "A rare harmony settles over the realm. Seize it.",
+                "The stars, the wind, the felt — all in agreement today."]},
+    {"name":"Arcane Mist", "emoji":"🔮", "exp_mod":0.90,"dmg_mod":1.15,
+     "flavors":["Arcane energy warps the air. Reality flickers. Trust your instincts.",
+                "Violet mist coils between the tables. Magic runs wild.",
+                "The boundary thins. Spells bite harder; the mind grows foggy.",
+                "Whispers of old power drift through the haze."]},
+    {"name":"Blood Moon", "emoji":"🌑", "exp_mod":1.30,"dmg_mod":1.20,"secret_eligible":True,
+     "flavors":["Something ancient awakens. The air crackles with power. High stakes incoming.",
+                "The moon bleeds crimson. Every ambition burns brighter tonight.",
+                "A red glow drowns the world. Fortune and ruin walk hand in hand.",
+                "The old hunger stirs beneath the felt. Glory favors the bold."]},
+    {"name":"Cursed Fog", "emoji":"🌫️", "exp_mod":0.85,"dmg_mod":0.85,
+     "flavors":["A thick haze clings to everything. Nothing moves as it should.",
+                "Grey fingers of fog blur every edge. Nothing is certain.",
+                "The curse settles in. Strength drains into the murk.",
+                "You can barely see the far rail. Trust nothing you can't touch."]},
+    {"name":"Golden Hour", "emoji":"🌅", "exp_mod":1.35,"dmg_mod":1.05,
+     "flavors":["Amber light drenches the realm. Rewards run rich today.",
+                "The magic hour lingers far too long — and no one is complaining.",
+                "Everything you touch turns a little more valuable.",
+                "A warm glow blesses the diligent. Grind while it lasts."]},
+    {"name":"Static Storm", "emoji":"⚡", "exp_mod":1.15,"dmg_mod":1.25,
+     "flavors":["Lightning splits the sky. Every blow carries a charge.",
+                "The air hums and snaps. Strikes hit like thunderclaps.",
+                "Hair stands on end. Aggression is rewarded today.",
+                "Raw voltage crackles across the felt. Hit hard, hit fast."]},
+    {"name":"Frostfall", "emoji":"❄️", "exp_mod":1.05,"dmg_mod":0.95,
+     "flavors":["Snow blankets the world in hush. Patience is a virtue now.",
+                "Ice creeps across the rails. Slow, deliberate, deadly.",
+                "Breath fogs the air. Everything moves at winter's pace.",
+                "A quiet freeze settles in. Steady hands win the day."]},
 ]
 _weather_cache = {"weather":None,"set_at":None}
 def get_weather():
@@ -34511,23 +34550,44 @@ async def _send_ambush_event(bot, uid, p):
         active_encounters.pop(uid, None)
         _enc_sessions.pop(uid, None)
 
+_CHEST_FLAVORS = [
+    "🎁 *A mysterious chest appears in your path!*",
+    "💰 *You spot a glint in the rubble — buried treasure!*",
+    "📦 *A courier drops a package at your feet and vanishes.*",
+    "🗝️ *An old lockbox finally gives up its secret.*",
+    "⛏️ *You strike something metal while digging around.*",
+]
+_QUEST_FLAVORS = [
+    "📜 *A traveling merchant rewards you for a good deed!*",
+    "🧙 *A grateful stranger presses knowledge into your hands.*",
+    "🕯️ *An oracle's blessing settles over you.*",
+    "🍺 *A tavern tale teaches you something worth knowing.*",
+    "🗺️ *You retrace an old map and learn from the journey.*",
+]
+
 async def _send_random_dm_event(bot, uid, p):
-    kind = random.choices(["chest", "quest", "ambush"], weights=[40, 35, 25])[0]
+    kind = random.choices(["chest", "quest", "gift", "ambush"], weights=[35, 30, 15, 20])[0]
     try:
         if kind == "chest":
-            gold = random.randint(80, 260) + p.get("level", 1) * 4
+            gold = scaled_gold(p.get("level", 1), random.randint(150, 450))
             p["gold"] = safe_int(p.get("gold")) + gold
             save_player(p)
             await bot.send_message(uid,
-                f"🎁 *A mysterious chest appears in your path!*\nYou find *{gold:,} gold*.",
+                f"{random.choice(_CHEST_FLAVORS)}\nYou find *{fmt_num(gold)} gold*.",
                 parse_mode="Markdown")
         elif kind == "quest":
-            exp = exp_share(p.get("level", 1), random.uniform(0.01, 0.03))
+            exp = exp_share(p.get("level", 1), random.uniform(0.03, 0.08))
             add_exp(p, exp)
             save_player(p)
             await bot.send_message(uid,
-                f"📜 *A traveling merchant rewards you for a good deed!*\n+*{fmt_num(exp)} EXP*",
+                f"{random.choice(_QUEST_FLAVORS)}\n+*{fmt_num(exp)} EXP*",
                 parse_mode="Markdown")
+        elif kind == "gift":
+            reward = _grant_gift(uid)
+            if reward:
+                await bot.send_message(uid,
+                    f"🍀 *A stroke of good fortune finds you!*\nYou received {reward}.",
+                    parse_mode="Markdown")
         else:  # ambush — tough, interactive fight with extreme rewards on a win
             await _send_ambush_event(bot, uid, p)
     except Exception:
@@ -35714,8 +35774,60 @@ async def standoff_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── WEATHER CHANGE ANNOUNCEMENTS ─────────────────────────────────────────────
 _last_weather_announced = {"name": None}
 
+def _recent_group_players(group_id, hours=6, limit=25):
+    """(uid, name) of players recently active in a specific group."""
+    try:
+        cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
+        c = _db().cursor()
+        rows = c.execute(
+            """SELECT s.user_id, COALESCE(p.username, s.username) AS name
+               FROM shadow_profiles s LEFT JOIN players p ON p.user_id = s.user_id
+               WHERE s.home_group = ? AND s.last_seen >= ?
+               ORDER BY s.last_seen DESC LIMIT ?""",
+            (group_id, cutoff, limit)).fetchall()
+        return [(r["user_id"], r["name"] or "someone") for r in rows]
+    except Exception:
+        return []
+
+# Gift pool for blessings/fortune drops. Each returns (apply_fn, describe).
+_GIFT_ITEMS = ["Greater Health Potion", "Grand Restorative Flask", "MP Tonic",
+               "Iron Shard", "Enchanting Scroll", "Common Egg", "Rare Egg",
+               "Pet Snack", "Scroll of Revival"]
+
+def _grant_gift(uid):
+    """Give a recently-active player a random gift. Returns a short reward
+    string ('+2.4K gold', '🥚 Rare Egg', ...) or None if the player is gone."""
+    p = get_player(uid)
+    if not p:
+        return None
+    lvl = safe_int(p.get("level"), 1)
+    roll = random.random()
+    if roll < 0.45:
+        amt = scaled_gold(lvl, random.randint(200, 600))
+        p["gold"] = safe_int(p.get("gold")) + amt
+        save_player(p)
+        return f"💰 +{fmt_num(amt)} gold"
+    elif roll < 0.75:
+        xp = exp_share(lvl, random.uniform(0.05, 0.13))
+        add_exp(p, xp); save_player(p)
+        return f"✨ +{fmt_num(xp)} EXP"
+    else:
+        item = random.choice(_GIFT_ITEMS)
+        add_item(p, item); save_player(p)
+        return f"🎁 {item}"
+
+_WEATHER_WITNESS = [
+    "{names} feel the shift in the air.",
+    "{names} pause mid-shot as the world turns.",
+    "The change isn't lost on {names}.",
+    "{names} look up as the atmosphere bends.",
+    "Somewhere, {names} sense it too.",
+]
+
 async def _weather_watch(bot):
-    """Announce weather CHANGES to active groups (max ~1/hour by nature)."""
+    """Announce weather CHANGES with variety: a random flavor line, a shout-out
+    to recent players, and an occasional 'blessing' gift to a random active
+    player — named publicly to pull the group's attention back in."""
     w = get_weather()
     if w["name"] == _last_weather_announced["name"]:
         return
@@ -35723,6 +35835,8 @@ async def _weather_watch(bot):
     _last_weather_announced["name"] = w["name"]
     if first_run:
         return  # don't announce on boot — only on actual changes
+    emoji = w.get("emoji", "🌦️")
+    flavor = random.choice(w.get("flavors", [w.get("desc", "The world shifts.")]))
     hint = "\n🌑 _Something ancient stirs... it can be summoned tonight._" if w.get("secret_eligible") else ""
     try:
         c = _db().cursor()
@@ -35733,10 +35847,80 @@ async def _weather_watch(bot):
     except Exception:
         return
     for g in groups:
+        recent = _recent_group_players(g, hours=6)
+        witness = ""
+        if len(recent) >= 1:
+            names = [f"*{n}*" for _, n in recent[:2]]
+            _joined = " & ".join(names)
+            witness = "\n_" + random.choice(_WEATHER_WITNESS).format(names=_joined) + "_"
+        # Blessing: ~40% of weather changes gift a random recent player, by name
+        blessing = ""
+        if recent and random.random() < 0.40:
+            _buid, _bname = random.choice(recent)
+            reward = _grant_gift(_buid)
+            if reward:
+                blessing = f"\n\n🎁 *The {w['name']} blesses {_bname}!*  {reward}"
+                try:
+                    await bot.send_message(_buid,
+                        f"🎁 *The {w['name']} smiles on you!*\nYou received {reward}. "
+                        f"_Being active in the group has its rewards._",
+                        parse_mode="Markdown")
+                except Exception:
+                    pass
         try:
             await bot.send_message(g,
-                f"🌦️ *The conditions have changed: {w['name']}*\n_{w['desc']}_\n\n"
-                f"📈 EXP ×{w['exp_mod']}  |  ⚔️ DMG ×{w['dmg_mod']}{hint}",
+                f"{emoji} *The conditions have changed: {w['name']}*\n"
+                f"_{flavor}_{witness}\n\n"
+                f"📈 EXP ×{w['exp_mod']}  |  ⚔️ DMG ×{w['dmg_mod']}{hint}{blessing}",
+                parse_mode="Markdown")
+        except Exception:
+            pass
+        await asyncio.sleep(0.3)
+
+# ── FORTUNE DROPS — random surprise gifts to active players ───────────────────
+_FORTUNE_LINES = [
+    "🍀 *Fortune smiles!* A stray pouch of luck lands on *{name}*.",
+    "🎰 *The 8-Ball rolls in {name}'s favor!*",
+    "✨ *A gift from the void* finds its way to *{name}*.",
+    "🪙 *{name}* reaches into their pocket and finds something new.",
+    "🌟 *The table honors {name}* for keeping the game alive.",
+    "🎁 *A wandering merchant tosses {name} a parting gift.*",
+]
+_fortune_last = {}  # chat_id -> last fortune drop ts
+
+async def _fortune_drop_scheduler(bot):
+    """A few times a day per group, surprise a random recently-active player
+    with a gift — named in the group. Pure 'come back and see what you got'."""
+    try:
+        c = _db().cursor()
+        day_ago = (datetime.now() - timedelta(days=1)).isoformat()
+        c.execute("""SELECT DISTINCT home_group FROM shadow_profiles
+                     WHERE home_group IS NOT NULL AND last_seen >= ?""", (day_ago,))
+        groups = [r[0] for r in c.fetchall()]
+    except Exception:
+        return
+    now_ts = time.time()
+    for g in groups:
+        if now_ts - _fortune_last.get(g, 0) < 5 * 3600:  # at most ~1 per 5h/group
+            continue
+        if random.random() >= 0.15:   # ~2-3 per day across eligible cycles
+            continue
+        recent = _recent_group_players(g, hours=4)
+        if not recent:
+            continue
+        _fortune_last[g] = now_ts
+        uid, name = random.choice(recent)
+        reward = _grant_gift(uid)
+        if not reward:
+            continue
+        line = random.choice(_FORTUNE_LINES).format(name=name)
+        try:
+            await bot.send_message(g, f"{line}\n{reward}", parse_mode="Markdown")
+        except Exception:
+            pass
+        try:
+            await bot.send_message(uid,
+                f"🍀 *A little fortune found you in the group!*\nYou received {reward}.",
                 parse_mode="Markdown")
         except Exception:
             pass
@@ -36510,6 +36694,10 @@ async def _engagement_loop(bot):
                 pass
             try:
                 await _crate_scheduler(bot)
+            except Exception:
+                pass
+            try:
+                await _fortune_drop_scheduler(bot)
             except Exception:
                 pass
             try:
