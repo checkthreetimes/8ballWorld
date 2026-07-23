@@ -3,7 +3,7 @@
 The World of 8Ball  -  RPG Bot v13
 """
 
-import os, json, random, logging, sqlite3, re, asyncio, time, threading, hashlib
+import os, json, random, logging, sqlite3, re, asyncio, time, threading
 from datetime import datetime, timedelta
 from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -868,15 +868,6 @@ def _pvp_attack_allowed(a, d):
         return (False, "⚔️ You're mid-encounter — finish it before starting PvP.")
     return (True, "")
 
-def _reset_card_timer(pair, bot, chat_id, mid, seconds=20):
-    """Cancel any existing auto-delete task for this card and schedule a fresh one."""
-    old = _pvp_card_tasks.pop(pair, None)
-    if old and not old.done():
-        old.cancel()
-    task = asyncio.create_task(_auto_delete(bot, chat_id, mid, seconds))
-    _pvp_card_tasks[pair] = task
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
 
 def _cancel_card_timer(pair):
     old = _pvp_card_tasks.pop(pair, None)
@@ -1057,16 +1048,6 @@ async def reply_to_dm(update, context, text: str, parse_mode="Markdown"):
             asyncio.create_task(_auto_delete(context.bot, chat.id, msg.message_id, 30))
         except Exception: pass
 
-async def send_dm_or_group(bot, user_id: int, chat_id: int, text: str,
-                            parse_mode="Markdown", group_delay: int = 20):
-    """Try to DM the player; fall back to group with auto-delete."""
-    try:
-        return await bot.send_message(chat_id=user_id, text=text[:4096], parse_mode=parse_mode)
-    except Exception:
-        msg = await bot.send_message(chat_id=chat_id, text=text[:4096], parse_mode=parse_mode)
-        if group_delay > 0:
-            asyncio.create_task(_auto_delete(bot, chat_id, msg.message_id, group_delay))
-        return msg
 
 # ── SAFE HELPERS ──────────────────────────────────────────────────────────────
 def sjl(v, d):
@@ -1074,7 +1055,6 @@ def sjl(v, d):
     try: return json.loads(v)
     except: return d
 
-def safe_inv(p):    return sjl(p.get("inventory"), [])
 def safe_stats(p):
     return sjl(p.get("stats"),
                {"STR":5,"DEF":0,"AGI":5,"INT":5,"WIS":5,"DEX":5,"LUK":5})
@@ -2778,7 +2758,6 @@ _LINE_EMOJI = {
 }
 
 # Priest classes that can revive for free
-HEALER_CLASSES = {"priest","cleric","bishop","high_priest","saint"}
 
 # ── TITLES ────────────────────────────────────────────────────────────────────
 TITLES = {
@@ -3975,11 +3954,7 @@ def save_pet(pet):
          pet.get("daycare_until")))
     conn.commit(); conn.close()
 
-def get_retired_pet_atk_bonus(p):
-    return safe_int(p.get("pet_retire_atk"))
 
-def get_retired_pet_hp_bonus(p):
-    return safe_int(p.get("pet_retire_hp"))
 
 def _get_pet_element_mult(atk_pet, def_pet):
     """Element matchup multiplier between two pets: 1.25 strong, 0.75 weak, 1.0 neutral."""
@@ -4707,103 +4682,10 @@ def _build_empire_stats(p, uid):
     return "\n".join(lines), markup
 
 
-async def empire_tab_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    parts = query.data.split("_")
-    try: uid = int(parts[2]); tab = parts[3]
-    except (IndexError, ValueError): await query.answer(); return
-    if query.from_user.id != uid:
-        await query.answer("This isn't your empire!", show_alert=True); return
-    p = get_player(uid)
-    if not p: await query.answer("Player not found.", show_alert=True); return
-    if tab == "overview":
-        text, markup = _build_empire_overview(p, uid)
-    elif tab == "build":
-        text, markup = _build_empire_build(p, uid)
-    elif tab == "stats":
-        text, markup = _build_empire_stats(p, uid)
-    else:
-        await query.answer(); return
-    try:
-        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
-    except Exception: pass
-    await query.answer()
 
 
-async def empire_collect_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    parts = query.data.split("_")
-    try: uid = int(parts[2])
-    except (IndexError, ValueError): await query.answer(); return
-    if query.from_user.id != uid:
-        await query.answer("This isn't your empire!", show_alert=True); return
-    p = get_player(uid)
-    if not p: await query.answer("Player not found.", show_alert=True); return
-    notes = _empire_collect(p)
-    save_player(p)
-    if not notes:
-        await query.answer("Nothing to collect yet — come back later!", show_alert=True); return
-    await query.answer(f"Collected {len(notes)} resource{'s' if len(notes)!=1 else ''}!")
-    text, markup = _build_empire_overview(p, uid)
-    text = "📦 *Collected:*\n" + "\n".join(notes) + "\n\n" + text
-    try:
-        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
-    except Exception: pass
 
 
-async def empire_build_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    parts = query.data.split("_", 3)
-    try: uid = int(parts[2]); bkey = parts[3]
-    except (IndexError, ValueError): await query.answer(); return
-    if query.from_user.id != uid:
-        await query.answer("This isn't your empire!", show_alert=True); return
-    p = get_player(uid)
-    if not p: await query.answer("Player not found.", show_alert=True); return
-    b = EMPIRE_BUILDINGS.get(bkey)
-    if not b: await query.answer("Unknown building.", show_alert=True); return
-    # Bank any pending accrual BEFORE the upgrade — otherwise resetting the
-    # collect clock below silently wipes everything generated since last visit
-    _empire_collect(p)
-    bld, res, lc = _get_empire(p)
-    cur_lvl = bld.get(bkey, 0)
-    if cur_lvl >= b["max_level"]:
-        await query.answer("Already at max level!", show_alert=True); return
-    # Check requirement
-    req = b["requires"]
-    if req:
-        req_key, req_lvl = req
-        if bld.get(req_key, 0) < req_lvl:
-            await query.answer(f"Requires {EMPIRE_BUILDINGS[req_key]['name']} Lv {req_lvl}!", show_alert=True); return
-    cost = _empire_upgrade_cost(bkey, cur_lvl)
-    # Deduct costs
-    for r, v in cost.items():
-        if r == "gold":
-            if p.get("gold", 0) < v:
-                await query.answer(f"Need {v:,}g (have {p.get('gold',0):,}g)!", show_alert=True); return
-            p["gold"] -= v
-        else:
-            if res.get(r, 0) < v:
-                await query.answer(f"Need {v} {r.capitalize()} (have {res.get(r,0):.1f})!", show_alert=True); return
-            res[r] -= v
-    bld[bkey] = cur_lvl + 1
-    nxt = bld[bkey]
-    _save_empire(p, bld, res, lc)
-    # Initialize the collect clock on the FIRST build only — resetting it on
-    # every upgrade wiped pending accrual (the _empire_collect above banks it)
-    if not p.get("empire_last_collect"):
-        p["empire_last_collect"] = datetime.now().isoformat()
-    save_player(p)
-    # Flavor text
-    flavor_idx = min(nxt - 1, len(b["flavor"]) - 1) if b.get("flavor") else -1
-    flavor = b["flavor"][flavor_idx] if flavor_idx >= 0 else ""
-    action = "Built" if cur_lvl == 0 else f"Upgraded to Lv {nxt}"
-    await query.answer(f"{action}: {b['name']}!")
-    text, markup = _build_empire_build(p, uid)
-    text = f"✅ *{action}: {b['emoji']} {b['name']}!*\n_{flavor}_\n\n" + text
-    try:
-        await _q_edit(query, text[:4096], parse_mode="Markdown", reply_markup=markup)
-    except Exception: pass
 
 
 # ── CRAFTING RECIPES ──────────────────────────────────────────────────────────
@@ -5011,8 +4893,6 @@ def get_shop_tab(tab):
             _shop_cache["tabs"][tab] = []
     return _shop_cache["tabs"][tab]
 
-def get_daily_shop():
-    return get_shop_tab("pot")
 
 def _shop_discount(p):
     discount = 0
@@ -5127,26 +5007,6 @@ MONSTER_MOVES = {
 }
 
 # NPC class skills used in Battle mode (3 moves per class)
-NPC_CLASS_SKILLS = {
-    "fighter":       ["tackle","bite","headbutt"],
-    "warlord":       ["earth_slam","shell_crush","roar"],
-    "paladin":       ["holy_beam","recover","headbutt"],
-    "sage":          ["void_rift","dark_pulse","recover"],
-    "arcanist":      ["fire_breath","thunder_claw","gust"],
-    "void_mage":     ["void_rift","dark_pulse","soul_drain"],
-    "wraith":        ["soul_drain","dark_pulse","poison_spit"],
-    "specialist":    ["thunder_claw","water_jet","gust"],
-    "strider":       ["scratch","bite","gust"],
-    "deadeye":       ["scratch","headbutt","wing_slash"],
-    "saint":         ["holy_beam","recover","petal_storm"],
-    "zealot":        ["holy_beam","earth_slam","roar"],
-    "wildflower":    ["petal_storm","water_jet","recover"],
-    "nature_chosen": ["petal_storm","earth_slam","recover"],
-    "dread_empress": ["void_rift","soul_drain","dark_pulse"],
-    "grand_muse":    ["fire_breath","thunder_claw","dark_pulse"],
-    "iron_valkyrie": ["earth_slam","shell_crush","holy_beam"],
-    "divine_tempest":["thunder_claw","holy_beam","gust"],
-}
 
 # Dungeon NPC skill effects on the player: skill_name -> (effect, label)
 # effect: "burn" | "poison" | "stun" | "weaken" | "heal_enemy" | None
@@ -5431,7 +5291,6 @@ ENCOUNTER_MONSTERS = [
 ]
 # Build quick-lookup dicts
 MONSTER_BY_KEY   = {m[0]: m for m in ENCOUNTER_MONSTERS}
-MONSTER_STARTERS = [m for m in ENCOUNTER_MONSTERS if m[3][0] <= 5]  # starter-eligible
 
 ELEMENT_EMOJI = {
     "fire":"🔥","water":"💧","earth":"🪨","wind":"🌪️","lightning":"⚡",
@@ -5442,20 +5301,7 @@ def _enc_hp_bar(current, maximum, length=10):
     filled = max(0, round((current / max(1, maximum)) * length))
     return "█" * filled + "░" * (length - filled)
 
-def _mon_level_stats(base_hp, base_atk, level):
-    hp  = int(base_hp  * (1 + 0.06 * (level - 1)))
-    atk = int(base_atk * (1 + 0.05 * (level - 1)))
-    return hp, atk
 
-def _npc_level_stats(base_hp, base_dmg, level, player_max_hp=0):
-    hp  = int(base_hp  * (1 + 0.10 * (level - 1)))
-    atk = int(base_dmg * (1 + 0.10 * (level - 1)))
-    if player_max_hp > 0:
-        # HP: between 70% and 130% of player max HP
-        hp  = max(int(player_max_hp * 0.70), min(hp, int(player_max_hp * 1.30)))
-        # ATK: floor 6%, ceiling 14% of player max HP (raw before DEF mitigation)
-        atk = max(int(player_max_hp * 0.06), min(atk, int(player_max_hp * 0.14)))
-    return hp, atk
 
 # ── PARTY SYSTEM ──────────────────────────────────────────────────────────────
 
@@ -6428,147 +6274,7 @@ def _boss_guaranteed_loot(p):
 
 BOSS_RAID_EXP = 500  # low EXP for boss mode
 
-RAID_TIERS = [
-    {"name":"The Forest Skirmish","min_level":1,"waves":2,"wave_boss_key":"1 ball",
-     "wave_enemies":[{"name":"Goblin Scout","hp":150,"dmg_min":15,"dmg_max":30},
-                     {"name":"Cursed Wanderer","hp":250,"dmg_min":20,"dmg_max":40}],
-     "exp_reward":600,"gold_reward":120,
-     "loot_table":[
-         ("Iron Broadsword",0.40),("Rusty Shiv",0.35),("Iron Shard Ring",0.30),
-         ("Worn Leather Band",0.30),("Scout's Pendant",0.25),("Brass Ring",0.20),
-         ("Traveler's Coin",0.15),("Silk Band",0.10),("Obsidian Stud",0.08),
-         ("Iron Shard",0.12),("Health Potion",0.20),
-         ("Chain Coif",0.18),("Shadow Hood",0.18),
-         ("Chain Gauntlets",0.18),("Rogue's Wraps",0.18),
-         ("Chain Boots",0.18),("Shadow Treads",0.18),
-         ("Shadow Mask",0.18),("War Paint Mask",0.18),
-     ]},
-    {"name":"The Fortress Assault","min_level":5,"waves":3,"wave_boss_key":"3 ball",
-     "wave_enemies":[{"name":"Stone Golem","hp":400,"dmg_min":35,"dmg_max":60},
-                     {"name":"Pocket Demon","hp":600,"dmg_min":45,"dmg_max":75},
-                     {"name":"Cursed Knight","hp":800,"dmg_min":55,"dmg_max":90}],
-     "exp_reward":1400,"gold_reward":300,
-     "loot_table":[
-         ("Steel Knight Sword",0.35),("Crystal Core Wand",0.30),("Warlock's Dread Staff",0.25),
-         ("Bloodstone Band",0.25),("Shadowmark Signet",0.20),("Hunter's Fang",0.18),
-         ("Crystal Bead Necklace",0.18),("Iron Chain Mail",0.15),("Shadow Leathers",0.12),
-         ("Iron Shard",0.25),("Fortune Coin",0.10),("Hawk Eye Medallion",0.08),
-         ("Enchanting Scroll",0.10),
-         ("Templar's Helm",0.15),("Void Cowl",0.15),
-         ("Templar's Gauntlets",0.15),("Shadow Wraps",0.15),
-         ("Templar's Sabatons",0.15),("Void Walkers",0.15),
-         ("Templar's Visor",0.15),("Assassin's Veil",0.15),
-     ]},
-    {"name":"The Citadel Siege","min_level":10,"waves":3,"wave_boss_key":"5 ball",
-     "wave_enemies":[{"name":"Ashen Wraith","hp":1000,"dmg_min":65,"dmg_max":100},
-                     {"name":"Void Specter","hp":1500,"dmg_min":85,"dmg_max":130},
-                     {"name":"Break Titan","hp":2000,"dmg_min":100,"dmg_max":150}],
-     "exp_reward":3000,"gold_reward":700,
-     "loot_table":[
-         ("Warlord's Edge",0.30),("Void Channel Staff",0.20),("Ferrule Dart",0.25),
-         ("War Master's Clasp",0.22),("Phantom Loop",0.18),("Warrior's Band",0.16),
-         ("Mage's Coil",0.15),("Stone Heart",0.18),("Beast Fang Chain",0.15),
-         ("Traveler's Compass",0.12),("The Storm Torc",0.12),
-         ("Iron Shard",0.35),("Enchanting Scroll",0.20),("Scroll of Revival",0.08),
-         ("Battleborn Crown",0.12),("Phantom Visage",0.12),
-         ("Battleborn Gauntlets",0.12),("Void Gloves",0.12),
-         ("Battleborn Treads",0.12),("Phantom Boots",0.12),
-         ("Phantom Mask",0.12),("Void Visor",0.12),
-     ]},
-    {"name":"The Final Sanctum  -  Endgame","min_level":15,"waves":4,"wave_boss_key":"8 ball",
-     "wave_enemies":[{"name":"Shadow Knight","hp":2500,"dmg_min":100,"dmg_max":160},
-                     {"name":"Void Ball","hp":3500,"dmg_min":130,"dmg_max":200},
-                     {"name":"Cursed Sentinel","hp":5000,"dmg_min":150,"dmg_max":230},
-                     {"name":"Doom Cluster","hp":6000,"dmg_min":180,"dmg_max":260}],
-     "exp_reward":8000,"gold_reward":2000,
-     "loot_table":[
-         ("Ruinblade",0.12),("The Mind's Eye",0.10),("Rune Ring",0.15),
-         ("Twin Strike Ring",0.18),("Eye of the Void",0.16),("Void Circle",0.14),
-         ("War Knuckle",0.14),("Cleric's Band",0.12),("Runed Heart",0.14),
-         ("The Shadow Whisper",0.12),("Guardian's Talisman",0.10),
-         ("Shard of the Void",0.06),("Ring of the Endless",0.05),("The Warlord's Ring",0.04),
-         ("The Eternal Ring",0.04),("Iron Shard",0.50),("Enchanting Scroll",0.35),
-         ("Scroll of Revival",0.15),
-         ("Helm of the Eternal",0.06),("Crown of the Void",0.02),
-         ("Gauntlets of the Eternal",0.06),("Hands of the Void",0.02),
-         ("Boots of the Eternal",0.06),("Steps of the Void",0.02),
-         ("Mask of the Eternal",0.06),("Face of the Void",0.02),
-     ]},
-]
 
-SOLO_RAID_TIERS = [
-    {"name":"The Quiet Ruins","min_level":1,"wave_boss_key":"1 ball",
-     "wave_enemies":[
-         {"name":"Young Raider","hp":140,"dmg_min":12,"dmg_max":26},
-         {"name":"Dungeon Brawler","hp":220,"dmg_min":18,"dmg_max":35},
-     ],
-     "exp_reward":280,"gold_reward":70,
-     "loot_table":[
-         ("Iron Broadsword",0.40),("Rusty Shiv",0.35),("Iron Shard Ring",0.30),
-         ("Worn Leather Band",0.28),("Scout's Pendant",0.25),("Brass Ring",0.22),
-         ("Traveler's Coin",0.18),("Silk Band",0.12),("Obsidian Stud",0.10),
-         ("Iron Shard",0.15),("Health Potion",0.25),
-         ("Chain Coif",0.18),("Shadow Hood",0.18),
-         ("Chain Gauntlets",0.18),("Rogue's Wraps",0.18),
-         ("Chain Boots",0.18),("Shadow Treads",0.18),
-         ("Shadow Mask",0.18),("War Paint Mask",0.18),
-     ]},
-    {"name":"The Side Pocket Run","min_level":5,"wave_boss_key":"3 ball",
-     "wave_enemies":[
-         {"name":"Stone Bruiser","hp":340,"dmg_min":28,"dmg_max":52},
-         {"name":"Rail Runner","hp":540,"dmg_min":38,"dmg_max":68},
-         {"name":"Dungeon Rogue","hp":760,"dmg_min":48,"dmg_max":82},
-     ],
-     "exp_reward":620,"gold_reward":170,
-     "loot_table":[
-         ("Steel Knight Sword",0.32),("Crystal Core Wand",0.28),("Warlock's Dread Staff",0.22),
-         ("Bloodstone Band",0.24),("Shadowmark Signet",0.20),("Hunter's Fang",0.16),
-         ("Crystal Bead Necklace",0.16),("Iron Shard",0.28),
-         ("Fortune Coin",0.10),("Hawk Eye Medallion",0.07),
-         ("Enchanting Scroll",0.08),
-         ("Templar's Helm",0.15),("Void Cowl",0.15),
-         ("Templar's Gauntlets",0.15),("Shadow Wraps",0.15),
-         ("Templar's Sabatons",0.15),("Void Walkers",0.15),
-         ("Templar's Visor",0.15),("Assassin's Veil",0.15),
-     ]},
-    {"name":"The One-Man Break","min_level":10,"wave_boss_key":"5 ball",
-     "wave_enemies":[
-         {"name":"Iron Enforcer","hp":850,"dmg_min":55,"dmg_max":85},
-         {"name":"Shadow Wraith","hp":1280,"dmg_min":72,"dmg_max":110},
-         {"name":"The Closer's Shadow","hp":1700,"dmg_min":88,"dmg_max":132},
-     ],
-     "exp_reward":1350,"gold_reward":400,
-     "loot_table":[
-         ("Warlord's Edge",0.28),("Void Channel Staff",0.18),("Ferrule Dart",0.24),
-         ("War Master's Clasp",0.20),("Phantom Loop",0.16),("Warrior's Band",0.14),
-         ("Mage's Coil",0.14),("Stone Heart",0.16),("Beast Fang Chain",0.14),
-         ("Iron Shard",0.35),("Enchanting Scroll",0.18),("Scroll of Revival",0.07),
-         ("Battleborn Crown",0.12),("Phantom Visage",0.12),
-         ("Battleborn Gauntlets",0.12),("Void Gloves",0.12),
-         ("Battleborn Treads",0.12),("Phantom Boots",0.12),
-         ("Phantom Mask",0.12),("Void Visor",0.12),
-     ]},
-    {"name":"The Ghost Run","min_level":15,"wave_boss_key":"8 ball",
-     "wave_enemies":[
-         {"name":"Void Knight","hp":2000,"dmg_min":88,"dmg_max":145},
-         {"name":"8Ball Phantom","hp":3000,"dmg_min":112,"dmg_max":180},
-         {"name":"The Dead Stroke","hp":4000,"dmg_min":132,"dmg_max":210},
-         {"name":"Final Ghost","hp":5000,"dmg_min":150,"dmg_max":240},
-     ],
-     "exp_reward":3400,"gold_reward":1200,
-     "loot_table":[
-         ("Rune Ring",0.14),("Twin Strike Ring",0.16),("Eye of the Void",0.14),
-         ("Void Circle",0.12),("War Knuckle",0.12),("Cleric's Band",0.10),
-         ("Runed Heart",0.12),("The Shadow Whisper",0.10),("Guardian's Talisman",0.09),
-         ("Shard of the Void",0.05),("Ring of the Endless",0.04),("The Warlord's Ring",0.03),
-         ("The Eternal Ring",0.03),("Iron Shard",0.50),("Enchanting Scroll",0.30),
-         ("Scroll of Revival",0.12),
-         ("Helm of the Eternal",0.06),("Crown of the Void",0.02),
-         ("Gauntlets of the Eternal",0.06),("Hands of the Void",0.02),
-         ("Boots of the Eternal",0.06),("Steps of the Void",0.02),
-         ("Mask of the Eternal",0.06),("Face of the Void",0.02),
-     ]},
-]
 
 WORLD_ZONES = [
     {
@@ -7952,10 +7658,6 @@ async def _dng_award_and_extract(uid, bot, p, state, narr_key="extract"):
     )
     await _dng_final_card(bot, state["chat_id"], state["msg_id"], text)
 
-def _dng_cancel_ticker(uid):
-    task = _dng_timers.pop(uid, None)
-    if task and not task.done():
-        task.cancel()
 
 _MAGIC_LINES = ("mage", "priest", "botanist", "enchantress")
 
@@ -9124,21 +8826,11 @@ def time_until(ts):
 def set_status(p, key, duration_seconds):
     p[key] = (datetime.now() + timedelta(seconds=duration_seconds)).isoformat()
 
-def set_charges(p, key, count):
-    """Set an integer-based charge/turn counter for a status effect."""
-    p[key] = max(0, int(count))
 
 def add_charges(p, key, count):
     """Add to an existing integer charge counter (stacks)."""
     p[key] = safe_int(p.get(key)) + max(0, int(count))
 
-def consume_charge(p, key):
-    """Decrement a charge counter by 1. Returns True if it was consumed."""
-    n = safe_int(p.get(key))
-    if n > 0:
-        p[key] = n - 1
-        return True
-    return False
 
 def get_active_statuses(p):
     statuses = []
@@ -9269,18 +8961,7 @@ def get_equipped_shield(p):
     if not name: return None
     return SHIELDS.get(name)
 
-def get_equipped_accessory(p):
-    name = p.get("equipped_accessory")
-    if not name: return None
-    return ACCESSORIES.get(name)
 
-def get_all_equipped_accessories(p):
-    """Return list of all equipped accessory names (non-None only)."""
-    names = []
-    for slot in ("equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4"):
-        n = p.get(slot)
-        if n: names.append(n)
-    return names
 
 def _first_free_acc_slot(p):
     """Return the key of the first empty accessory slot, or 'equipped_accessory' if all full."""
@@ -9587,12 +9268,7 @@ def get_primary_stat(p):
     if not cls: return "STR"
     return cls.get("primary_stat", "STR")
 
-def get_all_skills(p):
-    """Return all skills unlocked by player across all class tiers."""
-    return sjl(p.get("all_skills"), [])
 
-def get_class_path(p):
-    return p.get("class_path")  # "A" or "B" or None
 
 def get_combat_skills(p, skip_types=None):
     """Return skills for the player's current class path only.
@@ -12771,16 +12447,6 @@ def grant_loot_item(p, item_name):
     suffix = apply_drop_bonuses(p, item_name)
     return f"{item_name}{suffix}"
 
-def get_random_item_by_rarity(rarity):
-    """Get a random item of a given rarity from all item pools."""
-    pool = []
-    for name, data in WEAPONS.items():
-        if data["rarity"] == rarity: pool.append(name)
-    for name, data in ARMORS.items():
-        if data["rarity"] == rarity: pool.append(name)
-    for name, data in ACCESSORIES.items():
-        if data["rarity"] == rarity: pool.append(name)
-    return random.choice(pool) if pool else None
 
 def roll_loot_table(loot_table, p=None, boss=False):
     _RARITY_CHANCE = {"common":0.50,"uncommon":0.30,"rare":0.15,"epic":0.07,"legendary":0.03}
@@ -13284,9 +12950,6 @@ async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── PVP COMBAT HELPERS ────────────────────────────────────────────────────────
 
-def _pvp_pokemon_card(viewer_uid, a, d, pair):
-    viewer_p, opp_p = (a, d) if viewer_uid == a["user_id"] else (d, a)
-    return _pvp_fight_card(viewer_p, opp_p, "", pair)
 
 
 def _pvp_log_append(pair, entry):
@@ -15773,11 +15436,6 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update, msg, delay=30)
 
 # ── STATS ─────────────────────────────────────────────────────────────────────
-def _exp_bar(current, needed, length=10):
-    pct    = min(1.0, current / max(1, needed))
-    filled = round(pct * length)
-    bar    = "█" * filled + "░" * (length - filled)
-    return f"✨ [{bar}] {fmt_num(current)}/{fmt_num(needed)} EXP ({int(pct*100)}%)"
 
 def get_fame_tier(n):
     tiers = [
@@ -16132,13 +15790,6 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_stats_page(update, target_uid, page=1, caller_name=caller_name)
 
 # ── BOSS ──────────────────────────────────────────────────────────────────────
-def _roll_boss_loot(boss_data):
-    table = boss_data.get("loot_table",[])
-    if not table: return None
-    name, rarity = random.choice(table)
-    if name in WEAPONS or name in ARMORS or name in ACCESSORIES:
-        return name
-    return None
 
 # ── RAID ──────────────────────────────────────────────────────────────────────
 async def raid_cmd(update, context):
@@ -17235,55 +16886,7 @@ async def explore_zone_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # ── GUILD ─────────────────────────────────────────────────────────────────────
-async def purge_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Exorcist or anyone can purge the cursed event."""
-    chat_id = update.effective_chat.id; user = update.effective_user
-    event = active_events.get(chat_id)
-    if not event or event["key"] != "cursed": return
-    active_events.pop(chat_id, None)
-    target_id = event.get("cursed_player_id")
-    if target_id:
-        tp = get_player(target_id)
-        if tp:
-            tp["passive_cooldowns"] = json.dumps({
-                k:v for k,v in safe_cds(tp).items() if k != "cursed_until"})
-            save_player(tp)
-    await send_group(update, f"✨ *{user.first_name}* purges the curse! The afflicted player is free.", delay=20)
 
-async def _handle_drake_strike(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /strike reply to Wild Drake event message."""
-    user = update.effective_user; p = get_player(user.id); chat_id = update.effective_chat.id
-    if not p or is_defeated(p): return
-    drake = active_drakes.get(chat_id)
-    if not drake: return
-    w   = get_weather(); dmg = calc_attack_damage(p, w)
-    drake["hp"] = max(0, drake["hp"] - dmg)
-    drake.setdefault("fighters",{})
-    drake["fighters"][user.id] = drake["fighters"].get(user.id,0) + dmg
-
-    if drake["hp"] <= 0:
-        active_drakes.pop(chat_id, None)
-        total_dmg = sum(drake["fighters"].values())
-        lines = ["🐉 *The Wild Drake has been slain!*\n"]
-        for fid, fd in drake["fighters"].items():
-            fp = get_player(fid)
-            if not fp: continue
-            share = fd / max(1, total_dmg)
-            exp   = round(exp_share(fp["level"], 0.30) * share)
-            loot  = None
-            if random.random() < share * 0.5:
-                loot = roll_loot_table([(n,c) for n,c in drake.get("loot_table",[])])
-            if loot: add_item(fp, loot)
-            lmsgs, leveled = add_exp(fp, exp); save_player(fp)
-            lines.append(f"✅ *{fp['username']}*  -  {int(share*100)}% dmg | +{fmt_num(exp)} EXP"
-                         + (f" | 🎒 {loot}" if loot else ""))
-            if leveled and fp["level"] % 10 == 0:
-                asyncio.create_task(announce(context.bot, chat_id,
-                    f"🎉 *{fp['username']}* reached *Level {fp['level']}*! 🐉", delay=30))
-        await announce(context.bot, chat_id, "\n".join(lines), delay=90)
-    else:
-        await announce(context.bot, chat_id,
-            f"🐉 *{user.first_name}* hits the Drake for *{dmg}*! ❤️ HP: {drake['hp']}/500")
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -17317,7 +16920,6 @@ async def shoplegend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update, text, delay=60, reply_markup=markup)
 
 # ── INVENTORY / EQUIP / USE / SELL ────────────────────────────────────────────
-INV_SECTIONS = ["Equipped", "Weapons", "Armors", "Shields", "Accessories", "Hats", "Gloves", "Boots", "Masks", "Consumables", "Materials"]
 
 def _build_inv_sections(p):
     """Return ordered list of section names that have content for this player."""
@@ -18622,159 +18224,6 @@ async def boss_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         pass
 
-async def _attack_boss(update, context, p, boss_dict, chat_id):
-    """Handle /attack routing to boss fight."""
-    user = update.effective_user
-    is_secret = chat_id in secret_boss_active
-
-    if is_defeated(p):
-        await send_group(update, _defeated_msg(p), delay=15); return
-    _cc = _consume_cc(p)
-    if _cc:
-        await send_group(update, _cc, delay=9); return
-
-    # Auto-join and init raid HP if not in participants
-    if user.id not in [u["id"] for u in boss_dict["participants"]]:
-        boss_dict["participants"].append({"id": user.id, "name": user.first_name, "dmg": 0})
-        if "player_hp" not in boss_dict:
-            boss_dict["player_hp"] = {}
-            boss_dict["player_max_hp"] = {}
-        mhp = calc_max_hp(p)
-        boss_dict["player_hp"][user.id] = min(mhp, max(1, safe_int(p.get("hp")) or mhp))
-        boss_dict["player_max_hp"][user.id] = mhp
-    elif "player_hp" not in boss_dict:
-        # Init for existing participants (first attack after boss spawned)
-        boss_dict["player_hp"] = {}
-        boss_dict["player_max_hp"] = {}
-        for u in boss_dict["participants"]:
-            pp = get_player(u["id"])
-            if pp:
-                mhp = calc_max_hp(pp)
-                boss_dict["player_hp"][u["id"]] = min(mhp, max(1, safe_int(pp.get("hp")) or mhp))
-                boss_dict["player_max_hp"][u["id"]] = mhp
-    participant = next(u for u in boss_dict["participants"] if u["id"] == user.id)
-
-    w = get_weather()
-    dmg = calc_attack_damage(p, w)
-    if check_crit(p): dmg = apply_crit(p, dmg)
-    if safe_int(p.get("charging_killshot")):
-        p["charging_killshot"] = 0; dmg = get_stat(p, "AGI") * 4
-
-    boss_dict["hp"] = max(0, boss_dict["hp"] - dmg)
-    participant["dmg"] += dmg
-    for _d, _e, _g in track_objective(p, "boss_attempt"):
-        p["gold"] = p.get("gold",0) + _g; add_exp(p, _e)
-    save_player(p)
-
-    # Class companion auto-proc in boss fights (all classes)
-    _boss_cc_extra = []
-    def _boss_cc_deal(raw):
-        boss_dict["hp"] = max(0, boss_dict["hp"] - raw)
-        participant["dmg"] += raw
-        return raw
-    for _cc_ln in _class_companion_strike(p, _boss_cc_deal):
-        _boss_cc_extra.append(_cc_ln)
-
-    lines = [
-        f"⚔️ *{user.first_name}* strikes *{boss_dict['data']['name']}* for *{dmg}!*",
-        f"❤️ Boss HP: {boss_dict['hp']}/{boss_dict['data']['max_hp']}"
-    ] + _boss_cc_extra
-
-    # Pet attacks alongside player (with skill proc)
-    _boss_pet = get_active_pet_record(user.id)
-    if _boss_pet:
-        _pet_atk    = _pet_combat_atk(_boss_pet, p)
-        _sp_pet     = PET_SPECIES.get(_boss_pet.get("species"), {})
-        _pname      = _pet_display_name(_boss_pet)
-        _pers       = _sp_pet.get("personality", "calm")
-        _emoji_p    = _sp_pet.get("emoji", "🐾")
-        _battle_msg = PERSONALITY_BATTLE.get(_pers, "attacks")
-        _skill_fired, _pskill = _pet_skill_check(_boss_pet)
-        if _skill_fired and _pskill:
-            _pet_atk   = round(_pet_atk * _pskill["mult"])
-            _skill_tag = f" _{_pskill['name']}_"
-        else:
-            _skill_tag = ""
-        boss_dict["hp"] = max(0, boss_dict["hp"] - _pet_atk)
-        participant["dmg"] += _pet_atk
-        lines.append(f"{_emoji_p} *{_pname}* {_battle_msg} for *{_pet_atk}*{_skill_tag}!")
-
-    # Boss counter-attack (90% chance)
-    alive = [u for u in boss_dict["participants"]
-             if not is_defeated(get_player(u["id"])) and boss_dict.get("player_hp",{}).get(u["id"],1) > 0]
-    if alive and boss_dict["hp"] > 0 and random.random() < 0.90:
-        # Boss can hit 1 or 2 players (30% chance for 2)
-        hit_count = 2 if random.random() < 0.30 else 1
-        targets = random.sample(alive, min(hit_count, len(alive)))
-        for target in targets:
-            tp = get_player(target["id"])
-            if tp and not is_defeated(tp):
-                raw = random.randint(boss_dict["data"]["dmg_min"], boss_dict["data"]["dmg_max"])
-                edm = calc_defense(tp, raw)
-                boss_dict["player_hp"][target["id"]] = max(0,
-                    boss_dict["player_hp"].get(target["id"], calc_max_hp(tp)) - edm)
-                php  = boss_dict["player_hp"][target["id"]]
-                pmhp = boss_dict["player_max_hp"].get(target["id"], calc_max_hp(tp))
-                if php == 0:
-                    exp_loss = apply_pvp_death(tp, killer_name=boss_dict['data']['name'], cause="Boss")
-                    asyncio.create_task(_notify_defeat(context.bot, tp, boss_dict['data']['name'] + " (Boss)"))
-                    save_player(tp)
-                    lines.append(f"💀 *{boss_dict['data']['name']}* KILLS *{target['name']}*! 30min defeat. -{fmt_num(exp_loss)} EXP.")
-                else:
-                    lines.append(f"💥 *{boss_dict['data']['name']}* hits *{target['name']}* for *{edm}!* ({php}/{pmhp} HP)")
-                save_player(tp)
-
-    # All dead check
-    alive_after = [u for u in boss_dict["participants"]
-                   if not is_defeated(get_player(u["id"])) and boss_dict.get("player_hp",{}).get(u["id"],1) > 0]
-    if not alive_after and boss_dict["hp"] > 0:
-        if is_secret: secret_boss_active.pop(chat_id, None)
-        else: active_bosses.pop(chat_id, None)
-        lines.append("💀 *ALL PLAYERS DEFEATED!* The boss wins...")
-        save_player(p); await send_group(update, "\n".join(lines), delay=30); return
-
-    if boss_dict["hp"] <= 0:
-        data = boss_dict["data"]
-        if is_secret: secret_boss_active.pop(chat_id, None)
-        else: active_bosses.pop(chat_id, None)
-        lines.append(f"\n🏆 *{data['name']} DEFEATED!*\n")
-        w2 = get_weather()
-        for u in boss_dict["participants"]:
-            pp = get_player(u["id"])
-            if not pp: continue
-            # Sync boss instance HP back to real HP
-            inst_hp = boss_dict.get("player_hp", {}).get(u["id"])
-            if inst_hp is not None and not is_defeated(pp):
-                pp["hp"] = max(1, inst_hp)
-            pp["gold"] = pp.get("gold", 0) + data["gold"]
-            for loot in _boss_guaranteed_loot(pp):
-                add_item(pp, loot); r = ""
-                for pool in [WEAPONS, ARMORS, ACCESSORIES, HATS, GLOVES, BOOTS, MASKS]:
-                    if loot in pool: r = RARITY_EMOJI.get(pool[loot].get("rarity",""),""); break
-                lines.append(f"🎒 *{pp['username']}* found: {r} *{loot}*!")
-            if award_title(pp, data["title"]):
-                lines.append(f"🏅 *{pp['username']}* earned: *{data['title']}*!")
-            _braid_exp = exp_share(pp["level"], 0.10)
-            add_exp(pp, _braid_exp, w2)
-            _add_influence(pp, 3)
-            save_player(pp)
-            lines.append(f"✅ *{pp['username']}*  -  +{fmt_num(_braid_exp)} EXP | +{data['gold']} Gold")
-
-    # Delete the /attack command message, then edit the boss card in place
-    try: await update.message.delete()
-    except Exception: pass
-    boss_dead = boss_dict["hp"] <= 0
-    card_msg_id = boss_dict.get("card_msg_id")
-    if card_msg_id:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id, message_id=card_msg_id,
-                text="\n".join(lines)[:4096], parse_mode="Markdown",
-                reply_markup=None if boss_dead else _build_boss_markup(boss_dict.get("summoner_id", user.id)))
-        except Exception:
-            await announce(update.get_bot(), chat_id, "\n".join(lines), delay=60)
-    else:
-        await announce(update.get_bot(), chat_id, "\n".join(lines), delay=60)
 
 
 
@@ -18919,17 +18368,6 @@ async def _dispatch_secret_quest(uid: int, bot):
     try: await bot.send_message(uid, dm, parse_mode="Markdown")
     except: pass
 
-async def _try_complete_quest_social(p, action, target_id, bot):
-    q = sjl(p.get("active_quest"), None)
-    if not q or q.get("type") != "social" or q.get("action") != action: return
-    if q.get("target_id") != target_id: return
-    if q.get("expires", 0) < time.time(): p["active_quest"] = None; save_player(p); return
-    inf_r = q.get("reward_inf", 15)
-    exp_r = exp_share(p["level"], min(0.15, q.get("reward_exp", 200) / 900 * 0.15))
-    add_exp(p, exp_r); _add_influence(p, inf_r)
-    p["active_quest"] = None; save_player(p)
-    try: await bot.send_message(p["user_id"], f"✅ *Assignment complete.*\n\nThe Order takes note.\n\n+{fmt_num(exp_r)} EXP  +{inf_r} Influence", parse_mode="Markdown")
-    except: pass
 
 def _phrase_norm(s):
     """Normalize for phrase matching: lowercase, strip ALL punctuation
@@ -19324,8 +18762,6 @@ async def megaphone_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("Failed to send — make sure the bot is still in the group.")
 
-async def megaphone_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pass
 
 async def rumor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(update.effective_user.id)
@@ -22737,8 +22173,10 @@ async def _execute_skill(update, context, p, sk):
 async def weather_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     w = get_weather()
     hint = "\n🌑 _Something stirs in the shadows..._" if w.get("secret_eligible") else ""
+    flavor = random.choice(w.get("flavors", [w.get("desc", "The world shifts.")]))
+    emoji = w.get("emoji", "🌦️")
     await send_group(update,
-        f"🌦️ *Table Conditions: {w['name']}*\n_{w['desc']}_\n\n"
+        f"{emoji} *Table Conditions: {w['name']}*\n_{flavor}_\n\n"
         f"📈 EXP x{w['exp_mod']} | ⚔️ DMG x{w['dmg_mod']}{hint}", delay=15)
 
 async def killcondition_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -24643,13 +24081,6 @@ def calc_combat_power(p):
             pet_val = safe_int(_pet.get("level", 1)) * 5 + safe_int(_pet.get("evolution_stage", 0)) * 50
     return level_val + stat_total + weapon_val + armor_val + skill_val + enchant_val + passive_val + pet_val
 
-def calc_dungeon_cp(p):
-    sd = safe_stats(p)
-    return (p["level"] * 8
-            + sum(sd.values())
-            + get_weapon_atk(p) * 3
-            + get_armor_def(p) * 2
-            + len(sjl(p.get("all_skills"),[])) * 30)
 
 # ── SOCIAL SYSTEM HELPERS ─────────────────────────────────────────────────────
 def _social_name(tg_user):
@@ -24940,9 +24371,6 @@ def _holdhands_duration(since_iso: str) -> str:
 
 # ── PARTY COMMANDS ────────────────────────────────────────────────────────────
 
-def _party_guard(update, p):
-    """Returns player or None after sending error."""
-    return p  # caller already checked
 
 
 async def _party_menu(update_or_none, p, query=None):
@@ -31629,168 +31057,6 @@ POOL_SHOTS = [
 ]
 
 # Rolled on every /pool use as a secondary item chance
-POOL_ITEM_TABLE = [
-    # ── Common weapons ──
-    ("Iron Broadsword",0.018),("Rusty Shiv",0.018),("Steel Knight Sword",0.012),
-    # ── Common weapons — new classes ──
-    ("Seedling Wand",0.018),("Briar Rod",0.018),
-    ("Charmed Birch Wand",0.018),("Hexmark Rod",0.018),
-    ("Runic Training Blade",0.018),("Iron Rune Greatsword",0.018),
-    ("Dancing Blade",0.018),("Featherlight Star",0.018),
-    # ── Common armors ──
-    ("Rusty Iron Vest",0.018),("Padded Cloth Armor",0.018),("Studded Leather Plate",0.012),
-    # ── Common armors — new classes ──
-    ("Woven Herb Robe",0.018),("Charmed Silk Robe",0.018),
-    ("Runic Iron Vest",0.018),("Dancer's Silk Wrap",0.018),
-    # ── Common accessories ──
-    ("Iron Shard Ring",0.020),("Worn Leather Band",0.020),("Scout's Pendant",0.018),
-    ("Brass Ring",0.016),("Traveler's Coin",0.016),
-    # ── Uncommon weapons ──
-    ("Crystal Core Wand",0.008),("Warlock's Dread Staff",0.007),("Bloodsteel Shuriken",0.007),
-    # ── Uncommon weapons — new classes ──
-    ("Thornwood Wand",0.007),("Poison Vine Staff",0.007),
-    ("Binding Wand",0.007),("Cursed Branch",0.007),
-    ("Einherjar's Edge",0.007),("Storm Claymore",0.007),
-    ("Silver Step Dagger",0.007),("Phantom Arc",0.007),
-    # ── Uncommon armors ──
-    ("Iron Chain Mail",0.008),("Shadow Leathers",0.007),("Soldier's Plating",0.007),
-    # ── Uncommon armors — new classes ──
-    ("Druid's Leaf Vestment",0.007),("Beguiler's Mantle",0.007),
-    ("Shieldmaiden's Mail",0.007),("Phantom Dancer's Leathers",0.007),
-    # ── Uncommon accessories ──
-    ("Silk Band",0.008),("Rune Ring",0.008),("Obsidian Stud",0.007),
-    ("Bloodstone Band",0.007),("Shadowmark Signet",0.006),("Hunter's Fang",0.006),
-    ("Crystal Bead Necklace",0.006),
-    # ── Rare weapons ──
-    ("Warlord's Edge",0.003),("Void Channel Staff",0.003),("Gnarled Twig Wand",0.002),
-    ("The Mind's Eye",0.002),
-    # ── Rare weapons — new classes ──
-    ("Nature's Grasp",0.002),("Verdant Branch",0.002),
-    ("Enchanter's Wand",0.002),("Vexmark Staff",0.002),
-    ("Valiant Blade",0.002),("Thunder Greatsword",0.002),
-    ("Danse Blade",0.002),("Ethereal Star",0.002),
-    ("Asp's Edge",0.002),("Fang of the Viper",0.002),
-    ("King Cobra Claymore",0.002),("Warlord's Coil Blade",0.002),
-    # ── Rare armors ──
-    ("Steel Breastplate",0.003),("Knight's Plate Armor",0.003),("Nightstalker's Vest",0.002),
-    # ── Rare armors — new classes ──
-    ("Nature's Woven Robe",0.002),("Hex Dancer's Robe",0.002),
-    ("Valkyrior Plate",0.002),("Ghoststep Vest",0.002),
-    # ── Rare accessories ──
-    ("Fortune Coin",0.003),("War Master's Clasp",0.003),("Hawk Eye Medallion",0.003),
-    ("Phantom Loop",0.002),("Warrior's Band",0.002),("Mage's Coil",0.002),
-    ("Stone Heart",0.002),("Beast Fang Chain",0.002),("Traveler's Compass",0.002),
-    ("The Storm Torc",0.002),
-    # ── Common shields & claws ──
-    ("Wooden Buckler",0.015),("Battered Iron Shield",0.015),
-    ("Iron Claw Brace",0.015),("Spiked Knuckle Claw",0.015),
-    # ── Uncommon shields & claws ──
-    ("Soldier's Kite Shield",0.007),("Iron Heater Shield",0.007),
-    ("Razor Claw Gauntlet",0.007),("Hunting Claws",0.007),
-    # ── Rare shields ──
-    ("Knight's Bulwark",0.002),("Steel Tower Shield",0.002),
-    # ── Rare claws ──
-    ("Assassin's Talon",0.002),("Shadow Rend Claw",0.002),
-    # ── Epic weapons ──
-    ("Ruinblade",0.0005),("Shadow Death Star",0.0005),
-    # ── Epic weapons — new classes ──
-    ("Wildflower Scepter",0.0004),("Nature's Wrath Staff",0.0004),
-    ("Grand Muse Scepter",0.0004),("Dread Empress Staff",0.0004),
-    ("Runeblade",0.0004),("Divine Tempest Blade",0.0004),
-    ("Danse Macabre Blade",0.0004),("Ethereal Shuriken",0.0004),
-    # ── Epic weapons — serpent ──
-    ("Neurotoxin Blade",0.0004),("Ophidian's Kiss",0.0004),
-    ("Serpent Warlord's Edge",0.0004),("Ancient Coil Sword",0.0004),
-    # ── Epic armors ──
-    ("Void-Touched Robe",0.0005),("Indomitable Plate",0.0005),
-    # ── Epic armors — new classes ──
-    ("Bloom Sage Vestment",0.0004),("Empress's Vestment",0.0004),
-    ("Einherjar's Plate",0.0004),("Danse Macabre Armor",0.0004),
-    # ── Epic accessories ──
-    ("Twin Strike Ring",0.0005),("Eye of the Void",0.0005),("Void Circle",0.0004),
-    ("War Knuckle",0.0004),("Cleric's Band",0.0004),("Runed Heart",0.0004),
-    ("The Shadow Whisper",0.0004),("Guardian's Talisman",0.0004),
-    ("The Crossed Blades Pendant",0.0003),("The Iron and Flame Pendant",0.0003),
-    # ── Epic shields & claws ──
-    ("Holy Pavise",0.0003),("Aegis of the Devoted",0.0003),
-    ("Phantom Rend",0.0003),("Venomous Fang Claw",0.0003),
-    # ── Legendary weapons ──
-    ("Grand Inquisitor's Cross",0.00008),("The Final Judgment",0.00008),
-    # ── Legendary weapons — new classes ──
-    ("Eden's Branch",0.00006),("Grove of Thorns",0.00006),
-    ("Song of the Ancients",0.00006),("The Hex Throne",0.00006),
-    ("Bifrost's Edge",0.00006),("Valhalla's Thunder",0.00006),
-    ("The Last Dance",0.00006),("The Phantom Step",0.00006),
-    # ── Legendary weapons — serpent ──
-    ("Venom of the Ancients",0.00006),("The World Serpent",0.00006),
-    # ── Legendary armors ──
-    ("Dragonscale Plate",0.00008),
-    # ── Legendary armors — new classes ──
-    ("Eden's Weave",0.00006),("The Enchanted Gown",0.00006),
-    ("Odin's Battle Plate",0.00006),("The Phantom Veil",0.00006),
-    # ── Legendary accessories ──
-    ("Shard of the Void",0.00006),("Ring of the Endless",0.00006),
-    ("The Warlord's Ring",0.00005),("The Eternal Ring",0.00005),
-    # ── Legendary shields & claws ──
-    ("The Dead Reckoning",0.00004),("Celestial Bulwark",0.00004),
-    ("The Death Grasp",0.00004),
-    # ── Legendary accessories (missing) ──
-    ("The Last Stand Locket",0.00005),("The Soul Amulet",0.00005),
-    ("The Divine Shard",0.00005),("The Void Mark",0.00005),
-    # ── Legendary 8-Ball items ──
-    ("Enchanted 8-Ball",0.00008),("Ancient 8-Ball",0.00005),
-    # ── Common DEF gear ──
-    ("Leather Cap",0.015),("Iron Skullcap",0.015),
-    ("Worn Leather Gloves",0.015),("Iron Knuckle Guards",0.015),
-    ("Worn Leather Boots",0.015),("Iron Sabatons",0.015),
-    ("Cloth Face Wrap",0.015),("Iron Visor",0.015),
-    # ── Uncommon DEF gear ──
-    ("Chain Coif",0.007),("Shadow Hood",0.007),
-    ("Chain Gauntlets",0.007),("Rogue's Wraps",0.007),
-    ("Chain Boots",0.007),("Shadow Treads",0.007),
-    ("Shadow Mask",0.007),("War Paint Mask",0.007),
-    # ── Rare DEF gear ──
-    ("Templar's Helm",0.002),("Void Cowl",0.002),
-    ("Templar's Gauntlets",0.002),("Shadow Wraps",0.002),
-    ("Templar's Sabatons",0.002),("Void Walkers",0.002),
-    ("Templar's Visor",0.002),("Assassin's Veil",0.002),
-    # ── Epic DEF gear ──
-    ("Battleborn Crown",0.0004),("Phantom Visage",0.0004),
-    ("Battleborn Gauntlets",0.0004),("Void Gloves",0.0004),
-    ("Battleborn Treads",0.0004),("Phantom Boots",0.0004),
-    ("Phantom Mask",0.0004),("Void Visor",0.0004),
-    # ── Legendary DEF gear ──
-    ("Helm of the Eternal",0.00004),("Gauntlets of the Eternal",0.00004),
-    ("Boots of the Eternal",0.00004),("Mask of the Eternal",0.00004),
-    # ── Mythic weapons ──
-    ("Oath of the First Knight",0.000005),("The World Splitter",0.000005),
-    ("Eternal Arcanum",0.000005),("The Void Throne",0.000005),
-    ("The Final Cut",0.000005),("Black Orbit",0.000005),
-    ("The Infinity Quiver",0.000005),("The Endless Bolt",0.000005),
-    ("The Divine Rosary",0.000005),("The Eternal Verdict",0.000005),
-    ("The Root of Worlds",0.000005),("The Primordial Root",0.000005),
-    ("Aria Eternal",0.000005),("Doom's Conduit",0.000005),
-    ("Odin's Chosen Blade",0.000005),("Mjolnir's Rage",0.000005),
-    ("Eternal Waltz",0.000005),("Ethereal Sovereign",0.000005),
-    ("The Last Fang",0.000005),("Ouroboros",0.000005),
-    # ── Mythic armors ──
-    ("The Titan's Aegis Armor",0.000005),("The Eternal Weave",0.000005),
-    ("The Void Walker's Cloak",0.000005),("The Ghost Walker Vest",0.000005),
-    ("Heaven's Blessing Robe",0.000005),("The Living Robe",0.000005),
-    ("Grand Muse's Eternal Robe",0.000005),("The Chooser's Aegis",0.000005),
-    ("Ethereal Dancer's Form",0.000005),
-    # ── Mythic DEF gear ──
-    ("Crown of the Void",0.000003),("Hands of the Void",0.000003),
-    ("Steps of the Void",0.000003),("Face of the Void",0.000003),
-    # ── Mythic shields & claws ──
-    ("The Eternal Oath",0.000003),("Soul Ripper Claw",0.000003),
-    # ── Mythic accessories & 8-Ball ──
-    ("Void 8-Ball",0.000002),
-    # ── Common 8-Ball items ──
-    ("Cracked 8-Ball",0.010),("Magic 8-Ball",0.004),
-    # ── Crafting/consumables ──
-    ("Iron Shard",0.025),("Enchanting Scroll",0.008),("Scroll of Revival",0.003),
-]
 
 def _roll_pool_bonus(p=None):
     """Roll a bonus equip drop from /pool. All item types (weapons, armor, hats, gloves,
