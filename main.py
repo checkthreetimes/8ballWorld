@@ -4385,7 +4385,7 @@ EMPIRE_BUILDINGS = {
         "name": "Forge",         "emoji": "⚒️",
         "desc": "Master craft. Generates Iron Shards. Permanently raises DEF.",
         "requires": ("barracks", 3), "max_level": 10,
-        "generates": {"iron_shard": 0.7},
+        "generates": {"iron_shard": 1.5},
         "stat_bonus": {"DEF": 35},
         "base_cost": {"gold": 9000, "timber": 45, "stone": 50},
         "flavor": [
@@ -4780,6 +4780,16 @@ _SHOP_TAB_SHORT = {
 ENHANCE_COSTS = {1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:18, 9:23, 10:30}
 ENHANCE_RATES = {1:1.00, 2:0.95, 3:0.90, 4:0.85, 5:0.75,
                  6:0.65, 7:0.55, 8:0.45, 9:0.35, 10:0.25}
+# Safe checkpoints: an enhancement failure can drop one level, but never below
+# the highest checkpoint the item has already passed. This caps the old +6
+# death-spiral (protecting the brutal +8→+10 grind) without touching odds.
+ENHANCE_CHECKPOINTS = (5, 8)
+def _enhance_floor_after_fail(lv):
+    """Level after a failed attempt at +lv (downgrades only above +5)."""
+    if lv < 6:
+        return lv
+    floor = max((c for c in ENHANCE_CHECKPOINTS if c <= lv), default=0)
+    return max(lv - 1, floor)
 
 # Every enchant type here is verified to be CONSUMED in combat/economy — no
 # dead effects. Rarity weights bias rolls toward common effects; the rarer the
@@ -6280,6 +6290,11 @@ def _boss_guaranteed_loot(p):
         acc_pool = [n for n,d in ACCESSORIES.items() if d.get("rarity") in ("legendary","mythic")]
         if acc_pool:
             results.append(random.choice(acc_pool))
+
+    # Generous: sometimes a boss drops a duplicate of one of these — a spare copy
+    # to feed straight into /reinforce.
+    if results and random.random() < 0.35:
+        results.append(random.choice(results))
 
     return results
 
@@ -12454,6 +12469,12 @@ def add_item(p, item_name):
 
 def grant_loot_item(p, item_name):
     """Add item to inventory and apply drop bonuses. Returns display string like 'Sword +3 ✨(Flaming)'."""
+    # Iron Shards drop in a stack so the crafting sink actually keeps pace.
+    if item_name == "Iron Shard":
+        n = random.randint(2, 4)
+        for _ in range(n):
+            add_item(p, "Iron Shard")
+        return f"Iron Shard ×{n}"
     add_item(p, item_name)
     suffix = apply_drop_bonuses(p, item_name)
     return f"{item_name}{suffix}"
@@ -22517,6 +22538,12 @@ async def war_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
+def _daily_shard_reward(streak):
+    """Iron Shards from the daily claim, scaling generously with streak (capped)."""
+    if streak < 3:
+        return 0
+    return min(2 + (streak - 3) // 3, 12)
+
 async def claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
 
@@ -22553,15 +22580,12 @@ async def claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Rewards scale with streak
     gold_reward  = 50 + min(streak * 10, 200)
-    slate_count  = 1 if streak >= 3 else 0
-    scale_count  = 1 if streak >= 7 else 0
+    shard_count  = _daily_shard_reward(streak)
     bonus_scroll = streak >= 14
 
     inv = sjl(p.get("inventory"), [])
-    if slate_count:
-        inv.extend(["Iron Shard"] * slate_count)
-    if scale_count:
-        inv.extend(["Iron Shard"] * scale_count)
+    if shard_count:
+        inv.extend(["Iron Shard"] * shard_count)
     if bonus_scroll:
         inv.append("Enchanting Scroll")
     p["inventory"] = json.dumps(inv)
@@ -22575,10 +22599,8 @@ async def claim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎁 *Daily Claim — Day {streak}!* {streak_emojis}\n",
         f"💰 +{gold_reward} gold",
     ]
-    if slate_count:
-        lines.append(f"🪨 +{slate_count} Iron Shard (Day 3+ streak)")
-    if scale_count:
-        lines.append(f"🪨 +{scale_count} Iron Shard (Day 7+ streak)")
+    if shard_count:
+        lines.append(f"🪨 +{shard_count} Iron Shard{'s' if shard_count != 1 else ''} (Day 3+ streak, scales up)")
     if bonus_scroll:
         lines.append(f"📜 +1 Enchanting Scroll (Day 14+ streak)")
     lines.append(f"\n_Streak: {streak} day{'s' if streak != 1 else ''} — claim again tomorrow to keep it going!_")
@@ -23218,7 +23240,10 @@ def _build_enh_slot(p, uid, sid, flash=""):
         rate = int(ENHANCE_RATES[nxt] * 100)
         lines.append(f"\nNext → *+{nxt}*   ·   {rate}% success   ·   {cost} 🪨")
         if lv >= 6:
-            lines.append("_⚠️ A failure at +6 or higher drops one level._")
+            floor = max((c for c in ENHANCE_CHECKPOINTS if c <= lv), default=0)
+            lines.append(f"_⚠️ A failure drops one level — but never below the +{floor} checkpoint._")
+        elif lv == 5:
+            lines.append("_🛡️ +5 and +8 are safe checkpoints — you'll never fall below the last one reached._")
         if shards < cost:
             lines.append(f"_Not enough shards for the next level (need {cost})._")
         else:
@@ -23255,8 +23280,10 @@ def _do_enhance_batch(p, sid, n):
         attempts += 1
         if random.random() < ENHANCE_RATES[nxt]:
             set_enhancement(p, name, nxt); succ += 1
-        elif cur >= 6:
-            set_enhancement(p, name, cur - 1); down += 1
+        else:
+            dropped_to = _enhance_floor_after_fail(cur)
+            if dropped_to < cur:
+                set_enhancement(p, name, dropped_to); down += 1
     p["inventory"] = json.dumps(inv)
     end = get_enhancement(p, name)
     save_player(p)
@@ -26568,7 +26595,7 @@ GUIDE_PAGES = [
         "Use /equip to browse your bag and tap to equip. Use /unequip to remove gear.\n"
         "Hats, Gloves, Boots, and Masks are pure DEF items — equip all four to stack serious defense. All can be enhanced, enchanted, and reinforced.\n"
         "/craft  -  🛠️ Crafting Hub — one home for Enhance, Reinforce & Ascend, the Forge, and Permanent ATK. Every menu stays open while you work.\n"
-        "/enhance  -  Upgrade gear +1 to +10 with Iron Shards (+6 ATK/DEF per level). Tap a slot, then ⚒️ ×1 / ×5 / ⬆️ Max to batch it. Higher levels can fail, and a fail at +6 or above drops a level.\n"
+        "/enhance  -  Upgrade gear +1 to +10 with Iron Shards (+6 ATK/DEF per level). Tap a slot, then ⚒️ ×1 / ×5 / ⬆️ Max to batch it. Higher levels can fail and drop a level — but 🛡️ +5 and +8 are safe checkpoints, so you never fall below the last one reached.\n"
         "/enchant  -  Enchanting Hub: up to 3 enchants per gear slot, each a distinct effect (crit, dodge, ATK, DEF, HP, lifesteal, burn, gold%, EXP%...). The menu stays open — enchant slot after slot, or 🎲 Reroll the last enchant into a different one. Costs 1 Enchanting Scroll per action.\n"
         "/reinforce  -  Sacrifice duplicate gear to permanently raise its base stats (+3 ATK/DEF per reinforce, max 20). Tap an item, then 🔨 ×1 / ×5 / ⬆️ Max. Keeps one copy for you to wear.\n"
         "  ⭐ At 20/20 the Ascend button appears — Ascend to ★ tier (+15 flat bonus, resets to 0/20). Up to ★★★.\n"
@@ -30311,10 +30338,11 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         if last_claim != today:
             streak = safe_int(p.get("claim_streak")); streak = streak+1 if last_claim==yesterday else 1
             gold_reward = 50 + min(streak*10, 200); p["gold"] = p.get("gold",0) + gold_reward
-            if streak >= 3:  add_item(p, "Iron Shard")
+            _sh = _daily_shard_reward(streak)
+            for _ in range(_sh): add_item(p, "Iron Shard")
             if streak >= 14: add_item(p, "Enchanting Scroll")
             p["last_claim"] = today; p["claim_streak"] = streak
-            ran.append(f"🎁 Claim: +{gold_reward}g (Day {streak})")
+            ran.append(f"🎁 Claim: +{gold_reward}g" + (f", +{_sh}🪨" if _sh else "") + f" (Day {streak})")
         else: skipped.append("🎁 Claim — already claimed today")
         s_cd = get_shadow(uid)
         pool_ts = p.get("last_pool") or (s_cd.get("last_pool") if s_cd else None)
