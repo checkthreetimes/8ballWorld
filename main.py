@@ -22619,7 +22619,8 @@ def _build_forge_view(p, uid, cat="weapon", craft_msg=""):
         lines.append("\n_Collect materials to unlock craft buttons._")
 
     markup = InlineKeyboardMarkup([[*tab_row]] + craft_buttons + [
-        [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
+        [InlineKeyboardButton("🔙 Crafting", callback_data=f"crhome_{uid}"),
+         InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
     ])
     return "\n".join(lines), markup
 
@@ -22730,22 +22731,9 @@ async def perma_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Spent: {_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}x Iron Shard\n\n"
             f"_Tip: use /perma upgrade again to keep going. Max +{_PERMA_CAP}._", delay=20)
         return
-    # Display menu
-    markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton(
-            f"⚔️ Upgrade (+1 ATK) — {_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}× Iron Shard",
-            callback_data=f"perma_upgrade_{user.id}")
-    ]]) if current < _PERMA_CAP else None
-    inv_ctr = Counter(sjl(p.get("inventory"), []))
-    shards = inv_ctr.get("Iron Shard", 0)
-    status = "✅ MAX" if current >= _PERMA_CAP else f"+{current}/{_PERMA_CAP}"
-    await send_group(update,
-        f"⚔️ *Permanent Damage Upgrades*\n\n"
-        f"Current bonus: *+{current} ATK* per hit ({status})\n"
-        f"Your gold: *{safe_int(p.get('gold', 0))}g* | Iron Shards: *{shards}*\n\n"
-        f"Cost per +1: *{_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}× Iron Shard*\n"
-        f"_Each upgrade permanently adds +1 raw damage to every attack._",
-        reply_markup=markup, delay=20)
+    # Display menu (shared persistent view, also reachable from /craft)
+    text, markup = _build_perma_view(p, user.id)
+    await send_group(update, text, reply_markup=markup, delay=30)
 
 async def perma_upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -22769,20 +22757,9 @@ async def perma_upgrade_callback(update: Update, context: ContextTypes.DEFAULT_T
     p["perm_dmg_bonus"] = current + 1
     save_player(p)
     await query.answer(f"⚔️ Permanent ATK: +{current + 1}!", show_alert=True)
-    new_markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton(
-            f"⚔️ Upgrade (+1 ATK) — {_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}× Iron Shard",
-            callback_data=f"perma_upgrade_{uid}")
-    ]]) if current + 1 < _PERMA_CAP else None
-    inv_ctr2 = Counter(sjl(p.get("inventory"), []))
-    status = "✅ MAX" if current + 1 >= _PERMA_CAP else f"+{current + 1}/{_PERMA_CAP}"
     try:
-        await _q_edit(query, 
-            f"⚔️ *Permanent Damage Upgrades*\n\n"
-            f"Current bonus: *+{current + 1} ATK* per hit ({status})\n"
-            f"Your gold: *{safe_int(p.get('gold', 0))}g* | Iron Shards: *{inv_ctr2.get('Iron Shard', 0)}*\n\n"
-            f"Cost per +1: *{_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}× Iron Shard*",
-            reply_markup=new_markup, parse_mode="Markdown")
+        text, markup = _build_perma_view(p, uid)
+        await _q_edit(query, text, reply_markup=markup, parse_mode="Markdown")
     except Exception: pass
 
 async def title_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -23140,155 +23117,428 @@ async def decline_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_group(update, f"❌ Trade declined.", delay=9)
 
 # ── ENHANCE ───────────────────────────────────────────────────────────────────
+# ── CRAFTING HUB — persistent & batchable (menus stay open) ──────────────────
+# One home for all gear upgrading: Enhance, Reinforce/Ascend, Forge, Perma ATK.
+# Every action re-renders the same message in place, so the menu never closes
+# after a single use. Enhance and Reinforce support ×1 / ×5 / Max batching.
+
+_CRAFT_ENH_SLOTS = [
+    ("⚔️ Weapon", "equipped_weapon", "weapon", "ATK"),
+    ("🛡️ Armor",  "equipped_armor",  "armor",  "DEF"),
+    ("🔰 Shield", "equipped_shield", "shield", "DEF"),
+    ("🎩 Hat",    "equipped_hat",    "hat",    "DEF"),
+    ("🧤 Gloves", "equipped_gloves", "gloves", "DEF"),
+    ("👢 Boots",  "equipped_boots",  "boots",  "DEF"),
+    ("🎭 Mask",   "equipped_mask",   "mask",   "DEF"),
+]
+_CRAFT_ENH_LOOKUP = {sid: (label, key, stat) for label, key, sid, stat in _CRAFT_ENH_SLOTS}
+
+def _craft_iron(p):
+    return sjl(p.get("inventory"), []).count("Iron Shard")
+
+def _reinforce_pool_emoji(item):
+    for pool in (WEAPONS, ARMORS, SHIELDS, HATS, GLOVES, BOOTS, MASKS):
+        if item in pool:
+            return RARITY_EMOJI.get(pool[item].get("rarity", ""), "⚪")
+    return "⚪"
+
+def _is_reinforceable(item):
+    return any(item in pool for pool in (WEAPONS, ARMORS, SHIELDS, HATS, GLOVES, BOOTS, MASKS))
+
+def _reinforce_eq_slots(p):
+    return [p.get("equipped_weapon"), p.get("equipped_armor"), p.get("equipped_shield"),
+            p.get("equipped_hat"), p.get("equipped_gloves"), p.get("equipped_boots"),
+            p.get("equipped_mask"), p.get("equipped_accessory"),
+            p.get("equipped_accessory_2"), p.get("equipped_accessory_3"),
+            p.get("equipped_accessory_4")]
+
+# ---- Hub home ----------------------------------------------------------------
+def _build_craft_home(p, uid, flash=""):
+    inv_ctr = Counter(sjl(p.get("inventory"), []))
+    shards = inv_ctr.get("Iron Shard", 0)
+    gold = safe_int(p.get("gold", 0))
+    lines = ["🛠️ *Crafting Hub*"]
+    if flash:
+        lines.append(flash)
+    lines.append(f"🪨 Iron Shards: *{shards}*    💰 *{gold:,}g*\n")
+    lines.append("Pick a station — every menu stays open while you work:")
+    rows = [
+        [InlineKeyboardButton("⚒️ Enhance Gear",        callback_data=f"crenh_{uid}")],
+        [InlineKeyboardButton("🔨 Reinforce & Ascend",  callback_data=f"crref_{uid}")],
+        [InlineKeyboardButton("⚗️ The Forge",           callback_data=f"crfrg_{uid}")],
+        [InlineKeyboardButton("⚔️ Permanent ATK",       callback_data=f"crprm_{uid}")],
+        [InlineKeyboardButton("❌ Close",               callback_data=f"close_msg_{uid}")],
+    ]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+# ---- Enhance station ---------------------------------------------------------
+def _build_enh_home(p, uid):
+    shards = _craft_iron(p)
+    lines = ["⚒️ *Enhance Gear*",
+             f"🪨 Iron Shards: *{shards}*\n",
+             "_Boost equipped gear up to +10 (+6 {stat}/level). Higher levels can fail, "
+             "and a failure at +6 or above drops a level. Tap a slot:_\n"]
+    rows = []
+    for label, key, sid, stat in _CRAFT_ENH_SLOTS:
+        name = p.get(key)
+        if not name:
+            continue
+        lv = get_enhancement(p, name)
+        tag = "MAX" if lv >= 10 else f"+{lv}"
+        lines.append(f"{label}: *{name}*  ({tag})")
+        rows.append([InlineKeyboardButton(f"{label} — {name} ({tag})",
+                                          callback_data=f"crenhs_{uid}_{sid}")])
+    if not rows:
+        lines.append("_No enhanceable gear equipped. Equip weapons/armor with /equip._")
+    rows.append([InlineKeyboardButton("🔙 Crafting", callback_data=f"crhome_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines).replace("{stat}", "ATK/DEF"), InlineKeyboardMarkup(rows)
+
+def _build_enh_slot(p, uid, sid, flash=""):
+    if sid not in _CRAFT_ENH_LOOKUP:
+        return _build_enh_home(p, uid)
+    label, key, stat = _CRAFT_ENH_LOOKUP[sid]
+    name = p.get(key)
+    if not name:
+        return _build_enh_home(p, uid)
+    lv = get_enhancement(p, name)
+    shards = _craft_iron(p)
+    lines = [f"{label}: *{name}*"]
+    if flash:
+        lines.append(flash)
+    lines.append("")
+    lines.append(f"Level: *+{lv}*   (+{lv * 6} {stat} from enhancement)")
+    lines.append(f"🪨 Iron Shards: *{shards}*")
+    rows = []
+    if lv >= 10:
+        lines.append("\n⭐ *Maxed at +10.*")
+    else:
+        nxt = lv + 1
+        cost = ENHANCE_COSTS[nxt]
+        rate = int(ENHANCE_RATES[nxt] * 100)
+        lines.append(f"\nNext → *+{nxt}*   ·   {rate}% success   ·   {cost} 🪨")
+        if lv >= 6:
+            lines.append("_⚠️ A failure at +6 or higher drops one level._")
+        if shards < cost:
+            lines.append(f"_Not enough shards for the next level (need {cost})._")
+        else:
+            row = [InlineKeyboardButton(f"⚒️ ×1  ({cost}🪨)", callback_data=f"crenhx_{uid}_1_{sid}")]
+            if nxt < 10:
+                row.append(InlineKeyboardButton("⚒️ ×5", callback_data=f"crenhx_{uid}_5_{sid}"))
+                row.append(InlineKeyboardButton("⬆️ Max", callback_data=f"crenhx_{uid}_0_{sid}"))
+            rows.append(row)
+    rows.append([InlineKeyboardButton("🔙 Slots", callback_data=f"crenh_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _do_enhance_batch(p, sid, n):
+    """Run up to n enhance attempts (n<=0 = until +10 or out of shards).
+    Mutates and saves p. Returns a result dict for the flash line."""
+    label, key, stat = _CRAFT_ENH_LOOKUP[sid]
+    name = p.get(key)
+    inv = sjl(p.get("inventory"), [])
+    start = get_enhancement(p, name)
+    attempts = succ = down = shards_used = 0
+    cap = 9999 if n <= 0 else n
+    reason = "done"
+    while attempts < cap:
+        cur = get_enhancement(p, name)
+        if cur >= 10:
+            reason = "maxed"; break
+        nxt = cur + 1
+        cost = ENHANCE_COSTS[nxt]
+        if inv.count("Iron Shard") < cost:
+            reason = "no_shards"; break
+        for _ in range(cost):
+            inv.remove("Iron Shard")
+        shards_used += cost
+        attempts += 1
+        if random.random() < ENHANCE_RATES[nxt]:
+            set_enhancement(p, name, nxt); succ += 1
+        elif cur >= 6:
+            set_enhancement(p, name, cur - 1); down += 1
+    p["inventory"] = json.dumps(inv)
+    end = get_enhancement(p, name)
+    save_player(p)
+    return {"name": name, "stat": stat, "attempts": attempts, "succ": succ,
+            "down": down, "start": start, "end": end, "shards": shards_used, "reason": reason}
+
+def _enh_flash(r):
+    if r["attempts"] == 0:
+        if r["reason"] == "maxed":
+            return f"⭐ *{r['name']}* is already +10 MAX."
+        return "❌ Not enough Iron Shards for the next level."
+    stat, s, e = r["stat"], r["start"], r["end"]
+    if r["attempts"] == 1:
+        if e > s:
+            return f"⚒️ *Success!*   +{s} → *+{e}*   (+{e * 6} {stat})"
+        if e < s:
+            return f"💔 *Failed* — dropped +{s} → *+{e}*.   ({r['shards']}🪨)"
+        return f"💔 *Failed* — stayed at +{s}.   ({r['shards']}🪨)"
+    tail = {"maxed": " · reached +10 MAX", "no_shards": " · out of shards"}.get(r["reason"], "")
+    return (f"⚒️ *{r['attempts']} attempts* — {r['succ']}✅  {r['down']}💔↓\n"
+            f"+{s} → *+{e}*  (+{e * 6} {stat})  ·  {r['shards']}🪨 used{tail}")
+
+# ---- Reinforce station -------------------------------------------------------
+def _reinforce_lists(p):
+    """Return (reinforce_ready, ascend_ready) as lists of (item, entry, total)."""
+    inv_ctr = Counter(sjl(p.get("inventory"), []))
+    eq = _reinforce_eq_slots(p)
+    rd = get_reinforce_data(p)
+    candidates = set(inv_ctr.keys()) | {s for s in eq if s}
+    rf, asc = [], []
+    for item in sorted(candidates):
+        if not _is_reinforceable(item):
+            continue
+        inv_count = inv_ctr.get(item, 0)
+        if inv_count < 1:
+            continue
+        eq_count = sum(1 for s in eq if s == item)
+        total = inv_count + eq_count
+        entry = rd.get(item, {"r": 0, "s": 0})
+        if entry["r"] >= 20:
+            if entry["s"] < 3:
+                asc.append((item, entry, total))
+        elif total >= 2:
+            rf.append((item, entry, total))
+    return rf, asc
+
+def _build_ref_home(p, uid):
+    rf, asc = _reinforce_lists(p)
+    lines = ["🔨 *Reinforce & Ascend*",
+             "_Sacrifice duplicate gear for permanent +ATK/DEF. 20 reinforces → Ascend "
+             "for a ★ (+15 each). Duplicates drop from bosses & raids._\n"]
+    rows = []
+    for item, entry, total in rf:
+        em = _reinforce_pool_emoji(item)
+        stars = star_str(entry["s"]) if entry["s"] else ""
+        lines.append(f"{em} *{item}* {stars}  [{entry['r']}/20]  ×{total}")
+        rows.append([InlineKeyboardButton(f"{em} {item} [{entry['r']}/20] ×{total}",
+                                          callback_data=f"crrefs_{uid}_{item}")])
+    for item, entry, total in asc:
+        em = _reinforce_pool_emoji(item)
+        rows.append([InlineKeyboardButton(
+            f"⭐ Ascend {em} {item} {star_str(entry['s'])}→{star_str(entry['s'] + 1)}",
+            callback_data=f"crrefs_{uid}_{item}")])
+    if not rows:
+        lines.append("_You need 2 copies of the same weapon/armor/shield (at least 1 in "
+                     "your bag to sacrifice)._")
+    rows.append([InlineKeyboardButton("🔙 Crafting", callback_data=f"crhome_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_ref_item(p, uid, item, flash=""):
+    if not _is_reinforceable(item):
+        return _build_ref_home(p, uid)
+    inv_ctr = Counter(sjl(p.get("inventory"), []))
+    eq = _reinforce_eq_slots(p)
+    inv_count = inv_ctr.get(item, 0)
+    eq_count = sum(1 for s in eq if s == item)
+    total = inv_count + eq_count
+    entry = get_reinforce_data(p).get(item, {"r": 0, "s": 0})
+    em = _reinforce_pool_emoji(item)
+    stat = "ATK" if item in WEAPONS else "DEF"
+    bonus = reinforce_atk_bonus(p, item)
+    lines = [f"{em} *{item}* {star_str(entry['s']) if entry['s'] else ''}"]
+    if flash:
+        lines.append(flash)
+    lines.append("")
+    lines.append(f"Reinforces: *{entry['r']}/20*   ·   Total bonus: *+{bonus} {stat}*")
+    lines.append(f"Copies: *{total}*  ({inv_count} in bag, {eq_count} equipped)")
+    rows = []
+    sacrificeable = inv_count - (0 if eq_count else 1)  # keep one to wear if none equipped
+    if sacrificeable < 0:
+        sacrificeable = 0
+    if entry["r"] >= 20:
+        if entry["s"] < 3:
+            lines.append(f"\n⭐ *Ready to Ascend!*   {star_str(entry['s'])} → "
+                         f"{star_str(entry['s'] + 1)}   (+15 {stat}, resets to 0/20)")
+            rows.append([InlineKeyboardButton(f"⭐ Ascend → {star_str(entry['s'] + 1)}",
+                                              callback_data=f"crasc_{uid}_{item}")])
+        else:
+            lines.append("\n⭐ *Fully ascended (★★★) and maxed.*")
+    elif sacrificeable < 1:
+        lines.append("\n_Need another copy in your bag to sacrifice (keep one to wear)._")
+    else:
+        room = min(sacrificeable, 20 - entry["r"])
+        lines.append(f"\nEach reinforce: *+3 {stat}*, consumes 1 copy. You can do up to *{room}* now.")
+        row = [InlineKeyboardButton("🔨 ×1", callback_data=f"crrefx_{uid}_1_{item}")]
+        if room > 1:
+            row.append(InlineKeyboardButton("🔨 ×5", callback_data=f"crrefx_{uid}_5_{item}"))
+            row.append(InlineKeyboardButton("⬆️ Max", callback_data=f"crrefx_{uid}_0_{item}"))
+        rows.append(row)
+    rows.append([InlineKeyboardButton("🔙 Items", callback_data=f"crref_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _do_reinforce_batch(p, item, n):
+    """Consume up to n duplicate copies (n<=0 = until 20/20 or out of spares).
+    Mutates and saves p. Returns a result dict for the flash line."""
+    inv = sjl(p.get("inventory"), [])
+    eq = _reinforce_eq_slots(p)
+    eq_count = sum(1 for s in eq if s == item)
+    rd = get_reinforce_data(p)
+    entry = rd.get(item, {"r": 0, "s": 0})
+    start_r = entry["r"]
+    cap = 9999 if n <= 0 else n
+    done = 0
+    reason = "done"
+    while done < cap:
+        if entry["r"] >= 20:
+            reason = "maxed"; break
+        inv_count = inv.count(item)
+        if inv_count < 1 or (inv_count + eq_count) < 2:
+            reason = "no_copies"; break
+        inv.remove(item)
+        entry["r"] += 1
+        done += 1
+    rd[item] = entry
+    set_reinforce_data(p, rd)
+    p["inventory"] = json.dumps(inv)
+    if done:
+        p["total_reinforces"] = safe_int(p.get("total_reinforces")) + done
+        check_titles(p)
+    save_player(p)
+    return {"item": item, "done": done, "start_r": start_r, "end_r": entry["r"], "reason": reason}
+
+def _ref_flash(p, r):
+    item = r["item"]
+    if r["done"] == 0:
+        if r["reason"] == "maxed":
+            return f"⭐ *{item}* is at 20/20 — Ascend it!"
+        return "❌ Need another copy in your bag to sacrifice."
+    stat = "ATK" if item in WEAPONS else "DEF"
+    bonus = reinforce_atk_bonus(p, item)
+    tail = ""
+    if r["reason"] == "maxed":
+        tail = " · 20/20 — ready to Ascend!"
+    elif r["reason"] == "no_copies":
+        tail = " · out of spare copies"
+    verb = "Reinforced!" if r["done"] == 1 else f"{r['done']}× reinforced!"
+    return f"🔨 *{verb}*   {r['start_r']} → *{r['end_r']}/20*   (+{bonus} {stat}){tail}"
+
+# ---- Perma ATK view (shared with /perma) ------------------------------------
+def _build_perma_view(p, uid):
+    current = safe_int(p.get("perm_dmg_bonus", 0))
+    inv_ctr = Counter(sjl(p.get("inventory"), []))
+    shards = inv_ctr.get("Iron Shard", 0)
+    gold = safe_int(p.get("gold", 0))
+    status = "✅ MAX" if current >= _PERMA_CAP else f"+{current}/{_PERMA_CAP}"
+    lines = ["⚔️ *Permanent ATK*",
+             f"Current: *+{current} ATK* per hit  ({status})",
+             f"🪨 {shards} Iron Shards   ·   💰 {gold:,}g\n",
+             f"Cost per +1: *{_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}× Iron Shard*",
+             "_Adds +1 raw damage to every attack, permanently._"]
+    rows = []
+    if current < _PERMA_CAP:
+        rows.append([InlineKeyboardButton(
+            f"⚔️ Upgrade +1  ({_PERMA_GOLD_COST}g + {_PERMA_SHARD_COST}🪨)",
+            callback_data=f"perma_upgrade_{uid}")])
+    rows.append([InlineKeyboardButton("🔙 Crafting", callback_data=f"crhome_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+# ---- Commands ----------------------------------------------------------------
+async def craft_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    text, markup = _build_craft_home(p, user.id)
+    await send_group(update, text, delay=60, reply_markup=markup)
+
 async def enhance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-
-    if not context.args:
-        lines = ["⚒️ *Enhancement* — choose a slot:\n"]
-        inv = sjl(p.get("inventory"), [])
-        lines.append(f"🪨 Iron Shards: {inv.count('Iron Shard')}\n")
-        buttons = []
-        for slot_label, slot_key, slot_id in [
-                ("⚔️ Weapon", "equipped_weapon", "weapon"),
-                ("🛡️ Armor",  "equipped_armor",  "armor"),
-                ("🔰 Shield", "equipped_shield", "shield"),
-                ("🎩 Hat",    "equipped_hat",    "hat"),
-                ("🧤 Gloves", "equipped_gloves", "gloves"),
-                ("👢 Boots",  "equipped_boots",  "boots"),
-                ("🎭 Mask",   "equipped_mask",   "mask")]:
-            name = p.get(slot_key)
-            if not name: continue
-            lv    = get_enhancement(p, name)
-            stars = "⭐" * lv if lv else "+0"
-            nxt   = "MAX" if lv >= 10 else f"+{lv+1} ({int(ENHANCE_RATES[lv+1]*100)}% | {ENHANCE_COSTS[lv+1]} Shards)"
-            lines.append(f"{slot_label}: *{name}* {stars}\n  → {nxt}")
-            buttons.append([InlineKeyboardButton(
-                f"{slot_label}: {name} {stars}",
-                callback_data=f"enhance_{user.id}_{slot_id}")])
-        if not buttons:
-            await send_group(update, "⚒️ No enhanceable gear equipped!", delay=9); return
-        markup = InlineKeyboardMarkup(buttons)
-        await send_group(update, "\n".join(lines), delay=30, reply_markup=markup); return
-
-    slot = context.args[0].lower()
-    slot_map = {
-        "weapon": ("equipped_weapon", "ATK"),
-        "armor":  ("equipped_armor",  "DEF"),
-        "shield": ("equipped_shield", "DEF"),
-        "hat":    ("equipped_hat",    "DEF"),
-        "gloves": ("equipped_gloves", "DEF"),
-        "boots":  ("equipped_boots",  "DEF"),
-        "mask":   ("equipped_mask",   "DEF"),
-    }
-    if slot not in slot_map:
-        await send_group(update, "Usage: /enhance weapon | armor | shield | hat | gloves | boots | mask", delay=9); return
-
-    slot_key, stat_label = slot_map[slot]
-    item_name = p.get(slot_key)
-    if not item_name:
-        await send_group(update, f"No {slot} equipped!", delay=9); return
-
-    current = get_enhancement(p, item_name)
-    if current >= 10:
-        await send_group(update, f"*{item_name}* is already at +10 MAX!", delay=9); return
-
-    next_lv = current + 1
-    cost    = ENHANCE_COSTS[next_lv]
-    rate    = ENHANCE_RATES[next_lv]
-
-    inv = sjl(p.get("inventory"), [])
-    if inv.count("Iron Shard") < cost:
-        await send_group(update,
-            f"❌ Need {cost} Iron Shard(s), have {inv.count('Iron Shard')}.\n"
-            f"Iron Shards drop from bosses, explores, and quests.", delay=9); return
-
-    for _ in range(cost):
-        inv.remove("Iron Shard")
-    p["inventory"] = json.dumps(inv)
-
-    if random.random() < rate:
-        set_enhancement(p, item_name, next_lv)
-        bonus = get_enhance_bonus(p, item_name)
-        save_player(p)
-        await send_group(update,
-            f"⚒️ *Enhancement Success!*\n\n"
-            f"*{item_name}* → *+{next_lv}* {'⭐' * next_lv}\n"
-            f"+{bonus} {stat_label} total from enhancement\n"
-            f"Used {cost} Iron Shard(s).", delay=20)
+    if context.args and context.args[0].lower() in _CRAFT_ENH_LOOKUP:
+        text, markup = _build_enh_slot(p, user.id, context.args[0].lower())
     else:
-        if current >= 6:
-            set_enhancement(p, item_name, current - 1)
-            save_player(p)
-            await send_group(update,
-                f"💔 *Enhancement Failed!*\n\n"
-                f"*{item_name}* dropped from +{current} to +{current - 1}!\n"
-                f"Used {cost} Iron Shard(s). Try again.", delay=20)
-        else:
-            save_player(p)
-            await send_group(update,
-                f"💔 *Enhancement Failed!*\n\n"
-                f"*{item_name}* stays at +{current}.\n"
-                f"Used {cost} Iron Shard(s). Try again.", delay=20)
+        text, markup = _build_enh_home(p, user.id)
+    await send_group(update, text, delay=60, reply_markup=markup)
 
-async def enhance_slot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle slot button from /enhance menu."""
+async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    text, markup = _build_ref_home(p, user.id)
+    await send_group(update, text, delay=60, reply_markup=markup)
+
+async def crafting_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Unified persistent crafting hub. Every branch re-renders in place so the
+    menu never closes: crhome/crenh(+s/+x)/crref(+s/+x)/crasc/crfrg/crprm."""
     query = update.callback_query
-    parts = query.data.split("_", 2)  # enhance_{uid}_{slot}
+    data = query.data
+    head = data.split("_", 1)[0]
+    toks = data.split("_")
     try:
-        uid  = int(parts[1])
-        slot = parts[2]
+        uid = int(toks[1])
     except (IndexError, ValueError):
         await query.answer(); return
     if query.from_user.id != uid:
-        await query.answer("Not your enhance menu!", show_alert=True); return
+        await query.answer("Not your crafting menu!", show_alert=True); return
     p = get_player(uid)
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
-    slot_map = {
-        "weapon": ("equipped_weapon", "ATK"), "armor": ("equipped_armor", "DEF"),
-        "shield": ("equipped_shield", "DEF"), "hat": ("equipped_hat", "DEF"),
-        "gloves": ("equipped_gloves", "DEF"), "boots": ("equipped_boots", "DEF"),
-        "mask":   ("equipped_mask", "DEF"),
-    }
-    if slot not in slot_map:
-        await query.answer(); return
-    slot_key, stat_label = slot_map[slot]
-    item_name = p.get(slot_key)
-    if not item_name:
-        await query.answer(f"No {slot} equipped!", show_alert=True); return
-    current = get_enhancement(p, item_name)
-    if current >= 10:
-        await query.answer(f"{item_name} is already +10 MAX!", show_alert=True); return
-    next_lv = current + 1
-    cost = ENHANCE_COSTS[next_lv]; rate = ENHANCE_RATES[next_lv]
-    inv = sjl(p.get("inventory"), [])
-    if inv.count("Iron Shard") < cost:
-        await query.answer(f"Need {cost} Iron Shard(s), have {inv.count('Iron Shard')}.", show_alert=True); return
+
+    async def render(built):
+        text, markup = built
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+
+    if head == "crhome":
+        await query.answer(); await render(_build_craft_home(p, uid)); return
+    if head == "crfrg":
+        await query.answer(); await render(_build_forge_view(p, uid)); return
+    if head == "crprm":
+        await query.answer(); await render(_build_perma_view(p, uid)); return
+    if head == "crenh":
+        await query.answer(); await render(_build_enh_home(p, uid)); return
+    if head == "crenhs":
+        sid = toks[2] if len(toks) > 2 else ""
+        await query.answer(); await render(_build_enh_slot(p, uid, sid)); return
+    if head == "crenhx":
+        parts = data.split("_", 3)  # crenhx, uid, n, sid
+        try:
+            n = int(parts[2]); sid = parts[3]
+        except (IndexError, ValueError):
+            await query.answer(); return
+        if sid not in _CRAFT_ENH_LOOKUP or not p.get(_CRAFT_ENH_LOOKUP[sid][1]):
+            await query.answer("Nothing in that slot!", show_alert=True); return
+        r = _do_enhance_batch(p, sid, n)
+        await query.answer(f"+{r['start']} → +{r['end']}" if r["attempts"] else "Not enough shards!")
+        await render(_build_enh_slot(p, uid, sid, flash=_enh_flash(r))); return
+    if head == "crref":
+        await query.answer(); await render(_build_ref_home(p, uid)); return
+    if head == "crrefs":
+        item = data.split("_", 2)[2] if len(toks) > 2 else ""
+        await query.answer(); await render(_build_ref_item(p, uid, item)); return
+    if head == "crrefx":
+        parts = data.split("_", 3)  # crrefx, uid, n, item
+        try:
+            n = int(parts[2]); item = parts[3]
+        except (IndexError, ValueError):
+            await query.answer(); return
+        r = _do_reinforce_batch(p, item, n)
+        await query.answer(f"{r['start_r']} → {r['end_r']}/20" if r["done"] else "No spare copies!")
+        await render(_build_ref_item(p, uid, item, flash=_ref_flash(p, r))); return
+    if head == "crasc":
+        item = data.split("_", 2)[2] if len(toks) > 2 else ""
+        if not _is_reinforceable(item):
+            await query.answer(); return
+        rd = get_reinforce_data(p)
+        entry = rd.get(item, {"r": 0, "s": 0})
+        if entry["r"] < 20:
+            await query.answer(f"Need 20 reinforces (at {entry['r']}/20).", show_alert=True); return
+        if entry["s"] >= 3:
+            await query.answer("Already at max ★★★!", show_alert=True); return
+        entry["s"] += 1; entry["r"] = 0
+        rd[item] = entry
+        set_reinforce_data(p, rd)
+        p["total_ascensions"] = safe_int(p.get("total_ascensions")) + 1
+        check_titles(p); save_player(p)
+        await query.answer(f"🌟 Ascended to {star_str(entry['s'])}!")
+        flash = f"🌟 *ASCENDED!*   {item} → {star_str(entry['s'])}   (+15 permanent, reset to 0/20)"
+        await render(_build_ref_item(p, uid, item, flash=flash)); return
     await query.answer()
-    for _ in range(cost):
-        inv.remove("Iron Shard")
-    p["inventory"] = json.dumps(inv)
-    if random.random() < rate:
-        set_enhancement(p, item_name, next_lv)
-        bonus = get_enhance_bonus(p, item_name)
-        save_player(p)
-        await _q_edit(query, 
-            f"⚒️ *Enhancement Success!*\n\n*{item_name}* → *+{next_lv}* {'⭐' * next_lv}\n"
-            f"+{bonus} {stat_label} total from enhancement\nUsed {cost} Iron Shard(s).",
-            parse_mode="Markdown")
-    else:
-        if current >= 6:
-            set_enhancement(p, item_name, current - 1); save_player(p)
-            await _q_edit(query, 
-                f"💔 *Enhancement Failed!*\n\n*{item_name}* dropped from +{current} to +{current-1}!\n"
-                f"Used {cost} Iron Shard(s).", parse_mode="Markdown")
-        else:
-            save_player(p)
-            await _q_edit(query, 
-                f"💔 *Enhancement Failed!*\n\n*{item_name}* stays at +{current}.\n"
-                f"Used {cost} Iron Shard(s).", parse_mode="Markdown")
 
 # ── ENCHANT ───────────────────────────────────────────────────────────────────
 # ── ENCHANTING — persistent hub (menu stays open) ────────────────────────────
@@ -23797,276 +24047,7 @@ async def changelog_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "\n".join(lines), delay=40)
 
 # ── REINFORCE ─────────────────────────────────────────────────────────────────
-async def reinforce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user; p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-
-    args = context.args or []
-
-    # /reinforce ascend [item name]
-    if args and args[0].lower() == "ascend":
-        item_typed = " ".join(args[1:]).strip()
-        if not item_typed:
-            await send_group(update,
-                "Usage: `/reinforce ascend [item name]`\n"
-                "Ascend an item that has reached 20 reinforces.", delay=15)
-            return
-        inv = json.loads(p.get("inventory") or "[]")
-        equipped_slots = [p.get("equipped_weapon"), p.get("equipped_armor"),
-                          p.get("equipped_shield"), p.get("equipped_accessory"),
-                          p.get("equipped_hat"), p.get("equipped_gloves"),
-                          p.get("equipped_boots"), p.get("equipped_mask")]
-        item_name = resolve_item_ci(item_typed, inv) or resolve_item_ci(item_typed, [s for s in equipped_slots if s])
-        if not item_name:
-            await send_group(update, f"❌ *{item_typed}* not found in your inventory or equipped slots.", delay=10)
-            return
-        rd = get_reinforce_data(p)
-        entry = rd.get(item_name, {"r": 0, "s": 0})
-        if entry["r"] < 20:
-            await send_group(update,
-                f"❌ *{item_name}* needs 20 reinforces before it can ascend. "
-                f"Currently at *{entry['r']}/20*.", delay=12)
-            return
-        if entry["s"] >= 3:
-            await send_group(update,
-                f"⭐ *{item_name}* is already at maximum ascension (★★★)! "
-                "It can be reinforced up to 20 more times.", delay=12)
-            return
-        entry["s"] += 1
-        entry["r"]  = 0
-        rd[item_name] = entry
-        set_reinforce_data(p, rd)
-        p["total_ascensions"] = safe_int(p.get("total_ascensions")) + 1
-        new_titles = check_titles(p)
-        save_player(p)
-        title_line = "\n".join(f"🏅 New title: *{t}*!" for t in new_titles)
-        await send_group(update,
-            f"🌟 *ASCENSION!*\n\n"
-            f"*{item_name}* → {star_str(entry['s'])}\n"
-            f"+5 permanent ATK/DEF bonus per star!\n"
-            f"Reinforces reset to 0/20 — keep grinding!\n"
-            + (f"\n{title_line}" if title_line else ""), delay=25)
-        return
-
-    # /reinforce [item name]
-    if not args:
-        uid = user.id
-        inv = sjl(p.get("inventory"), [])
-        inv_ctr = Counter(inv)
-        rd = get_reinforce_data(p)
-        rf_buttons = []
-        asc_buttons = []
-
-        _eq_slots = [p.get("equipped_weapon"), p.get("equipped_armor"),
-                     p.get("equipped_shield"), p.get("equipped_hat"),
-                     p.get("equipped_gloves"), p.get("equipped_boots"),
-                     p.get("equipped_mask"),
-                     p.get("equipped_accessory"), p.get("equipped_accessory_2"),
-                     p.get("equipped_accessory_3"), p.get("equipped_accessory_4")]
-
-        # Items in inventory OR equipped (but must have ≥1 in inventory to sacrifice)
-        candidate_items = set(inv_ctr.keys())
-        for slot_item in _eq_slots:
-            if slot_item:
-                candidate_items.add(slot_item)
-
-        for item in candidate_items:
-            if item not in WEAPONS and item not in ARMORS and item not in SHIELDS and \
-               item not in HATS and item not in GLOVES and item not in BOOTS and item not in MASKS:
-                continue
-            inv_count = inv_ctr.get(item, 0)
-            if inv_count < 1:
-                continue  # need at least 1 in inventory to sacrifice
-            eq_count = sum(1 for s in _eq_slots if s == item)
-            total_count = inv_count + eq_count
-            entry = rd.get(item, {"r": 0, "s": 0})
-            if item in WEAPONS: pool = WEAPONS
-            elif item in ARMORS: pool = ARMORS
-            elif item in SHIELDS: pool = SHIELDS
-            elif item in HATS: pool = HATS
-            elif item in GLOVES: pool = GLOVES
-            elif item in BOOTS: pool = BOOTS
-            else: pool = MASKS
-            rarity = RARITY_EMOJI.get(pool[item].get("rarity",""), "⚪")
-            stars = star_str(entry["s"]) if entry["s"] else ""
-            if entry["r"] >= 20:
-                if entry["s"] < 3:
-                    asc_buttons.append([InlineKeyboardButton(
-                        f"⭐ Ascend {rarity}{item} {stars} → {star_str(entry['s']+1)}",
-                        callback_data=f"rfasc_{uid}_{item}")])
-            elif total_count >= 2:
-                eq_note = " *(1 equipped)*" if eq_count else ""
-                rf_buttons.append([InlineKeyboardButton(
-                    f"⚒️ Reinforce {rarity}{item} {stars} [{entry['r']}/20] (x{total_count}{eq_note})",
-                    callback_data=f"rf_{uid}_{item}")])
-
-        all_buttons = rf_buttons + asc_buttons
-        if not all_buttons:
-            await send_group(update,
-                "⚒️ *Reinforce*\n\n"
-                "Need *2 copies* of the same weapon, armor, or shield.\n"
-                "• Each reinforce: *+1 ATK or DEF*\n"
-                "• 20 reinforces → Ascend for *+5 per ★*\n"
-                "_Collect duplicate drops from raids and bosses!_", delay=20)
-            return
-        all_buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
-        markup = InlineKeyboardMarkup(all_buttons)
-        await send_group(update, "⚒️ *Reinforce — Choose an item:*", delay=60, reply_markup=markup)
-        return
-
-    item_typed = " ".join(args).strip()
-    inv = json.loads(p.get("inventory") or "[]")
-    _all_reinforceable = list(WEAPONS) + list(ARMORS) + list(SHIELDS) + list(HATS) + list(GLOVES) + list(BOOTS) + list(MASKS)
-    item_name = resolve_item_ci(item_typed, _all_reinforceable) or item_typed
-    inv_count = inv.count(item_name)
-    _eq_slots_txt = [p.get("equipped_weapon"), p.get("equipped_armor"),
-                     p.get("equipped_shield"), p.get("equipped_hat"),
-                     p.get("equipped_gloves"), p.get("equipped_boots"),
-                     p.get("equipped_mask"),
-                     p.get("equipped_accessory"), p.get("equipped_accessory_2"),
-                     p.get("equipped_accessory_3"), p.get("equipped_accessory_4")]
-    eq_count = sum(1 for s in _eq_slots_txt if s == item_name)
-    count = inv_count + eq_count
-
-    # Check if it's a valid reinforceable item
-    _rf_pools = (WEAPONS, ARMORS, SHIELDS, HATS, GLOVES, BOOTS, MASKS)
-    if not any(item_name in pool for pool in _rf_pools):
-        await send_group(update,
-            f"❌ *{item_name}* cannot be reinforced. Only weapons, armors, shields, hats, gloves, boots, and masks can be reinforced.", delay=12)
-        return
-
-    if count < 2 or inv_count < 1:
-        rd = get_reinforce_data(p)
-        entry = rd.get(item_name, {"r": 0, "s": 0})
-        await send_group(update,
-            f"❌ You need *at least 2 copies* of *{item_name}* to reinforce.\n"
-            f"You have: *{count}* copy(s).\n"
-            f"Current: {star_str(entry['s'])} [{entry['r']}/20 reinforces]", delay=15)
-        return
-
-    rd = get_reinforce_data(p)
-    entry = rd.get(item_name, {"r": 0, "s": 0})
-
-    if entry["r"] >= 20:
-        await send_group(update,
-            f"⭐ *{item_name}* is maxed at 20 reinforces!\n"
-            f"Use `/reinforce ascend {item_name}` to ascend it to {star_str(entry['s']+1)}.", delay=15)
-        return
-
-    # Consume one copy
-    inv.remove(item_name)
-    p["inventory"] = json.dumps(inv)
-    entry["r"] += 1
-    rd[item_name] = entry
-    set_reinforce_data(p, rd)
-    p["total_reinforces"] = safe_int(p.get("total_reinforces")) + 1
-    new_titles = check_titles(p)
-    save_player(p)
-
-    bonus_total = entry["r"] + entry["s"] * 5
-    slot_type = "ATK" if item_name in WEAPONS else "DEF"
-    title_line = "\n".join(f"🏅 New title: *{t}*!" for t in new_titles)
-    ready_to_ascend = entry["r"] == 20
-
-    msg = (
-        f"⚒️ *Reinforced!*\n\n"
-        f"*{item_name}* {star_str(entry['s'])}\n"
-        f"Reinforces: *{entry['r']}/20*\n"
-        f"Total {slot_type} bonus: *+{bonus_total}*\n"
-        f"1 copy consumed from inventory."
-    )
-    if ready_to_ascend:
-        msg += f"\n\n⭐ *Max reinforces reached!* Use `/reinforce ascend {item_name}` to ascend!"
-    if title_line:
-        msg += f"\n\n{title_line}"
-    await send_group(update, msg, delay=20)
-
-async def reinforce_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle reinforce button: rf_{uid}_{item_name}"""
-    query = update.callback_query
-    parts = query.data.split("_", 2)
-    try:
-        uid       = int(parts[1])
-        item_name = parts[2]
-    except (IndexError, ValueError):
-        await query.answer(); return
-    if query.from_user.id != uid:
-        await query.answer("Not your reinforce menu!", show_alert=True); return
-    p = get_player(uid)
-    if not p:
-        await query.answer("Use /ascend first!", show_alert=True); return
-    inv = sjl(p.get("inventory"), [])
-    inv_count_cb = inv.count(item_name)
-    _eq_cb = [p.get("equipped_weapon"), p.get("equipped_armor"),
-               p.get("equipped_shield"), p.get("equipped_hat"),
-               p.get("equipped_gloves"), p.get("equipped_boots"),
-               p.get("equipped_mask"),
-               p.get("equipped_accessory"), p.get("equipped_accessory_2"),
-               p.get("equipped_accessory_3"), p.get("equipped_accessory_4")]
-    eq_count_cb = sum(1 for s in _eq_cb if s == item_name)
-    if inv_count_cb < 1 or (inv_count_cb + eq_count_cb) < 2:
-        await query.answer(f"Need 2 copies of {item_name} (1 must be in inventory to sacrifice)!", show_alert=True); return
-    if item_name not in WEAPONS and item_name not in ARMORS and item_name not in SHIELDS \
-       and item_name not in HATS and item_name not in GLOVES and item_name not in BOOTS and item_name not in MASKS:
-        await query.answer("That item cannot be reinforced!", show_alert=True); return
-    rd = get_reinforce_data(p)
-    entry = rd.get(item_name, {"r": 0, "s": 0})
-    if entry["r"] >= 20:
-        await query.answer(f"{item_name} is maxed at 20 reinforces! Use Ascend.", show_alert=True); return
-    await query.answer()
-    inv.remove(item_name)
-    p["inventory"] = json.dumps(inv)
-    entry["r"] += 1
-    rd[item_name] = entry
-    set_reinforce_data(p, rd)
-    p["total_reinforces"] = safe_int(p.get("total_reinforces")) + 1
-    check_titles(p); save_player(p)
-    bonus_total = entry["r"] + entry["s"] * 5
-    slot_type = "ATK" if item_name in WEAPONS else "DEF"
-    msg = (
-        f"⚒️ *Reinforced!*\n\n"
-        f"*{item_name}* {star_str(entry['s']) if entry['s'] else ''}\n"
-        f"Reinforces: *{entry['r']}/20*\n"
-        f"Total {slot_type} bonus: *+{bonus_total}*\n"
-        f"1 copy consumed from inventory."
-    )
-    if entry["r"] == 20:
-        msg += f"\n\n⭐ *Max reinforces!* Tap /reinforce again to Ascend!"
-    await _q_edit(query, msg, parse_mode="Markdown")
-
-async def reinforce_asc_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle ascend button: rfasc_{uid}_{item_name}"""
-    query = update.callback_query
-    parts = query.data.split("_", 2)
-    try:
-        uid       = int(parts[1])
-        item_name = parts[2]
-    except (IndexError, ValueError):
-        await query.answer(); return
-    if query.from_user.id != uid:
-        await query.answer("Not your reinforce menu!", show_alert=True); return
-    p = get_player(uid)
-    if not p:
-        await query.answer("Use /ascend first!", show_alert=True); return
-    rd = get_reinforce_data(p)
-    entry = rd.get(item_name, {"r": 0, "s": 0})
-    if entry["r"] < 20:
-        await query.answer(f"Need 20 reinforces first! Currently {entry['r']}/20.", show_alert=True); return
-    if entry["s"] >= 3:
-        await query.answer(f"{item_name} is already at max ★★★ ascension!", show_alert=True); return
-    await query.answer()
-    entry["s"] += 1; entry["r"] = 0
-    rd[item_name] = entry
-    set_reinforce_data(p, rd)
-    p["total_ascensions"] = safe_int(p.get("total_ascensions")) + 1
-    check_titles(p); save_player(p)
-    await _q_edit(query, 
-        f"🌟 *ASCENSION!*\n\n"
-        f"*{item_name}* → {star_str(entry['s'])}\n"
-        f"+5 permanent ATK/DEF bonus per star!\n"
-        f"Reinforces reset to 0/20 — keep grinding!",
-        parse_mode="Markdown")
+# (reinforce lives in the Crafting Hub above — see crafting_callback)
 
 # ── OBJECTIVES ────────────────────────────────────────────────────────────────
 async def objectives_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -26586,10 +26567,11 @@ GUIDE_PAGES = [
         "⚔️ Weapon, 🛡️ Armor, 🔰 Shield, 💍 Accessory, 🎩 Hat, 🧤 Gloves, 👢 Boots, 🎭 Mask.\n"
         "Use /equip to browse your bag and tap to equip. Use /unequip to remove gear.\n"
         "Hats, Gloves, Boots, and Masks are pure DEF items — equip all four to stack serious defense. All can be enhanced, enchanted, and reinforced.\n"
-        "/enhance  -  Upgrade gear with Iron Shards. Tap the slot button. +1 to +10 max. Fails are possible at high levels.\n"
+        "/craft  -  🛠️ Crafting Hub — one home for Enhance, Reinforce & Ascend, the Forge, and Permanent ATK. Every menu stays open while you work.\n"
+        "/enhance  -  Upgrade gear +1 to +10 with Iron Shards (+6 ATK/DEF per level). Tap a slot, then ⚒️ ×1 / ×5 / ⬆️ Max to batch it. Higher levels can fail, and a fail at +6 or above drops a level.\n"
         "/enchant  -  Enchanting Hub: up to 3 enchants per gear slot, each a distinct effect (crit, dodge, ATK, DEF, HP, lifesteal, burn, gold%, EXP%...). The menu stays open — enchant slot after slot, or 🎲 Reroll the last enchant into a different one. Costs 1 Enchanting Scroll per action.\n"
-        "/reinforce  -  Sacrifice a duplicate to permanently raise its base stats (+1 DEF per reinforce, max 20). Tap to select.\n"
-        "/reinforce ascend  -  After 20 reinforces, Ascend the item to ★ tier (+5 flat bonus, resets to 0/20). Up to ★★★.\n"
+        "/reinforce  -  Sacrifice duplicate gear to permanently raise its base stats (+3 ATK/DEF per reinforce, max 20). Tap an item, then 🔨 ×1 / ×5 / ⬆️ Max. Keeps one copy for you to wear.\n"
+        "  ⭐ At 20/20 the Ascend button appears — Ascend to ★ tier (+15 flat bonus, resets to 0/20). Up to ★★★.\n"
         "\n"
         "*Consumable Items*\n"
         "Use /use to open your consumables and tap to use an item.\n"
@@ -26673,9 +26655,10 @@ GUIDE_PAGES = [
         "*Gear & Economy*\n"
         "/equip  -  Browse bag and tap to equip\n"
         "/unequip  -  Tap a slot to unequip\n"
-        "/enhance  -  Upgrade gear with Iron Shards\n"
+        "/craft  -  🛠️ Crafting Hub (Enhance · Reinforce · Forge · Perma ATK)\n"
+        "/enhance  -  Upgrade gear with Iron Shards (×1/×5/Max)\n"
         "/enchant  -  Add enchants via Enchanting Scrolls\n"
-        "/reinforce  -  Sacrifice duplicate gear for +1 ATK/DEF\n"
+        "/reinforce  -  Sacrifice duplicate gear for +3 ATK/DEF (×1/×5/Max)\n"
         "/use  -  Use a consumable (button menu)\n"
         "/title  -  View and equip your earned titles\n"
         "/objectives  -  View daily objectives\n"
@@ -29892,10 +29875,11 @@ _GEAR_HUB_TIPS = {
     "unequip":   ("❌ *Unequip*",         "Use */unequip* to remove equipped gear. Tap the slot you want to clear."),
     "shop":      ("🏪 *Shop*",            "Use */shop* for the full tabbed item shop — weapons, armor, accessories, and consumables."),
     "sell":      ("💰 *Sell*",            "Use */sell* or */sell [rarity]* to bulk-sell items from your bag."),
-    "enhance":   ("✨ *Enhance*",         "Use */enhance* to upgrade gear +1 to +10 using Iron Shards. Higher levels can fail."),
-    "reinforce": ("🔩 *Reinforce*",       "Use */reinforce* — sacrifice a duplicate item to raise its base stats permanently. Up to ★★★."),
+    "craft":     ("🛠️ *Crafting Hub*",    "Use */craft* — one home for Enhance, Reinforce & Ascend, the Forge, and Permanent ATK. Menus stay open while you work."),
+    "enhance":   ("✨ *Enhance*",         "Use */enhance* to upgrade gear +1 to +10 using Iron Shards (batch ×1/×5/Max). Higher levels can fail."),
+    "reinforce": ("🔩 *Reinforce*",       "Use */reinforce* — sacrifice duplicate gear to raise base stats permanently (+3 per level, ×1/×5/Max). Ascend up to ★★★."),
     "forge":     ("⚒️ *Forge*",          "Use */forge* to craft items from materials like Iron Shards. View available recipes."),
-    "perma":     ("💎 *Perma Enchant*",   "Use */perma* to apply a permanent enchant to a piece of gear. Requires special materials."),
+    "perma":     ("⚔️ *Permanent ATK*",   "Use */perma* (or /craft) to permanently raise your attack: +1 raw damage per upgrade, up to +50."),
     "enchant":   ("🔮 *Enchant*",         "Use */enchant* to add random enchants to gear via Enchanting Scrolls (up to 3 per item)."),
     "pool":      ("🎱 *Pool*",            "Use */pool* for a quick round — earns EXP, gold, and loot. 8-second cooldown."),
     "trade":     ("🤝 *Trade*",           "Reply to a player and use */trade* to open the trade menu. Pick item + price. They type */accept*."),
@@ -37246,6 +37230,8 @@ def main():
     app.add_handler(CommandHandler("war",          war_cmd))
     app.add_handler(CommandHandler("forge",        forge_cmd))
     app.add_handler(CommandHandler("perma",        perma_cmd))
+    app.add_handler(CommandHandler("craft",        craft_cmd))
+    app.add_handler(CommandHandler("crafting",     craft_cmd))
 
     # Class & progression
     app.add_handler(CommandHandler("class",      class_cmd))
@@ -37441,7 +37427,7 @@ def main():
     app.add_handler(CallbackQueryHandler(shopbulk_callback,     pattern="^shopbulk_"))
     app.add_handler(CallbackQueryHandler(shopreroll_callback,   pattern="^shopreroll_"))
     app.add_handler(CallbackQueryHandler(boss_start_callback,   pattern="^bossstart_"))
-    app.add_handler(CallbackQueryHandler(enhance_slot_callback, pattern="^enhance_"))
+    app.add_handler(CallbackQueryHandler(crafting_callback, pattern="^cr(home|enhx|enhs|enh|refx|refs|ref|asc|frg|prm)_"))
     app.add_handler(CallbackQueryHandler(enchant_slot_callback, pattern="^(enchant_|enchome_|encdo_|encrr_)"))
     app.add_handler(CallbackQueryHandler(allocate_callback,     pattern="^alloc_"))
     # New inline button callbacks
@@ -37461,8 +37447,6 @@ def main():
     app.add_handler(CallbackQueryHandler(use_item_callback,     pattern="^useitem_"))
     app.add_handler(CallbackQueryHandler(use_full_heal_callback, pattern="^usefull_"))
     app.add_handler(CallbackQueryHandler(settitle_callback,     pattern="^settitle_"))
-    app.add_handler(CallbackQueryHandler(reinforce_item_callback, pattern="^rf_"))
-    app.add_handler(CallbackQueryHandler(reinforce_asc_callback,  pattern="^rfasc_"))
     app.add_handler(CallbackQueryHandler(sell_item_callback,    pattern="^sll_"))
     app.add_handler(CallbackQueryHandler(sell_rarity_callback,  pattern="^sellr_"))
     app.add_handler(CallbackQueryHandler(sell_browse_callback,  pattern="^sellbrowse_"))
