@@ -3631,6 +3631,12 @@ PERSONALITY_DEFEND = {
 # EXP needed per pet level
 def pet_exp_for_level(lvl): return lvl * 50 + (lvl * lvl * 5)
 
+def _pet_level_cap(owner_level):
+    """A pet grows with its owner (×3) up to the player's own level ceiling (250),
+    instead of dead-ending at 100. Pet combat damage stays bounded to a fraction
+    of the owner's hit, so a higher cap is safe — it just lets pets keep leveling."""
+    return min(250, max(1, safe_int(owner_level)) * 3)
+
 # Passive bonus unlocks by pet level
 PET_LEVEL_PASSIVES = {
     5:   {"atk_flat": 4},
@@ -5498,11 +5504,12 @@ def _encounter_battle_markup(enc, p=None):
         for _i, _sk in enumerate(_p_skills):
             _cost = _dng_skill_mp_cost(_sk)
             _can  = p_mp >= _cost
-            _icon = "✅" if _can else "❌"
-            if _can:
-                rows.append([InlineKeyboardButton(
-                    f"{_icon} {_sk.get('name','Skill')} ({_cost}MP)",
-                    callback_data=f"enc_skl_{uid}_{_i}")])
+            # Always show the skill so it never "disappears" — an unaffordable
+            # skill shows ❌ and its cost; tapping it explains the MP shortfall.
+            _icon = "✨" if _can else "❌"
+            rows.append([InlineKeyboardButton(
+                f"{_icon} {_sk.get('name','Skill')} ({_cost}MP)",
+                callback_data=f"enc_skl_{uid}_{_i}")])
     if mode == "hunt":
         bottom = []
         if enc["e_hp"] / max(1, enc["e_max_hp"]) <= 0.5:
@@ -9276,6 +9283,18 @@ def can_equip_armor(p, armor_name):
         return False, f"Only {armor_class.replace('_',' ').capitalize()} classes can wear this."
     return True, ""
 
+def _can_equip_shield(p, name):
+    """Claws are assassin-only (offensive, thief-themed and balanced for them);
+    defensive shields are open to EVERY class, so no class is stuck with a
+    permanently dead off-hand slot."""
+    s = SHIELDS.get(name)
+    if not s:
+        return False, "Unknown shield."
+    if s.get("type") == "claw":
+        if get_class_line(p) != "thief" or p.get("class_path") != "B":
+            return False, "❌ Only the Assassin path (Cutthroat/Assassin/Blade Master/Specialist) can use claws."
+    return True, ""
+
 def get_player_class_id(p):
     return p.get("class_id")
 
@@ -12384,7 +12403,7 @@ def give_pet_exp(owner_id, raw_amount):
     if not pet: return ""
     _p = get_player(owner_id)
     _p_level = _p["level"] if _p else 1
-    _pet_cap = min(100, _p_level * 3)
+    _pet_cap = _pet_level_cap(_p_level)
     if pet.get("level", 1) >= _pet_cap: return ""
     amount = max(1, round(raw_amount * 0.15))
     pet["exp"] = pet.get("exp", 0) + amount
@@ -16297,6 +16316,14 @@ def _unequip_class_gear(p):
         item_name = p.get(slot_key)
         if not item_name:
             continue
+        if slot_key == "equipped_shield":
+            # Shields follow their own rule: defensive shields are open to every
+            # class; only claws are class-locked (assassin path). Only strip when
+            # the player genuinely can't use this off-hand.
+            ok, _ = _can_equip_shield(p, item_name)
+            if not ok:
+                inv.append(item_name); p[slot_key] = None; unequipped.append(item_name)
+            continue
         item_data = pool.get(item_name, {})
         item_class = item_data.get("class") or item_data.get("line")
         if not item_class:
@@ -17333,18 +17360,9 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🛡️ Equipped *{item_name}*!\n{compare}\n"
             + (f"_Unequipped {old_name}_" if old_name else ""), delay=15)
     elif item_name in SHIELDS:
-        s_data = SHIELDS[item_name]
-        cls_line = get_class_line(p)
-        path = p.get("class_path")
-        is_claw = s_data.get("type") == "claw"
-        if is_claw:
-            if cls_line != "thief" or path != "B":
-                await send_group(update,
-                    "❌ Only Assassin path (Cutthroat/Assassin/Blade Master/Specialist) can use claws.", delay=9); return
-        else:
-            if cls_line != "warrior" or path != "A":
-                await send_group(update,
-                    "❌ Only Warrior Path A (Page/Squire/Knight/Paladin) can use shields.", delay=9); return
+        _sh_ok, _sh_reason = _can_equip_shield(p, item_name)
+        if not _sh_ok:
+            await send_group(update, _sh_reason, delay=9); return
         old_name = p.get("equipped_shield")
         old_def = get_armor_def(p)
         p["equipped_shield"] = item_name
@@ -17648,9 +17666,9 @@ async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Armor DEF is now *{new_def}*" + (f"\n_Unequipped {old}_" if old else ""),
             parse_mode="Markdown")
     elif item_name in SHIELDS:
-        cls_line = get_class_line(p); path = p.get("class_path")
-        if cls_line != "warrior" or path != "A":
-            await query.answer("Only Warrior Path A can use shields!", show_alert=True); return
+        _sh_ok, _sh_reason = _can_equip_shield(p, item_name)
+        if not _sh_ok:
+            await query.answer(_sh_reason.replace("❌ ", ""), show_alert=True); return
         old = p.get("equipped_shield")
         p["equipped_shield"] = item_name; inv.remove(item_name)
         if old: inv.append(old)
@@ -25285,12 +25303,14 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         action_txt = ""
         # Stun / paralyze / freeze / fear: block ALL player actions this turn
         _p_blocked = enc.pop("p_stunned", False) or enc.pop("p_skip", False)
+        if not _p_blocked:
+            # MP regenerates each turn for EVERY class (magic recovers faster) so
+            # skills stay usable the whole fight — not just on the opening turn.
+            _mp_regen = 10 if get_class_line(p) in _MAGIC_LINES else 6
+            enc["p_mp"] = min(enc.get("p_max_mp", 10), enc.get("p_mp", 0) + _mp_regen)
         if _p_blocked:
             action_txt = "⚡ You're stunned and lose your turn!"
         elif data == f"enc_atk_{uid}":
-            # MP regen per turn — magic classes only
-            if get_class_line(p) in _MAGIC_LINES:
-                enc["p_mp"] = min(enc.get("p_max_mp", 10), enc.get("p_mp", 0) + 5)
             _enc_w = get_weather()
             dmg    = calc_attack_damage(p, _enc_w)
             if enc.pop("p_weakened", False): dmg = max(1, int(dmg * 0.65))
@@ -25610,12 +25630,14 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         action_txt = ""
         # Stun / paralyze / freeze / fear: block ALL player actions this turn
         _ph_blocked = enc.pop("p_stunned", False) or enc.pop("p_skip", False)
+        if not _ph_blocked:
+            # MP regenerates each turn for EVERY class (magic recovers faster) so
+            # skills stay usable the whole fight — not just on the opening turn.
+            _mp_regen = 10 if get_class_line(p) in _MAGIC_LINES else 6
+            enc["p_mp"] = min(enc.get("p_max_mp", 10), enc.get("p_mp", 0) + _mp_regen)
         if _ph_blocked:
             action_txt = "⚡ You're stunned and lose your turn!"
         elif data == f"enc_atk_{uid}":
-            # MP regen per turn — magic classes only
-            if get_class_line(p) in _MAGIC_LINES:
-                enc["p_mp"] = min(enc.get("p_max_mp", 10), enc.get("p_mp", 0) + 5)
             _hunt_w = get_weather()
             dmg     = calc_attack_damage(p, _hunt_w)
             if enc.pop("p_weakened", False): dmg = max(1, int(dmg * 0.65))
@@ -27864,7 +27886,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pet["last_trained"] = datetime.now().isoformat()
         # Level up (capped at player_level * 3)
         _owner_p = get_player(user.id)
-        _pet_train_cap = min(100, (_owner_p["level"] if _owner_p else 1) * 3)
+        _pet_train_cap = _pet_level_cap(_owner_p["level"] if _owner_p else 1)
         lvl_ups = []
         while pet["exp"] >= pet_exp_for_level(pet["level"]) and pet["level"] < _pet_train_cap:
             pet["exp"] -= pet_exp_for_level(pet["level"])
@@ -28072,7 +28094,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pet["bond_score"] = min(200, pet.get("bond_score",0) + 15)
             pet["adventure_ends_at"] = None
             _adv_p = get_player(user.id)
-            _adv_pet_cap = min(100, (_adv_p["level"] if _adv_p else 1) * 3)
+            _adv_pet_cap = _pet_level_cap(_adv_p["level"] if _adv_p else 1)
             lvl_ups = []
             while pet["exp"] >= pet_exp_for_level(pet["level"]) and pet["level"] < _adv_pet_cap:
                 pet["exp"] -= pet_exp_for_level(pet["level"])
@@ -28117,7 +28139,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pet["bond_score"] = min(200, pet.get("bond_score",0) + hours * 2 + 9)
         pet["adventure_ends_at"] = None
         _claim_p = get_player(user.id)
-        _claim_pet_cap = min(100, (_claim_p["level"] if _claim_p else 1) * 3)
+        _claim_pet_cap = _pet_level_cap(_claim_p["level"] if _claim_p else 1)
         lvl_ups = []
         while pet["exp"] >= pet_exp_for_level(pet["level"]) and pet["level"] < _claim_pet_cap:
             pet["exp"] -= pet_exp_for_level(pet["level"])
@@ -32472,12 +32494,10 @@ async def fixgear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if item_class and (not cls_line or item_class != cls_line):
                 bad.append(name)
         s_name = p.get("equipped_shield")
-        if s_name:
-            s_data = SHIELDS.get(s_name, {})
-            if s_data.get("type") == "claw":
-                if cls_line != "thief" or path != "B": bad.append(s_name)
-            else:
-                if cls_line != "warrior" or path != "A": bad.append(s_name)
+        if s_name and s_name in SHIELDS:
+            # Defensive shields are open to all classes now; only claws are locked.
+            if not _can_equip_shield(p, s_name)[0]:
+                bad.append(s_name)
         return bad
 
     if not context.args:
