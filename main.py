@@ -4781,32 +4781,43 @@ ENHANCE_COSTS = {1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:18, 9:23, 10:30}
 ENHANCE_RATES = {1:1.00, 2:0.95, 3:0.90, 4:0.85, 5:0.75,
                  6:0.65, 7:0.55, 8:0.45, 9:0.35, 10:0.25}
 
+# Every enchant type here is verified to be CONSUMED in combat/economy — no
+# dead effects. Rarity weights bias rolls toward common effects; the rarer the
+# effect, the bigger the payoff. Emoji + honest descriptions for the UI.
 ENCHANT_EFFECTS = {
     "weapon": [
-        {"id":"lifesteal",    "desc":"Each hit restores HP equal to 30% of damage dealt", "type":"lifesteal_flat","val":6},
-        {"id":"flaming",      "desc":"15% chance to burn on hit (3 stacks, 10% max HP/action)","type":"burn_proc","val":10},
-        {"id":"keen",         "desc":"+16% crit chance",               "type":"crit_bonus","val":0.16},
-        {"id":"heavy",        "desc":"+12 flat damage per hit",        "type":"flat_dmg","val":12},
-        {"id":"vampiric",     "desc":"Kills restore 35 HP",            "type":"kill_heal","val":35},
-        {"id":"swift",        "desc":"+10% dodge chance",              "type":"dodge_bonus","val":0.10},
+        {"id":"keen",       "emoji":"🎯","type":"crit_bonus","val":0.18,   "weight":4, "desc":"+18% critical hit chance"},
+        {"id":"heavy",      "emoji":"🔨","type":"flat_dmg","val":28,       "weight":4, "desc":"+28 flat damage every hit"},
+        {"id":"flaming",    "emoji":"🔥","type":"burn_proc","val":12,      "weight":3, "desc":"18% chance to Burn on hit (12% max HP/turn)"},
+        {"id":"vampiric",   "emoji":"🩸","type":"lifesteal_flat","val":14, "weight":3, "desc":"Restore 14 HP on every hit"},
+        {"id":"swift",      "emoji":"💨","type":"dodge_bonus","val":0.10,  "weight":2, "desc":"+10% dodge chance"},
+        {"id":"executioner","emoji":"⚰️","type":"kill_heal","val":80,      "weight":1, "desc":"Restore 80 HP on every kill"},
     ],
     "armor": [
-        {"id":"reinforced",   "desc":"+18 DEF",                        "type":"armor_def","val":18},
-        {"id":"thorned",      "desc":"Reflect 12 dmg to attacker",     "type":"reflect_flat","val":12},
-        {"id":"warded",       "desc":"+20% healing received",          "type":"heal_bonus","val":0.20},
-        {"id":"resilient",    "desc":"+35 max HP",                     "type":"max_hp","val":35},
-        {"id":"hardened",     "desc":"10% chance to fully block a hit","type":"block_chance","val":0.10},
-        {"id":"quickened",    "desc":"+8% dodge",                      "type":"dodge_bonus","val":0.08},
+        {"id":"reinforced","emoji":"🛡️","type":"armor_def","val":32,      "weight":4, "desc":"+32 DEF"},
+        {"id":"resilient", "emoji":"❤️","type":"max_hp","val":70,         "weight":4, "desc":"+70 max HP"},
+        {"id":"quickened", "emoji":"💨","type":"dodge_bonus","val":0.10,  "weight":3, "desc":"+10% dodge chance"},
+        {"id":"thorned",   "emoji":"🌵","type":"reflect_flat","val":22,   "weight":3, "desc":"Reflect 22 damage to attackers"},
+        {"id":"vital",     "emoji":"💗","type":"max_hp","val":120,        "weight":2, "desc":"+120 max HP"},
+        {"id":"hardened",  "emoji":"🪨","type":"block_chance","val":0.12, "weight":1, "desc":"12% chance to fully block a hit"},
     ],
     "accessory": [
-        {"id":"amplified",    "desc":"+6 to all stats",                "type":"all_stats","val":6},
-        {"id":"golden",       "desc":"+20% gold from all sources",     "type":"gold_bonus","val":0.20},
-        {"id":"soulbound",    "desc":"+10% EXP from all sources",      "type":"exp_bonus","val":0.10},
-        {"id":"fortified",    "desc":"+45 max HP",                     "type":"max_hp","val":45},
-        {"id":"empowered",    "desc":"+12 ATK",                        "type":"atk","val":12},
-        {"id":"mystical",     "desc":"+12 to primary class stat",      "type":"primary_stat","val":12},
+        {"id":"empowered","emoji":"⚔️","type":"atk","val":24,           "weight":4, "desc":"+24 ATK"},
+        {"id":"fortified","emoji":"🧱","type":"max_hp","val":80,        "weight":4, "desc":"+80 max HP"},
+        {"id":"golden",   "emoji":"💰","type":"gold_bonus","val":0.25,  "weight":3, "desc":"+25% gold from all sources"},
+        {"id":"scholarly","emoji":"📖","type":"exp_bonus","val":0.15,   "weight":3, "desc":"+15% EXP from all sources"},
+        {"id":"deadly",   "emoji":"🎯","type":"crit_bonus","val":0.15,  "weight":2, "desc":"+15% critical hit chance"},
+        {"id":"nimble",   "emoji":"🤸","type":"dodge_bonus","val":0.08, "weight":1, "desc":"+8% dodge chance"},
     ],
 }
+
+def _roll_enchant(pool_key, exclude_ids):
+    """Weighted-random enchant from a pool, excluding effects already present on
+    the slot so every scroll adds a NEW effect. Returns an effect dict or None."""
+    pool = [e for e in ENCHANT_EFFECTS.get(pool_key, []) if e["id"] not in exclude_ids]
+    if not pool:
+        return None
+    return random.choices(pool, weights=[e.get("weight", 1) for e in pool], k=1)[0]
 
 _shop_cache = {"date": None, "tabs": {}}
 
@@ -23280,98 +23291,103 @@ async def enhance_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 f"Used {cost} Iron Shard(s).", parse_mode="Markdown")
 
 # ── ENCHANT ───────────────────────────────────────────────────────────────────
+# ── ENCHANTING — persistent hub (menu stays open) ────────────────────────────
+_ENCHANT_SLOTS = [
+    ("⚔️ Weapon",      "equipped_weapon",      "weapon",     "weapon"),
+    ("🛡️ Armor",       "equipped_armor",       "armor",      "armor"),
+    ("🔰 Shield",      "equipped_shield",      "shield",     "armor"),
+    ("💍 Accessory 1", "equipped_accessory",   "accessory",  "accessory"),
+    ("💍 Accessory 2", "equipped_accessory_2", "accessory2", "accessory"),
+    ("💍 Accessory 3", "equipped_accessory_3", "accessory3", "accessory"),
+    ("💍 Accessory 4", "equipped_accessory_4", "accessory4", "accessory"),
+    ("🎩 Hat",         "equipped_hat",         "hat",        "armor"),
+    ("🧤 Gloves",      "equipped_gloves",      "gloves",     "armor"),
+    ("👢 Boots",       "equipped_boots",       "boots",      "armor"),
+    ("🎭 Mask",        "equipped_mask",        "mask",       "armor"),
+]
+_ENCHANT_SLOT_LOOKUP = {sid: (label, key, pool) for label, key, sid, pool in _ENCHANT_SLOTS}
+
+def _enchant_scrolls(p):
+    return sjl(p.get("inventory"), []).count("Enchanting Scroll")
+
+def _build_enchant_home(p, uid):
+    scrolls = _enchant_scrolls(p)
+    lines = ["✨ *Enchanting Hub*",
+             f"📜 Enchanting Scrolls: *{scrolls}*\n",
+             "_Each slot holds up to 3 enchants. Tap a slot to enchant it._\n"]
+    buttons = []
+    for label, key, sid, pool in _ENCHANT_SLOTS:
+        name = p.get(key)
+        if not name:
+            continue
+        encs = get_enchant(p, key) or get_enchant(p, name)
+        cnt = len(encs)
+        icons = " ".join(next((e2.get("emoji", "✨") for pool_list in ENCHANT_EFFECTS.values()
+                               for e2 in pool_list if e2["id"] == e.get("id")), "✨") for e in encs) or "—"
+        lines.append(f"{label}: *{name}*  ({cnt}/3)  {icons}")
+        buttons.append([InlineKeyboardButton(f"{label}  ({cnt}/3)", callback_data=f"enchant_{uid}_{sid}")])
+    if not buttons:
+        return "✨ No gear equipped to enchant! Equip something first with /equip.", None
+    buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(buttons)
+
+def _build_enchant_slot(p, uid, sid, flash=""):
+    if sid not in _ENCHANT_SLOT_LOOKUP:
+        return _build_enchant_home(p, uid)
+    label, key, pool = _ENCHANT_SLOT_LOOKUP[sid]
+    name = p.get(key)
+    if not name:
+        return _build_enchant_home(p, uid)
+    encs = get_enchant(p, key) or get_enchant(p, name)
+    scrolls = _enchant_scrolls(p)
+    lines = [f"{label}: *{name}*  ({len(encs)}/3 enchants)"]
+    if flash:
+        lines.append(flash)
+    lines.append("")
+    if encs:
+        for e in encs:
+            em = next((e2.get("emoji", "✨") for e2 in ENCHANT_EFFECTS.get(pool, []) if e2["id"] == e.get("id")), "✨")
+            lines.append(f"{em} *{e.get('id','?').capitalize()}* — _{e.get('desc','')}_")
+    else:
+        lines.append("_No enchants yet._")
+    lines.append(f"\n📜 Scrolls: *{scrolls}*")
+    rows = []
+    full = len(encs) >= 3
+    if full:
+        lines.append("_This slot is full (3/3)._")
+    elif scrolls <= 0:
+        lines.append("_You're out of Enchanting Scrolls — get more from /shop, quests, or explores._")
+    else:
+        rows.append([InlineKeyboardButton("✨ Enchant (1 📜)", callback_data=f"encdo_{uid}_{sid}")])
+    if encs and scrolls > 0:
+        rows.append([InlineKeyboardButton("🎲 Reroll last (1 📜)", callback_data=f"encrr_{uid}_{sid}")])
+    rows.append([InlineKeyboardButton("🔙 Slots", callback_data=f"enchome_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
 async def enchant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-
-    if not context.args:
-        lines = ["✨ *Enchanting* — choose a slot:\n"]
-        inv = sjl(p.get("inventory"), [])
-        lines.append(f"📜 Enchanting Scrolls: {inv.count('Enchanting Scroll')}\n")
-        buttons = []
-        for slot_label, slot_key, slot_id in [
-                ("⚔️ Weapon",      "equipped_weapon",      "weapon"),
-                ("🛡️ Armor",       "equipped_armor",       "armor"),
-                ("🔰 Shield",      "equipped_shield",      "shield"),
-                ("💍 Accessory 1", "equipped_accessory",   "accessory"),
-                ("💍 Accessory 2", "equipped_accessory_2", "accessory2"),
-                ("💍 Accessory 3", "equipped_accessory_3", "accessory3"),
-                ("💍 Accessory 4", "equipped_accessory_4", "accessory4"),
-                ("🎩 Hat",         "equipped_hat",         "hat"),
-                ("🧤 Gloves",      "equipped_gloves",      "gloves"),
-                ("👢 Boots",       "equipped_boots",       "boots"),
-                ("🎭 Mask",        "equipped_mask",        "mask")]:
-            name = p.get(slot_key)
-            if not name: continue
-            encs = get_enchant(p, slot_key) or get_enchant(p, name)  # slot-keyed first, fallback for old data
-            count = len(encs); remaining = 3 - count
-            enc_str = ", ".join(e["id"].capitalize() for e in encs) if encs else "None"
-            lines.append(f"{slot_label}: *{name}*\n  Enchants ({count}/3): {enc_str} | {remaining} slot(s) left")
-            buttons.append([InlineKeyboardButton(
-                f"{slot_label}: {name}  ({remaining} slot{'s' if remaining != 1 else ''} left)",
-                callback_data=f"enchant_{user.id}_{slot_id}")])
-        if not buttons:
-            await send_group(update, "✨ No gear equipped to enchant!", delay=9); return
-        buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")])
-        markup = InlineKeyboardMarkup(buttons)
-        await send_group(update, "\n".join(lines), delay=30, reply_markup=markup); return
-
-    slot = context.args[0].lower()
-    slot_map = {
-        "weapon":     ("equipped_weapon",      "weapon"),
-        "armor":      ("equipped_armor",       "armor"),
-        "shield":     ("equipped_shield",      "armor"),
-        "accessory":  ("equipped_accessory",   "accessory"),
-        "accessory2": ("equipped_accessory_2", "accessory"),
-        "accessory3": ("equipped_accessory_3", "accessory"),
-        "accessory4": ("equipped_accessory_4", "accessory"),
-        "hat":        ("equipped_hat",         "armor"),
-        "gloves":     ("equipped_gloves",      "armor"),
-        "boots":      ("equipped_boots",       "armor"),
-        "mask":       ("equipped_mask",        "armor"),
-    }
-    if slot not in slot_map:
-        await send_group(update,
-            "Usage: /enchant weapon | armor | shield | accessory | accessory2 | accessory3 | accessory4 | hat | gloves | boots | mask", delay=9); return
-
-    slot_key, effect_pool_key = slot_map[slot]
-    item_name = p.get(slot_key)
-    if not item_name:
-        await send_group(update, f"No {slot} equipped!", delay=9); return
-
-    inv = sjl(p.get("inventory"), [])
-    if "Enchanting Scroll" not in inv:
-        await send_group(update,
-            "❌ You need an *Enchanting Scroll*.\n"
-            "They drop from explores, quests, and the shop.", delay=9); return
-
-    encs = get_enchant(p, slot_key) or get_enchant(p, item_name)
-    if len(encs) >= 3:
-        await send_group(update,
-            f"❌ *{item_name}* already has 3 enchants (maximum).\n"
-            f"Current: {', '.join(e['id'].capitalize() for e in encs)}"); return
-
-    inv.remove("Enchanting Scroll")
-    p["inventory"] = json.dumps(inv)
-
-    pool = ENCHANT_EFFECTS.get(effect_pool_key, [])
-    effect = random.choice(pool)
-    set_enchant(p, slot_key, effect)  # store by slot so duplicates are independent
-    save_player(p)
-    new_encs = get_enchant(p, slot_key)
-    all_str = "\n".join(f"✨ {e['id'].capitalize()}  -  {e['desc']}" for e in new_encs)
-    await send_group(update,
-        f"✨ *Enchanted!*\n\n"
-        f"*{item_name}*  -  Enchants ({len(new_encs)}/3):\n{all_str}", delay=20)
+    # Optional direct slot arg still works: /enchant weapon
+    if context.args:
+        arg = context.args[0].lower()
+        if arg in _ENCHANT_SLOT_LOOKUP:
+            text, markup = _build_enchant_slot(p, user.id, arg)
+            await send_group(update, text, delay=60, reply_markup=markup); return
+    text, markup = _build_enchant_home(p, user.id)
+    await send_group(update, text, delay=60, reply_markup=markup)
 
 async def enchant_slot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle slot button from /enchant menu."""
+    """Persistent enchant hub: enchant_{uid}_{slot} (open slot),
+    enchome_{uid} (slot list), encdo_{uid}_{slot} (enchant),
+    encrr_{uid}_{slot} (reroll last). Menu re-renders in place — never closes."""
     query = update.callback_query
-    parts = query.data.split("_", 2)  # enchant_{uid}_{slot}
+    data = query.data
+    parts = data.split("_")
+    action = parts[0]
     try:
-        uid  = int(parts[1])
-        slot = parts[2]
+        uid = int(parts[1])
     except (IndexError, ValueError):
         await query.answer(); return
     if query.from_user.id != uid:
@@ -23379,43 +23395,64 @@ async def enchant_slot_callback(update: Update, context: ContextTypes.DEFAULT_TY
     p = get_player(uid)
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
-    slot_map = {
-        "weapon":     ("equipped_weapon",      "weapon"),
-        "armor":      ("equipped_armor",       "armor"),
-        "shield":     ("equipped_shield",      "armor"),
-        "accessory":  ("equipped_accessory",   "accessory"),
-        "accessory2": ("equipped_accessory_2", "accessory"),
-        "accessory3": ("equipped_accessory_3", "accessory"),
-        "accessory4": ("equipped_accessory_4", "accessory"),
-        "hat":        ("equipped_hat",         "armor"),
-        "gloves":     ("equipped_gloves",      "armor"),
-        "boots":      ("equipped_boots",       "armor"),
-        "mask":       ("equipped_mask",        "armor"),
-    }
-    if slot not in slot_map:
+
+    if action == "enchome":
+        await query.answer()
+        text, markup = _build_enchant_home(p, uid)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+
+    if action == "enchant":  # open a slot's detail screen
+        sid = parts[2] if len(parts) > 2 else ""
+        await query.answer()
+        text, markup = _build_enchant_slot(p, uid, sid)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+
+    # encdo / encrr — both spend a scroll and mutate the slot, then re-render it
+    sid = parts[2] if len(parts) > 2 else ""
+    if sid not in _ENCHANT_SLOT_LOOKUP:
         await query.answer(); return
-    slot_key, effect_pool_key = slot_map[slot]
-    item_name = p.get(slot_key)
-    if not item_name:
-        await query.answer(f"No {slot} equipped!", show_alert=True); return
+    label, key, pool = _ENCHANT_SLOT_LOOKUP[sid]
+    name = p.get(key)
+    if not name:
+        await query.answer("Nothing equipped in that slot!", show_alert=True); return
     inv = sjl(p.get("inventory"), [])
     if "Enchanting Scroll" not in inv:
-        await query.answer("You need an Enchanting Scroll to enchant!", show_alert=True); return
-    encs = get_enchant(p, slot_key) or get_enchant(p, item_name)
+        await query.answer("You're out of Enchanting Scrolls!", show_alert=True); return
+    encs = get_enchant(p, key) or get_enchant(p, name)
+
+    if action == "encrr":  # reroll: drop the most recent enchant, roll a fresh one
+        if not encs:
+            await query.answer("Nothing to reroll yet."); return
+        dropped = encs[-1].get("id")
+        remaining = encs[:-1]
+        # exclude the remaining enchants AND the one being rerolled, so a reroll
+        # always yields a genuinely different effect
+        present = {e.get("id") for e in remaining} | {dropped}
+        new_eff = _roll_enchant(pool, present)
+        if not new_eff:
+            await query.answer("No other enchant to roll into on this slot.", show_alert=True); return
+        inv.remove("Enchanting Scroll"); p["inventory"] = json.dumps(inv)
+        enchants = sjl(p.get("enchants"), {})
+        enchants[key] = remaining + [new_eff]
+        p["enchants"] = json.dumps(enchants); save_player(p)
+        await query.answer(f"🎲 {dropped.capitalize()} → {new_eff['id'].capitalize()}!")
+        flash = f"🎲 Rerolled *{dropped.capitalize()}* into {new_eff.get('emoji','✨')} *{new_eff['id'].capitalize()}!*"
+        text, markup = _build_enchant_slot(p, uid, sid, flash=flash)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+
+    # encdo — add a new enchant
     if len(encs) >= 3:
-        await query.answer(f"{item_name} already has 3 enchants (max)!", show_alert=True); return
-    await query.answer()
-    inv.remove("Enchanting Scroll")
-    p["inventory"] = json.dumps(inv)
-    pool = ENCHANT_EFFECTS.get(effect_pool_key, [])
-    effect = random.choice(pool)
-    set_enchant(p, slot_key, effect)  # store by slot so duplicates are independent
-    save_player(p)
-    new_encs = get_enchant(p, slot_key)
-    all_str = "\n".join(f"✨ {e['id'].capitalize()}  —  {e['desc']}" for e in new_encs)
-    await _q_edit(query, 
-        f"✨ *Enchanted!*\n\n*{item_name}*  —  Enchants ({len(new_encs)}/3):\n{all_str}",
-        parse_mode="Markdown")
+        await query.answer(f"{name} already has 3 enchants (max)!", show_alert=True); return
+    present = {e.get("id") for e in encs}
+    new_eff = _roll_enchant(pool, present)
+    if not new_eff:
+        await query.answer("This slot already has every enchant!", show_alert=True); return
+    inv.remove("Enchanting Scroll"); p["inventory"] = json.dumps(inv)
+    set_enchant(p, key, new_eff); save_player(p)
+    await query.answer(f"✨ {new_eff['id'].capitalize()}!")
+    flash = f"✨ *Enchanted!* {new_eff.get('emoji','✨')} *{new_eff['id'].capitalize()}* — _{new_eff['desc']}_"
+    text, markup = _build_enchant_slot(p, uid, sid, flash=flash)
+    await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
 
 # ── SKILL TREE PAGE BUILDER ───────────────────────────────────────────────────
 def _build_skill_tree_pages(p):
@@ -26550,7 +26587,7 @@ GUIDE_PAGES = [
         "Use /equip to browse your bag and tap to equip. Use /unequip to remove gear.\n"
         "Hats, Gloves, Boots, and Masks are pure DEF items — equip all four to stack serious defense. All can be enhanced, enchanted, and reinforced.\n"
         "/enhance  -  Upgrade gear with Iron Shards. Tap the slot button. +1 to +10 max. Fails are possible at high levels.\n"
-        "/enchant  -  Add random enchants via Enchanting Scrolls (up to 3 per item). Tap slot to enchant.\n"
+        "/enchant  -  Enchanting Hub: up to 3 enchants per gear slot, each a distinct effect (crit, dodge, ATK, DEF, HP, lifesteal, burn, gold%, EXP%...). The menu stays open — enchant slot after slot, or 🎲 Reroll the last enchant into a different one. Costs 1 Enchanting Scroll per action.\n"
         "/reinforce  -  Sacrifice a duplicate to permanently raise its base stats (+1 DEF per reinforce, max 20). Tap to select.\n"
         "/reinforce ascend  -  After 20 reinforces, Ascend the item to ★ tier (+5 flat bonus, resets to 0/20). Up to ★★★.\n"
         "\n"
@@ -37405,7 +37442,7 @@ def main():
     app.add_handler(CallbackQueryHandler(shopreroll_callback,   pattern="^shopreroll_"))
     app.add_handler(CallbackQueryHandler(boss_start_callback,   pattern="^bossstart_"))
     app.add_handler(CallbackQueryHandler(enhance_slot_callback, pattern="^enhance_"))
-    app.add_handler(CallbackQueryHandler(enchant_slot_callback, pattern="^enchant_"))
+    app.add_handler(CallbackQueryHandler(enchant_slot_callback, pattern="^(enchant_|enchome_|encdo_|encrr_)"))
     app.add_handler(CallbackQueryHandler(allocate_callback,     pattern="^alloc_"))
     # New inline button callbacks
     app.add_handler(CallbackQueryHandler(raid_atk_callback,      pattern="^raid_atk_"))
