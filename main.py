@@ -13130,11 +13130,11 @@ CLASS_KITS = {
                  "desc":"Freeze the foe — they lose their next attack."},
     },
     "thief": {
-        "main": {"name":"Backstab","emoji":"🗡️","mp":18,"cd":2,"kind":"strike","mult":1.8,
-                 "rider":{"crit":0.5},"desc":"AGI×1.8 with +50% crit chance."},
+        "main": {"name":"Backstab","emoji":"🗡️","mp":18,"cd":2,"kind":"strike","mult":2.1,
+                 "rider":{"crit":0.5},"desc":"LUK×2.1 with +50% crit chance."},
         "s1":   {"name":"Vanish","emoji":"💨","mp":15,"cd":3,"kind":"support",
-                 "effect":[("self","vanish_turns","add",1),("self","empower_next","set",0.5)],
-                 "desc":"Dodge the next hit; your next attack deals +50%."},
+                 "effect":[("self","vanish_turns","add",2),("self","empower_next","set",0.6)],
+                 "desc":"Dodge the next 2 hits; your next attack deals +60%."},
         "s2":   {"name":"Toxin","emoji":"🧪","mp":15,"cd":2,"kind":"support",
                  "effect":[("foe","poison_stacks","add",3),("foe","poison_pct","setmax",12)],
                  "desc":"Coat your blade: Poison ×3 (12% max HP/turn)."},
@@ -13215,6 +13215,24 @@ CLASS_KITS = {
 def _kit_for(p):
     """Return the class-line kit dict {main, s1, s2} or None (no class yet)."""
     return CLASS_KITS.get(get_class_line(p) or "")
+
+def _build_kit_text(p):
+    """Player-facing view of the 3-skill combat kit (the actual skills used in
+    battle). Replaces the old sprawling skill-tree list."""
+    kit = _kit_for(p)
+    cls = get_player_class(p)
+    if not kit or not cls:
+        return None
+    lines = [f"🎯 *{p['username']}'s Combat Kit* — {cls['name']}\n",
+             "_These are your 3 battle skills. Use them from the ⚔️ fight card "
+             "(reply */attack*) or the 🗡️ */encounter* panel._\n"]
+    for slot, label in (("main", "⚔️ Main Strike"), ("s1", "✨ Skill I"), ("s2", "✨ Skill II")):
+        sk = kit.get(slot)
+        if not sk:
+            continue
+        meta = f"_(💙{sk.get('mp','?')} MP · ⏳{sk.get('cd','?')}-turn cd)_"
+        lines.append(f"{sk.get('emoji','✨')} *{sk['name']}*  {meta}\n   {sk.get('desc','')}")
+    return "\n".join(lines)
 
 def _kit_cd_state(uid):
     st = _pvp_battle_state.setdefault(uid, {})
@@ -20180,29 +20198,14 @@ async def gbank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── SKILL ─────────────────────────────────────────────────────────────────────
 async def skills_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show the player's unlocked skills and descriptions."""
+    """Show the player's 3-skill combat kit."""
     user = update.effective_user; p = get_player(user.id)
     if not p:
         await send_group(update, "Use /ascend first!", delay=9); return
-    cls = get_player_class(p)
-    if not cls:
+    txt = _build_kit_text(p)
+    if not txt:
         await send_group(update, "No class yet! Use /class at Level 5.", delay=9); return
-    all_skills = get_combat_skills(p)
-    if not all_skills:
-        await send_group(update, "No skills unlocked yet. Level up or change class!", delay=9); return
-    lines = [f"🔮 *{p['username']}'s Skills* — {cls['name']}\n"]
-    for i, s in enumerate(all_skills, 1):
-        stype = s.get("type", "damage")
-        type_icon = ("⚔️" if stype in ("damage","combo_dmg","freeze_nuke","execute_nuke",
-                                        "holy_nuke","fear_kill","nature_nuke","drain")
-                     else "💚" if stype in ("self_heal","group_heal","revive_heal","full_revive","regen")
-                     else "✨" if stype in ("dmg_reduction_buff","self_heal_buff","heal_shield",
-                                            "self_atk_buff","party_atk_buff","party_full_buff")
-                     else "⚡")
-        unlock_note = f" _(unlocks Lv.{s.get('unlock',5)})_" if p.get("level",1) < s.get("unlock",5) else ""
-        lines.append(f"*{i}.* {type_icon} *{s['name']}*{unlock_note}\n   _{s['desc']}_\n")
-    lines.append("_Use /skill [name or number] in a reply to fire a skill._")
-    await send_group(update, "\n".join(lines), permanent=True)
+    await send_group(update, txt, permanent=True)
 
 
 async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -20212,6 +20215,15 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cls = get_player_class(p)
     if not cls:
         await send_group(update, "No class yet! Use /class at Level 5.", delay=9); return
+    # Pure "show me my skills" — no target and no active fight → display the
+    # 3-skill combat kit (not the old skill-tree list).
+    _sk_chat = update.effective_chat.id
+    _sk_raid, _ = in_active_raid(user.id, _sk_chat)
+    _sk_in_fight = (bool(_sk_raid) or _sk_chat in active_bosses or _sk_chat in secret_boss_active
+                    or bool(update.message and update.message.reply_to_message))
+    if not context.args and not _sk_in_fight:
+        await send_group(update, _build_kit_text(p) or "No class yet! Use /class at Level 5.",
+                         permanent=True); return
     all_skills = sjl(p.get("all_skills"), [])
     # Sync: add any skills from current class that the player qualifies for but is missing
     skill_names = {s["name"] for s in all_skills}
