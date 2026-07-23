@@ -27630,6 +27630,10 @@ GUIDE_PAGES = [
         "and is defeated for 3 minutes. Go quiet on your turn = forfeit.\n"
         "🤝 /standoff [wager] — split-or-steal. Both pick in secret DM: "
         "Split/Split = +25% each · Steal/Split = thief takes all · Steal/Steal = pot BURNS.\n"
+        "⚔️ /duel [wager] — Honor Duel: strictly alternating turns with your full "
+        "class kit (Attack + 3 skills), fresh sandboxed HP, winner takes the pot. "
+        "No real HP/EXP at stake — pure skill and resource management. 75s per turn; "
+        "the arena collapses after ~24 turns to force a finish.\n"
         "\n"
         "*Spectators:* every /attack fight opens a 💰 betting window in the group — "
         "100g on your pick, 2x payout, refunds if the fight ends without a winner.\n"
@@ -36163,6 +36167,413 @@ async def standoff_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _standoff_resolve(context.bot, chat_id)
         return
 
+# ══════════════════════════════════════════════════════════════════════════════
+# HONOR DUELS — formal, strictly-alternating, sandboxed 1v1 for a gold wager.
+# Fresh HP each duel; no real defeat/EXP/wanted — pure skill for the pot. Reuses
+# CLASS_KITS (the 3-skill system) so it's the ideal showcase for it.
+# ══════════════════════════════════════════════════════════════════════════════
+_duels = {}   # chat_id -> duel state
+
+def _duel_bars(hp, mx, w=12):
+    f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
+    return "█" * f + "░" * (w - f)
+
+def _duel_status_line(st):
+    ic = []
+    if safe_int(st.get("poison_stacks")) > 0: ic.append(f"🧪×{st['poison_stacks']}")
+    if safe_int(st.get("bleed_stacks")) > 0:  ic.append(f"🩸×{st['bleed_stacks']}")
+    if safe_int(st.get("stun_turns")) > 0:    ic.append("⚡stunned")
+    if safe_int(st.get("shield_charges")) > 0:ic.append(f"🛡️×{st['shield_charges']}")
+    if safe_int(st.get("weakened_hits")) > 0: ic.append(f"💔×{st['weakened_hits']}")
+    if safe_int(st.get("exposed_hits")) > 0:  ic.append(f"🎯×{st['exposed_hits']}")
+    if safe_int(st.get("vanish_turns")) > 0:  ic.append(f"💨×{st['vanish_turns']}")
+    if safe_int(st.get("warcry_stacks")) > 0: ic.append(f"📣×{st['warcry_stacks']}")
+    if float(st.get("empower_next") or 0) > 0:ic.append("✨empowered")
+    if safe_int(st.get("silence_turns")) > 0: ic.append("🤐silenced")
+    if safe_int(st.get("entangle_turns")) > 0:ic.append("🌱rooted")
+    if safe_int(st.get("regen_charges")) > 0: ic.append(f"💚×{st['regen_charges']}")
+    return "  ".join(ic)
+
+def _duel_card(duel):
+    n1, n2 = duel["n1"], duel["n2"]
+    a1 = "▶️ " if duel["turn"] == "1" else ""
+    a2 = "▶️ " if duel["turn"] == "2" else ""
+    lines = [
+        f"⚔️ *HONOR DUEL*  —  💰 *{fmt_num(duel['wager']*2)}g* pot",
+        f"{a1}👤 *{n1}*  Lv{duel['lv1']}",
+        f"`{_duel_bars(duel['hp1'], duel['mhp1'])}`  {duel['hp1']:,}/{duel['mhp1']:,}   💙 {duel['mp1']}/{duel['mmp1']}",
+    ]
+    s1 = _duel_status_line(duel["st1"])
+    if s1: lines.append(f"  ↳ {s1}")
+    lines.append("──────────────────")
+    lines.append(f"{a2}👾 *{n2}*  Lv{duel['lv2']}")
+    lines.append(f"`{_duel_bars(duel['hp2'], duel['mhp2'])}`  {duel['hp2']:,}/{duel['mhp2']:,}   💙 {duel['mp2']}/{duel['mmp2']}")
+    s2 = _duel_status_line(duel["st2"])
+    if s2: lines.append(f"  ↳ {s2}")
+    if duel.get("log"):
+        lines.append("──────────────────")
+        for l in duel["log"][-2:]:
+            lines.append("▸ " + l[:120])
+    active = duel["n" + duel["turn"]]
+    lines.append(f"\n🎯 *{active}'s turn*")
+    return "\n".join(lines)
+
+def _duel_markup(duel):
+    side = duel["turn"]
+    active_uid = duel["p" + side]
+    ap = get_player(active_uid)
+    kit = _kit_for(ap) if ap else None
+    st = duel["st" + side]; cd = duel["cd" + side]; mp = duel["mp" + side]
+    rows = [[InlineKeyboardButton("⚔️ Attack", callback_data=f"duelact_{active_uid}_atk")]]
+    if kit and safe_int(st.get("silence_turns")) <= 0:
+        for slot in ("main", "s1", "s2"):
+            sk = kit[slot]; cdl = safe_int(cd.get(slot))
+            if cdl > 0:
+                rows.append([InlineKeyboardButton(f"⏳ {sk['name']} ({cdl}t)", callback_data=f"duelno_{active_uid}")])
+            elif mp < sk.get("mp", 0):
+                rows.append([InlineKeyboardButton(f"❌ {sk['emoji']} {sk['name']} ({sk['mp']}MP)", callback_data=f"duelno_{active_uid}")])
+            else:
+                rows.append([InlineKeyboardButton(f"{sk['emoji']} {sk['name']} ({sk['mp']}MP)", callback_data=f"duelact_{active_uid}_{slot}")])
+    rows.append([InlineKeyboardButton("🏳️ Forfeit", callback_data=f"duelff_{active_uid}")])
+    return InlineKeyboardMarkup(rows)
+
+async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat; user = update.effective_user
+    if chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("⚔️ Honor Duels happen in the group!"); return
+    if chat.id in _duels:
+        await send_group(update, "⚔️ A duel is already underway here!", delay=9); return
+    if not (update.message and update.message.reply_to_message):
+        await send_group(update, "⚔️ *Honor Duel*: reply to someone with `/duel [wager]`.\n"
+                                 "Strictly alternating turns, fresh HP, full skills — winner takes the pot. "
+                                 "No real HP/EXP at stake, just gold and glory.", delay=15); return
+    tu = update.message.reply_to_message.from_user
+    if tu.id == user.id or tu.is_bot:
+        await send_group(update, "⚔️ Pick a real opponent to duel.", delay=9); return
+    a = get_player(user.id); d = get_player(tu.id)
+    if not a:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if not d:
+        await send_group(update, f"⚔️ *{tu.first_name}* hasn't ascended yet!", delay=9); return
+    if not a.get("class_id") or not d.get("class_id"):
+        await send_group(update, "⚔️ Both duelists need a class first (/class).", delay=9); return
+    wager = _wager_from_args(context.args, default=200)
+    _duels[chat.id] = {"state": "challenge", "p1": user.id, "p2": tu.id,
+                       "n1": user.first_name, "n2": tu.first_name, "wager": wager,
+                       "chat_id": chat.id, "msg_id": None}
+    try:
+        msg = await context.bot.send_message(chat.id,
+            f"⚔️ *HONOR DUEL CHALLENGE!*\n\n*{user.first_name}* challenges *{tu.first_name}* — "
+            f"💰 {wager}g each, winner takes *{wager*2}g*.\n\n"
+            f"_Turn-based · full skills · fresh HP. Do you accept, {tu.first_name}?_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "⚔️ Accept the duel", callback_data=f"duelaccept_{chat.id}")]]))
+        _duels[chat.id]["msg_id"] = msg.message_id
+    except Exception:
+        _duels.pop(chat.id, None); return
+    async def _expire(cid=chat.id, mid=_duels[chat.id]["msg_id"]):
+        await asyncio.sleep(90)
+        s2 = _duels.get(cid)
+        if s2 and s2["state"] == "challenge" and s2["msg_id"] == mid:
+            _duels.pop(cid, None)
+            await bot_edit_challenge_expired(context.bot, cid, mid)
+    _t = asyncio.create_task(_expire()); _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+async def _duel_start(bot, chat_id):
+    duel = _duels.get(chat_id)
+    if not duel: return
+    p1 = get_player(duel["p1"]); p2 = get_player(duel["p2"])
+    if not p1 or not p2:
+        _duels.pop(chat_id, None); return
+    for pk, pp in (("1", p1), ("2", p2)):
+        # Sandboxed HP pool = 30% of real max HP so a duel resolves in a snappy
+        # ~10-18 turns instead of the ~50+ a full pool would take. All %-based
+        # effects (DOTs, heals) key off this pool, so it stays internally fair.
+        duel["hp" + pk] = duel["mhp" + pk] = max(200, round(calc_max_hp(pp) * 0.30))
+        duel["mp" + pk] = duel["mmp" + pk] = safe_int(pp.get("max_mp")) or calc_max_mp(pp)
+        duel["lv" + pk] = pp.get("level", 1)
+        duel["st" + pk] = {}; duel["cd" + pk] = {}
+    duel["turn"] = random.choice(["1", "2"])
+    duel["turn_no"] = 0
+    duel["log"] = []
+    duel["state"] = "active"
+    await _duel_render(bot, chat_id)
+    _duel_arm_timer(bot, chat_id)
+
+async def _duel_render(bot, chat_id):
+    duel = _duels.get(chat_id)
+    if not duel: return
+    try:
+        m = await bot.send_message(chat_id, _duel_card(duel), parse_mode="Markdown",
+                                   reply_markup=_duel_markup(duel))
+        old = duel.get("msg_id")
+        duel["msg_id"] = m.message_id
+        if old:
+            try: await bot.delete_message(chat_id=chat_id, message_id=old)
+            except Exception: pass
+    except Exception:
+        pass
+
+def _duel_arm_timer(bot, chat_id):
+    duel = _duels.get(chat_id)
+    if not duel: return
+    tn = duel["turn_no"]
+    async def _timeout():
+        await asyncio.sleep(75)
+        d2 = _duels.get(chat_id)
+        if d2 and d2["state"] == "active" and d2["turn_no"] == tn:
+            loser = d2["p" + d2["turn"]]
+            winner = d2["p" + _duel_other(d2["turn"])]
+            await _duel_finish(bot, chat_id, winner, loser, timeout=True)
+    _t = asyncio.create_task(_timeout()); _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+def _duel_other(side): return "2" if side == "1" else "1"
+
+def _duel_dot_tick(duel, side):
+    """Poison/bleed tick on the player whose turn is starting. Returns log notes."""
+    st = duel["st" + side]; notes = []
+    mhp = duel["mhp" + side]
+    for stacks_k, pct_k, emoji, nm in (("poison_stacks", "poison_pct", "🧪", "Poison"),
+                                        ("bleed_stacks", "bleed_pct", "🩸", "Bleed")):
+        n = safe_int(st.get(stacks_k))
+        if n > 0:
+            pct = safe_int(st.get(pct_k)) or 8
+            dmg = max(1, round(mhp * pct / 100))
+            duel["hp" + side] = max(0, duel["hp" + side] - dmg)
+            st[stacks_k] = n - 1
+            notes.append(f"{emoji} {nm} -{fmt_num(dmg)}")
+    # regen
+    rc = safe_int(st.get("regen_charges"))
+    if rc > 0:
+        heal = max(1, round(mhp * float(st.get("regen_amt") or 0.08)))
+        duel["hp" + side] = min(mhp, duel["hp" + side] + heal)
+        st["regen_charges"] = rc - 1
+        notes.append(f"💚 Regen +{fmt_num(heal)}")
+    return notes
+
+def _duel_apply_action(duel, side, action):
+    """Resolve the active player's action against the duel state. Returns log line."""
+    other = _duel_other(side)
+    ap = get_player(duel["p" + side]); dp = get_player(duel["p" + other])
+    st, ost = duel["st" + side], duel["st" + other]
+    aname = duel["n" + side]
+    kit = _kit_for(ap)
+    if action != "atk" and kit and action in kit:
+        sk = kit[action]
+        duel["mp" + side] = max(0, duel["mp" + side] - sk.get("mp", 0))
+        duel["cd" + side][action] = sk.get("cd", 0)
+        if sk.get("kind") == "support":
+            notes = []
+            if sk.get("heal_pct"):
+                h = round(duel["mhp" + side] * sk["heal_pct"])
+                duel["hp" + side] = min(duel["mhp" + side], duel["hp" + side] + h); notes.append(f"💚 +{fmt_num(h)} HP")
+            if sk.get("cleanse"):
+                for f in ("poison_stacks", "bleed_stacks", "weakened_hits", "exposed_hits",
+                          "stun_turns", "silence_turns", "entangle_turns"):
+                    st[f] = 0
+                notes.append("🧼 cleansed")
+            for (tgt, field, op, val) in sk.get("effect", []):
+                obj = st if tgt == "self" else ost
+                if op == "add":    obj[field] = safe_int(obj.get(field)) + val
+                elif op == "set":  obj[field] = val
+                elif op == "setmax": obj[field] = max(float(obj.get(field) or 0), val)
+            return f"{sk['emoji']} *{aname}* uses *{sk['name']}!*" + (f"  {'  '.join(notes)}" if notes else "")
+        # strike skill
+        dmg, dnotes = _duel_strike(duel, side, other, ap, sk)
+        return f"{sk['emoji']} *{aname}* — *{sk['name']}!* {dnotes} *{fmt_num(dmg)}* dmg"
+    # basic attack
+    dmg, dnotes = _duel_strike(duel, side, other, ap, None)
+    return f"⚔️ *{aname}* strikes for *{fmt_num(dmg)}*{(' '+dnotes) if dnotes else ''}"
+
+def _duel_strike(duel, side, other, ap, skill):
+    """Compute + apply a damage strike from side→other. Returns (dmg_dealt, notes)."""
+    st, ost = duel["st" + side], duel["st" + other]
+    base = calc_attack_damage(ap)
+    notes = []
+    # dodge (vanish on defender)
+    if safe_int(ost.get("vanish_turns")) > 0:
+        ost["vanish_turns"] -= 1
+        return 0, "🌀 *MISS!* (dodged)"
+    # self buffs
+    wc = safe_int(st.get("warcry_stacks"))
+    if wc > 0: base = round(base * (1 + 0.15 * wc))
+    emp = float(st.get("empower_next") or 0)
+    if emp > 0: base = round(base * (1 + emp)); st["empower_next"] = 0
+    if skill:
+        rider = skill.get("rider", {})
+        base = round(base * skill.get("mult", 1.0))
+        if rider.get("crit") and random.random() < rider["crit"]:
+            base = round(base * 1.8); notes.append("💥CRIT")
+        if rider.get("pierce"): base = round(base * 1.25)
+        if rider.get("focus"):  base = round(base * 1.25)
+        if rider.get("execute") and duel["hp" + other] / max(1, duel["mhp" + other]) < rider["execute"]:
+            base *= 2; notes.append("💀EXECUTE")
+        if rider.get("laststand"):
+            base = round(base * (1 + (1 - duel["hp" + side] / max(1, duel["mhp" + side])) * 0.5))
+        if rider.get("lifesteal"):
+            ls = round(base * rider["lifesteal"])
+            duel["hp" + side] = min(duel["mhp" + side], duel["hp" + side] + ls); notes.append(f"🩸+{fmt_num(ls)}")
+        if rider.get("bleed"): ost["bleed_stacks"] = safe_int(ost.get("bleed_stacks")) + rider["bleed"]; ost["bleed_pct"] = 10
+        if rider.get("poison"): ost["poison_stacks"] = safe_int(ost.get("poison_stacks")) + rider["poison"]; ost["poison_pct"] = 12
+        if rider.get("expose"): ost["exposed_hits"] = safe_int(ost.get("exposed_hits")) + rider["expose"]
+    # attacker weakened
+    wh = safe_int(st.get("weakened_hits"))
+    if wh > 0: base = round(base * 0.75); st["weakened_hits"] = wh - 1
+    # defender exposed
+    eh = safe_int(ost.get("exposed_hits"))
+    if eh > 0: base = round(base * 1.25); ost["exposed_hits"] = eh - 1
+    # defender shield
+    sc = safe_int(ost.get("shield_charges"))
+    if sc > 0: base = round(base * 0.5); ost["shield_charges"] = sc - 1; notes.append("🛡️halved")
+    base = max(1, base)
+    duel["hp" + other] = max(0, duel["hp" + other] - base)
+    return base, "  ".join(notes)
+
+async def duel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data; parts = data.split("_")
+    if data.startswith("duelaccept_"):
+        try: chat_id = int(parts[1])
+        except (IndexError, ValueError): await query.answer(); return
+        duel = _duels.get(chat_id)
+        if not duel or duel["state"] != "challenge":
+            await query.answer("This challenge is over.", show_alert=True); return
+        if query.from_user.id != duel["p2"]:
+            await query.answer("This challenge isn't for you!", show_alert=True); return
+        pa = _take_gold(duel["p1"], duel["wager"])
+        if not pa:
+            _duels.pop(chat_id, None)
+            await query.answer(f"{duel['n1']} can't cover the wager — duel off!", show_alert=True); return
+        pb = _take_gold(duel["p2"], duel["wager"])
+        if not pb:
+            _give_gold(duel["p1"], duel["wager"]); _duels.pop(chat_id, None)
+            await query.answer(f"You can't cover the {duel['wager']}g wager!", show_alert=True); return
+        await query.answer("⚔️ Duel accepted!")
+        await _duel_start(context.bot, chat_id)
+        return
+    if data.startswith("duelno_"):
+        await query.answer("Not usable this turn (cooldown, MP, or silenced)."); return
+    if data.startswith("duelrematch_"):
+        try:
+            u1, u2 = int(parts[1]), int(parts[2])
+        except (IndexError, ValueError):
+            await query.answer(); return
+        tapper = query.from_user.id
+        if tapper not in (u1, u2):
+            await query.answer("Only the duelists can rematch.", show_alert=True); return
+        chat_id = query.message.chat_id if query.message else None
+        if chat_id is None or chat_id in _duels:
+            await query.answer("Start a fresh /duel — one's already running here." if chat_id in _duels
+                               else "Use /duel to challenge again.", show_alert=True); return
+        opp = u2 if tapper == u1 else u1
+        a = get_player(tapper); d = get_player(opp)
+        if not a or not d:
+            await query.answer("Use /duel to challenge again."); return
+        _duels[chat_id] = {"state": "challenge", "p1": tapper, "p2": opp,
+                           "n1": a.get("username", "?"), "n2": d.get("username", "?"),
+                           "wager": 200, "chat_id": chat_id, "msg_id": None}
+        await query.answer("⚔️ Rematch challenge sent!")
+        try:
+            m = await context.bot.send_message(chat_id,
+                f"⚔️ *REMATCH!* *{a.get('username','?')}* challenges *{d.get('username','?')}* again — "
+                f"💰 200g each.\n_Accept to run it back._",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                    "⚔️ Accept", callback_data=f"duelaccept_{chat_id}")]]))
+            _duels[chat_id]["msg_id"] = m.message_id
+        except Exception:
+            _duels.pop(chat_id, None)
+        return
+    # duelact_ / duelff_
+    try: actor = int(parts[1])
+    except (IndexError, ValueError): await query.answer(); return
+    # find the duel this player is in
+    chat_id = next((cid for cid, dl in _duels.items()
+                    if dl.get("state") == "active" and actor in (dl["p1"], dl["p2"])), None)
+    if chat_id is None:
+        await query.answer("No active duel.", show_alert=True); return
+    duel = _duels[chat_id]
+    side = "1" if duel["p1"] == query.from_user.id else ("2" if duel["p2"] == query.from_user.id else None)
+    if side is None:
+        await query.answer("You're not in this duel!", show_alert=True); return
+    if duel["turn"] != side:
+        await query.answer("⏳ Not your turn!", show_alert=True); return
+    if data.startswith("duelff_"):
+        await query.answer("🏳️ You forfeit.")
+        await _duel_finish(context.bot, chat_id, duel["p" + _duel_other(side)], duel["p" + side], forfeit=True)
+        return
+    # duelact_{uid}_{action}
+    action = parts[2] if len(parts) > 2 else "atk"
+    kit = _kit_for(get_player(actor))
+    if action != "atk":
+        if not kit or action not in kit:
+            await query.answer(); return
+        sk = kit[action]
+        if safe_int(duel["st" + side].get("silence_turns")) > 0:
+            await query.answer("🤐 Silenced!", show_alert=True); return
+        if safe_int(duel["cd" + side].get(action)) > 0:
+            await query.answer("⏳ On cooldown!", show_alert=True); return
+        if duel["mp" + side] < sk.get("mp", 0):
+            await query.answer(f"❌ Need {sk.get('mp',0)} MP!", show_alert=True); return
+    await query.answer()
+    # advance this player's cooldowns, tick their DOTs, resolve, check death, swap
+    for k in list(duel["cd" + side].keys()):
+        duel["cd" + side][k] = max(0, safe_int(duel["cd" + side][k]) - 1)
+    dot_notes = _duel_dot_tick(duel, side)
+    if dot_notes:
+        duel["log"].append(f"({duel['n'+side]}) " + "  ".join(dot_notes))
+    # Sudden death — after ~24 turns the arena closes in, escalating chip damage
+    # each turn so evasion/attrition duels can't drag on forever.
+    if duel["turn_no"] >= 24:
+        chip = round(duel["mhp" + side] * 0.10 * (duel["turn_no"] - 23))
+        duel["hp" + side] = max(0, duel["hp" + side] - chip)
+        duel["log"].append(f"🌋 *The arena collapses!* {duel['n'+side]} -{fmt_num(chip)} HP")
+    if duel["hp" + side] <= 0:
+        await _duel_finish(context.bot, chat_id, duel["p" + _duel_other(side)], duel["p" + side]); return
+    # stun: lose the turn
+    if safe_int(duel["st" + side].get("stun_turns")) > 0:
+        duel["st" + side]["stun_turns"] -= 1
+        duel["log"].append(f"⚡ *{duel['n'+side]}* is stunned and loses the turn!")
+    else:
+        log = _duel_apply_action(duel, side, action)
+        duel["log"].append(log)
+    other = _duel_other(side)
+    if duel["hp" + other] <= 0:
+        await _duel_finish(context.bot, chat_id, duel["p" + side], duel["p" + other]); return
+    # MP regen a touch each turn so long duels stay playable
+    duel["mp" + side] = min(duel["mmp" + side], duel["mp" + side] + 4)
+    duel["turn"] = other
+    duel["turn_no"] += 1
+    await _duel_render(context.bot, chat_id)
+    _duel_arm_timer(context.bot, chat_id)
+
+async def _duel_finish(bot, chat_id, winner_uid, loser_uid, timeout=False, forfeit=False):
+    duel = _duels.pop(chat_id, None)
+    if not duel: return
+    pot = duel["wager"] * 2
+    _give_gold(winner_uid, pot)
+    wn = duel["n1"] if duel["p1"] == winner_uid else duel["n2"]
+    ln = duel["n1"] if duel["p1"] == loser_uid else duel["n2"]
+    reason = ("⌛ timed out" if timeout else ("🏳️ forfeited" if forfeit else "was defeated"))
+    # winner earns a little EXP for the glory (scaled, no HP lost since sandboxed)
+    wp = get_player(winner_uid); exp_line = ""
+    if wp:
+        xg = exp_share(wp.get("level", 1), 0.05); add_exp(wp, xg); save_player(wp)
+        exp_line = f"  ✨ +{fmt_num(xg)} EXP"
+    txt = (f"🏆 *HONOR DUEL — {wn} WINS!*\n"
+           f"_{ln} {reason}._\n"
+           f"💰 *{wn}* takes the *{fmt_num(pot)}g* pot!{exp_line}")
+    try:
+        await bot.send_message(chat_id, txt, parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "⚔️ Rematch", callback_data=f"duelrematch_{duel['p1']}_{duel['p2']}")]]))
+        if duel.get("msg_id"):
+            try: await bot.delete_message(chat_id=chat_id, message_id=duel["msg_id"])
+            except Exception: pass
+    except Exception:
+        pass
+
 # ── WEATHER CHANGE ANNOUNCEMENTS ─────────────────────────────────────────────
 _last_weather_announced = {"name": None}
 
@@ -37435,6 +37846,7 @@ async def _post_init(application):
             BotCommand("quickdraw", "🤠 Reaction duel — reply to challenge, first shot wins"),
             BotCommand("russian",   "🔫 1v1 Russian roulette — reply to challenge"),
             BotCommand("standoff",  "🤝 Split-or-steal showdown — reply to challenge"),
+            BotCommand("duel",      "⚔️ Honor Duel — turn-based skill duel for a gold wager"),
             BotCommand("rob",       "🕶️ Rob a player (reply, risky)"),
             BotCommand("help",      "❓ How to play"),
             BotCommand("ping",      "🏓 Bot health check"),
@@ -37631,6 +38043,8 @@ def main():
     app.add_handler(CallbackQueryHandler(skill_target_picker_callback, pattern="^skl2_"))
     app.add_handler(CallbackQueryHandler(pvp_card_callback,  pattern="^pvpcard_"))
     app.add_handler(CallbackQueryHandler(kit_card_callback,  pattern="^(kitsk_|kitnope_)"))
+    app.add_handler(CommandHandler("duel",       duel_cmd))
+    app.add_handler(CallbackQueryHandler(duel_callback, pattern="^(duelaccept_|duelno_|duelact_|duelff_|duelrematch_)"))
     app.add_handler(CommandHandler("heal",         heal_cmd))
     app.add_handler(CommandHandler("defend",       defend_cmd))
     app.add_handler(CommandHandler("curepriority",   curepriority_cmd))
