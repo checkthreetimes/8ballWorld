@@ -11511,6 +11511,7 @@ def init_db():
         ("empire_last_collect",   "TEXT DEFAULT NULL"),
         ("mp",                    "INTEGER DEFAULT 0"),
         ("max_mp",                "INTEGER DEFAULT 0"),
+        ("bonus_stat_points",     "INTEGER DEFAULT 0"),
     ]:
         try:
             _v24conn = _connect_db()
@@ -11562,6 +11563,29 @@ def init_db():
             _mig_conn.commit()
             logger.info(f"Migration int_overflow_clamp_v1: clamped {_fixed} out-of-range value(s)")
 
+        # bonus_stat_points_backfill_v1: reconstruct the bonus-stat-point counter
+        # from each player's claimed bestiary milestones, so the stat-pool ceiling
+        # (_calc_max_stat_points) accounts for legitimately-earned points and
+        # /fixstats stops false-flagging (and never wrongly strips) them.
+        _mig_cur.execute("SELECT 1 FROM _migrations WHERE name='bonus_stat_points_backfill_v1'")
+        if not _mig_cur.fetchone():
+            _bsp_reward = {need: r.get("stat_points", 0) for need, _perk, r in _BESTIARY_MILESTONES}
+            _bsp_fixed = 0
+            for _r in _mig_conn.execute("SELECT user_id, passive_cooldowns FROM players").fetchall():
+                try:
+                    _cds = json.loads(_r[1]) if _r[1] else {}
+                except Exception:
+                    _cds = {}
+                _claimed = _cds.get("bestiary_claimed") or []
+                _bonus = sum(_bsp_reward.get(int(_n), 0) for _n in _claimed if str(_n).isdigit())
+                if _bonus:
+                    _mig_conn.execute("UPDATE players SET bonus_stat_points=? WHERE user_id=?", (_bonus, _r[0]))
+                    _bsp_fixed += 1
+            _mig_conn.execute("INSERT INTO _migrations (name, ran_at) VALUES ('bonus_stat_points_backfill_v1', ?)",
+                              (datetime.now().isoformat(),))
+            _mig_conn.commit()
+            logger.info(f"Migration bonus_stat_points_backfill_v1: set bonus pool for {_bsp_fixed} player(s)")
+
         _mig_conn.close()
     except Exception as _me:
         logger.error(f"Migration error: {_me}")
@@ -11580,6 +11604,19 @@ def init_db():
             PRIMARY KEY (party_id, user_id))""")
         conn_v23b.commit(); conn_v23b.close()
     except Exception: pass
+
+    # Boot housekeeping: clear expired unclaimed bounties so the board and DB
+    # stay clean without the admin /fixbounties wipe command. Safe — standing
+    # /bounty contracts never expire and expiring auto-bounties escrow no gold.
+    try:
+        _bpconn = _connect_db()
+        _bpn = _bpconn.execute("DELETE FROM bounties WHERE claimed_by IS NULL AND expires_at < ?",
+                               (datetime.now().isoformat(),)).rowcount
+        _bpconn.commit(); _bpconn.close()
+        if _bpn:
+            logger.info(f"Boot housekeeping: purged {_bpn} expired unclaimed bounty(s)")
+    except Exception:
+        pass
 
     conn = _connect_db()  # reopen for remaining setup
 
@@ -12013,6 +12050,7 @@ def save_player(p):
         "empire_buildings","empire_resources","empire_last_collect",
         "mp","max_mp","dng_companions","dodge_momentum","collection_log",
         "serpent_revive_used","pet_dex","pvp_rating","pvp_peak_rating",
+        "bonus_stat_points",
     ]
     # dng_companions is held as a list in memory; store as JSON text
     if isinstance(p.get("dng_companions"), list):
@@ -27649,6 +27687,8 @@ async def bestiary_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             p["gold"] = safe_int(p.get("gold")) + reward["gold"]; parts.append(f"+{reward['gold']:,}g")
         if reward.get("stat_points"):
             p["stat_points"] = safe_int(p.get("stat_points")) + reward["stat_points"]
+            # record as earned bonus so the stat-pool ceiling stays accurate
+            p["bonus_stat_points"] = safe_int(p.get("bonus_stat_points")) + reward["stat_points"]
             parts.append(f"+{reward['stat_points']} stat points")
         if reward.get("item"):
             add_item(p, reward["item"]); parts.append(f"🥚 {reward['item']}")
@@ -32222,7 +32262,9 @@ def _calc_max_stat_points(p):
     lvl = safe_int(p.get("level", 1))
     prestige = safe_int(p.get("prestige_count", 0))
     base_pts = (lvl * 3 + lvl // 5) if lvl <= 20 else (20 * 3 + 20 // 5 + (lvl - 20) * 6)
-    return base_pts + prestige * 10
+    # bonus_stat_points tracks legitimately-earned points from non-level sources
+    # (bestiary milestones, etc.) so the ceiling doesn't false-flag them.
+    return base_pts + prestige * 10 + safe_int(p.get("bonus_stat_points", 0))
 
 async def fixstats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: inspect and correct stat points.
@@ -34571,6 +34613,18 @@ async def _post_daily_digest(bot):
         conn.execute("""INSERT INTO digest_snap
                         SELECT user_id, COALESCE(total_exp,0), COALESCE(wins,0) FROM players""")
         conn.commit()
+    except Exception:
+        pass
+    # Housekeeping: purge expired unclaimed bounties so they stop piling up
+    # (this is what /fixbounties wipe used to be needed for). Standing bounties
+    # from /bounty never expire, and expiring auto-bounties escrow no player
+    # gold, so this only clears dead rows.
+    try:
+        _pc = conn.execute("DELETE FROM bounties WHERE claimed_by IS NULL AND expires_at < ?",
+                           (datetime.now().isoformat(),)).rowcount
+        conn.commit()
+        if _pc:
+            logger.info(f"Daily housekeeping: purged {_pc} expired unclaimed bounty(s)")
     except Exception:
         pass
 
