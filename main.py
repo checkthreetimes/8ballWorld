@@ -31798,6 +31798,183 @@ async def resetstats_callback(update, context):
         _cb_unlock(caller_id, _tok)
 
 # ── BROADCAST (admin only) ────────────────────────────────────────────────────
+# ── GM VISION — admin analytics / surveillance ───────────────────────────────
+_GM_ACTIVITY_COLS = [
+    ("last_explore", "🌍 Explored"), ("last_dungeon", "🏚️ Dungeon"),
+    ("last_quest", "📜 Quest"),      ("last_train", "🏋️ Trained"),
+    ("last_pool", "🎱 Pool"),        ("last_encounter", "🗡️ Encounter"),
+    ("last_defend", "🛡️ Defended"),  ("last_daily", "🎁 Daily"),
+    ("last_claim", "🎁 Claimed"),
+]
+
+def _gm_parse_ts(v):
+    if not v:
+        return None
+    try:
+        return datetime.fromisoformat(v)
+    except Exception:
+        try:
+            return datetime.strptime(v, "%Y-%m-%d")
+        except Exception:
+            return None
+
+def _gm_last_activity(row):
+    """Most recent activity (datetime, label) across all timestamp columns."""
+    best_dt, best_lbl = None, None
+    for col, lbl in _GM_ACTIVITY_COLS:
+        dt = _gm_parse_ts(row.get(col))
+        if dt and (best_dt is None or dt > best_dt):
+            best_dt, best_lbl = dt, lbl
+    return best_dt, best_lbl
+
+def _gm_ago(dt):
+    if not dt:
+        return "never"
+    secs = (datetime.now() - dt).total_seconds()
+    if secs < 0:
+        return "just now"
+    if secs < 60:
+        return f"{int(secs)}s ago"
+    if secs < 3600:
+        return f"{int(secs // 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    return f"{int(secs // 86400)}d ago"
+
+def _gm_live_state(uid):
+    """What is this player doing RIGHT NOW (in-memory state)? Returns a label or ''."""
+    tags = []
+    if uid in active_dungeons:
+        tags.append("🏚️ in a dungeon")
+    if uid in _pvp_battle_state and _pvp_battle_state.get(uid):
+        tags.append("⚔️ in a PvP fight")
+    for st in _duels.values():
+        if isinstance(st, dict) and uid in (st.get("pA"), st.get("pB")):
+            tags.append("🤺 in a duel"); break
+    for st in _russians.values():
+        if isinstance(st, dict) and uid in (st.get("a"), st.get("b")):
+            tags.append("🔫 in Russian roulette"); break
+    return "  ".join(tags)
+
+def _gm_name(row):
+    n = row.get("username") or str(row.get("user_id"))
+    tg = row.get("tg_username")
+    return f"{n}" + (f" (@{tg})" if tg else "")
+
+async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only GM vision. /gm overview, /gm <name|id> deep dive, /gm live."""
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        return
+    # Keep surveillance private: delete the trigger in groups, reply in the admin DM.
+    if update.effective_chat.type != "private":
+        try: await update.message.delete()
+        except Exception: pass
+
+    async def _dm(text):
+        try:
+            await context.bot.send_message(ADMIN_ID, text[:4096], parse_mode="Markdown")
+        except Exception:
+            try:
+                await context.bot.send_message(ADMIN_ID, text[:4096])
+            except Exception:
+                pass
+
+    conn = _connect_db(); conn.row_factory = sqlite3.Row
+    cols = ("user_id, username, tg_username, level, gold, total_exp, class_id, class_path, "
+            "prestige_count, wins, losses, hp, max_hp, kills_today, is_wanted, banned, created_at, "
+            + ", ".join(c for c, _ in _GM_ACTIVITY_COLS))
+    rows = [dict(r) for r in conn.execute(f"SELECT {cols} FROM players").fetchall()]
+    conn.close()
+
+    args = context.args or []
+
+    # ── Per-player deep dive ────────────────────────────────────────────────
+    if args and args[0].lower() != "live":
+        q = " ".join(args).lower()
+        match = None
+        try:
+            qid = int(args[0]); match = next((r for r in rows if r["user_id"] == qid), None)
+        except ValueError:
+            match = next((r for r in rows if (r.get("username") or "").lower() == q), None) \
+                    or next((r for r in rows if q in (r.get("username") or "").lower()), None)
+        if not match:
+            await _dm(f"🕵️ No player matching *{q}*."); return
+        dt, lbl = _gm_last_activity(match)
+        cls = CLASS_TREE.get(match.get("class_id") or "", {}).get("name", "—")
+        live = _gm_live_state(match["user_id"]) or "_idle_"
+        acts = []
+        for col, l in _GM_ACTIVITY_COLS:
+            adt = _gm_parse_ts(match.get(col))
+            if adt:
+                acts.append(f"  {l}: {_gm_ago(adt)}")
+        joined = _gm_parse_ts(match.get("created_at"))
+        flags = []
+        if match.get("banned"): flags.append("🚫 BANNED")
+        if match.get("is_wanted"): flags.append("🎯 WANTED")
+        text = (
+            f"🕵️ *GM Dossier — {_gm_name(match)}*\n"
+            f"`id {match['user_id']}`\n\n"
+            f"⭐ Lv {match['level']} {cls}"
+            + (f" · Prestige {match['prestige_count']}" if match.get('prestige_count') else "")
+            + (("  " + " ".join(flags)) if flags else "") + "\n"
+            f"❤️ {match.get('hp',0)}/{match.get('max_hp',0)}   💰 {safe_int(match.get('gold')):,}g\n"
+            f"📊 EXP {safe_int(match.get('total_exp')):,}   ⚔️ {match.get('wins',0)}W/{match.get('losses',0)}L\n"
+            f"🟢 Now: {live}\n"
+            f"🕐 Last seen: {_gm_ago(dt)}" + (f" ({lbl})" if lbl else "") + "\n"
+            f"📅 Joined: {_gm_ago(joined)}\n\n"
+            f"*Activity log:*\n" + ("\n".join(acts) if acts else "  _no activity recorded_")
+        )
+        await _dm(text); return
+
+    # ── Live feed only ──────────────────────────────────────────────────────
+    now = datetime.now()
+    live_players = []
+    for r in rows:
+        ls = _gm_live_state(r["user_id"])
+        if ls:
+            live_players.append((r, ls))
+    if args and args[0].lower() == "live":
+        if not live_players:
+            await _dm("🕵️ *Live feed* — nobody is mid-action right now."); return
+        lines = [f"🕵️ *Live feed* — {len(live_players)} active"]
+        for r, ls in live_players[:30]:
+            lines.append(f"• *{_gm_name(r)}* (Lv {r['level']}) — {ls}")
+        await _dm("\n".join(lines)); return
+
+    # ── Overview ────────────────────────────────────────────────────────────
+    total = len(rows)
+    with_act = [(r, _gm_last_activity(r)[0], _gm_last_activity(r)[1]) for r in rows]
+    active_24h = sum(1 for _, dt, _ in with_act if dt and (now - dt).total_seconds() < 86400)
+    active_7d  = sum(1 for _, dt, _ in with_act if dt and (now - dt).total_seconds() < 604800)
+    active_1h  = sum(1 for _, dt, _ in with_act if dt and (now - dt).total_seconds() < 3600)
+    total_gold = sum(safe_int(r.get("gold")) for r in rows)
+    banned = sum(1 for r in rows if r.get("banned"))
+
+    recent = sorted([x for x in with_act if x[1]], key=lambda x: x[1], reverse=True)[:8]
+    top_lvl = sorted(rows, key=lambda r: safe_int(r.get("level")), reverse=True)[:5]
+    top_gold = sorted(rows, key=lambda r: safe_int(r.get("gold")), reverse=True)[:5]
+
+    lines = [
+        f"🕵️ *GM Vision — {WORLD_NAME}*",
+        f"👥 Players: *{total}*"
+        + (f"  ·  🚫 {banned} banned" if banned else ""),
+        f"🟢 Active: *{active_1h}* (1h) · *{active_24h}* (24h) · *{active_7d}* (7d)",
+        f"💰 Gold in the economy: *{total_gold:,}g*",
+        f"⚔️ Live now: *{len(live_players)}* mid-action",
+        "",
+        "*🔥 Most recently active:*",
+    ]
+    for r, dt, lbl in recent:
+        live = _gm_live_state(r["user_id"])
+        suffix = f" — {live}" if live else (f" — {lbl} {_gm_ago(dt)}" if lbl else "")
+        lines.append(f"• *{_gm_name(r)}* (Lv {r['level']}){suffix}")
+    lines.append("\n*🏆 Top level:*  " + " · ".join(f"{_gm_name(r)} ({r['level']})" for r in top_lvl))
+    lines.append("*💰 Richest:*  " + " · ".join(f"{_gm_name(r)} ({safe_int(r.get('gold')):,}g)" for r in top_gold))
+    lines.append("\n_/gm <name> for a dossier · /gm live for the live feed_")
+    await _dm("\n".join(lines))
+
+
 async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != ADMIN_ID:
@@ -37680,6 +37857,7 @@ def main():
     app.add_handler(CommandHandler("pray",      pray_event))
 
     # Admin
+    app.add_handler(CommandHandler("gm",        gm_cmd))
     app.add_handler(CommandHandler("wipe",      wipe_cmd))
     app.add_handler(CommandHandler("fixstats",  fixstats_cmd))
     app.add_handler(CommandHandler("ban",       ban_cmd))
