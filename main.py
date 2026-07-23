@@ -3442,7 +3442,7 @@ ACCESSORIES = {
 }
 
 RARITY_EMOJI = {
-    "common":"⚪","uncommon":"🟢","rare":"🔵","epic":"🟣","legendary":"🟡","mythic":"🔴","legacy":"🟤"
+    "common":"⚪","uncommon":"🟢","rare":"🔵","epic":"🟣","legendary":"🟡","mythic":"🔴","legacy":"🟤","celestial":"🌠"
 }
 
 # ── PET SYSTEM ────────────────────────────────────────────────────────────────
@@ -3605,6 +3605,35 @@ PET_SPECIES = {
     "storm_god":        {"name":"Storm God",               "element":"lightning","rarity":"mythic",  "base_atk":160,"base_def":24,"personality":"fierce",  "emoji":"⚡","desc":"Not a creature — a storm given will and purpose. It chose you. Be worthy.","def_ability":"counter"},
     "shadow_sovereign": {"name":"Shadow Sovereign",        "element":"shadow",   "rarity":"mythic",  "base_atk":148,"base_def":32,"personality":"mischievous","emoji":"🌑","desc":"The ruler of all shadow. It plays games with reality for entertainment.","def_ability":"poison"},
     "celestial_serpent":{"name":"Celestial Serpent",       "element":"holy",     "rarity":"mythic",  "base_atk":144,"base_def":36,"personality":"loyal",  "emoji":"🌟","desc":"A serpent woven from starlight and divine will. Ancient beyond measure.","def_ability":"intercept"},
+    # ── EXPANSION: more variety across every tier (v15) ───────────────────────
+    # Commons & uncommons — everyday catches so early spawns feel fresh
+    "meadow_bunny":     {"name":"Meadow Bunny",            "element":"nature",   "rarity":"common",  "base_atk":14, "base_def":2, "personality":"timid",      "emoji":"🐰","desc":"A soft-footed bunny that nibbles courage into you. Heals when it hides behind your leg.","def_ability":"regen"},
+    "cave_bat":         {"name":"Cave Bat",                "element":"shadow",   "rarity":"common",  "base_atk":16, "base_def":2, "personality":"mischievous","emoji":"🦇","desc":"A leathery little bat that drinks the fright out of your foes.","def_ability":"lifesteal"},
+    "pebble_crab":      {"name":"Pebble Crab",             "element":"water",    "rarity":"common",  "base_atk":13, "base_def":4, "personality":"lazy",       "emoji":"🦀","desc":"A stubborn crab with a shell like river-stone. Refuses to let go.","def_ability":"shield"},
+    "dust_mole":        {"name":"Dust Mole",               "element":"earth",    "rarity":"uncommon","base_atk":24, "base_def":5, "personality":"lazy",       "emoji":"🦔","desc":"Burrows under blows and pops up to trip the attacker.","def_ability":"shield"},
+    "spark_finch":      {"name":"Spark Finch",             "element":"lightning","rarity":"uncommon","base_atk":27, "base_def":3, "personality":"playful",    "emoji":"🐤","desc":"A tiny bird crackling with static. One peck and everything goes numb.","def_ability":"stun"},
+    "bog_toad":         {"name":"Bog Toad",                "element":"nature",   "rarity":"uncommon","base_atk":25, "base_def":6, "personality":"calm",       "emoji":"🐸","desc":"A warty toad that spits acid at anyone who threatens its friend.","def_ability":"poison"},
+    # Rare & epic — the mid-game 'nice!' pulls
+    "tide_serpent":     {"name":"Tide Serpent",            "element":"water",    "rarity":"rare",    "base_atk":38, "base_def":7, "personality":"calm",       "emoji":"🐍","desc":"A coastal serpent that drags attackers into the undertow.","def_ability":"poison"},
+    "gale_hawk":        {"name":"Gale Hawk",               "element":"wind",     "rarity":"rare",    "base_atk":42, "base_def":5, "personality":"fierce",     "emoji":"🦅","desc":"A raptor riding the high winds. Answers a strike with a diving counter.","def_ability":"counter"},
+    "moon_owl":         {"name":"Moon Owl",                "element":"holy",     "rarity":"rare",    "base_atk":34, "base_def":8, "personality":"calm",       "emoji":"🦉","desc":"A silver owl that folds moonlight into a shielding hush.","def_ability":"shield"},
+    "cinder_fox":       {"name":"Cinder Fox",              "element":"fire",     "rarity":"epic",    "base_atk":58, "base_def":8, "personality":"mischievous","emoji":"🦊","desc":"A fox trailing embers. Its coat burns anyone who dares to strike you.","def_ability":"thorns"},
+    "crystal_stag":     {"name":"Crystal Stag",            "element":"earth",    "rarity":"epic",    "base_atk":54, "base_def":10,"personality":"calm",       "emoji":"🦌","desc":"A stag with antlers of living crystal that mend your wounds mid-fight.","def_ability":"regen"},
+    "storm_ray":        {"name":"Storm Ray",               "element":"lightning","rarity":"epic",    "base_atk":60, "base_def":7, "personality":"fierce",     "emoji":"🐟","desc":"A manta gliding on thunderheads. Its wake stuns anything nearby.","def_ability":"stun"},
+    # Legendary — the roar-worthy catches
+    "storm_griffin":    {"name":"Storm Griffin",           "element":"wind",     "rarity":"legendary","base_atk":82,"base_def":14,"personality":"fierce",    "emoji":"🦅","desc":"Half eagle, half lion, all tempest. It counters with a sky-splitting dive.","def_ability":"counter"},
+    "abyss_kraken":     {"name":"Abyss Kraken",            "element":"void",     "rarity":"legendary","base_atk":88,"base_def":18,"personality":"calm",      "emoji":"🐙","desc":"A deep-void kraken. Its tentacles intercept blows meant for you.","def_ability":"intercept"},
+    "phoenix_chick":    {"name":"Phoenix Chick",           "element":"fire",     "rarity":"legendary","base_atk":76,"base_def":12,"personality":"playful",   "emoji":"🐣","desc":"A newborn phoenix. Small, smug, and already immortal — its warmth knits you whole.","def_ability":"regen"},
+    "verdant_treant":   {"name":"Verdant Treant",          "element":"nature",   "rarity":"legendary","base_atk":78,"base_def":24,"personality":"calm",      "emoji":"🌳","desc":"An ancient walking tree. Its bark lashes back thorns at every attacker.","def_ability":"thorns"},
+    # Mythic additions
+    "eclipse_leviathan":{"name":"Eclipse Leviathan",       "element":"void",     "rarity":"mythic",  "base_atk":150,"base_def":34,"personality":"calm",    "emoji":"🐋","desc":"A whale that swallowed an eclipse. Light bends around it and shields you.","def_ability":"intercept"},
+    "inferno_wyrm":     {"name":"Inferno Wyrm",            "element":"fire",     "rarity":"mythic",  "base_atk":158,"base_def":26,"personality":"fierce",  "emoji":"🐉","desc":"A wyrm of molten core-fire. Every strike against you is answered in flame.","def_ability":"thorns"},
+    # ── CELESTIAL — a new apex tier. Vanishingly rare, breathtaking to catch ──
+    "astral_phoenix":   {"name":"Astral Phoenix",          "element":"holy",     "rarity":"celestial","base_atk":190,"base_def":30,"personality":"fierce", "emoji":"🌠","desc":"Reborn from starfire at the edge of the sky. Its cry rewrites the dawn and mends all it loves.","def_ability":"regen"},
+    "cosmic_wyrm":      {"name":"Cosmic Wyrm",             "element":"void",     "rarity":"celestial","base_atk":205,"base_def":40,"personality":"calm",   "emoji":"🌌","desc":"A dragon coiled around a dead star, dreaming of the next universe. It takes the blow so you never feel it.","def_ability":"intercept"},
+    "eclipse_wolf":     {"name":"Eclipse Wolf",            "element":"shadow",   "rarity":"celestial","base_atk":198,"base_def":34,"personality":"fierce", "emoji":"🐺","desc":"It hunts in the seam between light and dark. Strike it and the darkness bites back.","def_ability":"thorns"},
+    "aurora_kirin":     {"name":"Aurora Kirin",            "element":"lightning","rarity":"celestial","base_atk":186,"base_def":44,"personality":"calm",   "emoji":"🦄","desc":"A holy qilin trailing living aurora across the night. Its light turns aside any harm.","def_ability":"shield"},
+    "genesis_turtle":   {"name":"Genesis Turtle",          "element":"water",    "rarity":"celestial","base_atk":180,"base_def":50,"personality":"loyal",  "emoji":"🐢","desc":"It carries a nascent ocean — and a new world — on its back. Endless, patient, and quietly healing.","def_ability":"regen"},
 }
 
 # Defensive ability definitions
@@ -3615,6 +3644,8 @@ PET_DEF_ABILITIES = {
     "stun":       {"name":"Stunning Blow", "emoji":"⚡","desc":"Delivers a blow that stuns the attacker (miss next attack).", "proc_base":0.22},
     "lifesteal":  {"name":"Life Drain",    "emoji":"💜","desc":"Drains 30–45% of incoming damage as HP for you (scales with pet level).", "proc_base":0.24},
     "shield":     {"name":"Aura Shield",   "emoji":"✨","desc":"Projects a protective aura that heavily reduces incoming damage.",    "proc_base":0.30},
+    "regen":      {"name":"Mend",          "emoji":"💚","desc":"Channels soothing energy, healing you for a burst of HP.",           "proc_base":0.26},
+    "thorns":     {"name":"Thornmail",     "emoji":"🌵","desc":"Bristles with spines — reflects a chunk of the incoming hit back.",  "proc_base":0.26},
 }
 
 PERSONALITY_DEFEND = {
@@ -3732,6 +3763,19 @@ def apply_pet_defense(pet, attacker, dmg_after_def, extra_notes, owner_max_hp=0)
         dmg_after_def = max(0, dmg_after_def - absorbed)
         extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Aura Shield!* Shielded *{absorbed} dmg*!")
 
+    elif da == "regen":
+        heal_amt = round(owner_max_hp * (0.06 + lvl * 0.001)) if owner_max_hp > 0 else round(20 + lvl * 2)
+        # reuse the owner-heal channel the callers already apply
+        status_type = "lifesteal_to_owner"
+        status_val  = heal_amt
+        extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Mend!* Restored *{heal_amt} HP* to you!")
+
+    elif da == "thorns":
+        reflect = round(dmg_after_def * min(0.45, 0.20 + lvl * 0.004))
+        if attacker and reflect > 0:
+            attacker["hp"] = max(0, attacker.get("hp", 0) - reflect)
+        extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Thornmail!* Reflected *{reflect} dmg* back!")
+
     return dmg_after_def, status_type, status_val
 
 # Eggs and their hatch pools by rarity weight
@@ -3739,7 +3783,7 @@ PET_EGG_POOLS = {
     "Common Egg":   {"common":0.65,"uncommon":0.30,"rare":0.05},
     "Rare Egg":     {"uncommon":0.40,"rare":0.45,"epic":0.15},
     "Dragon Egg":   {"rare":0.35,"epic":0.50,"legendary":0.15},
-    "Mythic Egg":   {"epic":0.40,"legendary":0.45,"mythic":0.15},
+    "Mythic Egg":   {"epic":0.38,"legendary":0.45,"mythic":0.15,"celestial":0.02},
 }
 
 # Elemental advantage table: strong_against → bonus; weak_against → penalty
@@ -4175,8 +4219,8 @@ def _pet_view_markup(pet_id, is_active, uid=0, pet=None):
     rows.append([InlineKeyboardButton("❌ Close", callback_data=close_cb)])
     return InlineKeyboardMarkup(rows)
 
-_PET_SELL_BASE    = {"common":500,"uncommon":1000,"rare":2500,"epic":5000,"legendary":15000,"mythic":50000}
-_PET_SELL_PER_LVL = {"common":100,"uncommon":150,"rare":200,"epic":300,"legendary":500,"mythic":1000}
+_PET_SELL_BASE    = {"common":500,"uncommon":1000,"rare":2500,"epic":5000,"legendary":15000,"mythic":50000,"celestial":150000}
+_PET_SELL_PER_LVL = {"common":100,"uncommon":150,"rare":200,"epic":300,"legendary":500,"mythic":1000,"celestial":2500}
 
 def _pet_sell_price(pet):
     sp = PET_SPECIES.get(pet.get("species"), {})
@@ -26879,7 +26923,7 @@ GUIDE_PAGES = [
         "• ✨ Shiny pets: +15% ATK and worth 2.5× when sold\n"
         "\n"
         "*📖 Bestiary & Collector's Bond — /bestiary or /dex*\n"
-        "85 species to collect across dogs, cats, dragons and more. Every unique species you've EVER owned counts forever — selling never loses progress.\n"
+        f"{len(PET_SPECIES)} species to collect across dogs, cats, dragons, and the new ✨ Celestial apex tier. Every unique species you've EVER owned counts forever — selling never loses progress.\n"
         "• *Collector's Bond:* +3% pet ATK per unique species (up to +150%) — the reason to catch every wild spawn\n"
         "• Milestone rewards at 10/25/45/65/85 species: big gold, stat points, rare eggs, and permanent +gold%/+EXP% perks\n"
         "\n"
@@ -27539,7 +27583,7 @@ async def hatch_egg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         chat_id=query.message.chat.id, text=text, parse_mode="Markdown")
     asyncio.create_task(_auto_delete(context.bot, query.message.chat.id, msg.message_id, 60))
 
-_RARITY_ORDER = ["common", "uncommon", "rare", "epic", "legendary", "mythic"]
+_RARITY_ORDER = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "celestial"]
 
 def _bulk_sellable(owner_id, mode):
     """Return (list_of_pets_to_sell, total_gold) for a bulk-sell mode.
@@ -28619,7 +28663,7 @@ async def pethub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         by_rar  = {}
         for sid, sp in PET_SPECIES.items():
             by_rar.setdefault(sp.get("rarity","common"), []).append(sid)
-        for rar in ["common","uncommon","rare","epic","legendary","mythic"]:
+        for rar in ["common","uncommon","rare","epic","legendary","mythic","celestial"]:
             sids = by_rar.get(rar, [])
             if not sids: continue
             got = sum(1 for s in sids if s in owned)
@@ -36402,9 +36446,12 @@ _wild_last = {}         # chat_id -> last spawn ts
 async def _spawn_wild_pet(bot, chat_id):
     if chat_id in _wild_spawns:
         return
-    _rarity_w = {"common": 50, "uncommon": 30, "rare": 15, "epic": 4, "legendary": 1}
+    # Every rarity is listed so none falls back to a wrong default — previously
+    # 'mythic' was missing and defaulted to 10, spawning MORE often than epics.
+    _rarity_w = {"common": 50, "uncommon": 30, "rare": 15, "epic": 5,
+                 "legendary": 2, "mythic": 0.8, "celestial": 0.15}
     keys = list(PET_SPECIES.keys())
-    weights = [_rarity_w.get(PET_SPECIES[k].get("rarity", "common"), 10) for k in keys]
+    weights = [_rarity_w.get(PET_SPECIES[k].get("rarity", "common"), 1) for k in keys]
     sk = random.choices(keys, weights=weights, k=1)[0]
     sp = PET_SPECIES[sk]
     shiny = random.random() < 0.02
@@ -37605,7 +37652,7 @@ async def _post_init(application):
             BotCommand("party",     "👥 Party up"),
             BotCommand("objectives","📋 Daily objectives"),
             BotCommand("collection","📖 Your collection log"),
-            BotCommand("bestiary",  "🐾 Pet bestiary — collect all 85 species"),
+            BotCommand("bestiary",  "🐾 Pet bestiary — collect them all"),
             BotCommand("pvp",       "⚔️ Your PvP hub — rating, record, streak, bounties"),
             BotCommand("pvptop",    "🏆 PvP rating leaderboard"),
             BotCommand("casino",    "🎲 The Casino hub — slots, lottery & more"),
