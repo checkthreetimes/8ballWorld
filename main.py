@@ -27136,8 +27136,10 @@ GUIDE_PAGES = [
         "⚡ Random events with one-tap action buttons (fight the bandit, greet the traveler...)\n"
         "\n"
         "*Casino & risk:*\n"
-        "🎰 /slots — spin for gold\n"
+        "🎲 /casino — the Casino hub: all house games in one place. Play 🎰 Slots in-place (pick a bet, spin again without retyping) and buy lottery tickets right from the menu.\n"
+        "🎰 /slots [bet] — spin for gold; pair 1.5×, triple 5×, 🎱🎱🎱 10× (bet buttons, spin again)\n"
         "🪙 /coinflip — 50/50 vs another player, double or nothing\n"
+        "🔫 /russian (reply) — 1v1 Russian roulette, six chambers, winner takes the pot\n"
         "💀 /roulette — group Russian roulette lobby (last one standing takes the pot)\n"
         "🎟️ /lottery — daily ticket; the pot draws every evening in the digest\n"
         "🕶️ /rob (reply) — steal gold; fail and pay damages + get marked\n"
@@ -36316,24 +36318,29 @@ async def rob_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _SLOT_REELS = ["🎱", "💰", "💎", "7️⃣", "🍀", "⭐"]
 _coinflips = {}  # (challenger, target) -> {"amt","expires","chat_id"}
 
-async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    p = get_player(user.id)
-    if not p:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    try:
-        amt = int(context.args[0]) if context.args else 100
-    except (ValueError, IndexError):
-        amt = 100
-    amt = max(50, min(2000, amt))
-    if p.get("gold", 0) < amt:
-        await send_group(update, f"Need {amt}g to spin! (You have {p.get('gold',0):,}g)", delay=9); return
+# ── CASINO HUB — one home for the house games (persistent, spin-again) ───────
+# Slots is fully playable in-place (pick a bet, spin repeatedly without retyping),
+# lottery tickets can be bought from the hub, and the PvP games (coinflip, russian
+# roulette, roulette table) are presented with their rules and commands.
+_CASINO_BETS = [50, 100, 250, 500, 1000, 2000]
+_SLOTS_DAILY_STOP = -5000
+
+def _slots_net_today(p):
+    cds = safe_cds(p)
+    today = datetime.now().strftime("%Y-%m-%d")
+    return cds.get("slots_net", 0) if cds.get("slots_date") == today else 0
+
+def _slots_spin(p, amt):
+    """Core slot spin. Returns (reels, win, status). status: None ok, 'cutoff', 'broke'.
+    Mutates and saves p on a successful spin."""
     cds = safe_cds(p)
     today = datetime.now().strftime("%Y-%m-%d")
     if cds.get("slots_date") != today:
         cds["slots_date"] = today; cds["slots_net"] = 0
-    if cds.get("slots_net", 0) <= -5000:
-        await send_group(update, "🎰 The house cuts you off — you've lost 5,000g today. Come back tomorrow.", delay=9); return
+    if cds.get("slots_net", 0) <= _SLOTS_DAILY_STOP:
+        return None, 0, "cutoff"
+    if p.get("gold", 0) < amt:
+        return None, 0, "broke"
     reels = [random.choice(_SLOT_REELS) for _ in range(3)]
     p["gold"] -= amt
     win = 0
@@ -36345,14 +36352,161 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cds["slots_net"] = cds.get("slots_net", 0) + (win - amt)
     p["passive_cooldowns"] = json.dumps(cds)
     save_player(p)
-    if win > amt:
-        verdict = f"🎉 *+{win - amt:,}g profit!*" + (" *JACKPOT!* 🎱🎱🎱" if win == amt * 10 else "")
-    elif win > 0:
-        verdict = f"😌 Pair — {win:,}g back."
+    return reels, win, None
+
+def _lottery_state():
+    today = datetime.now().strftime("%Y-%m-%d")
+    lot = _ws_get("lottery") or {"date": today, "pot": 0, "tickets": []}
+    if lot.get("date") != today:
+        lot = {"date": today, "pot": lot.get("pot", 0) if not lot.get("tickets") else 0, "tickets": []}
+    return lot
+
+def _build_casino_home(p, uid, flash=""):
+    gold = safe_int(p.get("gold", 0))
+    net = _slots_net_today(p)
+    lot = _lottery_state()
+    in_draw = uid in lot.get("tickets", [])
+    lines = ["🎲 *The 8Ball Casino*"]
+    if flash:
+        lines.append(flash)
+    lines.append(f"💰 Gold: *{gold:,}*\n")
+    lines.append("*🎰 Slots* — solo. Match 3 to win; pair pays 1.5×, triple 5×, 🎱🎱🎱 *10×*.")
+    lines.append(f"    _Today: {net:+,}g  (house stops you at {_SLOTS_DAILY_STOP:,})_")
+    lotto_label = "✅ you're in tonight's draw" if in_draw else "250g/ticket"
+    n_tickets = len(lot.get("tickets", []))
+    lines.append(f"*🎟️ Lottery* — {lotto_label}. Pot: *{lot.get('pot', 0):,}g*  ({n_tickets} in)")
+    lines.append("*🪙 Coinflip* — reply to a player: `/coinflip <gold>`. 50/50, winner takes all.")
+    lines.append("*🔫 Russian Roulette* — reply to a player: `/russian <wager>`. 1v1, six chambers.")
+    lines.append("*💀 Roulette Table* — `/roulette <buyin>` opens a lobby anyone can join.")
+    rows = [[InlineKeyboardButton("🎰 Play Slots", callback_data=f"casslot_{uid}")]]
+    if not in_draw:
+        rows.append([InlineKeyboardButton("🎟️ Buy Lottery Ticket (250g)", callback_data=f"caslotto_{uid}")])
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_slots_view(p, uid, bet, flash=""):
+    gold = safe_int(p.get("gold", 0))
+    net = _slots_net_today(p)
+    bet = max(_CASINO_BETS[0], min(_CASINO_BETS[-1], bet))
+    lines = ["🎰 *Slots*"]
+    if flash:
+        lines.append(flash)
     else:
-        verdict = f"💸 House wins. -{amt:,}g"
-    await send_group(update,
-        f"🎰 [ {reels[0]} | {reels[1]} | {reels[2]} ]\n\n{verdict}\n💰 Gold: {p['gold']:,}", delay=15)
+        lines.append("_Match 3 to win. Any pair pays 1.5×._")
+    lines.append("")
+    lines.append(f"💰 Gold: *{gold:,}*    ·    Today: *{net:+,}g* / {_SLOTS_DAILY_STOP:,} stop")
+    lines.append(f"🎯 Bet: *{bet:,}g*   →   pair 1.5×  ·  triple 5×  ·  🎱🎱🎱 10×")
+    rows = []
+    # bet selector — only bets the player can afford (always show the lowest)
+    bet_row = []
+    for b in _CASINO_BETS:
+        if b > gold and b != bet:
+            continue
+        bet_row.append(InlineKeyboardButton(("▸ " if b == bet else "") + f"{b:,}",
+                                            callback_data=f"casbet_{uid}_{b}"))
+    if bet_row:
+        rows.append(bet_row)
+    if net <= _SLOTS_DAILY_STOP:
+        lines.append("\n_🛑 You've hit today's loss limit. Come back tomorrow._")
+    elif gold < bet:
+        lines.append("\n_Not enough gold for this bet — lower it._")
+    else:
+        rows.append([InlineKeyboardButton(f"🎰 SPIN  ({bet:,}g)", callback_data=f"casspin_{uid}_{bet}")])
+    rows.append([InlineKeyboardButton("🔙 Casino", callback_data=f"cashome_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+async def casino_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    text, markup = _build_casino_home(p, user.id)
+    await send_group(update, text, delay=60, reply_markup=markup)
+
+async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    try:
+        bet = int(context.args[0]) if context.args else 100
+    except (ValueError, IndexError):
+        bet = 100
+    bet = max(_CASINO_BETS[0], min(_CASINO_BETS[-1], bet))
+    text, markup = _build_slots_view(p, user.id, bet)
+    await send_group(update, text, delay=60, reply_markup=markup)
+
+async def casino_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Persistent casino hub: cashome / casslot / casbet / casspin / caslotto.
+    Every action re-renders in place so the table never closes."""
+    query = update.callback_query
+    data = query.data
+    head = data.split("_", 1)[0]
+    toks = data.split("_")
+    try:
+        uid = int(toks[1])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your table!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+
+    async def render(built):
+        text, markup = built
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+
+    if head == "cashome":
+        await query.answer(); await render(_build_casino_home(p, uid)); return
+    if head == "casslot":
+        await query.answer(); await render(_build_slots_view(p, uid, 100)); return
+    if head == "casbet":
+        try:
+            bet = int(toks[2])
+        except (IndexError, ValueError):
+            await query.answer(); return
+        await query.answer(); await render(_build_slots_view(p, uid, bet)); return
+    if head == "casspin":
+        try:
+            bet = int(toks[2])
+        except (IndexError, ValueError):
+            await query.answer(); return
+        reels, win, status = _slots_spin(p, bet)
+        if status == "cutoff":
+            await query.answer("🛑 Daily loss limit reached.", show_alert=True)
+            await render(_build_slots_view(p, uid, bet)); return
+        if status == "broke":
+            await query.answer("Not enough gold for that bet!", show_alert=True)
+            await render(_build_slots_view(p, uid, bet)); return
+        row = f"[ {reels[0]} | {reels[1]} | {reels[2]} ]"
+        if win > bet:
+            jackpot = " 🎱 *JACKPOT!*" if win == bet * 10 else ""
+            flash = f"{row}\n🎉 *+{win - bet:,}g profit!*{jackpot}"
+            await query.answer(f"+{win - bet:,}g!")
+        elif win > 0:
+            flash = f"{row}\n😌 Pair — {win:,}g back  (net -{bet - win:,}g)"
+            await query.answer(f"Pair, {win:,}g back")
+        else:
+            flash = f"{row}\n💸 House wins. -{bet:,}g"
+            await query.answer(f"-{bet:,}g")
+        await render(_build_slots_view(p, uid, bet, flash=flash)); return
+    if head == "caslotto":
+        lot = _lottery_state()
+        if uid in lot.get("tickets", []):
+            await query.answer("You already have a ticket tonight!", show_alert=True)
+            await render(_build_casino_home(p, uid)); return
+        if safe_int(p.get("gold", 0)) < 250:
+            await query.answer("Tickets cost 250g!", show_alert=True)
+            await render(_build_casino_home(p, uid)); return
+        p["gold"] = safe_int(p.get("gold", 0)) - 250
+        save_player(p)
+        lot.setdefault("tickets", []).append(uid)
+        lot["pot"] = lot.get("pot", 0) + 250
+        _ws_set("lottery", lot)
+        await query.answer("🎟️ Ticket bought — good luck!")
+        flash = f"🎟️ *Ticket bought!* You're in tonight's draw for the *{lot['pot']:,}g* pot."
+        await render(_build_casino_home(p, uid, flash=flash)); return
+    await query.answer()
 
 async def coinflip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -37153,6 +37307,7 @@ async def _post_init(application):
             BotCommand("bestiary",  "🐾 Pet bestiary — collect all 85 species"),
             BotCommand("pvp",       "⚔️ Your PvP hub — rating, record, streak, bounties"),
             BotCommand("pvptop",    "🏆 PvP rating leaderboard"),
+            BotCommand("casino",    "🎲 The Casino hub — slots, lottery & more"),
             BotCommand("slots",     "🎰 Spin the slots"),
             BotCommand("coinflip",  "🪙 Wager vs a player (reply)"),
             BotCommand("lottery",   "🎟️ Buy a lottery ticket"),
@@ -37224,10 +37379,12 @@ def main():
     app.add_handler(CallbackQueryHandler(russian_callback,     pattern="^rr2_"))
     app.add_handler(CallbackQueryHandler(standoff_callback,    pattern="^so_"))
     app.add_handler(CommandHandler("rob",          rob_cmd))
+    app.add_handler(CommandHandler("casino",       casino_cmd))
     app.add_handler(CommandHandler("slots",        slots_cmd))
     app.add_handler(CommandHandler("coinflip",     coinflip_cmd))
     app.add_handler(CommandHandler("lottery",      lottery_cmd))
     app.add_handler(CommandHandler("roulette",     roulette_cmd))
+    app.add_handler(CallbackQueryHandler(casino_callback, pattern="^cas(home|slot|bet|spin|lotto)_"))
     app.add_handler(CommandHandler("collection",   collection_cmd))
     app.add_handler(CallbackQueryHandler(wild_catch_callback, pattern="^wild_"))
     app.add_handler(CallbackQueryHandler(heist_callback, pattern="^heist_"))
