@@ -4596,7 +4596,7 @@ def _build_empire_overview(p, uid):
         [InlineKeyboardButton("📦 Collect Resources", callback_data=f"empire_collect_{uid}"),
          InlineKeyboardButton("🏗️ Build / Upgrade",  callback_data=f"empire_tab_{uid}_build")],
         [InlineKeyboardButton("📊 Stat Bonuses",      callback_data=f"empire_tab_{uid}_stats"),
-         InlineKeyboardButton("🗺️ Hubs",              callback_data=f"empire_home_{uid}")],
+         InlineKeyboardButton("🏠 Menu",              callback_data=f"empire_home_{uid}")],
         [InlineKeyboardButton("❌ Close",              callback_data=f"close_msg_{uid}")],
     ])
     return "\n".join(lines), markup
@@ -30714,16 +30714,52 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
             await _show(f"_{action}_ — use the command in chat.")
 
 # ── EMPIRE (Master Hub) ───────────────────────────────────────────────────────
-def _empire_markup(uid: int) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton("⚔️ Combat",     callback_data=f"empire_combat_{uid}"),
-         InlineKeyboardButton("🌍 Activities", callback_data=f"empire_activities_{uid}")],
-        [InlineKeyboardButton("⚙️ Gear",       callback_data=f"empire_gear_{uid}"),
-         InlineKeyboardButton("💬 Social",     callback_data=f"empire_social_{uid}")],
-        [InlineKeyboardButton("🐾 Pet Hub",    callback_data=f"empire_pethub_{uid}")],
-        [InlineKeyboardButton("❌ Close",       callback_data=f"close_msg_{uid}")],
+def _build_master_hub(p, uid):
+    """The one master menu: live status + frequent actions in reach + every hub
+    visible so players never forget a system exists. Reached from /menu, /empire,
+    and every sub-hub's 🏠 Home button."""
+    w = get_weather()
+    cls = get_player_class(p)
+    cls_line = f" · {cls['name']}" if cls else ""
+    cp = calc_combat_power(p)
+    maxhp = calc_max_hp(p)
+    lines = [
+        f"🎱 *{WORLD_NAME}*",
+        f"👤 *{p['username']}* · Lv {p['level']}{cls_line}",
+        f"❤️ {safe_int(p.get('hp')):,}/{maxhp:,}   ⚡ CP {cp:,}",
+        f"💰 {safe_int(p.get('gold')):,}g   🌍 {w['name']}",
     ]
-    return InlineKeyboardMarkup(rows)
+    hints = []
+    sp = safe_int(p.get("stat_points"))
+    if sp > 0:
+        hints.append(f"⬆️ {sp} stat point{'s' if sp != 1 else ''} unspent")
+    if is_defeated(p):
+        hints.append("💀 defeated — heal up")
+    if hints:
+        lines.append("_" + "  ·  ".join(hints) + "_")
+    lines.append("\n_Everything in one place — tap a hub:_")
+
+    rows = []
+    if not _first_steps_complete(p):
+        rows.append([InlineKeyboardButton("🚀 First Steps — rewards inside!",
+                                          callback_data=f"menu_fsteps_{uid}")])
+    rows += [
+        # Frequent actions, one tap away
+        [InlineKeyboardButton("⚡ Hustle All", callback_data=f"acthub_hustle_{uid}"),
+         InlineKeyboardButton("🌍 Explore",    callback_data=f"acthub_explore_{uid}")],
+        # System hubs — everything the game has, grouped
+        [InlineKeyboardButton("⚔️ Combat",       callback_data=f"empire_combat_{uid}"),
+         InlineKeyboardButton("🌍 Activities",   callback_data=f"empire_activities_{uid}")],
+        [InlineKeyboardButton("⚙️ Gear & Craft", callback_data=f"empire_gear_{uid}"),
+         InlineKeyboardButton("🐾 Pets",         callback_data=f"empire_pethub_{uid}")],
+        [InlineKeyboardButton("💬 Social",       callback_data=f"empire_social_{uid}"),
+         InlineKeyboardButton("🏰 Empire",       callback_data=f"empire_tab_{uid}_overview")],
+        [InlineKeyboardButton("🛒 Shop",         callback_data=f"empire_shop_{uid}"),
+         InlineKeyboardButton("🎲 Casino",       callback_data=f"empire_casino_{uid}")],
+        [InlineKeyboardButton("📖 Guide",        callback_data=f"empire_guide_{uid}"),
+         InlineKeyboardButton("❌ Close",        callback_data=f"close_msg_{uid}")],
+    ]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 async def empire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -30893,11 +30929,48 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown", reply_markup=_pethub_markup(uid, pet, page=1))
         except Exception: pass
 
+    elif hub == "shop":
+        text, markup = _build_shop_view(p, "daily", uid, _shop_discount(p))
+        rows = list(markup.inline_keyboard) + [[
+            InlineKeyboardButton("🏠 Menu", callback_data=f"empire_home_{uid}"),
+            InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]
+        try:
+            await _q_edit(query, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+        except Exception: pass
+
+    elif hub == "casino":
+        text, markup = _build_casino_home(p, uid)
+        rows = list(markup.inline_keyboard)
+        rows.insert(-1, [InlineKeyboardButton("🏠 Menu", callback_data=f"empire_home_{uid}")])
+        try:
+            await _q_edit(query, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+        except Exception: pass
+
+    elif hub == "guide":
+        text = (
+            "📖 *Getting Around*\n\n"
+            "This menu is your home base — open it any time with */menu* or */empire*.\n\n"
+            "*The hubs:*\n"
+            "⚔️ *Combat* — encounter, PvP attack, skills, dungeon, raids, war\n"
+            "🌍 *Activities* — daily grind: hustle, daily, claim, train, quest, explore, objectives\n"
+            "⚙️ *Gear & Craft* — inventory, equip, shop, enhance, reinforce, forge, enchant, perma\n"
+            "🐾 *Pets* — hatch, evolve, breed, pet shop, bestiary\n"
+            "💬 *Social* — marriage, emotes, guilds & alliances, influence, ranks\n"
+            "🏰 *Empire* — build passive-income buildings for resources & stat bonuses\n"
+            "🛒 *Shop* · 🎲 *Casino* — spend your gold\n\n"
+            "*Quick tip:* ⚡ Hustle All runs every ready daily cooldown at once.\n"
+            "_Type */guide* for the full manual, or */firststeps* for the new-player quest._"
+        )
+        rows = [[InlineKeyboardButton("🏠 Menu", callback_data=f"empire_home_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]
+        try:
+            await _q_edit(query, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+        except Exception: pass
+
     elif hub == "home":
         try:
-            await _q_edit(query, 
-                f"🌌 *{p['username']}'s Empire*\n\nYour command center. Choose a hub:",
-                parse_mode="Markdown", reply_markup=_empire_markup(uid))
+            text, markup = _build_master_hub(p, uid)
+            await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         except Exception: pass
 
 
@@ -37135,21 +37208,6 @@ async def firststeps_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         pass
 
 # ── MAIN MENU HUB ─────────────────────────────────────────────────────────────
-def _menu_markup(uid, p=None):
-    rows = [
-        [InlineKeyboardButton("👤 Profile", callback_data=f"menu_stats_{uid}"),
-         InlineKeyboardButton("🏚️ Dungeon", callback_data=f"menu_dungeon_{uid}")],
-        [InlineKeyboardButton("🐾 Pets",    callback_data=f"menu_pets_{uid}"),
-         InlineKeyboardButton("🏰 Empire",  callback_data=f"menu_empire_{uid}")],
-        [InlineKeyboardButton("🛒 Shop",    callback_data=f"menu_shop_{uid}"),
-         InlineKeyboardButton("⚔️ Battle",  callback_data=f"menu_battle_{uid}")],
-    ]
-    if p is not None and not _first_steps_complete(p):
-        rows.insert(0, [InlineKeyboardButton("🚀 First Steps — rewards inside!",
-                                             callback_data=f"menu_fsteps_{uid}")])
-    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
-    return InlineKeyboardMarkup(rows)
-
 async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     p = get_player(user.id)
@@ -37157,13 +37215,9 @@ async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception: pass
     if not p:
         await send_group(update, "Use /ascend first to enter the world!", delay=9); return
-    w = get_weather()
-    text = (f"🎱 *{WORLD_NAME}*\n\n"
-            f"👤 *{p['username']}* — Lv {p['level']}  |  ❤️ {p['hp']}/{p['max_hp']}\n"
-            f"💰 {p.get('gold',0):,}g  |  🌍 {w['name']}\n\n"
-            f"_Where to?_")
+    text, markup = _build_master_hub(p, user.id)
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text,
-                                   parse_mode="Markdown", reply_markup=_menu_markup(user.id, p))
+                                   parse_mode="Markdown", reply_markup=markup)
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -37189,13 +37243,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     if section == "home":
-        w = get_weather()
-        text = (f"🎱 *{WORLD_NAME}*\n\n"
-                f"👤 *{p['username']}* — Lv {p['level']}  |  ❤️ {p['hp']}/{p['max_hp']}\n"
-                f"💰 {p.get('gold',0):,}g  |  🌍 {w['name']}\n\n"
-                f"_Where to?_")
         try:
-            await _q_edit(query, text, parse_mode="Markdown", reply_markup=_menu_markup(uid, p))
+            text, markup = _build_master_hub(p, uid)
+            await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         except Exception:
             pass
         return
