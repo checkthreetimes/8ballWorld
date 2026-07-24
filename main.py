@@ -646,16 +646,20 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
             _pvp_card_ts[viewer_uid] = time.time()
             if stored and stored[1] != msg.message_id:
                 async def _rm_old(cid=stored[0], mid=stored[1]):
+                    # Soft hand-off: strip the old card's buttons IMMEDIATELY (so a
+                    # stray tap on it no-ops instead of double-firing), but delay the
+                    # actual delete ~1.3s so the message doesn't blink out from under
+                    # the player's finger mid-tap — the new card is already live below.
+                    try:
+                        await bot.edit_message_reply_markup(
+                            chat_id=cid, message_id=mid, reply_markup=None)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1.3)
                     try:
                         await bot.delete_message(chat_id=cid, message_id=mid)
                     except Exception:
-                        # Can't delete (permissions/age) — at least strip the
-                        # old card's buttons so it can't be tapped
-                        try:
-                            await bot.edit_message_reply_markup(
-                                chat_id=cid, message_id=mid, reply_markup=None)
-                        except Exception:
-                            pass
+                        pass
                 _t = asyncio.create_task(_rm_old())
                 _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
             _t2 = asyncio.create_task(_auto_delete_pvp_card(bot, viewer_uid, viewer_uid, msg.message_id))
@@ -13294,39 +13298,48 @@ def _kit_apply_support(a, d, skill):
     return "  ".join(notes) if notes else ""
 
 def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
-    """Action buttons for PvP card — Attack, Defend, Skills, Potion, Finisher."""
+    """Action buttons for the PvP card. The layout is FIXED — the same rows in
+    the same positions on every render — so buttons never shift under the
+    player's finger as the card cycles. Unavailable actions render disabled and
+    simply explain themselves (a no-op that never re-renders the card)."""
     inv = sjl(player_p.get("inventory"), [])
     _hp_pots = sum(1 for i in inv if i in ("Health Potion", "Greater Health Potion",
                    "Grand Restorative Flask", "Supreme Restorative Flask", "Ultimate Vitality Draught"))
     _mp_pots = sum(1 for i in inv if i in ("MP Tonic", "Minor MP Tonic",
                    "Major MP Elixir", "Grand Mana Crystal"))
-    has_potion = _hp_pots > 0
-    all_skills = sjl(player_p.get("all_skills"), [])
-    shield_active   = safe_int(player_p.get("shield_used")) == 1
+    shield_active = safe_int(player_p.get("shield_used")) == 1
     kill_ready = opp_p is not None and _check_kill_condition(player_p, opp_p)
     rows = []
+
+    # Row 0 — Finisher (ALWAYS present; locked until the target is set up)
     if kill_ready:
         rows.append([InlineKeyboardButton(
             f"⚡ FINISHER — {_KILL_CONDITIONS.get(get_class_line(player_p),{}).get('name','Finisher')}",
-            callback_data=f"pvpcard_finish_{player_uid}_{opp_uid}"
-        )])
-    # Row 1: Attack + Defend
-    row1 = [InlineKeyboardButton("⚔️ Attack", callback_data=f"pvpcard_atk_{player_uid}_{opp_uid}")]
+            callback_data=f"pvpcard_finish_{player_uid}_{opp_uid}")])
+    else:
+        rows.append([InlineKeyboardButton("⚡ Finisher 🔒",
+            callback_data=f"pvpcard_finlock_{player_uid}_{opp_uid}")])
+
+    # Row 1 — Attack + Defend (always)
     defend_label = "🛡️ Shield ✓" if shield_active else "🛡️ Defend"
-    row1.append(InlineKeyboardButton(defend_label, callback_data=f"pvpcard_def_{player_uid}_{opp_uid}"))
-    rows.append(row1)
+    rows.append([
+        InlineKeyboardButton("⚔️ Attack", callback_data=f"pvpcard_atk_{player_uid}_{opp_uid}"),
+        InlineKeyboardButton(defend_label, callback_data=f"pvpcard_def_{player_uid}_{opp_uid}")])
+
+    # Row 2 — Potion + MP (always present; disabled when unavailable)
     _pot_left = max(0, _PVP_POTION_LIMIT - safe_int(_pvp_battle_state.get(player_uid, {}).get("potions_used")))
-    _can_potion = has_potion and _pot_left > 0
-    if _can_potion or _mp_pots > 0:
-        _pot_row = []
-        if _can_potion:
-            _pot_row.append(InlineKeyboardButton(f"🧪 Potion ({_pot_left} left)",
-                            callback_data=f"pvpcard_heal_{player_uid}_{opp_uid}"))
-        if _mp_pots > 0:
-            _pot_row.append(InlineKeyboardButton(f"💙 MP ({_mp_pots})",
-                            callback_data=f"pvpcard_mp_{player_uid}_{opp_uid}"))
-        rows.append(_pot_row)
-    # ── Simplified kit: 1 main + 2 support skills (class-line based) ──────────
+    if _hp_pots > 0 and _pot_left > 0:
+        _pot_btn = InlineKeyboardButton(f"🧪 Potion ({_pot_left})", callback_data=f"pvpcard_heal_{player_uid}_{opp_uid}")
+    else:
+        _pot_lbl = "🧪 Potion (limit)" if _pot_left <= 0 else "🧪 Potion (0)"
+        _pot_btn = InlineKeyboardButton(_pot_lbl, callback_data=f"pvpcard_nopot_{player_uid}_{opp_uid}")
+    if _mp_pots > 0:
+        _mp_btn = InlineKeyboardButton(f"💙 MP ({_mp_pots})", callback_data=f"pvpcard_mp_{player_uid}_{opp_uid}")
+    else:
+        _mp_btn = InlineKeyboardButton("💙 MP (0)", callback_data=f"pvpcard_nomp_{player_uid}_{opp_uid}")
+    rows.append([_pot_btn, _mp_btn])
+
+    # Rows 3-5 — the 3 kit skills (ALWAYS 3 rows; disabled shows why)
     kit = _kit_for(player_p)
     p_mp = safe_int(player_p.get("mp"))
     if kit:
@@ -13347,6 +13360,8 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
                 rows.append([InlineKeyboardButton(label, callback_data=f"kitsk_{player_uid}_{slot}_{opp_uid}")])
             else:
                 rows.append([InlineKeyboardButton(label, callback_data=f"kitnope_{player_uid}_{slot}")])
+
+    # Row 6 — Surrender (always)
     rows.append([InlineKeyboardButton("🏳️ Surrender", callback_data=f"pvpyield_{player_uid}_{opp_uid}")])
     return InlineKeyboardMarkup(rows)
 
@@ -15031,6 +15046,27 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.from_user.id != uid:
         await query.answer("These aren't your buttons!", show_alert=True); return
+
+    # Disabled/locked buttons on the fixed layout — just explain themselves. They
+    # never touch battle state, take the lock, or re-render, so the card doesn't
+    # cycle when a player taps one.
+    if action_type in ("finlock", "nopot", "nomp"):
+        if action_type == "finlock":
+            _fl_line = get_class_line(get_player(uid) or {})
+            _kc = _KILL_CONDITIONS.get(_fl_line) if _fl_line else None
+            if _kc:
+                _need = ", ".join(f"{_FINISHER_COND_NAMES.get(k, k)} ×{n}" for k, n in _kc.get("conds", []))
+                await query.answer(f"🔒 {_kc['name']} unlocks once your target has: {_need}", show_alert=True)
+            else:
+                await query.answer("🔒 Finisher locked.", show_alert=True)
+        elif action_type == "nopot":
+            if safe_int(_pvp_battle_state.get(uid, {}).get("potions_used")) >= _PVP_POTION_LIMIT:
+                await query.answer(f"🧪 Potion limit reached ({_PVP_POTION_LIMIT} per battle) — finish the fight!", show_alert=True)
+            else:
+                await query.answer("🧪 No health potions in your bag!", show_alert=True)
+        else:
+            await query.answer("💙 No MP potions in your bag!", show_alert=True)
+        return
 
     pair = _pvp_pair_key(uid, target_id)
 
