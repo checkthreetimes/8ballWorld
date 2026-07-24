@@ -35424,6 +35424,19 @@ async def crate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── FIGHT BETTING (spectators stake gold on PvP fights) ──────────────────────
 _fight_bets = {}  # pair -> {"chat_id","msg_id","bets":{uid:(side_uid,amt,name)},"open_until","names":{uid:name}}
 _BET_AMOUNT = 100
+_BET_TIERS  = [1000, 25000, 250000, 1000000]  # spectator wager tiers (2x payout)
+
+def _bet_k(n):
+    if n >= 1000000: return f"{n // 1000000}M"
+    if n >= 1000:    return f"{n // 1000}k"
+    return str(n)
+
+def _fight_bet_markup(au, du, a_name, d_name):
+    rows = []
+    for side, nm in ((au, a_name), (du, d_name)):
+        rows.append([InlineKeyboardButton(f"💰 {nm[:9]} {_bet_k(amt)}",
+                     callback_data=f"bet_{au}_{du}_{side}_{amt}") for amt in _BET_TIERS])
+    return InlineKeyboardMarkup(rows)
 
 async def _open_fight_bets(bot, chat_id, pair, a, d):
     if pair in _fight_bets or not chat_id or chat_id in (a.get("user_id"), d.get("user_id")):
@@ -35433,12 +35446,10 @@ async def _open_fight_bets(bot, chat_id, pair, a, d):
         msg = await bot.send_message(chat_id,
             f"⚔️ *FIGHT!*  *{a['username']}* (Lv {a.get('level',1)})  vs  "
             f"*{d['username']}* (Lv {d.get('level',1)})\n\n"
-            f"💰 _Spectators: bet {_BET_AMOUNT}g on the winner — 60s window, 2x payout!_",
+            f"💰 _Spectators: tap a stake on who you think wins — 60s window, *2x payout!*_\n"
+            f"_Wager from 1k up to 1M gold._",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton(f"💰 {a['username'][:12]}", callback_data=f"bet_{au}_{du}_{au}"),
-                InlineKeyboardButton(f"💰 {d['username'][:12]}", callback_data=f"bet_{au}_{du}_{du}"),
-            ]]))
+            reply_markup=_fight_bet_markup(au, du, a["username"], d["username"]))
         _fight_bets[pair] = {"chat_id": chat_id, "msg_id": msg.message_id, "bets": {},
                              "open_until": time.time() + 60,
                              "names": {au: a["username"], du: d["username"]}}
@@ -35462,6 +35473,7 @@ async def bet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = query.data.split("_")
     try:
         au, du, side = int(parts[1]), int(parts[2]), int(parts[3])
+        amt = int(parts[4]) if len(parts) > 4 else _BET_AMOUNT   # legacy 2-button cards
     except (IndexError, ValueError):
         await query.answer(); return
     pair = _pvp_pair_key(au, du)
@@ -35478,18 +35490,19 @@ async def bet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(uid)
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
-    if p.get("gold", 0) < _BET_AMOUNT:
-        await query.answer(f"Need {_BET_AMOUNT}g to bet!", show_alert=True); return
-    p["gold"] -= _BET_AMOUNT
+    if safe_int(p.get("gold")) < amt:
+        await query.answer(f"You need {amt:,}g for that stake!", show_alert=True); return
+    p["gold"] = safe_int(p.get("gold")) - amt
     save_player(p)
-    st["bets"][uid] = (side, _BET_AMOUNT, p["username"])
-    await query.answer(f"💰 {_BET_AMOUNT}g on {st['names'].get(side,'?')}!")
+    st["bets"][uid] = (side, amt, p["username"])
+    await query.answer(f"💰 {amt:,}g on {st['names'].get(side,'?')}! Win → {amt*2:,}g")
     n_bets = len(st["bets"])
+    _pot = sum(b[1] for b in st["bets"].values())
     try:
-        await _q_edit(query, 
+        await _q_edit(query,
             f"⚔️ *FIGHT!*  *{st['names'][au]}*  vs  *{st['names'][du]}*\n\n"
-            f"💰 {n_bets} bet{'s' if n_bets != 1 else ''} placed — "
-            f"_{_BET_AMOUNT}g a seat, 2x payout, window closes fast!_",
+            f"💰 {n_bets} bet{'s' if n_bets != 1 else ''} placed · *{_pot:,}g* on the table — "
+            f"_2x payout, window closes fast!_",
             parse_mode="Markdown", reply_markup=query.message.reply_markup)
     except Exception:
         pass
