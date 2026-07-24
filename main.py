@@ -3897,6 +3897,8 @@ _BESTIARY_MILESTONES = [
     (45, "+8% gold, +5% EXP",              {"gold": 50000, "stat_points": 3, "item": "Dragon Egg"}),
     (65, "+12% gold, +8% EXP, +3 stats",   {"gold": 150000, "stat_points": 5, "item": "Mythic Egg"}),
     (85, "MASTER COLLECTOR — +20% gold, +12% EXP", {"gold": 500000, "stat_points": 10, "item": "Mythic Egg"}),
+    (108, "👑 GRAND COLLECTOR — +30% gold, +18% EXP (the full roster, all Celestials!)",
+          {"gold": 2000000, "stat_points": 15, "item": "Mythic Egg"}),
 ]
 
 def _pet_dex(p):
@@ -3934,6 +3936,7 @@ def _collector_global(p):
     if n >= 45: gold_pct, exp_pct = 0.08, 0.05
     if n >= 65: gold_pct, exp_pct = 0.12, 0.08
     if n >= 85: gold_pct, exp_pct = 0.20, 0.12
+    if n >= 108: gold_pct, exp_pct = 0.30, 0.18
     return {"gold_pct": gold_pct, "exp_pct": exp_pct}
 
 def pet_status_tag(pet):
@@ -26876,7 +26879,7 @@ GUIDE_PAGES = [
         "*📖 Bestiary & Collector's Bond — /bestiary or /dex*\n"
         f"{len(PET_SPECIES)} species to collect across dogs, cats, dragons, and the new ✨ Celestial apex tier. Every unique species you've EVER owned counts forever — selling never loses progress.\n"
         "• *Collector's Bond:* +3% pet ATK per unique species (up to +150%) — the reason to catch every wild spawn\n"
-        "• Milestone rewards at 10/25/45/65/85 species: big gold, stat points, rare eggs, and permanent +gold%/+EXP% perks\n"
+        "• Milestone rewards at 10/25/45/65/85/108 species: big gold, stat points, rare eggs, and permanent +gold%/+EXP% perks — the 108 👑 Grand Collector tier means every species including all Celestials\n"
         "\n"
         "*💰 Bulk Sell — /pethub → Bulk Sell*\n"
         "Clear out duplicates in one tap. Always protects your active pet, every shiny, and the highest-level copy of each species. Sell by 'duplicates', 'up to uncommon', or 'up to rare'.\n"
