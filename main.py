@@ -29434,41 +29434,15 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception: pass
 
     elif action == "explore":
-        if is_defeated(p):
-            txt = "🌍 *Explore*\n\n💀 Too beaten up to explore right now."
-        else:
-            today = datetime.now().strftime("%Y-%m-%d")
-            exp_count = safe_int(p.get("explore_count_today")) if p.get("explore_date") == today else 0
-            exp_bar = "█" * exp_count + "░" * (2 - exp_count)
-            if exp_count >= 2:
-                txt = f"🌍 *Explore*\n\n[{exp_bar}] 2/2 expeditions used today.\n\n_Resets at midnight. Come back tomorrow!_"
-            else:
-                txt = (f"🌍 *Explore*\n\n[{exp_bar}] {exp_count}/2 expeditions used today.\n\n"
-                       f"✅ *Ready!* Head to the group chat and use the Explore action to go on a 1-hour expedition.\n"
-                       f"Best loot in the game — rare items, monster encounters, and pet finds.")
-        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
+        # Launch the real action — opens the world-map zone picker.
+        await explore_cmd(update, context)
 
     elif action == "dungeon":
-        if is_defeated(p):
-            txt = "🏚️ *Dungeon*\n\n💀 You're defeated — recover first."
-        else:
-            txt = ("🏚️ *Dungeon*\n\n✅ *Ready to run!*\n\n"
-                   "6 floors · 10 rooms each · real-time combat\n"
-                   "Monsters, traps, NPCs, treasure, and a boss every floor.\n\n"
-                   "_Use */dungeon* in the group chat to enter, or start one from */encounter*._")
-        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
+        # Launch the real action — opens the difficulty picker to start a run.
+        await dungeon_cmd(update, context)
 
     elif action == "soloraid":
-        if is_defeated(p):
-            txt = "⚔️ *Solo Raid*\n\n💀 You're defeated — recover first."
-        else:
-            txt = ("⚔️ *Solo Raid*\n\n✅ *Available!*\n\n"
-                   "Take on a raid boss alone for massive rewards.\n"
-                   "_Use */soloraid* in the group chat to begin._")
-        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
+        await soloraid_cmd(update, context)
 
     elif action == "petbattle":
         pet_rec = get_active_pet_record(uid)
@@ -30649,49 +30623,16 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
                 await _show("\n".join(lines))
 
     elif action == "quest":
-        aq = p.get("active_quest")
-        if aq:
-            import json as _json
-            try: _qdata = _json.loads(aq) if isinstance(aq, str) else aq
-            except: _qdata = {}
-            txt = (f"📜 *Active Quest*\n\n"
-                   f"*{_qdata.get('text','Quest in progress...')}*\n\n"
-                   f"_Check the group chat for quest objectives and progress._")
-        else:
-            txt = ("📜 *Quest*\n\n"
-                   "✅ No active quest — you're free to take one!\n\n"
-                   "_Quests give EXP, gold, and rare loot. Head to the group chat to start one._")
-        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
+        # Launch the real action.
+        await quest_cmd(update, context)
 
     elif action == "explore":
-        if is_defeated(p):
-            txt = "🌍 *Explore*\n\n💀 Too beaten up to explore right now."
-        else:
-            today = datetime.now().strftime("%Y-%m-%d")
-            exp_count = safe_int(p.get("explore_count_today")) if p.get("explore_date") == today else 0
-            exp_bar = "█" * exp_count + "░" * (2 - exp_count)
-            if exp_count >= 2:
-                txt = f"🌍 *Explore*\n\n[{exp_bar}] 2/2 used today. Resets at midnight!"
-            else:
-                txt = (f"🌍 *Explore*\n\n[{exp_bar}] {exp_count}/2 used today.\n\n"
-                       f"✅ *Ready!* Best loot in the game — head to the group chat to explore.")
-        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
+        # Launch the real action — opens the world-map zone picker.
+        await explore_cmd(update, context)
 
     elif action in ("dungeon", "dungeonhard", "dungeonleg"):
-        _dng_info2 = {"dungeon":("🏚️","Dungeon",1),"dungeonhard":("🔥","Dungeon Hard",15),"dungeonleg":("💀","Dungeon Legendary",40)}
-        _dem2, _dname2, _dmin2 = _dng_info2[action]
-        if p["level"] < _dmin2:
-            txt = f"{_dem2} *{_dname2}*\n\n🔒 Requires Level {_dmin2}. You are Level {p['level']}."
-        elif is_defeated(p):
-            txt = f"{_dem2} *{_dname2}*\n\n💀 You're defeated — recover first."
-        elif not check_cooldown(p.get("last_dungeon"), 86400):
-            txt = f"{_dem2} *{_dname2}*\n\n⏳ Ready in: *{time_remaining(p.get('last_dungeon'), 86400)}*"
-        else:
-            txt = f"{_dem2} *{_dname2}*\n\n✅ *Ready!* Head to the group chat to start your run."
-        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
+        # Launch the real action — opens the difficulty picker to start a run.
+        await dungeon_cmd(update, context)
 
     elif action == "oracle":
         # Execute pool shot inline (same logic as pool button)
