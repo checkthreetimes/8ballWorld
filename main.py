@@ -220,6 +220,7 @@ _pvp_action_times  = {}   # uid -> float timestamp of last PvP card button press
 _pvp_battle_state  = {}   # uid -> per-battle dungeon item charge state
 _target_pickers    = {}   # uid -> {"last_pick": isostr, "chat_id": int}
 _PVP_ACTION_CD     = 1.5  # seconds between PvP card button presses (not used for gate — kept for reference)
+_PVP_POTION_LIMIT  = 3    # max HP potions each player may drink per battle (anti heal-stall)
 ROUNDS_PER_PAGE    = 3    # how many rounds to show per page on the battle card
 _megaphone_state   = {"group": None}  # last known group chat ID for /megaphone DMs
 _broadcast_quest   = None   # {"id": str, "phrase": str, "exp": int, "expires": float}
@@ -13299,10 +13300,12 @@ def _build_pvp_card_markup(player_uid, opp_uid, player_p, opp_p=None):
     defend_label = "🛡️ Shield ✓" if shield_active else "🛡️ Defend"
     row1.append(InlineKeyboardButton(defend_label, callback_data=f"pvpcard_def_{player_uid}_{opp_uid}"))
     rows.append(row1)
-    if has_potion or _mp_pots > 0:
+    _pot_left = max(0, _PVP_POTION_LIMIT - safe_int(_pvp_battle_state.get(player_uid, {}).get("potions_used")))
+    _can_potion = has_potion and _pot_left > 0
+    if _can_potion or _mp_pots > 0:
         _pot_row = []
-        if has_potion:
-            _pot_row.append(InlineKeyboardButton(f"🧪 Potion ({_hp_pots})",
+        if _can_potion:
+            _pot_row.append(InlineKeyboardButton(f"🧪 Potion ({_pot_left} left)",
                             callback_data=f"pvpcard_heal_{player_uid}_{opp_uid}"))
         if _mp_pots > 0:
             _pot_row.append(InlineKeyboardButton(f"💙 MP ({_mp_pots})",
@@ -14983,6 +14986,9 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
     if _is_new_battle:
+        # Fresh battle → reset each fighter's per-battle potion budget.
+        for _bu in (au.id, du_id):
+            _pvp_battle_state.setdefault(_bu, {})["potions_used"] = 0
         asyncio.create_task(announce(bot, _grp_chat, _pvp_fight_start_line(a["username"], d["username"]), permanent=True))
     start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
     _pvp_log_append(pair, start_txt)
@@ -15047,6 +15053,10 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ── HEAL ──────────────────────────────────────────────────────────────
         if action_type == "heal":
+            # Cap HP potions at 3 per battle so a fight can't heal-stall forever.
+            _bstate = _pvp_battle_state.setdefault(uid, {})
+            if _bstate.get("potions_used", 0) >= _PVP_POTION_LIMIT:
+                await query.answer(f"🧪 Potion limit reached ({_PVP_POTION_LIMIT} per battle) — finish the fight!", show_alert=True); return
             if is_healing_blocked(a):
                 if safe_int(a.get("heal_blocked_turns")) > 0:
                     a["heal_blocked_turns"] -= 1; save_player(a)
@@ -15074,8 +15084,11 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             old_hp = a["hp"]
             a["hp"] = min(a["max_hp"], a["hp"] + heal_amount)
             actual = a["hp"] - old_hp
+            _bstate["potions_used"] = _bstate.get("potions_used", 0) + 1
+            _pot_left = _PVP_POTION_LIMIT - _bstate["potions_used"]
             save_player(a)
-            heal_entry = f"🧪 *{a['username']}* uses *{potion}* — *+{actual} HP* ❤️ {a['hp']}/{a['max_hp']}"
+            heal_entry = (f"🧪 *{a['username']}* uses *{potion}* — *+{actual} HP* ❤️ {a['hp']}/{a['max_hp']}"
+                          + (f"  _({_pot_left} potion{'s' if _pot_left != 1 else ''} left)_" if _pot_left > 0 else "  _(last potion!)_"))
             _pvp_log_append(pair, heal_entry)
             fresh_a = get_player(uid) or a
             fresh_d = get_player(target_id) or d
