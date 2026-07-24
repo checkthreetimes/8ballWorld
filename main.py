@@ -20215,15 +20215,6 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cls = get_player_class(p)
     if not cls:
         await send_group(update, "No class yet! Use /class at Level 5.", delay=9); return
-    # Pure "show me my skills" — no target and no active fight → display the
-    # 3-skill combat kit (not the old skill-tree list).
-    _sk_chat = update.effective_chat.id
-    _sk_raid, _ = in_active_raid(user.id, _sk_chat)
-    _sk_in_fight = (bool(_sk_raid) or _sk_chat in active_bosses or _sk_chat in secret_boss_active
-                    or bool(update.message and update.message.reply_to_message))
-    if not context.args and not _sk_in_fight:
-        await send_group(update, _build_kit_text(p) or "No class yet! Use /class at Level 5.",
-                         permanent=True); return
     all_skills = sjl(p.get("all_skills"), [])
     # Sync: add any skills from current class that the player qualifies for but is missing
     skill_names = {s["name"] for s in all_skills}
