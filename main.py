@@ -38490,9 +38490,137 @@ def _siege_grant_rewards(p, state, wiped):
                     titles.append(title); p["titles"] = json.dumps(titles)
                     milestone_msg += f"\n🏅 New title unlocked: *{title}*!"
     cds["siege_tokens_lifetime"] = safe_int(cds.get("siege_tokens_lifetime", 0)) + total
+    cds["siege_tokens"] = safe_int(cds.get("siege_tokens", 0)) + total   # spendable balance
     p["passive_cooldowns"] = json.dumps(cds)
     save_player(p)
+    if total:
+        lines.append(f"🎫 *{fmt_num(total)} Break Tokens* → spend at the Break Shop (`/siegeshop`).")
     return "\n".join(lines), milestone_msg
+
+# ── Break Tokens: spendable currency, shop & leaderboard ──────────────────────
+def _siege_token_balance(p):
+    return safe_int(safe_cds(p).get("siege_tokens", 0))
+
+def _siege_spend_tokens(p, amt):
+    cds = safe_cds(p)
+    bal = safe_int(cds.get("siege_tokens", 0))
+    if bal < amt:
+        return False
+    cds["siege_tokens"] = bal - amt
+    p["passive_cooldowns"] = json.dumps(cds)
+    return True
+
+SIEGE_SHOP = [
+    {"id":"flask","name":"Grand Restorative Flask ×3","emoji":"🧪","cost":40,
+     "kind":"item","item":"Grand Restorative Flask","qty":3},
+    {"id":"gold","name":"Gold Cache (500k)","emoji":"💰","cost":50,"kind":"gold","amount":500_000},
+    {"id":"shards","name":"Iron Shard ×10","emoji":"⛏️","cost":60,
+     "kind":"item","item":"Iron Shard","qty":10},
+    {"id":"scroll","name":"Enchanting Scroll ×2","emoji":"✨","cost":110,
+     "kind":"item","item":"Enchanting Scroll","qty":2},
+    {"id":"statpts","name":"Bonus Stat Points ×3","emoji":"🎯","cost":120,"kind":"stat","amount":3},
+    {"id":"perma","name":"PERMA ATK Injector (+1)","emoji":"⚔️","cost":150,"kind":"perma"},
+    {"id":"title","name":"Title: “The Unbroken”","emoji":"🏅","cost":500,"kind":"title","title":"The Unbroken"},
+]
+_SIEGE_SHOP_BY_ID = {s["id"]: s for s in SIEGE_SHOP}
+
+def _siege_shop_purchase(p, item_id):
+    """Attempt a Break-Shop purchase. Returns a flash string; saves on success."""
+    item = _SIEGE_SHOP_BY_ID.get(item_id)
+    if not item:
+        return ""
+    if item["kind"] == "perma" and safe_int(p.get("perm_dmg_bonus", 0)) >= _PERMA_CAP:
+        return f"⚔️ PERMA ATK already maxed at +{_PERMA_CAP}."
+    if item["kind"] == "title" and item["title"] in sjl(p.get("titles"), []):
+        return "🏅 You already own that title."
+    if _siege_token_balance(p) < item["cost"]:
+        return f"❌ Need *{item['cost']}* Break Tokens (you have {_siege_token_balance(p)})."
+    if not _siege_spend_tokens(p, item["cost"]):
+        return "❌ Not enough Break Tokens."
+    if item["kind"] == "item":
+        for _ in range(item["qty"]):
+            add_item(p, item["item"])
+        msg = f"✅ Bought *{item['name']}*!"
+    elif item["kind"] == "gold":
+        p["gold"] = safe_int(p.get("gold", 0)) + item["amount"]
+        msg = f"✅ +*{fmt_num(item['amount'])}* gold!"
+    elif item["kind"] == "stat":
+        p["bonus_stat_points"] = safe_int(p.get("bonus_stat_points")) + item["amount"]
+        msg = f"✅ +*{item['amount']}* bonus stat points! Allocate with /allocate."
+    elif item["kind"] == "perma":
+        p["perm_dmg_bonus"] = safe_int(p.get("perm_dmg_bonus", 0)) + 1
+        msg = f"✅ *PERMA ATK +{p['perm_dmg_bonus']}!*"
+    elif item["kind"] == "title":
+        titles = sjl(p.get("titles"), []); titles.append(item["title"])
+        p["titles"] = json.dumps(titles)
+        msg = f"🏅 Title unlocked: *{item['title']}*! Equip via /titles."
+    else:
+        msg = "✅ Purchased!"
+    save_player(p)
+    return msg
+
+def _build_siege_shop_card(p, uid, flash=""):
+    bal = _siege_token_balance(p)
+    lines = ["🎫 *BREAK SHOP*", "_Spend Break Tokens earned in Hold the Pocket._"]
+    if flash:
+        lines.append(flash)
+    lines.append(f"\n💠 Balance: *{fmt_num(bal)}* Break Tokens\n")
+    rows = []
+    for s in SIEGE_SHOP:
+        owned = s["kind"] == "title" and s["title"] in sjl(p.get("titles"), [])
+        maxed = s["kind"] == "perma" and safe_int(p.get("perm_dmg_bonus", 0)) >= _PERMA_CAP
+        tag = "  ✅owned" if owned else ("  (MAX)" if maxed else "")
+        lines.append(f"{s['emoji']} *{s['name']}* — *{s['cost']}*🎫{tag}")
+        if not owned and not maxed:
+            can = bal >= s["cost"]
+            label = f"{s['emoji']} {s['cost']}🎫" + ("" if can else " 🔒")
+            rows.append([InlineKeyboardButton(label if can else f"{s['emoji']} {s['name']} 🔒",
+                                              callback_data=f"sg_sbuy_{uid}_{s['id']}")])
+    rows.append([InlineKeyboardButton("🏆 Leaderboard", callback_data=f"sg_board_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _siege_leaderboard_card(uid, highlight=None, limit=10):
+    rows_out = []
+    try:
+        c = _db().cursor()
+        c.execute("SELECT user_id, username, passive_cooldowns FROM players "
+                  "WHERE user_id NOT IN (SELECT user_id FROM banned_users)")
+        for row in c.fetchall():
+            best = safe_int(sjl(row["passive_cooldowns"], {}).get("siege_best_rack", 0))
+            if best > 0:
+                rows_out.append((best, row["username"] or "—", row["user_id"]))
+    except Exception:
+        pass
+    rows_out.sort(key=lambda x: x[0], reverse=True)
+    lines = ["🏆 *HOLD THE POCKET — Deepest Racks*", ""]
+    if not rows_out:
+        lines.append("_No runs recorded yet. Be the first to hold the break!_")
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    for i, (best, name, ruid) in enumerate(rows_out[:limit], 1):
+        badge = medals.get(i, f"#{i}")
+        star = " ⬅️ *you*" if ruid == highlight else ""
+        lines.append(f"{badge} *{name}* — Rack *{best}*{star}")
+    if highlight is not None:
+        pos = next((i for i, (_, _, ruid) in enumerate(rows_out, 1) if ruid == highlight), None)
+        if pos and pos > limit:
+            best = next(b for b, _, ru in rows_out if ru == highlight)
+            lines.append(f"\n…\n*#{pos}* *you* — Rack *{best}*")
+    back = [InlineKeyboardButton("🎫 Break Shop", callback_data=f"sg_shop_{uid}"),
+            InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
+    return "\n".join(lines), InlineKeyboardMarkup([back])
+
+async def siegeshop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    text, markup = _build_siege_shop_card(p, user.id)
+    await send_group(update, text, delay=120, permanent=True, reply_markup=markup)
+
+async def siegeboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    text, markup = _siege_leaderboard_card(user.id, highlight=user.id)
+    await send_group(update, text, delay=120, permanent=True, reply_markup=markup)
 
 # ── HOLD THE POCKET — UI / interaction layer ──────────────────────────────────
 def _siege_bar(cur, mx, width=10):
@@ -38562,6 +38690,8 @@ def _build_siege_mode_select(uid, p=None):
     rows = [
         [InlineKeyboardButton("🧠 Turn-Based (think freely)", callback_data=f"sg_mode_{uid}_turn")],
         [InlineKeyboardButton(f"⏱️ Timed ({SIEGE_CLOCK_SECS}s shot clock)", callback_data=f"sg_mode_{uid}_timed")],
+        [InlineKeyboardButton("🎫 Break Shop", callback_data=f"sg_shop_{uid}"),
+         InlineKeyboardButton("🏆 Leaderboard", callback_data=f"sg_board_{uid}")],
         [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")],
     ]
     return "\n".join(lines), InlineKeyboardMarkup(rows)
@@ -38655,6 +38785,8 @@ def _build_siege_end_card(p, state, summary, milestone, wiped):
     if milestone:
         lines.append(milestone)
     rows = [[InlineKeyboardButton("🔁 Play Again", callback_data=f"sg_again_{uid}"),
+             InlineKeyboardButton("🎫 Break Shop", callback_data=f"sg_shop_{uid}")],
+            [InlineKeyboardButton("🏆 Leaderboard", callback_data=f"sg_board_{uid}"),
              InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
@@ -38760,6 +38892,26 @@ async def siege_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _siege_arm_clock(context.bot, st)
         return
 
+    # ── Actions that don't need an active run (end-card / mode-select) ─────────
+    if action == "again":
+        text, markup = _build_siege_mode_select(uid, p)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+    if action == "shop":
+        text, markup = _build_siege_shop_card(p, uid)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+    if action == "sbuy":
+        item_id = toks[3] if len(toks) > 3 else ""
+        flash = _siege_shop_purchase(get_player(uid), item_id)
+        text, markup = _build_siege_shop_card(get_player(uid), uid, flash=flash)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+    if action == "board":
+        text, markup = _siege_leaderboard_card(uid, highlight=uid)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+
     st = _active_sieges.get(uid)
     if not st or st["phase"] == "over":
         await query.answer("This run has ended — /siege to play again.", show_alert=True); return
@@ -38854,12 +39006,6 @@ async def siege_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _q_edit(query, "🏳️ *You abandon the break.* No Break Tokens banked.\n\n_/siege to try again._",
                       parse_mode="Markdown",
                       reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]))
-        return
-
-    if action == "again":
-        text, markup = _build_siege_mode_select(uid, p)
-        await query.answer()
-        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         return
 
     await query.answer()
@@ -38992,6 +39138,9 @@ def main():
     app.add_handler(CommandHandler("siege",       siege_cmd))
     app.add_handler(CommandHandler("holdthepocket", siege_cmd))
     app.add_handler(CommandHandler("htp",         siege_cmd))
+    app.add_handler(CommandHandler("siegeshop",   siegeshop_cmd))
+    app.add_handler(CommandHandler("breakshop",   siegeshop_cmd))
+    app.add_handler(CommandHandler("siegeboard",  siegeboard_cmd))
     app.add_handler(CallbackQueryHandler(siege_callback, pattern="^sg_"))
 
     # Empire master hub
