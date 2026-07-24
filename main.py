@@ -30724,8 +30724,8 @@ _ACTIVITIES_HUB_PAGES = [
     [
         [("🏚️ Dungeon",      "acthub_dungeon"),    ("🔥 Dungeon Hard",    "acthub_dungeonhard")],
         [("💀 Dungeon Leg.",  "acthub_dungeonleg"), ("🎱 Hold the Pocket", "acthub_siege")],
-        [("🔮 Oracle",        "acthub_oracle"),     ("🎯 Objectives",      "acthub_objectives")],
-        [("⏱️ Cooldowns",     "acthub_cooldowns")],
+        [("🗼 The Ascension", "acthub_ascension"),  ("🔮 Oracle",          "acthub_oracle")],
+        [("🎯 Objectives",    "acthub_objectives"), ("⏱️ Cooldowns",      "acthub_cooldowns")],
     ],
     # Page 3 — Character
     [
@@ -30821,7 +30821,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("Register first.", show_alert=True); return
 
     _PAGE = {"hustle":1,"daily":1,"claim":1,"train":1,"quest":1,"explore":1,
-             "dungeon":2,"dungeonhard":2,"dungeonleg":2,"siege":2,"oracle":2,"objectives":2,"cooldowns":2,
+             "dungeon":2,"dungeonhard":2,"dungeonleg":2,"siege":2,"ascension":2,"oracle":2,"objectives":2,"cooldowns":2,
              "stats":3,"allocate":3,"class":3,"prestige":3,"skills":3,"changelog":3}
     page = _PAGE.get(action, 1)
     back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"acthub_back_{page}_{uid}")]])
@@ -31135,6 +31135,10 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "siege":
         # Launch Hold the Pocket — the endgame siege/command roguelite.
         await siege_cmd(update, context)
+
+    elif action == "ascension":
+        # Launch The Ascension — the roguelite climbing gauntlet.
+        await ascension_cmd(update, context)
 
     elif action == "oracle":
         # Execute pool shot inline (same logic as pool button)
@@ -38622,6 +38626,542 @@ async def siegeboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text, markup = _siege_leaderboard_card(user.id, highlight=user.id)
     await send_group(update, text, delay=120, permanent=True, reply_markup=markup)
 
+# ══════════════════════════════════════════════════════════════════════════════
+# THE ASCENSION — solo roguelite gauntlet (Concept B)
+# ══════════════════════════════════════════════════════════════════════════════
+# One hero, one HP pool that carries between fights, a branching route, and a
+# stack of drafted relics that define the run. Your real ATK/DEF/crit set the
+# baseline; enemies scale geometrically and healing is scarce, so attrition +
+# route/relic decisions — not stats — decide how high you climb. Permadeath.
+
+_active_ascension = {}   # uid -> run state
+
+ASC_HP0        = 520      # floor-1 enemy HP
+ASC_ATK0       = 55       # floor-1 enemy ATK
+ASC_HP_GROWTH  = 1.135
+ASC_ATK_GROWTH = 1.145    # ATK outpaces HP slightly, so deep floors turn lethal
+ASC_REST_HEAL  = 0.35     # Rest node heals 35% max HP
+ASC_BOSS_EVERY = 10
+
+ASC_ENEMY_NAMES = [
+    ("Chalk Wraith", "👻"), ("Rack Golem", "🗿"), ("Felt Stalker", "🐾"),
+    ("Cue Revenant", "💀"), ("Break Fiend", "😈"), ("Pocket Horror", "🕳️"),
+    ("Bank-Shot Beast", "🦎"), ("Spinbound Shade", "🌀"),
+]
+ASC_BOSS_NAMES = {1:"The 1-Ball Colossus", 2:"The 8-Ball Leviathan",
+                  3:"The 9-Ball Tyrant", 4:"The Money-Ball Devourer"}
+
+ASC_RELICS = [
+    {"id":"whetstone","name":"Whetstone","emoji":"🗡️","desc":"+15% damage."},
+    {"id":"vampfang","name":"Vampiric Fang","emoji":"🩸","desc":"Heal 8% of damage dealt."},
+    {"id":"thornmail","name":"Thornmail","emoji":"🌵","desc":"Reflect 20% of damage taken."},
+    {"id":"luckycoin","name":"Lucky Coin","emoji":"🍀","desc":"+12% crit chance."},
+    {"id":"ironhide","name":"Iron Hide","emoji":"🛡️","desc":"Take 15% less damage."},
+    {"id":"swiftboots","name":"Swift Boots","emoji":"💨","desc":"15% chance to dodge a hit."},
+    {"id":"executioner","name":"Executioner","emoji":"⚰️","desc":"+40% damage to enemies under 30% HP."},
+    {"id":"firstblood","name":"First Blood","emoji":"⚡","desc":"First strike each fight is doubled."},
+    {"id":"phoenix","name":"Phoenix Feather","emoji":"🔥","desc":"Once per run, revive at 50% HP."},
+    {"id":"greaves","name":"Warlord's Greaves","emoji":"🎖️","desc":"Heal 10% max HP after each win."},
+    {"id":"warbanner","name":"War Banner","emoji":"🚩","desc":"+7% damage per relic owned."},
+    {"id":"bulwark","name":"Bulwark","emoji":"🧱","desc":"Start each fight with a 20% max-HP shield."},
+    {"id":"berserk","name":"Berserker's Rage","emoji":"😤","desc":"+30% damage below 40% HP."},
+    {"id":"chrono","name":"Chrono Charm","emoji":"⏳","desc":"Rest nodes heal +50% more."},
+    {"id":"vitality","name":"Vitality Totem","emoji":"❤️","desc":"+20% max HP (heals to it)."},
+    {"id":"scholar","name":"Battle Scholar","emoji":"📖","desc":"Elites & treasure offer +1 relic choice."},
+]
+_ASC_RELIC_BY_ID = {r["id"]: r for r in ASC_RELICS}
+
+def _asc_has(state, rid):
+    return rid in state.get("relics", [])
+
+def _asc_scale_hp(floor):  return ASC_HP0  * (ASC_HP_GROWTH  ** (floor - 1))
+def _asc_scale_atk(floor): return ASC_ATK0 * (ASC_ATK_GROWTH ** (floor - 1))
+
+def _asc_max_hp(p, state):
+    mhp = calc_max_hp(p)
+    if _asc_has(state, "vitality"):
+        mhp = round(mhp * 1.20)
+    return mhp
+
+def _asc_make_enemy(floor, kind="fight"):
+    scale_hp = _asc_scale_hp(floor); scale_atk = _asc_scale_atk(floor)
+    if kind == "boss":
+        name = ASC_BOSS_NAMES.get(floor // ASC_BOSS_EVERY, f"Ascendant Horror ×{floor // ASC_BOSS_EVERY}")
+        emoji = "🔴"; hp = scale_hp * 6.0; atk = scale_atk * 1.7
+    elif kind == "elite":
+        name, emoji = random.choice(ASC_ENEMY_NAMES); name = f"Elite {name}"
+        hp = scale_hp * 2.2; atk = scale_atk * 1.35
+    else:
+        name, emoji = random.choice(ASC_ENEMY_NAMES)
+        hp = scale_hp * 1.0; atk = scale_atk * 1.0
+    hp = max(1, round(hp)); atk = max(1, round(atk))
+    return {"name": name, "emoji": emoji, "hp": hp, "max_hp": hp, "atk": atk, "kind": kind}
+
+def _asc_hero_hit(p, state, enemy, first):
+    base = calc_attack_damage(p)
+    mult = 1.0
+    if _asc_has(state, "whetstone"): mult += 0.15
+    if _asc_has(state, "warbanner"): mult += 0.07 * len(state["relics"])
+    if _asc_has(state, "berserk") and state["hp"] < state["max_hp"] * 0.40: mult += 0.30
+    if _asc_has(state, "executioner") and enemy["hp"] < enemy["max_hp"] * 0.30: mult += 0.40
+    dmg = base * mult
+    crit = _asc_has(state, "luckycoin") and random.random() < 0.12
+    if check_crit(p) or crit:
+        dmg = apply_crit(p, round(dmg))
+    if first and _asc_has(state, "firstblood"):
+        dmg *= 2
+    return max(1, round(dmg))
+
+def _asc_fight(p, state, enemy):
+    """Auto-resolve a fight; HP carries in state['hp']. Returns (log, survived)."""
+    log = []
+    mhp = state["max_hp"]
+    shield = round(mhp * 0.20) if _asc_has(state, "bulwark") else 0
+    first = True; rounds = 0; reflected = 0; healed = 0
+    while enemy["hp"] > 0 and state["hp"] > 0 and rounds < 80:
+        rounds += 1
+        dmg = _asc_hero_hit(p, state, enemy, first); first = False
+        enemy["hp"] -= dmg
+        if _asc_has(state, "vampfang"):
+            h = max(1, round(dmg * 0.08)); state["hp"] = min(mhp, state["hp"] + h); healed += h
+        if enemy["hp"] <= 0:
+            break
+        # enemy strike
+        if _asc_has(state, "swiftboots") and random.random() < 0.15:
+            continue
+        inc = calc_defense(p, enemy["atk"])
+        if _asc_has(state, "ironhide"):
+            inc = max(1, round(inc * 0.85))
+        if shield > 0:
+            s = min(shield, inc); shield -= s; inc -= s
+        state["hp"] -= inc
+        if _asc_has(state, "thornmail") and inc > 0:
+            r = max(1, round(enemy["atk"] * 0.20)); enemy["hp"] -= r; reflected += r
+        if state["hp"] <= 0:
+            if _asc_has(state, "phoenix") and not state.get("phoenix_used"):
+                state["phoenix_used"] = True; state["hp"] = round(mhp * 0.50)
+                log.append("🔥 *Phoenix Feather!* You rise again at 50% HP!")
+            else:
+                break
+    survived = state["hp"] > 0 and enemy["hp"] <= 0
+    if survived:
+        if healed:    log.append(f"🩸 Lifesteal restored {fmt_num(healed)} HP.")
+        if reflected: log.append(f"🌵 Thorns reflected {fmt_num(reflected)}.")
+        if _asc_has(state, "greaves"):
+            g = round(mhp * 0.10); state["hp"] = min(mhp, state["hp"] + g)
+            log.append(f"🎖️ Greaves mend {fmt_num(g)} HP after the win.")
+    return log, survived
+
+def _asc_gen_choices(state):
+    """Build the next set of route nodes. Boss floors are forced single nodes."""
+    floor = state["floor"]
+    if floor % ASC_BOSS_EVERY == 0:
+        return [{"type": "boss", "emoji": "🔴", "label": "BOSS"}]
+    pool = [
+        ("fight",    "⚔️", "Fight"),
+        ("fight",    "⚔️", "Fight"),
+        ("elite",    "☠️", "Elite (relic)"),
+        ("rest",     "🔥", "Rest (heal)"),
+        ("treasure", "🎁", "Treasure (relic)"),
+        ("event",    "❓", "Mystery"),
+    ]
+    n = 3 if floor > 1 else 2
+    picks = random.sample(pool, min(n, len(pool)))
+    return [{"type": t, "emoji": e, "label": l} for t, e, l in picks]
+
+def _asc_relic_draft(state, n=3):
+    pool = [r["id"] for r in ASC_RELICS if r["id"] not in state["relics"]]
+    if not pool:
+        return []
+    random.shuffle(pool)
+    if _asc_has(state, "scholar"):
+        n += 1
+    return pool[:min(n, len(pool))]
+
+def _asc_new_run(p, uid):
+    mhp = calc_max_hp(p)
+    state = {
+        "uid": uid, "floor": 1, "hp": mhp, "max_hp": mhp,
+        "relics": [], "phase": "map", "choices": [], "draft": None,
+        "event": None, "phoenix_used": False, "log": [],
+        "chat_id": None, "msg_id": None, "cleared_boss": 0,
+    }
+    state["choices"] = _asc_gen_choices(state)
+    _active_ascension[uid] = state
+    return state
+
+def _asc_advance(p, state):
+    """Move to the next floor and roll its route (or a relic draft if pending)."""
+    state["floor"] += 1
+    state["max_hp"] = _asc_max_hp(p, state)
+    state["choices"] = _asc_gen_choices(state)
+    state["phase"] = "map"
+
+def _asc_grant_rewards(p, state, died):
+    floor = state["floor"] - (1 if died else 0)
+    floor = max(1, floor)
+    scale = ASC_HP_GROWTH ** floor
+    mult = 0.5 if died else 1.0
+    gold = round(1500 * floor * mult)
+    shards = int(floor * 0.8 * mult)
+    scrolls = int(floor * 0.28 * mult)
+    p["gold"] = safe_int(p.get("gold", 0)) + gold
+    lines = [f"💰 *{fmt_num(gold)}* gold"]
+    for _ in range(shards):  add_item(p, "Iron Shard")
+    if shards:  lines.append(f"⛏️ *Iron Shard ×{shards}*")
+    for _ in range(scrolls): add_item(p, "Enchanting Scroll")
+    if scrolls: lines.append(f"✨ *Enchanting Scroll ×{scrolls}*")
+    cds = safe_cds(p)
+    best_prev = safe_int(cds.get("asc_best_floor", 0))
+    milestone = ""
+    reached = state["floor"] - (1 if died else 0)
+    if reached > best_prev:
+        cds["asc_best_floor"] = reached
+        for thr, title in ((15, "Ascendant"), (30, "Skybreaker"), (50, "Voidclimber")):
+            if best_prev < thr <= reached:
+                titles = sjl(p.get("titles"), [])
+                if title not in titles:
+                    titles.append(title); p["titles"] = json.dumps(titles)
+                    milestone += f"\n🏅 New title: *{title}*!"
+    p["passive_cooldowns"] = json.dumps(cds)
+    save_player(p)
+    return "\n".join(lines), milestone
+
+# ── Ascension UI ──────────────────────────────────────────────────────────────
+def _asc_hpbar(state):
+    bar, pct = _siege_bar(state["hp"], state["max_hp"])
+    return f"❤️ `{bar}` *{pct}%*  ({fmt_num(state['hp'])}/{fmt_num(state['max_hp'])})"
+
+def _build_asc_map_card(p, state, flash=""):
+    uid = state["uid"]
+    relics = " ".join(_ASC_RELIC_BY_ID[r]["emoji"] for r in state["relics"]) or "_none_"
+    lines = [f"🗼 *THE ASCENSION* — Floor *{state['floor']}*"]
+    if flash:
+        lines.append(flash)
+    lines += [_asc_hpbar(state), f"🎒 Relics: {relics}", ""]
+    if state["choices"] and state["choices"][0]["type"] == "boss":
+        boss = _asc_make_enemy(state["floor"], "boss")
+        lines.append(f"🔴 *BOSS — {boss['name']}* blocks the stair. No way but through.")
+    else:
+        lines.append("Choose your path:")
+        for i, n in enumerate(state["choices"]):
+            lines.append(f"{n['emoji']} *{n['label']}*")
+    rows = []
+    for i, n in enumerate(state["choices"]):
+        rows.append([InlineKeyboardButton(f"{n['emoji']} {n['label']}", callback_data=f"clm_pick_{uid}_{i}")])
+    rows.append([InlineKeyboardButton("🎒 Relics", callback_data=f"clm_relics_{uid}"),
+                 InlineKeyboardButton("🏳️ Abandon", callback_data=f"clm_quit_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_asc_draft_card(p, state):
+    uid = state["uid"]
+    lines = ["🎁 *Choose a relic:*", _asc_hpbar(state), ""]
+    for ln in state.get("log", [])[-3:]:
+        lines.append(f"_{ln}_")
+    lines.append("")
+    rows = []
+    for i, rid in enumerate(state["draft"]):
+        r = _ASC_RELIC_BY_ID[rid]
+        lines.append(f"{r['emoji']} *{r['name']}* — _{r['desc']}_")
+        rows.append([InlineKeyboardButton(f"{r['emoji']} {r['name']}", callback_data=f"clm_draft_{uid}_{i}")])
+    rows.append([InlineKeyboardButton("⏭️ Skip (heal 8%)", callback_data=f"clm_draft_{uid}_skip")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_asc_event_card(p, state):
+    uid = state["uid"]; ev = state["event"]
+    lines = [f"❓ *{ev['title']}*", _asc_hpbar(state), "", ev["desc"], ""]
+    rows = [[InlineKeyboardButton(ev["a_label"], callback_data=f"clm_event_{uid}_a")],
+            [InlineKeyboardButton(ev["b_label"], callback_data=f"clm_event_{uid}_b")]]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_asc_boss_extract_card(p, state):
+    uid = state["uid"]
+    lines = ["🏆 *BOSS FELLED!*", _asc_hpbar(state), "",
+             f"You've conquered floor *{state['floor']}*. The stair keeps climbing…",
+             "_Extract now to bank your full haul, or push deeper for greater rewards —"
+             " but death past here costs you half._"]
+    rows = [[InlineKeyboardButton("⬆️ Climb On", callback_data=f"clm_push_{uid}")],
+            [InlineKeyboardButton("💰 Extract (bank rewards)", callback_data=f"clm_extract_{uid}")]]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_asc_relics_card(p, state):
+    uid = state["uid"]
+    lines = ["🎒 *Your Relics:*", ""]
+    if not state["relics"]:
+        lines.append("_None yet — win Elites, crack Treasure, or beat Bosses._")
+    for rid in state["relics"]:
+        r = _ASC_RELIC_BY_ID[rid]
+        lines.append(f"{r['emoji']} *{r['name']}* — _{r['desc']}_")
+    rows = [[InlineKeyboardButton("🔙 Back", callback_data=f"clm_home_{uid}")]]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_asc_end_card(p, state, summary, milestone, died):
+    uid = state["uid"]
+    reached = state["floor"] - (1 if died else 0)
+    head = "💀 *YOU FELL*" if died else "💰 *EXTRACTED*"
+    lines = [head, ""]
+    for ln in state.get("log", [])[-3:]:
+        lines.append(f"_{ln}_")
+    lines += ["", f"🗼 You reached floor *{reached}*.",
+              "_Half your haul was lost in the fall._" if died else "_Full haul secured._",
+              "", "*Rewards:*", summary or "_—_"]
+    if milestone:
+        lines.append(milestone)
+    rows = [[InlineKeyboardButton("🔁 Climb Again", callback_data=f"clm_again_{uid}"),
+             InlineKeyboardButton("🏆 Leaderboard", callback_data=f"clm_board_{uid}")],
+            [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _asc_render(p, state, flash=""):
+    ph = state["phase"]
+    if ph == "draft":  return _build_asc_draft_card(p, state)
+    if ph == "event":  return _build_asc_event_card(p, state)
+    if ph == "extract": return _build_asc_boss_extract_card(p, state)
+    if ph == "relics": return _build_asc_relics_card(p, state)
+    return _build_asc_map_card(p, state, flash=flash)
+
+_ASC_EVENTS = [
+    {"title":"Cursed Altar","desc":"A shrine hums with power. Offer blood for a relic?",
+     "a_label":"🩸 Bleed for a relic (-25% HP)","b_label":"🚪 Leave untouched",
+     "a":"relic_hp", "b":"none"},
+    {"title":"Abandoned Cache","desc":"A dusty chest — probably safe. Probably.",
+     "a_label":"📦 Open it","b_label":"🚪 Walk away",
+     "a":"gamble", "b":"none"},
+    {"title":"Healing Spring","desc":"Clear water glimmers. Drink deeply?",
+     "a_label":"💧 Drink (heal 30%)","b_label":"🧪 Bottle it (relic reroll next)",
+     "a":"heal", "b":"none"},
+]
+
+def _asc_resolve_node(p, state, node):
+    """Resolve a chosen route node. Returns ('win'|'dead'|'ok', log)."""
+    t = node["type"]
+    if t in ("fight", "elite", "boss"):
+        enemy = _asc_make_enemy(state["floor"], t)
+        log, survived = _asc_fight(p, state, enemy)
+        head = f"{enemy['emoji']} *{enemy['name']}*"
+        if not survived:
+            state["log"] = [f"{head} strikes you down on floor {state['floor']}."] + log
+            return "dead", log
+        state["log"] = [f"⚔️ You defeated {head}!"] + log
+        if t in ("elite", "boss"):
+            state["draft"] = _asc_relic_draft(state)
+            state["phase"] = "draft" if state["draft"] else "map"
+        state["_last_was_boss"] = (t == "boss")
+        return "win", log
+    if t == "treasure":
+        state["draft"] = _asc_relic_draft(state)
+        state["phase"] = "draft" if state["draft"] else "map"
+        state["log"] = ["🎁 You crack open a treasure cache!"]
+        return "ok", []
+    if t == "rest":
+        heal = round(state["max_hp"] * ASC_REST_HEAL * (1.5 if _asc_has(state, "chrono") else 1.0))
+        state["hp"] = min(state["max_hp"], state["hp"] + heal)
+        state["log"] = [f"🔥 You rest and recover {fmt_num(heal)} HP."]
+        return "ok", []
+    if t == "event":
+        state["event"] = dict(random.choice(_ASC_EVENTS))
+        state["phase"] = "event"
+        return "ok", []
+    return "ok", []
+
+async def ascension_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    st = _active_ascension.get(user.id)
+    if st and st["phase"] not in ("over",):
+        text, markup = _asc_render(p, st)
+        msg = await send_group(update, text, delay=9, permanent=True, reply_markup=markup)
+        if msg:
+            st["chat_id"] = msg.chat_id; st["msg_id"] = msg.message_id
+        return
+    best = safe_int(safe_cds(p).get("asc_best_floor", 0))
+    lines = ["🗼 *THE ASCENSION*",
+             "_A branching climb of endless floors. One HP pool, carried between"
+             " fights. Draft relics, pick your route, rest when you dare. Fall and"
+             " the run is over — how high can you climb?_"]
+    if best:
+        lines.append(f"\n🏅 Your highest floor: *{best}*")
+    lines.append("\nBosses every 10 floors. Extract after a boss to bank rewards — or push your luck.")
+    rows = [[InlineKeyboardButton("🗼 Begin the Climb", callback_data=f"clm_start_{user.id}")],
+            [InlineKeyboardButton("🏆 Leaderboard", callback_data=f"clm_board_{user.id}"),
+             InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")]]
+    await send_group(update, "\n".join(lines), delay=9, permanent=True,
+                     reply_markup=InlineKeyboardMarkup(rows))
+
+def _asc_leaderboard_card(uid, highlight=None, limit=10):
+    rows_out = []
+    try:
+        c = _db().cursor()
+        c.execute("SELECT user_id, username, passive_cooldowns FROM players "
+                  "WHERE user_id NOT IN (SELECT user_id FROM banned_users)")
+        for row in c.fetchall():
+            best = safe_int(sjl(row["passive_cooldowns"], {}).get("asc_best_floor", 0))
+            if best > 0:
+                rows_out.append((best, row["username"] or "—", row["user_id"]))
+    except Exception:
+        pass
+    rows_out.sort(key=lambda x: x[0], reverse=True)
+    lines = ["🏆 *THE ASCENSION — Highest Floors*", ""]
+    if not rows_out:
+        lines.append("_No climbers yet. Be the first to scale the stair!_")
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    for i, (best, name, ruid) in enumerate(rows_out[:limit], 1):
+        badge = medals.get(i, f"#{i}")
+        star = " ⬅️ *you*" if ruid == highlight else ""
+        lines.append(f"{badge} *{name}* — Floor *{best}*{star}")
+    if highlight is not None:
+        pos = next((i for i, (_, _, ruid) in enumerate(rows_out, 1) if ruid == highlight), None)
+        if pos and pos > limit:
+            best = next(b for b, _, ru in rows_out if ru == highlight)
+            lines.append(f"\n…\n*#{pos}* *you* — Floor *{best}*")
+    back = [InlineKeyboardButton("🗼 Climb", callback_data=f"clm_again_{uid}"),
+            InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
+    return "\n".join(lines), InlineKeyboardMarkup([back])
+
+async def ascboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text, markup = _asc_leaderboard_card(user.id, highlight=user.id)
+    await send_group(update, text, delay=120, permanent=True, reply_markup=markup)
+
+async def ascension_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    toks = query.data.split("_")
+    action = toks[1] if len(toks) > 1 else ""
+    try:
+        uid = int(toks[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your climb!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+
+    async def render(flash=""):
+        st = _active_ascension.get(uid)
+        text, markup = _asc_render(p, st, flash=flash)
+        st["chat_id"] = query.message.chat_id; st["msg_id"] = query.message.message_id
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+
+    # Actions that don't need an active run
+    if action in ("start", "again"):
+        st = _asc_new_run(p, uid)
+        await query.answer("The stair beckons…")
+        await render(); return
+    if action == "board":
+        text, markup = _asc_leaderboard_card(uid, highlight=uid)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+
+    st = _active_ascension.get(uid)
+    if not st or st["phase"] == "over":
+        await query.answer("This climb has ended — /ascension to start again.", show_alert=True); return
+
+    async def _end(died):
+        summary, milestone = _asc_grant_rewards(p, st, died=died)
+        text, markup = _build_asc_end_card(p, st, summary, milestone, died=died)
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+        _active_ascension.pop(uid, None)
+
+    if action == "home":
+        st["phase"] = "map"; await query.answer(); await render(); return
+    if action == "relics":
+        st["phase"] = "relics"; await query.answer(); await render(); return
+
+    if action == "pick":
+        try:
+            idx = int(toks[3]); node = st["choices"][idx]
+        except (IndexError, ValueError):
+            await query.answer(); return
+        outcome, _ = _asc_resolve_node(p, st, node)
+        flash = st["log"][0] if st.get("log") else ""
+        if outcome == "dead":
+            await query.answer("You fall…")
+            await _end(died=True); return
+        if outcome == "win" and st.get("_last_was_boss"):
+            st["_last_was_boss"] = False
+            if st["phase"] != "draft":     # boss relic draft comes first, then extract
+                st["phase"] = "extract"
+            else:
+                st["_boss_pending_extract"] = True
+            await query.answer("Boss down!"); await render(); return
+        if st["phase"] not in ("draft", "event"):
+            _asc_advance(p, st)
+        await query.answer(); await render(flash=flash); return
+
+    if action == "draft":
+        pick = toks[3] if len(toks) > 3 else "skip"
+        if pick == "skip":
+            heal = round(st["max_hp"] * 0.08)
+            st["hp"] = min(st["max_hp"], st["hp"] + heal)
+            await query.answer(f"Skipped — +{fmt_num(heal)} HP")
+        else:
+            try:
+                rid = st["draft"][int(pick)]
+                if rid not in st["relics"]:
+                    st["relics"].append(rid)
+                    if rid == "vitality":
+                        st["max_hp"] = _asc_max_hp(p, st)
+                await query.answer(f"{_ASC_RELIC_BY_ID[rid]['name']} claimed!")
+            except (ValueError, IndexError, KeyError):
+                await query.answer()
+        st["draft"] = None
+        if st.pop("_boss_pending_extract", False):
+            st["phase"] = "extract"
+        else:
+            _asc_advance(p, st)
+        await render(); return
+
+    if action == "event":
+        which = toks[3] if len(toks) > 3 else "b"
+        ev = st.get("event") or {}
+        choice = ev.get(which, "none")
+        flash = ""
+        if choice == "relic_hp":
+            dmg = round(st["max_hp"] * 0.25); st["hp"] = max(1, st["hp"] - dmg)
+            st["draft"] = _asc_relic_draft(st)
+            st["event"] = None
+            st["phase"] = "draft" if st["draft"] else "map"
+            await query.answer("Blood for power…")
+            if st["phase"] != "draft":
+                _asc_advance(p, st)
+            await render(); return
+        elif choice == "gamble":
+            if random.random() < 0.6:
+                st["draft"] = _asc_relic_draft(st); st["event"] = None
+                st["phase"] = "draft" if st["draft"] else "map"
+                await query.answer("Fortune favors you!")
+                if st["phase"] != "draft": _asc_advance(p, st)
+                await render(); return
+            else:
+                dmg = round(st["max_hp"] * 0.20); st["hp"] = max(1, st["hp"] - dmg)
+                flash = f"💥 *Trapped!* Lost {fmt_num(dmg)} HP."
+        elif choice == "heal":
+            h = round(st["max_hp"] * 0.30); st["hp"] = min(st["max_hp"], st["hp"] + h)
+            flash = f"💧 Restored {fmt_num(h)} HP."
+        st["event"] = None
+        _asc_advance(p, st)
+        await query.answer()
+        await render(flash=flash); return
+
+    if action == "push":
+        _asc_advance(p, st)
+        await query.answer("Upward!")
+        await render(); return
+    if action == "extract":
+        await query.answer("Haul secured!")
+        await _end(died=False); return
+    if action == "quit":
+        _active_ascension.pop(uid, None)
+        await query.answer("You abandon the climb.")
+        await _q_edit(query, "🏳️ *You descend and abandon the run.* No rewards banked.\n\n_/ascension to climb again._",
+                      parse_mode="Markdown",
+                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]))
+        return
+    await query.answer()
+
+
 # ── HOLD THE POCKET — UI / interaction layer ──────────────────────────────────
 def _siege_bar(cur, mx, width=10):
     cur = max(0, cur); pct = (cur / mx) if mx else 0
@@ -39142,6 +39682,10 @@ def main():
     app.add_handler(CommandHandler("breakshop",   siegeshop_cmd))
     app.add_handler(CommandHandler("siegeboard",  siegeboard_cmd))
     app.add_handler(CallbackQueryHandler(siege_callback, pattern="^sg_"))
+    app.add_handler(CommandHandler("ascension",   ascension_cmd))
+    app.add_handler(CommandHandler("climb",       ascension_cmd))
+    app.add_handler(CommandHandler("ascboard",    ascboard_cmd))
+    app.add_handler(CallbackQueryHandler(ascension_callback, pattern="^clm_"))
 
     # Empire master hub
     app.add_handler(CommandHandler("empire",       empire_cmd))
