@@ -13236,7 +13236,22 @@ def _build_kit_text(p):
             continue
         meta = f"_(💙{sk.get('mp','?')} MP · ⏳{sk.get('cd','?')}-turn cd)_"
         lines.append(f"{sk.get('emoji','✨')} *{sk['name']}*  {meta}\n   {sk.get('desc','')}")
+    # Finisher: the class execute that unlocks once the target is set up.
+    line = get_class_line(p)
+    kc = _KILL_CONDITIONS.get(line) if line else None
+    if kc:
+        need = "  ".join(f"{_FINISHER_COND_NAMES.get(k, k)} ×{n}" for k, n in kc.get("conds", []))
+        lines.append(f"\n⚡ *Finisher — {kc['name']}*\n   _{kc.get('desc','')}_\n"
+                     f"   🎯 *Unlocks when your target has:* {need}\n"
+                     f"   _Stack those with your skills, then the ⚡ Finisher button appears on the fight card._")
     return "\n".join(lines)
+
+# Readable names for the debuffs a finisher requires on the target.
+_FINISHER_COND_NAMES = {
+    "bleed_stacks": "🩸 Bleed", "poison_stacks": "🧪 Poison", "hex_turns": "💀 Hex",
+    "distract_turns": "🌀 Distract", "silence_turns": "🤐 Silence",
+    "weakened_hits": "📉 Weaken", "exposed_hits": "🎯 Expose",
+}
 
 def _kit_cd_state(uid):
     st = _pvp_battle_state.setdefault(uid, {})
