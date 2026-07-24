@@ -30724,8 +30724,9 @@ _ACTIVITIES_HUB_PAGES = [
     [
         [("🏚️ Dungeon",      "acthub_dungeon"),    ("🔥 Dungeon Hard",    "acthub_dungeonhard")],
         [("💀 Dungeon Leg.",  "acthub_dungeonleg"), ("🎱 Hold the Pocket", "acthub_siege")],
-        [("🗼 The Ascension", "acthub_ascension"),  ("🔮 Oracle",          "acthub_oracle")],
-        [("🎯 Objectives",    "acthub_objectives"), ("⏱️ Cooldowns",      "acthub_cooldowns")],
+        [("🗼 The Ascension", "acthub_ascension"),  ("⚔️ War Table",       "acthub_wartable")],
+        [("🔮 Oracle",        "acthub_oracle"),     ("🎯 Objectives",      "acthub_objectives")],
+        [("⏱️ Cooldowns",     "acthub_cooldowns")],
     ],
     # Page 3 — Character
     [
@@ -30821,7 +30822,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("Register first.", show_alert=True); return
 
     _PAGE = {"hustle":1,"daily":1,"claim":1,"train":1,"quest":1,"explore":1,
-             "dungeon":2,"dungeonhard":2,"dungeonleg":2,"siege":2,"ascension":2,"oracle":2,"objectives":2,"cooldowns":2,
+             "dungeon":2,"dungeonhard":2,"dungeonleg":2,"siege":2,"ascension":2,"wartable":2,"oracle":2,"objectives":2,"cooldowns":2,
              "stats":3,"allocate":3,"class":3,"prestige":3,"skills":3,"changelog":3}
     page = _PAGE.get(action, 1)
     back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"acthub_back_{page}_{uid}")]])
@@ -31139,6 +31140,10 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "ascension":
         # Launch The Ascension — the roguelite climbing gauntlet.
         await ascension_cmd(update, context)
+
+    elif action == "wartable":
+        # Launch War Table — the squad auto-battler.
+        await wartable_cmd(update, context)
 
     elif action == "oracle":
         # Execute pool shot inline (same logic as pool button)
@@ -39551,6 +39556,479 @@ async def siege_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# WAR TABLE — squad auto-battler (Concept C)
+# ══════════════════════════════════════════════════════════════════════════════
+# Draft a squad of mercenaries (plus your pet), let element/role SYNERGIES stack,
+# then auto-battle escalating enemy armies. Skill lives entirely in team-building
+# and economy — buy, sell, reroll, and read the counter. Lose a round and your
+# Command HP drops; at zero the run ends. How many rounds can your comp hold?
+
+_active_wartable = {}   # uid -> run state
+
+WT_COMMAND_HP   = 25
+WT_START_GOLD   = 10
+WT_REROLL_COST  = 2
+WT_SHOP_SIZE    = 5
+WT_ENEMY_HP0    = 130
+WT_ENEMY_ATK0   = 26
+WT_ENEMY_GROWTH = 1.17
+
+# id, name, emoji, element, role, cost, atk, hp
+WT_ROSTER = [
+    {"id":"ranger","name":"Ranger","emoji":"🏹","element":"nature","role":"archer","cost":2,"atk":58,"hp":110},
+    {"id":"berserker","name":"Berserker","emoji":"🪓","element":"fire","role":"warrior","cost":2,"atk":74,"hp":150},
+    {"id":"druid","name":"Druid","emoji":"🌿","element":"nature","role":"healer","cost":2,"atk":24,"hp":140},
+    {"id":"pyro","name":"Pyromancer","emoji":"🔥","element":"fire","role":"mage","cost":3,"atk":66,"hp":120},
+    {"id":"knight","name":"Iron Knight","emoji":"🛡️","element":"earth","role":"tank","cost":3,"atk":32,"hp":340},
+    {"id":"tide","name":"Tide Caller","emoji":"🌊","element":"water","role":"mage","cost":3,"atk":60,"hp":135},
+    {"id":"assassin","name":"Assassin","emoji":"🗡️","element":"shadow","role":"warrior","cost":3,"atk":100,"hp":100},
+    {"id":"cleric","name":"Cleric","emoji":"✨","element":"holy","role":"healer","cost":3,"atk":22,"hp":160},
+    {"id":"shade","name":"Night Shade","emoji":"🌑","element":"shadow","role":"archer","cost":3,"atk":80,"hp":100},
+    {"id":"golem","name":"Stone Golem","emoji":"🗿","element":"earth","role":"tank","cost":4,"atk":42,"hp":460},
+    {"id":"storm","name":"Storm Caller","emoji":"⚡","element":"lightning","role":"mage","cost":4,"atk":92,"hp":150},
+    {"id":"valkyrie","name":"Valkyrie","emoji":"⚔️","element":"holy","role":"warrior","cost":4,"atk":96,"hp":200},
+]
+_WT_BY_ID = {u["id"]: u for u in WT_ROSTER}
+_WT_FRONT_ROLES = {"tank", "warrior"}
+_WT_ELEM_EMOJI = {"fire":"🔥","water":"🌊","earth":"🗿","lightning":"⚡","nature":"🌿",
+                  "shadow":"🌑","holy":"✨","beast":"🐾"}
+
+def _wt_row(unit):
+    return "front" if unit.get("role") in _WT_FRONT_ROLES else "back"
+
+def _wt_squad_cap(state):
+    return min(8, 4 + state["round"] // 2)
+
+def _wt_synergies(squad):
+    """Return (buffs, active_list). Buffs are team-wide multipliers/effects that
+    reward a focused composition — the whole skill of the mode."""
+    buffs = {"atk_mult": 1.0, "hp_mult": 1.0, "heal_per_turn": 0, "first_strike": 0.0, "crit": 0.0}
+    active = []
+    elems = {}; roles = {}
+    for u in squad:
+        elems[u["element"]] = elems.get(u["element"], 0) + 1
+        roles[u["role"]] = roles.get(u["role"], 0) + 1
+    # Element synergies
+    for elem, n in elems.items():
+        if n < 2: continue
+        tier = 3 if n >= 4 else (2 if n >= 3 else 1)
+        emo = _WT_ELEM_EMOJI.get(elem, "✨")
+        if elem == "fire":
+            buffs["atk_mult"] += 0.10 * tier;   active.append(f"{emo} Fire ×{n}: +{10*tier}% ATK")
+        elif elem == "earth":
+            buffs["hp_mult"] += 0.12 * tier;    active.append(f"{emo} Earth ×{n}: +{12*tier}% HP")
+        elif elem == "water":
+            buffs["atk_mult"] += 0.06 * tier; buffs["hp_mult"] += 0.06 * tier
+            active.append(f"{emo} Water ×{n}: +{6*tier}% ATK & HP")
+        elif elem == "lightning":
+            buffs["atk_mult"] += 0.14 * tier;   active.append(f"{emo} Lightning ×{n}: +{14*tier}% ATK")
+        elif elem == "nature":
+            buffs["heal_per_turn"] += 12 * tier; active.append(f"{emo} Nature ×{n}: heal {12*tier}/turn")
+        elif elem == "shadow":
+            buffs["crit"] += 0.12 * tier;       active.append(f"{emo} Shadow ×{n}: +{12*tier}% crit")
+        elif elem == "holy":
+            buffs["hp_mult"] += 0.08 * tier; buffs["heal_per_turn"] += 6 * tier
+            active.append(f"{emo} Holy ×{n}: +{8*tier}% HP & heal")
+    # Role synergies
+    if roles.get("tank", 0) >= 2:
+        t = roles["tank"]; buffs["hp_mult"] += 0.10 * (t - 1); active.append(f"🛡️ Tanks ×{t}: +{10*(t-1)}% HP")
+    if roles.get("warrior", 0) >= 2:
+        t = roles["warrior"]; buffs["atk_mult"] += 0.10 * (t - 1); active.append(f"⚔️ Warriors ×{t}: +{10*(t-1)}% ATK")
+    if roles.get("mage", 0) >= 2:
+        buffs["atk_mult"] += 0.15; active.append("🔮 Mages ×2+: +15% ATK")
+    if roles.get("archer", 0) >= 2:
+        buffs["first_strike"] += 0.50; active.append("🏹 Archers ×2+: +50% first-strike volley")
+    if roles.get("healer", 0) >= 1:
+        buffs["heal_per_turn"] += 10 * roles["healer"]; active.append(f"➕ Healers ×{roles['healer']}: heal {10*roles['healer']}/turn")
+    return buffs, active
+
+def _wt_warlord_aura(p):
+    """A modest team buff from the player's own power, so account upgrades matter
+    without overriding the drafting. Caps quickly."""
+    lvl = safe_int(p.get("level", 1))
+    return 1.0 + min(0.40, lvl * 0.0016)   # up to +40% at level 250
+
+def _wt_pet_unit(p, uid):
+    petrec = get_active_pet_record(uid)
+    if not petrec:
+        return None
+    sp = PET_SPECIES.get(petrec.get("species"), {})
+    lvl = petrec.get("level", 1)
+    atk = max(20, round(get_pet_atk_bonus(petrec) * 0.5))
+    hp = max(120, round(80 + lvl * 6))
+    return {"id": "pet", "name": _pet_display_name(petrec), "emoji": sp.get("emoji", "🐾"),
+            "element": sp.get("element", "beast"), "role": "warrior",
+            "cost": 0, "atk": atk, "hp": hp, "is_pet": True}
+
+def _wt_gen_shop(state):
+    weights = [max(1, 5 - u["cost"]) for u in WT_ROSTER]
+    return [dict(random.choices(WT_ROSTER, weights=weights, k=1)[0]) for _ in range(WT_SHOP_SIZE)]
+
+def _wt_gen_enemies(rnd):
+    scale_hp = WT_ENEMY_GROWTH ** (rnd - 1)
+    scale_atk = WT_ENEMY_GROWTH ** (rnd - 1)
+    size = min(8, 2 + rnd)
+    out = []
+    for _ in range(size):
+        base = random.choice(WT_ROSTER)
+        out.append({"name": base["name"], "emoji": base["emoji"], "element": base["element"],
+                    "role": base["role"], "row": _wt_row(base),
+                    "atk": max(1, round(WT_ENEMY_ATK0 * (base["atk"] / 60) * scale_atk)),
+                    "hp": max(1, round(WT_ENEMY_HP0 * (base["hp"] / 150) * scale_hp))})
+    return out
+
+def _wt_apply_damage(units, dmg):
+    """Front row soaks first, then back row. Mutates hp in place."""
+    for row in ("front", "back"):
+        pool = [u for u in units if u["hp"] > 0 and u.get("row") == row]
+        for u in pool:
+            if dmg <= 0: break
+            if dmg >= u["hp"]:
+                dmg -= u["hp"]; u["hp"] = 0
+            else:
+                u["hp"] -= dmg; dmg = 0
+        if dmg <= 0:
+            break
+
+def _wt_battle(p, state):
+    """Simulate the round. Returns (won, surviving_enemies, log)."""
+    squad = state["squad"]
+    buffs, _ = _wt_synergies(squad)
+    aura = _wt_warlord_aura(p)
+    T = []
+    for u in squad:
+        eu = dict(u); eu["row"] = _wt_row(u)
+        eu["hp"] = max(1, round(u["hp"] * buffs["hp_mult"] * aura))
+        eu["atk"] = max(1, round(u["atk"] * buffs["atk_mult"] * aura))
+        T.append(eu)
+    E = _wt_gen_enemies(state["round"])
+    heal = buffs["heal_per_turn"]; fs = buffs["first_strike"]; crit = buffs["crit"]
+    for u in T: u["max_hp"] = u["hp"]
+    turn = 0
+    while any(u["hp"] > 0 for u in T) and any(e["hp"] > 0 for e in E) and turn < 60:
+        turn += 1
+        tdmg = sum(u["atk"] for u in T if u["hp"] > 0)
+        if crit and random.random() < min(0.6, crit): tdmg = round(tdmg * 1.5)
+        if turn == 1 and fs: tdmg = round(tdmg * (1 + fs))
+        _wt_apply_damage(E, tdmg)
+        if not any(e["hp"] > 0 for e in E): break
+        edmg = sum(e["atk"] for e in E if e["hp"] > 0)
+        _wt_apply_damage(T, edmg)
+        if heal:
+            for u in T:
+                if u["hp"] > 0: u["hp"] = min(u["max_hp"], u["hp"] + heal)
+    team_alive = [u for u in T if u["hp"] > 0]
+    enemy_alive = [e for e in E if e["hp"] > 0]
+    if enemy_alive and not team_alive:
+        won = False
+    elif team_alive and not enemy_alive:
+        won = True
+    elif team_alive and enemy_alive:
+        won = sum(u["hp"] for u in team_alive) >= sum(e["hp"] for e in enemy_alive)
+    else:
+        won = True
+    log = [f"⚔️ {len(squad)} vs {len(E)} — " +
+           (f"*Victory!* {len(team_alive)} survive." if won else
+            f"*Defeat.* {len(enemy_alive)} enemies still standing.")]
+    return won, len(enemy_alive), log
+
+def _wt_new_run(p, uid):
+    state = {"uid": uid, "round": 1, "command_hp": WT_COMMAND_HP, "command_max": WT_COMMAND_HP,
+             "gold": WT_START_GOLD, "squad": [], "shop": [], "phase": "shop",
+             "pet_added": False, "log": [], "chat_id": None, "msg_id": None, "win_streak": 0}
+    state["shop"] = _wt_gen_shop(state)
+    _active_wartable[uid] = state
+    return state
+
+def _wt_income(state, won):
+    base = 5
+    interest = min(5, state["gold"] // 10)
+    streak = min(3, state["win_streak"]) if won else 0
+    return base + interest + streak + (2 if won else 0)
+
+def _wt_grant_rewards(p, state):
+    rounds = state["round"] - 1
+    gold = round(1200 * max(1, rounds))
+    shards = int(rounds * 0.7)
+    scrolls = int(rounds * 0.25)
+    p["gold"] = safe_int(p.get("gold", 0)) + gold
+    lines = [f"💰 *{fmt_num(gold)}* gold"]
+    for _ in range(shards):  add_item(p, "Iron Shard")
+    if shards:  lines.append(f"⛏️ *Iron Shard ×{shards}*")
+    for _ in range(scrolls): add_item(p, "Enchanting Scroll")
+    if scrolls: lines.append(f"✨ *Enchanting Scroll ×{scrolls}*")
+    cds = safe_cds(p)
+    best_prev = safe_int(cds.get("wt_best_round", 0))
+    milestone = ""
+    if rounds > best_prev:
+        cds["wt_best_round"] = rounds
+        for thr, title in ((10, "Tactician"), (20, "Warlord"), (35, "Grand Marshal")):
+            if best_prev < thr <= rounds:
+                titles = sjl(p.get("titles"), [])
+                if title not in titles:
+                    titles.append(title); p["titles"] = json.dumps(titles)
+                    milestone += f"\n🏅 New title: *{title}*!"
+    p["passive_cooldowns"] = json.dumps(cds)
+    save_player(p)
+    return "\n".join(lines), milestone
+
+# ── War Table UI ──────────────────────────────────────────────────────────────
+def _wt_squad_line(squad):
+    if not squad:
+        return "_empty — buy units below_"
+    front = [u for u in squad if _wt_row(u) == "front"]
+    back = [u for u in squad if _wt_row(u) == "back"]
+    def fmt(us): return " ".join(f"{u['emoji']}" for u in us) or "—"
+    return f"  🛡️ Front: {fmt(front)}\n  🎯 Back:  {fmt(back)}"
+
+def _build_wt_card(p, state, flash=""):
+    uid = state["uid"]
+    cap = _wt_squad_cap(state)
+    buffs, active = _wt_synergies(state["squad"])
+    hpbar, hppct = _siege_bar(state["command_hp"], state["command_max"])
+    lines = [f"⚔️ *WAR TABLE* — Round *{state['round']}*"]
+    if flash:
+        lines.append(flash)
+    lines += [
+        f"❤️ Command `{hpbar}` *{hppct}%*   💰 Gold: *{state['gold']}*",
+        f"👥 Squad: *{len(state['squad'])}/{cap}*",
+    ]
+    if active:
+        lines.append("✨ *Synergies:* " + "  ·  ".join(active))
+    lines += ["", "*Your squad:*", _wt_squad_line(state["squad"]), "", "*Recruits* (tap to buy):"]
+    rows = []
+    for i, u in enumerate(state["shop"]):
+        if u is None: continue
+        lines.append(f"{u['emoji']} *{u['name']}* — {u['element']}/{u['role']} — {u['cost']}💰 "
+                     f"(⚔️{u['atk']} ❤️{u['hp']})")
+        rows.append([InlineKeyboardButton(f"{u['emoji']} {u['name']} ({u['cost']}💰)",
+                                          callback_data=f"wt_buy_{uid}_{i}")])
+    action_row = [InlineKeyboardButton(f"🔄 Reroll ({WT_REROLL_COST}💰)", callback_data=f"wt_reroll_{uid}")]
+    if not state["pet_added"] and get_active_pet_record(uid):
+        action_row.append(InlineKeyboardButton("🐾 Add Pet (free)", callback_data=f"wt_pet_{uid}"))
+    rows.append(action_row)
+    rows.append([InlineKeyboardButton("👥 Manage Squad", callback_data=f"wt_squad_{uid}"),
+                 InlineKeyboardButton("⚔️ FIGHT ROUND", callback_data=f"wt_fight_{uid}")])
+    rows.append([InlineKeyboardButton("🏳️ Forfeit", callback_data=f"wt_quit_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_wt_squad_manage(p, state):
+    uid = state["uid"]
+    lines = ["👥 *Manage Squad* — tap a unit to sell (refund cost−1):", ""]
+    rows = []
+    for i, u in enumerate(state["squad"]):
+        refund = max(0, u["cost"] - 1)
+        tag = " 🐾" if u.get("is_pet") else ""
+        lines.append(f"{u['emoji']} *{u['name']}*{tag} — {u['element']}/{u['role']} (⚔️{u['atk']} ❤️{u['hp']})")
+        if not u.get("is_pet"):
+            rows.append([InlineKeyboardButton(f"💸 Sell {u['emoji']} {u['name']} (+{refund}💰)",
+                                              callback_data=f"wt_sell_{uid}_{i}")])
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"wt_home_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_wt_end_card(p, state, summary, milestone):
+    uid = state["uid"]
+    rounds = state["round"] - 1
+    lines = ["💀 *YOUR LINE IS BROKEN*", ""]
+    for ln in state.get("log", [])[-3:]:
+        lines.append(f"_{ln}_")
+    lines += ["", f"🏁 Your squad held *{rounds}* round{'s' if rounds != 1 else ''}.",
+              "", "*Rewards:*", summary or "_—_"]
+    if milestone:
+        lines.append(milestone)
+    rows = [[InlineKeyboardButton("🔁 New Squad", callback_data=f"wt_again_{uid}"),
+             InlineKeyboardButton("🏆 Leaderboard", callback_data=f"wt_board_{uid}")],
+            [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _wt_render(p, state, flash=""):
+    if state["phase"] == "manage":
+        return _build_wt_squad_manage(p, state)
+    return _build_wt_card(p, state, flash=flash)
+
+def _wt_leaderboard_card(uid, highlight=None, limit=10):
+    rows_out = []
+    try:
+        c = _db().cursor()
+        c.execute("SELECT user_id, username, passive_cooldowns FROM players "
+                  "WHERE user_id NOT IN (SELECT user_id FROM banned_users)")
+        for row in c.fetchall():
+            best = safe_int(sjl(row["passive_cooldowns"], {}).get("wt_best_round", 0))
+            if best > 0:
+                rows_out.append((best, row["username"] or "—", row["user_id"]))
+    except Exception:
+        pass
+    rows_out.sort(key=lambda x: x[0], reverse=True)
+    lines = ["🏆 *WAR TABLE — Rounds Survived*", ""]
+    if not rows_out:
+        lines.append("_No commanders yet. Draft the first squad!_")
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    for i, (best, name, ruid) in enumerate(rows_out[:limit], 1):
+        badge = medals.get(i, f"#{i}")
+        star = " ⬅️ *you*" if ruid == highlight else ""
+        lines.append(f"{badge} *{name}* — Round *{best}*{star}")
+    back = [InlineKeyboardButton("⚔️ Play", callback_data=f"wt_again_{uid}"),
+            InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
+    return "\n".join(lines), InlineKeyboardMarkup([back])
+
+async def wartable_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    st = _active_wartable.get(user.id)
+    if st and st["phase"] != "over":
+        text, markup = _wt_render(p, st)
+        msg = await send_group(update, text, delay=9, permanent=True, reply_markup=markup)
+        if msg:
+            st["chat_id"] = msg.chat_id; st["msg_id"] = msg.message_id
+        return
+    best = safe_int(safe_cds(p).get("wt_best_round", 0))
+    lines = ["⚔️ *WAR TABLE*",
+             "_Draft a squad of mercenaries. Stack element & role SYNERGIES, then"
+             " auto-battle escalating armies. Buy, sell, reroll between rounds —"
+             " lose a round and your Command HP falls. Build the perfect comp and"
+             " see how long you last._"]
+    if best:
+        lines.append(f"\n🏅 Your best: *Round {best}*")
+    rows = [[InlineKeyboardButton("⚔️ Draft a Squad", callback_data=f"wt_again_{user.id}")],
+            [InlineKeyboardButton("🏆 Leaderboard", callback_data=f"wt_board_{user.id}"),
+             InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")]]
+    await send_group(update, "\n".join(lines), delay=9, permanent=True,
+                     reply_markup=InlineKeyboardMarkup(rows))
+
+async def wtboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text, markup = _wt_leaderboard_card(user.id, highlight=user.id)
+    await send_group(update, text, delay=120, permanent=True, reply_markup=markup)
+
+async def wartable_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    toks = query.data.split("_")
+    action = toks[1] if len(toks) > 1 else ""
+    try:
+        uid = int(toks[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your war table!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+
+    async def render(flash=""):
+        st = _active_wartable.get(uid)
+        text, markup = _wt_render(p, st, flash=flash)
+        st["chat_id"] = query.message.chat_id; st["msg_id"] = query.message.message_id
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+
+    if action == "again":
+        _wt_new_run(p, uid)
+        await query.answer("Assemble your squad!")
+        await render(); return
+    if action == "board":
+        text, markup = _wt_leaderboard_card(uid, highlight=uid)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+
+    st = _active_wartable.get(uid)
+    if not st or st["phase"] == "over":
+        await query.answer("This run has ended — /wartable to play again.", show_alert=True); return
+
+    if action == "home":
+        st["phase"] = "shop"; await query.answer(); await render(); return
+    if action == "squad":
+        st["phase"] = "manage"; await query.answer(); await render(); return
+
+    if action == "buy":
+        try:
+            idx = int(toks[3]); u = st["shop"][idx]
+        except (IndexError, ValueError, TypeError):
+            await query.answer(); return
+        if u is None:
+            await query.answer(); return
+        if len(st["squad"]) >= _wt_squad_cap(st):
+            await query.answer("Squad is full — sell or fight to grow it!", show_alert=True); return
+        if st["gold"] < u["cost"]:
+            await query.answer("Not enough gold!", show_alert=True); return
+        st["gold"] -= u["cost"]
+        nu = dict(u); nu["row"] = _wt_row(u); st["squad"].append(nu)
+        st["shop"][idx] = None
+        await query.answer(f"{u['name']} recruited!")
+        await render(); return
+
+    if action == "reroll":
+        if st["gold"] < WT_REROLL_COST:
+            await query.answer("Not enough gold to reroll!", show_alert=True); return
+        st["gold"] -= WT_REROLL_COST
+        st["shop"] = _wt_gen_shop(st)
+        await query.answer("New recruits!")
+        await render(); return
+
+    if action == "pet":
+        if st["pet_added"]:
+            await query.answer("Pet already in the squad!"); return
+        pu = _wt_pet_unit(p, uid)
+        if not pu:
+            await query.answer("No active pet!", show_alert=True); return
+        if len(st["squad"]) >= _wt_squad_cap(st):
+            await query.answer("Squad is full!", show_alert=True); return
+        pu["row"] = _wt_row(pu); st["squad"].append(pu); st["pet_added"] = True
+        await query.answer(f"{pu['name']} joins!")
+        await render(); return
+
+    if action == "sell":
+        try:
+            idx = int(toks[3]); u = st["squad"][idx]
+        except (IndexError, ValueError):
+            await query.answer(); return
+        if u.get("is_pet"):
+            await query.answer("Can't sell your pet."); return
+        st["gold"] += max(0, u["cost"] - 1)
+        st["squad"].pop(idx)
+        await query.answer(f"Sold {u['name']}.")
+        await render(); return
+
+    if action == "fight":
+        if not st["squad"]:
+            await query.answer("Recruit at least one unit first!", show_alert=True); return
+        won, surviving, log = _wt_battle(p, st)
+        st["log"] = log
+        income = _wt_income(st, won)
+        st["gold"] += income
+        if won:
+            st["win_streak"] += 1
+            flash = f"🏆 *Round {st['round']} won!*  +{income}💰"
+        else:
+            st["win_streak"] = 0
+            dmg = min(st["command_hp"], surviving * 2 + st["round"] // 3 + 1)
+            st["command_hp"] -= dmg
+            flash = f"💥 *Round {st['round']} lost!* −{dmg} Command HP, +{income}💰"
+        if st["command_hp"] <= 0:
+            st["phase"] = "over"
+            summary, milestone = _wt_grant_rewards(p, st)
+            text, markup = _build_wt_end_card(p, st, summary, milestone)
+            await query.answer("Your line breaks!")
+            await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+            _active_wartable.pop(uid, None)
+            return
+        st["round"] += 1
+        st["shop"] = _wt_gen_shop(st)
+        st["phase"] = "shop"
+        await query.answer("Round resolved!")
+        await render(flash=flash); return
+
+    if action == "quit":
+        _active_wartable.pop(uid, None)
+        await query.answer("You disband the squad.")
+        await _q_edit(query, "🏳️ *You disband your squad.* No rewards banked.\n\n_/wartable to play again._",
+                      parse_mode="Markdown",
+                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]))
+        return
+    await query.answer()
+
+
 def main():
     init_db()
     # concurrent_updates: PTB's default processes ONE update at a time for the
@@ -39686,6 +40164,10 @@ def main():
     app.add_handler(CommandHandler("climb",       ascension_cmd))
     app.add_handler(CommandHandler("ascboard",    ascboard_cmd))
     app.add_handler(CallbackQueryHandler(ascension_callback, pattern="^clm_"))
+    app.add_handler(CommandHandler("wartable",    wartable_cmd))
+    app.add_handler(CommandHandler("wt",          wartable_cmd))
+    app.add_handler(CommandHandler("wtboard",     wtboard_cmd))
+    app.add_handler(CallbackQueryHandler(wartable_callback, pattern="^wt_"))
 
     # Empire master hub
     app.add_handler(CommandHandler("empire",       empire_cmd))
