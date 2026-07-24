@@ -30774,6 +30774,13 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
                 if loot: add_item(p, loot); entry += f", *{loot}*"
             ran.append(entry)
         else: skipped.append("🎱 Pool — on cooldown")
+        # Empire: bank accrued passive resources
+        if sjl(p.get("empire_buildings"), {}):
+            _emp_notes = _empire_collect(p)
+            if _emp_notes:
+                ran.append("🏰 Empire: " + "  ".join(n.split(" (")[0] for n in _emp_notes[:4]))
+            else:
+                skipped.append("🏰 Empire — nothing to collect yet")
         save_player(p)
         lines = ["⚡ *Hustle Results*\n"]
         if ran:
@@ -31979,6 +31986,15 @@ async def hustle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _task = asyncio.create_task(_hustle_explore())
         explore_timers[_uid] = _task
 
+    # ── Empire: bank accrued passive resources ──────────────────────────────────
+    if sjl(p.get("empire_buildings"), {}):
+        _emp_notes = _empire_collect(p)
+        if _emp_notes:
+            ran.append("🏰 *Empire collected:* " + "  ".join(n.split(" (")[0].replace("+", "+") for n in _emp_notes[:4]))
+        else:
+            skipped.append("🏰 Empire  -  nothing to collect yet")
+
+    # ── Pool table shot handled above · summary ─────────────────────────────────
     if not ran:
         cd_list = "\n".join(f"  {s}" for s in skipped)
         await reply_to_dm(update, context,
