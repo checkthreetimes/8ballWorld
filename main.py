@@ -30723,8 +30723,9 @@ _ACTIVITIES_HUB_PAGES = [
     # Page 2 — Challenges
     [
         [("🏚️ Dungeon",      "acthub_dungeon"),    ("🔥 Dungeon Hard",    "acthub_dungeonhard")],
-        [("💀 Dungeon Leg.",  "acthub_dungeonleg"), ("🔮 Oracle",          "acthub_oracle")],
-        [("🎯 Objectives",    "acthub_objectives"), ("⏱️ Cooldowns",      "acthub_cooldowns")],
+        [("💀 Dungeon Leg.",  "acthub_dungeonleg"), ("🎱 Hold the Pocket", "acthub_siege")],
+        [("🔮 Oracle",        "acthub_oracle"),     ("🎯 Objectives",      "acthub_objectives")],
+        [("⏱️ Cooldowns",     "acthub_cooldowns")],
     ],
     # Page 3 — Character
     [
@@ -30820,7 +30821,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("Register first.", show_alert=True); return
 
     _PAGE = {"hustle":1,"daily":1,"claim":1,"train":1,"quest":1,"explore":1,
-             "dungeon":2,"dungeonhard":2,"dungeonleg":2,"oracle":2,"objectives":2,"cooldowns":2,
+             "dungeon":2,"dungeonhard":2,"dungeonleg":2,"siege":2,"oracle":2,"objectives":2,"cooldowns":2,
              "stats":3,"allocate":3,"class":3,"prestige":3,"skills":3,"changelog":3}
     page = _PAGE.get(action, 1)
     back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"acthub_back_{page}_{uid}")]])
@@ -31130,6 +31131,10 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
     elif action in ("dungeon", "dungeonhard", "dungeonleg"):
         # Launch the real action — opens the difficulty picker to start a run.
         await dungeon_cmd(update, context)
+
+    elif action == "siege":
+        # Launch Hold the Pocket — the endgame siege/command roguelite.
+        await siege_cmd(update, context)
 
     elif action == "oracle":
         # Execute pool shot inline (same logic as pool button)
@@ -38108,6 +38113,758 @@ async def _post_init(application):
             chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
     except Exception: pass
 
+# ══════════════════════════════════════════════════════════════════════════════
+# HOLD THE POCKET — solo siege / command roguelite for endgame players
+# ══════════════════════════════════════════════════════════════════════════════
+# Fail state is your Barricade, not your HP, so the mode is about defensive
+# allocation rather than out-tanking. Your real calc_attack_damage powers the
+# hero (so gear/upgrades carry you early), but enemy HP grows geometrically, so
+# deep racks demand the whole army + relics + economy — skill, not stats.
+# Runs live in memory (_active_sieges); only banked rewards persist to the DB.
+
+_active_sieges = {}   # uid -> run state
+_siege_clocks  = {}   # uid -> shot-clock nonce (timed mode)
+
+# Tuning — all safe to retune later without touching logic.
+SIEGE_HP0        = 140      # enemy base HP at rack 1
+SIEGE_ATK0       = 26       # enemy base ATK at rack 1
+SIEGE_GROWTH     = 1.16     # geometric HP/ATK growth per rack
+SIEGE_BARRICADE0 = 1200     # starting barricade HP
+SIEGE_SUPPLY0    = 7        # starting Supply
+SIEGE_SUPPLY_INC = 2        # Supply gained per rack cleared
+SIEGE_ABILITY_CD = 3        # racks between hero-ability uses
+SIEGE_CLOCK_SECS = 28       # timed-mode shot clock
+
+SIEGE_UNITS = {
+    "bruiser":  {"name":"Bruiser","emoji":"🛡️","cost":3,"hp":420,"atk":55,"lane":"front",
+                 "desc":"Front-line wall. Soaks rushers so the barricade doesn't."},
+    "marksman": {"name":"Marksman","emoji":"🏹","cost":3,"hp":150,"atk":120,"lane":"back",
+                 "desc":"Snipes ranged balls first & intercepts their fire."},
+    "medic":    {"name":"Medic","emoji":"✨","cost":4,"hp":180,"atk":0,"lane":"mid",
+                 "desc":"Repairs the barricade every rack. No attack."},
+    "bombard":  {"name":"Bombard","emoji":"💣","cost":5,"hp":200,"atk":85,"lane":"mid",
+                 "desc":"Splash — hits EVERY enemy each rack. Great vs swarms."},
+}
+_SIEGE_LANES = ("front", "mid", "back")
+
+SIEGE_ENEMIES = {
+    "rush":   {"name":"Cue Ball","emoji":"🎱","hp":0.80,"atk":0.95,"kind":"rush"},
+    "ranged": {"name":"Striped Ball","emoji":"🟡","hp":0.55,"atk":1.15,"kind":"ranged"},
+    "tank":   {"name":"Solid Ball","emoji":"⚫","hp":1.90,"atk":0.70,"kind":"tank"},
+}
+
+SIEGE_RELICS = [
+    {"id":"momentum","name":"Break Momentum","emoji":"🎱","desc":"Each kill refunds 1 Supply (max +6/rack)."},
+    {"id":"felt","name":"Reinforced Felt","emoji":"🛡️","desc":"Barricade auto-repairs 12% each rack."},
+    {"id":"sharpshoot","name":"Sharpshooter","emoji":"🏹","desc":"Marksmen deal +60% damage."},
+    {"id":"phalanx","name":"Phalanx","emoji":"🧱","desc":"Bruisers get +50% HP."},
+    {"id":"overcharge","name":"Overcharged Cue","emoji":"⚡","desc":"Hero ability cooldown −1 rack."},
+    {"id":"suddendeath","name":"Sudden Death","emoji":"☠️","desc":"+50% damage dealt AND taken."},
+    {"id":"quartermaster","name":"Quartermaster","emoji":"📦","desc":"+2 Supply income each rack."},
+    {"id":"medkit","name":"Field Medicine","emoji":"➕","desc":"Medics repair +100%."},
+    {"id":"bounty","name":"Bounty Contract","emoji":"💰","desc":"+30% Break Tokens earned."},
+    {"id":"artillery","name":"Artillery Doctrine","emoji":"💣","desc":"Bombard splash +80%."},
+    {"id":"veteran","name":"Veterans","emoji":"🎖️","desc":"All units +25% damage."},
+    {"id":"conscript","name":"Conscription","emoji":"🪖","desc":"Deploy costs −1 Supply (min 1)."},
+    {"id":"petpact","name":"Beast Pact","emoji":"🐾","desc":"Pet deals +80% and never dies."},
+    {"id":"focusfire","name":"Focus Fire","emoji":"🎯","desc":"+35% damage to bosses."},
+    {"id":"aegis","name":"Aegis Plating","emoji":"🔰","desc":"Barricade max +40% (repairs to it)."},
+    {"id":"lastditch","name":"Last Ditch","emoji":"🩹","desc":"Once per run, survive a lethal rack at 1 HP."},
+]
+_SIEGE_RELIC_BY_ID = {r["id"]: r for r in SIEGE_RELICS}
+
+SIEGE_MUTATORS = [
+    {"id":"none","name":"Standard Rack","emoji":"🎱","desc":"No modifier — a clean break."},
+    {"id":"split","name":"Split Shot","emoji":"✳️","desc":"+40% more enemies per rack."},
+    {"id":"armored","name":"Reinforced Rack","emoji":"🪨","desc":"Enemy HP +25%."},
+    {"id":"blitz","name":"Blitz","emoji":"⚡","desc":"Enemy ATK +25%, but +1 Supply income."},
+    {"id":"frugal","name":"Rationing","emoji":"📉","desc":"−1 Supply income, but +25% Tokens."},
+    {"id":"glass","name":"Glass Break","emoji":"💥","desc":"Everyone deals +40% damage."},
+    {"id":"fog","name":"Corner Fog","emoji":"🌫️","desc":"Next-rack preview is hidden."},
+]
+
+def _siege_scale(rack):
+    return SIEGE_GROWTH ** max(0, rack - 1)
+
+def _siege_today_mutator():
+    """Deterministic per-day mutator so everyone shares the day's puzzle."""
+    # toordinal() is a stable day number, so the pick is identical for everyone
+    # on a given day and survives restarts (unlike hash(), which is salted).
+    idx = (datetime.now().toordinal() * 7 + 3) % len(SIEGE_MUTATORS)
+    return SIEGE_MUTATORS[idx]
+
+def _siege_has(state, relic_id):
+    return relic_id in state.get("relics", [])
+
+def _siege_boss_name(rack):
+    tier = rack // 5
+    names = {1:"The 1-Ball", 2:"The 8-Ball", 3:"The 9-Ball", 4:"The Money Ball",
+             5:"The Break Master", 6:"The Rack Breaker"}
+    return names.get(tier, f"Rack Sovereign ×{tier}")
+
+def _siege_gen_rack(state):
+    """Build the enemy list for the current rack, applying the day's mutator."""
+    rack  = state["rack"]
+    scale = _siege_scale(rack)
+    mut   = state["mutator"]
+    is_boss = rack % 5 == 0
+    # Count grows ~linearly while per-enemy HP grows geometrically, so a
+    # supply-bounded roster is eventually out-swarmed — every run has an end,
+    # and how deep you get is the skill score.
+    count = min(42, 3 + rack)
+    if mut == "split":
+        count = min(48, round(count * 1.4))
+    if is_boss:
+        count = max(3, count - 4)
+    hp_mod  = 1.25 if mut == "armored" else 1.0
+    atk_mod = 1.25 if mut == "blitz"   else 1.0
+    enemies = []
+    for _ in range(count):
+        r = random.random()
+        if rack >= 6 and r < 0.28:
+            kind = "tank"
+        elif r < 0.42:
+            kind = "ranged"
+        else:
+            kind = "rush"
+        a = SIEGE_ENEMIES[kind]
+        hp = max(1, round(SIEGE_HP0 * a["hp"] * scale * hp_mod))
+        enemies.append({"name":a["name"],"emoji":a["emoji"],"kind":kind,
+                        "hp":hp,"max_hp":hp,"atk":max(1, round(SIEGE_ATK0 * a["atk"] * scale * atk_mod))})
+    if is_boss:
+        bhp = max(1, round(SIEGE_HP0 * 9 * scale * hp_mod))
+        enemies.insert(0, {"name":_siege_boss_name(rack),"emoji":"🔴","kind":"boss",
+                           "hp":bhp,"max_hp":bhp,"atk":max(1, round(SIEGE_ATK0 * 1.7 * scale * atk_mod)),
+                           "boss":True})
+    return enemies
+
+def _siege_unit_eff(u, rack, state):
+    """Effective (atk, hp) for a unit at the current rack — units auto-scale so a
+    standing garrison stays relevant, with relic modifiers folded in."""
+    base  = SIEGE_UNITS[u["code"]]
+    scale = _siege_scale(rack)
+    atk = base["atk"] * scale
+    hp  = base["hp"]  * scale
+    if u["code"] == "marksman" and _siege_has(state, "sharpshoot"): atk *= 1.60
+    if u["code"] == "bombard"  and _siege_has(state, "artillery"):  atk *= 1.80
+    if u["code"] == "bruiser"  and _siege_has(state, "phalanx"):    hp  *= 1.50
+    if _siege_has(state, "veteran"): atk *= 1.25
+    return max(0, round(atk)), max(1, round(hp))
+
+def _siege_deploy_cost(state, code):
+    cost = SIEGE_UNITS[code]["cost"]
+    if _siege_has(state, "conscript"):
+        cost = max(1, cost - 1)
+    return cost
+
+def _siege_barricade_max(state):
+    base = SIEGE_BARRICADE0
+    if _siege_has(state, "aegis"):
+        base = round(base * 1.40)
+    return base
+
+def _siege_new_run(p, uid, mode):
+    mut = _siege_today_mutator()
+    state = {
+        "uid": uid, "mode": mode, "rack": 1,
+        "barricade": SIEGE_BARRICADE0, "barricade_max": SIEGE_BARRICADE0,
+        "supply": SIEGE_SUPPLY0 + (1 if mut["id"] == "blitz" else 0) - (1 if mut["id"] == "frugal" else 0),
+        "hero_cd": 0, "relics": [], "units": [], "pet": False,
+        "pending_tokens": 0, "banked_tokens": 0,
+        "mutator": mut["id"], "phase": "plan", "draft": None,
+        "log": [], "lastditch_used": False, "clock": 0,
+        "chat_id": None, "msg_id": None, "fire_ready": True,
+    }
+    state["supply"] = max(1, state["supply"])
+    _active_sieges[uid] = state
+    return state
+
+def _siege_resolve(p, state, fire_ability=False):
+    """Resolve one rack. Mutates state. Returns (list_of_log_lines, outcome)
+    where outcome is 'win' (rack cleared) or 'loss' (barricade destroyed)."""
+    rack  = state["rack"]
+    scale = _siege_scale(rack)
+    mut   = state["mutator"]
+    log   = []
+    enemies = _siege_ensure_rack(state)   # the exact rack the player was shown
+
+    # Rescale & fully regroup surviving units for this rack.
+    for u in state["units"]:
+        atk, hp = _siege_unit_eff(u, rack, state)
+        u["atk"] = atk; u["hp"] = hp; u["max_hp"] = hp
+    units = state["units"]
+
+    dmg_mult = 1.0
+    if _siege_has(state, "suddendeath"): dmg_mult *= 1.5
+    if mut == "glass":                   dmg_mult *= 1.4
+
+    # ── Player phase ──────────────────────────────────────────────────────────
+    hero_dmg = max(1, round(calc_attack_damage(p) * dmg_mult))
+    pet_dmg = 0; pet_name = None
+    if state.get("pet"):
+        petrec = get_active_pet_record(state["uid"])
+        if petrec:
+            pet_name = _pet_display_name(petrec)
+            pmult = 1.8 if _siege_has(state, "petpact") else 1.0
+            pet_dmg = max(1, round(_pet_combat_atk(petrec, p) * pmult * dmg_mult))
+
+    unit_atk_total = 0
+    bombard_atk = 0
+    has_marksman = False
+    for u in units:
+        if u["code"] == "medic":
+            continue
+        eff = round(u["atk"] * dmg_mult)
+        if u["code"] == "bombard":
+            bombard_atk += eff        # splash, applied to ALL enemies
+        else:
+            unit_atk_total += eff
+        if u["code"] == "marksman":
+            has_marksman = True
+
+    # Bombard splash first (softens the whole rack)
+    if bombard_atk:
+        for e in enemies:
+            e["hp"] = max(0, e["hp"] - bombard_atk)
+
+    # Focused pool: hero + pet + melee/marksman units, spent kill-by-kill.
+    pool = hero_dmg + pet_dmg + unit_atk_total
+    focus_boss = 1.35 if _siege_has(state, "focusfire") else 1.0
+    order = sorted(range(len(enemies)),
+                   key=lambda i: (0 if (has_marksman and enemies[i]["kind"] == "ranged") else 1,
+                                  enemies[i]["hp"]))
+    kills = 0
+    for i in order:
+        e = enemies[i]
+        if e["hp"] <= 0:
+            if e["hp"] == 0: kills += 1
+            continue
+        eff_pool = pool * (focus_boss if e.get("boss") else 1.0)
+        if eff_pool >= e["hp"]:
+            spent = e["hp"] / max(1e-9, (focus_boss if e.get("boss") else 1.0))
+            pool = max(0, pool - spent)
+            e["hp"] = 0; kills += 1
+        else:
+            e["hp"] = max(1, round(e["hp"] - eff_pool)); pool = 0
+            break
+
+    survivors = [e for e in enemies if e["hp"] > 0]
+    log.append(f"⚔️ Your line hits for *{fmt_num(hero_dmg + pet_dmg + unit_atk_total + bombard_atk * len(enemies))}* — "
+               f"*{kills}* balls sunk, *{len(survivors)}* break through.")
+    if pet_name and pet_dmg:
+        log.append(f"🐾 *{pet_name}* (your pet) adds *{fmt_num(pet_dmg)}*.")
+
+    # ── Hero ability (Break Shot) ──────────────────────────────────────────────
+    if fire_ability and state.get("fire_ready"):
+        nuke = hero_dmg * 3
+        for e in survivors:
+            e["hp"] = max(0, e["hp"] - nuke)
+        newly = [e for e in survivors if e["hp"] <= 0]
+        survivors = [e for e in survivors if e["hp"] > 0]
+        repair = round(state["barricade_max"] * 0.15)
+        state["barricade"] = min(state["barricade_max"], state["barricade"] + repair)
+        state["hero_cd"] = SIEGE_ABILITY_CD - (1 if _siege_has(state, "overcharge") else 0)
+        state["fire_ready"] = False
+        log.append(f"🎱 *BREAK SHOT!* Cue smashes the rack — {len(newly)} balls shattered, +{fmt_num(repair)} barricade!")
+
+    # ── Enemy retaliation ──────────────────────────────────────────────────────
+    front = [u for u in units if u.get("lane") == "front" and u["hp"] > 0]
+    melee = [e for e in survivors if e["kind"] in ("rush", "tank", "boss")]
+    ranged = [e for e in survivors if e["kind"] == "ranged"]
+
+    # Marksmen intercept ranged fire, one enemy each.
+    n_mm = sum(1 for u in units if u["code"] == "marksman" and u["hp"] > 0)
+    intercepted = ranged[:n_mm]
+    ranged_hitting = ranged[n_mm:]
+
+    melee_dmg = sum(e["atk"] * (2 if e.get("boss") else 1) for e in melee)
+    ranged_dmg = sum(e["atk"] for e in ranged_hitting)
+
+    # Front units soak melee; overflow spills to the barricade.
+    soak_pool = melee_dmg
+    dead_units = []
+    for u in front:
+        if soak_pool <= 0: break
+        if soak_pool >= u["hp"]:
+            soak_pool -= u["hp"]; u["hp"] = 0; dead_units.append(u)
+        else:
+            u["hp"] = round(u["hp"] - soak_pool); soak_pool = 0
+    barricade_dmg = soak_pool + ranged_dmg
+
+    if intercepted:
+        log.append(f"🏹 Marksmen intercept *{len(intercepted)}* incoming shots.")
+    if dead_units:
+        names = ", ".join(f"{SIEGE_UNITS[u['code']]['emoji']} {SIEGE_UNITS[u['code']]['name']}" for u in dead_units)
+        log.append(f"💀 Overrun: {names} destroyed holding the front.")
+    # Remove dead units from the roster.
+    if dead_units:
+        state["units"] = [u for u in units if u["hp"] > 0 or u not in dead_units]
+        units = state["units"]
+
+    # Medics repair after the assault.
+    medic_heal = 0
+    for u in units:
+        if u["code"] == "medic":
+            base_heal = round(SIEGE_UNITS["medic"]["hp"] * scale * 0.9)
+            if _siege_has(state, "medkit"): base_heal *= 2
+            medic_heal += base_heal
+    if medic_heal:
+        state["barricade"] = min(state["barricade_max"], state["barricade"] + medic_heal)
+
+    # Reinforced Felt auto-repair.
+    if _siege_has(state, "felt"):
+        rep = round(state["barricade_max"] * 0.12)
+        state["barricade"] = min(state["barricade_max"], state["barricade"] + rep)
+
+    # Apply barricade damage.
+    if barricade_dmg > 0:
+        state["barricade"] -= barricade_dmg
+        log.append(f"🏰 Barricade takes *{fmt_num(barricade_dmg)}* damage.")
+    if medic_heal:
+        log.append(f"➕ Medics restore *{fmt_num(medic_heal)}* barricade.")
+
+    # Last Ditch save.
+    if state["barricade"] <= 0 and _siege_has(state, "lastditch") and not state["lastditch_used"]:
+        state["barricade"] = 1; state["lastditch_used"] = True
+        log.append("🩹 *LAST DITCH!* The barricade holds on a single splinter!")
+
+    if state["barricade"] <= 0:
+        state["barricade"] = 0
+        log.append("💥 *THE BARRICADE SHATTERS!* The break overruns you.")
+        return log, "loss"
+
+    # ── Rack cleared — economy & rewards ───────────────────────────────────────
+    gain = round(8 * scale)
+    if _siege_has(state, "bounty"): gain = round(gain * 1.3)
+    if mut == "frugal":            gain = round(gain * 1.25)
+    if rack % 5 == 0:              gain = round(gain * 1.5)   # boss milestone bonus
+    state["pending_tokens"] += gain
+
+    inc = SIEGE_SUPPLY_INC
+    if _siege_has(state, "quartermaster"): inc += 2
+    if mut == "blitz":  inc += 1
+    if mut == "frugal": inc -= 1
+    if _siege_has(state, "momentum"):
+        inc += min(6, kills)
+    state["supply"] += max(0, inc)
+
+    if state["hero_cd"] > 0:
+        state["hero_cd"] -= 1
+        if state["hero_cd"] <= 0:
+            state["fire_ready"] = True
+    state["rack"] += 1
+    state["cur_enemies"] = None   # next rack regenerates (and re-telegraphs)
+    log.append(f"✅ *Rack cleared!* +{fmt_num(gain)} Break Tokens, +{max(0, inc)} Supply.")
+    return log, "win"
+
+def _siege_grant_rewards(p, state, wiped):
+    """Bank tokens (wipe forfeits half of the unbanked haul), convert to real
+    loot scaled by depth, persist best-rack + lifetime tokens. Returns summary."""
+    pending = state["pending_tokens"]
+    if wiped:
+        pending = pending // 2
+    total = state["banked_tokens"] + pending
+    racks_cleared = state["rack"] - 1
+
+    gold  = total * 5
+    shards = total // 35
+    scrolls = total // 110
+    p["gold"] = safe_int(p.get("gold", 0)) + gold
+    lines = [f"💰 *{fmt_num(gold)}* gold"]
+    for _ in range(shards):  add_item(p, "Iron Shard")
+    if shards:  lines.append(f"⛏️ *Iron Shard ×{shards}*")
+    for _ in range(scrolls): add_item(p, "Enchanting Scroll")
+    if scrolls: lines.append(f"✨ *Enchanting Scroll ×{scrolls}*")
+
+    # Persist siege stats in the passive_cooldowns bag (save_player only writes
+    # known columns, so custom top-level keys would be dropped).
+    cds = safe_cds(p)
+    best_prev = safe_int(cds.get("siege_best_rack", 0))
+    milestone_msg = ""
+    if racks_cleared > best_prev:
+        cds["siege_best_rack"] = racks_cleared
+        for thr, title in ((10, "Rack Warden"), (20, "Break Master"), (30, "Pocket Sovereign")):
+            if best_prev < thr <= racks_cleared:
+                titles = sjl(p.get("titles"), [])
+                if title not in titles:
+                    titles.append(title); p["titles"] = json.dumps(titles)
+                    milestone_msg += f"\n🏅 New title unlocked: *{title}*!"
+    cds["siege_tokens_lifetime"] = safe_int(cds.get("siege_tokens_lifetime", 0)) + total
+    p["passive_cooldowns"] = json.dumps(cds)
+    save_player(p)
+    return "\n".join(lines), milestone_msg
+
+# ── HOLD THE POCKET — UI / interaction layer ──────────────────────────────────
+def _siege_bar(cur, mx, width=10):
+    cur = max(0, cur); pct = (cur / mx) if mx else 0
+    filled = int(round(pct * width))
+    return "█" * filled + "░" * (width - filled), round(pct * 100)
+
+def _siege_ensure_rack(state):
+    """Generate the current rack once and cache it, so the telegraphed preview is
+    exactly the rack you fight (honest telegraph = the skill signature)."""
+    if not state.get("cur_enemies"):
+        state["cur_enemies"] = _siege_gen_rack(state)
+    return state["cur_enemies"]
+
+def _siege_enemy_preview(state):
+    if state["mutator"] == "fog":
+        _siege_ensure_rack(state)
+        return "🌫️ _Corner Fog — the next rack is hidden!_"
+    enemies = _siege_ensure_rack(state)
+    counts = {}
+    boss = None
+    for e in enemies:
+        if e.get("boss"):
+            boss = e["name"]; continue
+        counts[e["emoji"]] = counts.get(e["emoji"], 0) + 1
+    parts = [f"{emo}×{n}" for emo, n in counts.items()]
+    line = "  ".join(parts) if parts else "—"
+    if boss:
+        line = f"🔴 *{boss}*  +  " + line
+    return f"⚠️ *Incoming Rack {state['rack']}* ({len(enemies)} enemies):\n   {line}"
+
+def _siege_units_block(state):
+    lanes = {"front": [], "mid": [], "back": []}
+    for u in state["units"]:
+        b = SIEGE_UNITS[u["code"]]
+        lanes.setdefault(u.get("lane", b["lane"]), []).append(f"{b['emoji']}")
+    def row(lbl, key):
+        items = lanes.get(key, [])
+        return f"  {lbl} " + ("".join(items) if items else "_empty_")
+    out = [row("🛡️Front:", "front"), row("💠 Mid: ", "mid"), row("🎯Back: ", "back")]
+    if state.get("pet"):
+        out.append("  🐾 Pet on the field")
+    return "\n".join(out)
+
+def _build_siege_mode_select(uid, p=None):
+    best = 0
+    if p is not None:
+        best = safe_int(safe_cds(p).get("siege_best_rack", 0))
+    mut = _siege_today_mutator()
+    lines = [
+        "🎱 *HOLD THE POCKET*",
+        "_Command the break. Deploy your line, ride your gear early, out-think the swarm late._",
+        "",
+        f"🌀 *Today's Mutator:* {mut['emoji']} *{mut['name']}* — _{mut['desc']}_",
+    ]
+    if best:
+        lines.append(f"🏅 Your deepest rack: *{best}*")
+    lines += [
+        "",
+        "*How it works:* survive endless racks of enemies. Your Barricade is your"
+        " life — if it shatters, the run ends. Spend *Supply* on troops, draft a"
+        " *relic* after every rack, and *cash out* your Break Tokens before you"
+        " push too far. Bosses every 5 racks.",
+        "",
+        "Choose your tempo:",
+    ]
+    rows = [
+        [InlineKeyboardButton("🧠 Turn-Based (think freely)", callback_data=f"sg_mode_{uid}_turn")],
+        [InlineKeyboardButton(f"⏱️ Timed ({SIEGE_CLOCK_SECS}s shot clock)", callback_data=f"sg_mode_{uid}_timed")],
+        [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")],
+    ]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_siege_command_card(p, state, flash=""):
+    uid = state["uid"]
+    bar, pct = _siege_bar(state["barricade"], state["barricade_max"])
+    mut = next((mm for mm in SIEGE_MUTATORS if mm["id"] == state["mutator"]), SIEGE_MUTATORS[0])
+    fire = "🎱 READY" if state.get("fire_ready") else f"CD {state['hero_cd']}"
+    tokens = state["pending_tokens"] + state["banked_tokens"]
+    relics = " ".join(_SIEGE_RELIC_BY_ID[r]["emoji"] for r in state["relics"]) or "_none yet_"
+    lines = [f"🎱 *HOLD THE POCKET* — Rack *{state['rack']}*   ({mut['emoji']} {mut['name']})"]
+    if flash:
+        lines.append(flash)
+    lines += [
+        f"🏰 Barricade `{bar}` *{pct}%*  ({fmt_num(state['barricade'])}/{fmt_num(state['barricade_max'])})",
+        f"⚡ Supply: *{state['supply']}*     🎱 Break Shot: *{fire}*",
+        f"🏅 Break Tokens: *{fmt_num(tokens)}*   ·   Relics: {relics}",
+        "",
+        "*Your line:*",
+        _siege_units_block(state),
+        "",
+        _siege_enemy_preview(state),
+    ]
+    if state["mode"] == "timed":
+        lines.append(f"\n⏱️ _Shot clock ~{SIEGE_CLOCK_SECS}s — the rack auto-starts if you stall._")
+    rows = [
+        [InlineKeyboardButton("⚡ Deploy", callback_data=f"sg_deploy_{uid}"),
+         InlineKeyboardButton("🔧 Repair (3⚡)", callback_data=f"sg_repair_{uid}")],
+    ]
+    fire_row = []
+    if state.get("fire_ready"):
+        fire_row.append(InlineKeyboardButton("🎱 BREAK SHOT + Start", callback_data=f"sg_fire_{uid}"))
+    fire_row.append(InlineKeyboardButton("▶️ Start Rack", callback_data=f"sg_start_{uid}"))
+    rows.append(fire_row)
+    rows.append([InlineKeyboardButton("💰 Cash Out", callback_data=f"sg_cash_{uid}"),
+                 InlineKeyboardButton("🏳️ Retreat", callback_data=f"sg_quit_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_siege_deploy_card(p, state):
+    uid = state["uid"]
+    lines = [f"⚡ *DEPLOY*  —  Supply: *{state['supply']}*", "_Pick a unit for your line:_", ""]
+    rows = []
+    for code, u in SIEGE_UNITS.items():
+        cost = _siege_deploy_cost(state, code)
+        afford = state["supply"] >= cost
+        lines.append(f"{u['emoji']} *{u['name']}* ({cost}⚡, {u['lane']}) — _{u['desc']}_")
+        if afford:
+            rows.append([InlineKeyboardButton(f"{u['emoji']} {u['name']} ({cost}⚡)",
+                                              callback_data=f"sg_buy_{uid}_{code}")])
+    petrec = get_active_pet_record(uid)
+    if petrec and not state.get("pet"):
+        pcost = _siege_deploy_cost(state, "bruiser")  # pet costs like a mid unit
+        pcost = 4 if not _siege_has(state, "conscript") else 3
+        lines.append(f"🐾 *{_pet_display_name(petrec)}* ({pcost}⚡) — _your pet joins the line._")
+        if state["supply"] >= pcost:
+            rows.append([InlineKeyboardButton(f"🐾 Deploy Pet ({pcost}⚡)", callback_data=f"sg_pet_{uid}")])
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"sg_home_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_siege_draft_card(p, state):
+    uid = state["uid"]
+    lines = ["✅ *Rack cleared!*  Choose a relic:", ""]
+    for ln in state.get("log", [])[-4:]:
+        lines.append(f"_{ln}_")
+    lines.append("")
+    rows = []
+    for i, rid in enumerate(state["draft"]):
+        r = _SIEGE_RELIC_BY_ID[rid]
+        lines.append(f"{r['emoji']} *{r['name']}* — _{r['desc']}_")
+        rows.append([InlineKeyboardButton(f"{r['emoji']} {r['name']}", callback_data=f"sg_relic_{uid}_{i}")])
+    rows.append([InlineKeyboardButton("⏭️ Skip", callback_data=f"sg_relic_{uid}_skip")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_siege_end_card(p, state, summary, milestone, wiped):
+    uid = state["uid"]
+    racks = state["rack"] - 1
+    head = "💥 *THE BARRICADE FELL*" if wiped else "💰 *CASHED OUT*"
+    lines = [head, ""]
+    for ln in state.get("log", [])[-3:]:
+        lines.append(f"_{ln}_")
+    lines += [
+        "",
+        f"🏁 You held *{racks}* rack{'s' if racks != 1 else ''}"
+        + (f" on {next((mm['name'] for mm in SIEGE_MUTATORS if mm['id']==state['mutator']),'')}." if racks else "."),
+        f"{'_Half your unbanked tokens were lost in the rout._' if wiped else '_Full haul secured._'}",
+        "",
+        "*Rewards:*",
+        summary or "_—_",
+    ]
+    if milestone:
+        lines.append(milestone)
+    rows = [[InlineKeyboardButton("🔁 Play Again", callback_data=f"sg_again_{uid}"),
+             InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _siege_render(p, state, flash=""):
+    if state["phase"] == "deploy":
+        return _build_siege_deploy_card(p, state)
+    if state["phase"] == "draft":
+        return _build_siege_draft_card(p, state)
+    return _build_siege_command_card(p, state, flash=flash)
+
+def _siege_recalc_barricade_max(state):
+    nm = _siege_barricade_max(state)
+    if nm > state["barricade_max"]:
+        state["barricade"] += (nm - state["barricade_max"])
+    state["barricade_max"] = nm
+
+def _siege_apply_rack(p, state, fire):
+    """Resolve one rack (from a button tap or the shot clock) and advance phase.
+    Bumps the clock nonce first so an in-flight timer can't double-resolve."""
+    state["clock"] = state.get("clock", 0) + 1
+    log, outcome = _siege_resolve(p, state, fire_ability=fire)
+    state["log"] = log
+    if outcome == "loss":
+        state["phase"] = "over"; state["outcome"] = "loss"
+        return outcome
+    pool = [r["id"] for r in SIEGE_RELICS if r["id"] not in state["relics"]]
+    if pool:
+        random.shuffle(pool); state["draft"] = pool[:3]; state["phase"] = "draft"
+    else:
+        state["draft"] = None; state["phase"] = "plan"
+    return outcome
+
+async def _siege_clock(bot, uid, nonce):
+    try:
+        await asyncio.sleep(SIEGE_CLOCK_SECS)
+    except asyncio.CancelledError:
+        return
+    state = _active_sieges.get(uid)
+    if not state or state.get("clock") != nonce or state.get("phase") != "plan":
+        return
+    p = get_player(uid)
+    if not p:
+        return
+    _siege_apply_rack(p, state, fire=False)
+    text, markup = _siege_render(p, state)
+    try:
+        await bot.edit_message_text(chat_id=state["chat_id"], message_id=state["msg_id"],
+                                    text=text, parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
+    if state["mode"] == "timed" and state["phase"] == "plan":
+        _siege_arm_clock(bot, state)
+
+def _siege_arm_clock(bot, state):
+    if state["mode"] != "timed":
+        return
+    state["clock"] = state.get("clock", 0) + 1
+    asyncio.create_task(_siege_clock(bot, state["uid"], state["clock"]))
+
+async def siege_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    st = _active_sieges.get(user.id)
+    if st and st["phase"] != "over":
+        text, markup = _siege_render(p, st)
+        msg = await send_group(update, text, delay=9, permanent=True, reply_markup=markup)
+        if msg:
+            st["chat_id"] = msg.chat_id; st["msg_id"] = msg.message_id
+            if st["mode"] == "timed" and st["phase"] == "plan":
+                _siege_arm_clock(context.bot, st)
+        return
+    text, markup = _build_siege_mode_select(user.id, p)
+    await send_group(update, text, delay=9, permanent=True, reply_markup=markup)
+
+async def siege_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    toks = query.data.split("_")
+    action = toks[1] if len(toks) > 1 else ""
+    try:
+        uid = int(toks[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your siege!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+
+    async def render(flash=""):
+        st = _active_sieges.get(uid)
+        text, markup = _siege_render(p, st, flash=flash)
+        st["chat_id"] = query.message.chat_id; st["msg_id"] = query.message.message_id
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+
+    # ── Start a run (mode chosen) ──────────────────────────────────────────────
+    if action == "mode":
+        mode = toks[3] if len(toks) > 3 else "turn"
+        st = _siege_new_run(p, uid, "timed" if mode == "timed" else "turn")
+        await query.answer("The break racks up…")
+        await render()
+        if st["mode"] == "timed":
+            _siege_arm_clock(context.bot, st)
+        return
+
+    st = _active_sieges.get(uid)
+    if not st or st["phase"] == "over":
+        await query.answer("This run has ended — /siege to play again.", show_alert=True); return
+
+    if action == "home":
+        st["phase"] = "plan"; await query.answer(); await render(); return
+    if action == "deploy":
+        st["phase"] = "deploy"; await query.answer(); await render(); return
+
+    if action == "buy":
+        code = toks[3] if len(toks) > 3 else ""
+        if code not in SIEGE_UNITS:
+            await query.answer(); return
+        cost = _siege_deploy_cost(st, code)
+        if st["supply"] < cost:
+            await query.answer("Not enough Supply!", show_alert=True); return
+        st["supply"] -= cost
+        st["units"].append({"code": code, "lane": SIEGE_UNITS[code]["lane"], "hp": 1, "max_hp": 1, "atk": 1})
+        await query.answer(f"{SIEGE_UNITS[code]['name']} deployed!")
+        await render(); return
+
+    if action == "pet":
+        petrec = get_active_pet_record(uid)
+        if not petrec:
+            await query.answer("No active pet to deploy!", show_alert=True); return
+        if st.get("pet"):
+            await query.answer("Pet already on the field!"); return
+        pcost = 3 if _siege_has(st, "conscript") else 4
+        if st["supply"] < pcost:
+            await query.answer("Not enough Supply!", show_alert=True); return
+        st["supply"] -= pcost; st["pet"] = True
+        await query.answer(f"{_pet_display_name(petrec)} joins the line!")
+        await render(); return
+
+    if action == "repair":
+        if st["supply"] < 3:
+            await query.answer("Repairs cost 3 Supply!", show_alert=True); return
+        if st["barricade"] >= st["barricade_max"]:
+            await query.answer("Barricade already full!"); return
+        st["supply"] -= 3
+        heal = round(st["barricade_max"] * 0.22)
+        st["barricade"] = min(st["barricade_max"], st["barricade"] + heal)
+        await query.answer(f"+{fmt_num(heal)} barricade")
+        await render(); return
+
+    if action in ("start", "fire"):
+        fire = action == "fire" and st.get("fire_ready")
+        outcome = _siege_apply_rack(p, st, fire=bool(fire))
+        if outcome == "loss":
+            summary, milestone = _siege_grant_rewards(p, st, wiped=True)
+            text, markup = _build_siege_end_card(p, st, summary, milestone, wiped=True)
+            await query.answer("The barricade shatters!")
+            await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+            _active_sieges.pop(uid, None)
+            return
+        await query.answer("Rack cleared!" if st["phase"] == "draft" else "Held the line!")
+        await render()
+        if st["mode"] == "timed" and st["phase"] == "plan":
+            _siege_arm_clock(context.bot, st)
+        return
+
+    if action == "relic":
+        pick = toks[3] if len(toks) > 3 else "skip"
+        if pick != "skip":
+            try:
+                rid = st["draft"][int(pick)]
+                if rid not in st["relics"]:
+                    st["relics"].append(rid)
+                    _siege_recalc_barricade_max(st)
+                await query.answer(f"{_SIEGE_RELIC_BY_ID[rid]['name']} acquired!")
+            except (ValueError, IndexError, KeyError):
+                await query.answer()
+        else:
+            await query.answer("Skipped.")
+        st["draft"] = None; st["phase"] = "plan"
+        await render()
+        if st["mode"] == "timed":
+            _siege_arm_clock(context.bot, st)
+        return
+
+    if action == "cash":
+        summary, milestone = _siege_grant_rewards(p, st, wiped=False)
+        text, markup = _build_siege_end_card(p, st, summary, milestone, wiped=False)
+        await query.answer("Haul secured!")
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+        _active_sieges.pop(uid, None)
+        return
+
+    if action == "quit":
+        _active_sieges.pop(uid, None)
+        await query.answer("Retreated — run abandoned, no rewards.")
+        await _q_edit(query, "🏳️ *You abandon the break.* No Break Tokens banked.\n\n_/siege to try again._",
+                      parse_mode="Markdown",
+                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]))
+        return
+
+    if action == "again":
+        text, markup = _build_siege_mode_select(uid, p)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+        return
+
+    await query.answer()
+
+
 def main():
     init_db()
     # concurrent_updates: PTB's default processes ONE update at a time for the
@@ -38232,6 +38989,10 @@ def main():
     app.add_handler(CallbackQueryHandler(encounter_callback, pattern="^enc_"))
     app.add_handler(CommandHandler("dungeon",      dungeon_cmd))
     app.add_handler(CallbackQueryHandler(dungeon_callback, pattern="^dng_"))
+    app.add_handler(CommandHandler("siege",       siege_cmd))
+    app.add_handler(CommandHandler("holdthepocket", siege_cmd))
+    app.add_handler(CommandHandler("htp",         siege_cmd))
+    app.add_handler(CallbackQueryHandler(siege_callback, pattern="^sg_"))
 
     # Empire master hub
     app.add_handler(CommandHandler("empire",       empire_cmd))
