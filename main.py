@@ -517,68 +517,87 @@ def _class_companion_strike(attacker, deal_dmg_fn, apply_to_defender_fn=None):
     return lines
 
 
+def _pvp_status_line(p):
+    """Readable active-status summary — emoji + count, so you can see exactly
+    what's ticking on each fighter (🔥2 🩸3 💀1) instead of a wall of icons."""
+    bits = []
+    for field, emoji in (("burn_stacks", "🔥"), ("poison_stacks", "🧪"), ("bleed_stacks", "🩸"),
+                          ("hex_turns", "💀"), ("stun_turns", "⚡"), ("freeze_turns", "🧊"),
+                          ("silence_turns", "🤐"), ("distract_turns", "😵"), ("entangle_turns", "🌿"),
+                          ("weakened_hits", "💔"), ("exposed_hits", "🎯"), ("vanish_turns", "👻"),
+                          ("shield_charges", "🛡️"), ("regen_charges", "💚"), ("warcry_stacks", "💪"),
+                          ("blessed_turns", "🌟")):
+        n = safe_int(p.get(field))
+        if n > 0:
+            bits.append(f"{emoji}{n}")
+    return "  ".join(bits)
+
 def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
-    def _bar(hp, mx, w=14):
+    def _bar(hp, mx, w=12):
         f = round(max(0, min(int(hp), int(mx))) / max(1, int(mx)) * w)
         return "█" * f + "░" * (w - f)
-    v_hp = max(0, int(viewer_p.get("hp", 0)))
-    v_mx = max(1, int(viewer_p.get("max_hp", 100)))
-    o_hp = max(0, int(opp_p.get("hp", 0)))
-    o_mx = max(1, int(opp_p.get("max_hp", 100)))
-    vn = str(viewer_p.get("username", "You"))[:16]
-    on = str(opp_p.get("username", "Foe"))[:16]
-    _k = _get_king()
-    if _k:
-        if _k.get("uid") == viewer_p.get("user_id"): vn = "👑" + vn
-        if _k.get("uid") == opp_p.get("user_id"):    on = "👑" + on
-    v_lvl = viewer_p.get("level", 1)
-    o_lvl = opp_p.get("level", 1)
-    v_pct = round(v_hp / v_mx * 100)
-    o_pct = round(o_hp / o_mx * 100)
-    v_status = _compact_status_emojis(viewer_p)
-    o_status = _compact_status_emojis(opp_p)
-    v_shield = safe_int(viewer_p.get("shield_hp"))
-    o_shield = safe_int(opp_p.get("shield_hp"))
-    v_sh_str = f"  🛡️{v_shield}" if v_shield > 0 else ""
-    o_sh_str = f"  🛡️{o_shield}" if o_shield > 0 else ""
-    v_mp = safe_int(viewer_p.get("mp")); v_mxmp = safe_int(viewer_p.get("max_mp")) or calc_max_mp(viewer_p)
-    o_mp = safe_int(opp_p.get("mp"));   o_mxmp = safe_int(opp_p.get("max_mp")) or calc_max_mp(opp_p)
-    lines = []
-    # Best-of-3 series header (only if a series is in progress between these two)
+
+    def _side(who, is_you):
+        uid = who.get("user_id")
+        hp = max(0, int(who.get("hp", 0))); mx = max(1, int(who.get("max_hp", 100)))
+        pct = round(hp / mx * 100)
+        nm = str(who.get("username", "?"))[:16]
+        _k = _get_king()
+        if _k and _k.get("uid") == uid:
+            nm = "👑" + nm
+        mp = safe_int(who.get("mp")); mxmp = safe_int(who.get("max_mp")) or calc_max_mp(who)
+        sh = safe_int(who.get("shield_hp"))
+        tag = "🟢 *YOU*" if is_you else "🔴 *FOE*"
+        rows = [
+            f"{tag}  {nm} · Lv{who.get('level', 1)}",
+            f"❤️ `{_bar(hp, mx)}` {pct}%" + (f" 🛡️{sh}" if sh > 0 else "") + f"   💙 {mp}/{mxmp}",
+        ]
+        # third line: pet in the fight + active statuses (only if there's something)
+        extras = []
+        pet = get_active_pet_record(uid) if uid else None
+        if pet:
+            sp = PET_SPECIES.get(pet.get("species"), {})
+            pnm = pet.get("nickname") or sp.get("name", "Pet")
+            extras.append(f"{sp.get('emoji','🐾')} {pnm}")
+        st = _pvp_status_line(who)
+        if st:
+            extras.append(("⚠️ " if not pet else "") + st)
+        if extras:
+            rows.append("   " + "   ".join(extras))
+        return rows
+
     _vu, _ou = viewer_p.get("user_id"), opp_p.get("user_id")
     _ser = _pvp_series.get(_pvp_series_key(_vu, _ou)) if (_vu and _ou) else None
+    hdr = "⚔️ *BATTLE*"
     if _ser:
-        _vs = _ser["score"].get(_vu, 0); _os = _ser["score"].get(_ou, 0)
-        lines.append(f"🎯 Series *{_vs}—{_os}* _(first to {_PVP_SERIES_TARGET})_")
-    lines += [
-        f"👤 *{vn}*  Lv{v_lvl}",
-        f"`{_bar(v_hp, v_mx)}`  {v_pct}%{v_sh_str}",
-        f"💙 {v_mp}/{v_mxmp} MP",
-    ]
-    if v_status:
-        lines.append(f"↳ {v_status}")
-    lines.append("──────────────────")
-    lines.append(f"👾 *{on}*  Lv{o_lvl}")
-    lines.append(f"`{_bar(o_hp, o_mx)}`  {o_pct}%{o_sh_str}")
-    lines.append(f"💙 {o_mp}/{o_mxmp} MP")
-    if o_status:
-        lines.append(f"↳ {o_status}")
-    # Live damage tally
+        hdr += f"   ·   Series *{_ser['score'].get(_vu, 0)}—{_ser['score'].get(_ou, 0)}* (first to {_PVP_SERIES_TARGET})"
+    lines = [hdr, ""]
+    lines += _side(viewer_p, True)
+    lines.append("")
+    lines += _side(opp_p, False)
+
+    # Live damage tally (who's dealt more)
     if pair is not None:
         _dst = _pvp_stats.get(pair)
         if _dst and _vu in _dst and _ou in _dst:
-            lines.append(f"⚔️ Dmg: you *{fmt_num(_dst[_vu]['dmg'])}* · them *{fmt_num(_dst[_ou]['dmg'])}*")
-    # On-card battle log (replaces the separate log message — halves API calls)
+            lines.append("")
+            lines.append(f"📊 Damage — you *{fmt_num(_dst[_vu]['dmg'])}*  ·  foe *{fmt_num(_dst[_ou]['dmg'])}*")
+
+    # Recent events — flattened so you can follow who did what (incl. pets)
     if pair is not None:
         logs = _pvp_battle_logs.get(pair, [])
         if logs:
-            lines.append("──────────────────")
-            for entry in logs[-2:]:
-                e_lines = [l.strip() for l in entry.split("\n") if l.strip()]
-                if e_lines:
-                    lines.append("▸ " + e_lines[0][:120])
-                    for extra in e_lines[1:3]:
-                        lines.append(f"  ↳ {extra[:90]}")
+            flat = []
+            for entry in logs[-3:]:
+                for l in entry.split("\n"):
+                    l = l.strip()
+                    if l:
+                        flat.append(l)
+            if flat:
+                lines.append("")
+                lines.append("📜 *Recent*")
+                for l in flat[-4:]:
+                    lines.append(f"▸ {l[:118]}")
     return "\n".join(lines)
 
 
