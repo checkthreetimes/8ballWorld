@@ -20215,6 +20215,13 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cls = get_player_class(p)
     if not cls:
         await send_group(update, "No class yet! Use /class at Level 5.", delay=9); return
+    # Outside of a boss/raid, /skill against players mirrors /attack: it opens the
+    # fight card, which shows your 3-skill combat kit — not the old accumulated
+    # skill-tree list. Boss/raid skill use still runs through the tree path below.
+    _sc_chat = update.effective_chat.id
+    _sc_raid, _ = in_active_raid(user.id, _sc_chat)
+    if not _sc_raid and _sc_chat not in active_bosses and _sc_chat not in secret_boss_active:
+        await attack_cmd(update, context); return
     all_skills = sjl(p.get("all_skills"), [])
     # Sync: add any skills from current class that the player qualifies for but is missing
     skill_names = {s["name"] for s in all_skills}
@@ -20506,70 +20513,11 @@ async def skill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "\n".join(lines), delay=30)
         return
 
-    if not replying:
-        if is_defeated(p):
-            await send_group(update, _defeated_msg(p), delay=15); return
-        if is_invincible(p):
-            await send_group(update, "🛡️ You're *Still Recovering* — can't use offensive skills.", delay=9); return
-        # Show player picker for skill targeting
-        players, total = _get_attackable_players(user.id, p.get("guild_id"))
-        if total == 0:
-            # No PvP targets — fall back to self-skill list
-            lines = [f"🔮 *Your Skills* ({cls['name']}):\n"]
-            for i, s in enumerate(all_skills, 1):
-                lines.append(f"*{i}.* *{s['name']}*  -  {s['desc']}")
-            lines.append("\n_Reply to a message with /skill [name or number] to use a skill._")
-            await send_group(update, "\n".join(lines), delay=20)
-            return
-        markup = _build_target_picker_markup(user.id, p.get("guild_id"), 0, "skl")
-        await send_group(update,
-            f"🔮 *Choose a target* ({total} available)\n_Pick a player, then choose your skill. Close when done._",
-            permanent=True, reply_markup=markup)
-        return
-
-    # Replying to a target  -  pick skill
-    if sk is None:
-        if len(all_skills) == 1:
-            sk = all_skills[0]
-        else:
-            # Block defeated and invincible attackers before showing the picker
-            if is_defeated(p):
-                await send_group(update, "☠️ You're *Defeated*  -  you can't use offensive skills while defeated.", delay=9); return
-            if is_invincible(p):
-                await send_group(update, "🛡️ You're *Still Recovering*  -  you can't use offensive skills while invincible.", delay=9); return
-            # Show numbered selection prompt
-            target_uid = update.message.reply_to_message.from_user.id
-            markup = _build_skill_picker_keyboard(all_skills, user.id, 0, target_uid)
-            await update.message.reply_text(
-                "🔮 Choose a skill to use:",
-                parse_mode="Markdown", reply_markup=markup)
-            await update.message.delete()
-            return
-
-    # When replying with an explicit skill (or auto-selected sole skill), route through
-    # the PvP card system instead of the old plain-text path.
-    if replying:
-        _reply_tgt = update.message.reply_to_message.from_user
-        _reply_p = get_player(_reply_tgt.id)
-        if _reply_p:
-            sk_idx = next((i for i, s in enumerate(all_skills) if s["name"] == sk["name"]), 0)
-            markup = InlineKeyboardMarkup([[
-                InlineKeyboardButton(
-                    f"⚡ {sk['name']} → {_reply_p['username']}",
-                    callback_data=f"skillpick_{user.id}_{sk_idx}_{_reply_tgt.id}")
-            ]])
-            try:
-                await update.message.reply_to_message.reply_text(
-                    f"🎯 *{p['username']}* readies *{sk['name']}*!",
-                    parse_mode="Markdown", reply_markup=markup)
-            except Exception:
-                await update.message.reply_text(
-                    f"🎯 *{p['username']}* readies *{sk['name']}*!",
-                    parse_mode="Markdown", reply_markup=markup)
-            try: await update.message.delete()
-            except Exception: pass
-            return
-    await _execute_skill(update, context, p, sk)
+    # PvP: /skill against a player now mirrors /attack — it opens the fight
+    # card, which presents your 3-skill combat kit (Attack + the 3 kit skills +
+    # potion/finisher), instead of the old accumulated skill-tree picker. This
+    # keeps the "attack a player with /skill" flow while showing only the 3.
+    await attack_cmd(update, context)
 
 _SKILL_PAGE_SIZE = 4
 
