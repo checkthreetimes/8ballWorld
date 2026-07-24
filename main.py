@@ -19300,12 +19300,171 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="social_hub")]])); return
 
 
+# ── GUILD HUB — one persistent home for everything guild ─────────────────────
+_GH_DONATE_PRESETS = [1000, 10000, 50000]
+_GH_BANK_PRESETS   = [1000, 25000, 250000]
+
+def _guild_bank(g):
+    """Canonical guild bank — folds the legacy 'bank' column into bank_gold so
+    deposits (/gbank) and donations (/guilddonate) finally share one pool."""
+    return safe_int(g.get("bank_gold")) + safe_int(g.get("bank"))
+
+def _guild_consolidate_bank(g):
+    if safe_int(g.get("bank")) > 0:
+        g["bank_gold"] = _guild_bank(g); g["bank"] = 0
+        save_guild(g)
+    return g
+
+def _guild_of(p):
+    """Return (guild_dict_or_None, role) where role is 'leader'/'member'/None."""
+    gid = p.get("guild_id")
+    if not gid or str(gid) in ("None", "", "0"):
+        return None, None
+    g = get_guild(gid)
+    if not g:
+        return None, None
+    return g, ("leader" if g.get("leader_id") == p.get("user_id") else "member")
+
+def _build_guild_hub(p, uid, flash=""):
+    g, role = _guild_of(p)
+    if not g:
+        lines = ["🏰 *Guild Hall*"]
+        if flash: lines.append(flash)
+        lines.append("\n_You're not in a guild yet._\n\n"
+                     "Guilds share a 🏦 bank, level up for permanent +EXP/+Gold perks, "
+                     "wage ⚔️ war, and form 🤝 alliances.")
+        rows = [
+            [InlineKeyboardButton("➕ Create a Guild", callback_data=f"gh_create_{uid}")],
+            [InlineKeyboardButton("📋 Browse & Join",  callback_data=f"gh_browse_{uid}")],
+            [InlineKeyboardButton("❌ Close",           callback_data=f"close_msg_{uid}")],
+        ]
+        return "\n".join(lines), InlineKeyboardMarkup(rows)
+    g = _guild_consolidate_bank(g)
+    members = sjl(g.get("members"), [])
+    glvl = safe_int(g.get("level"), 1)
+    perk = GUILD_PERKS.get(glvl, {})
+    nxt  = guild_exp_for_level(glvl) if glvl < 10 else None
+    leader = get_player(g["leader_id"])
+    war = get_active_war(g["guild_id"])
+    lines = [f"🏰 *{g['name']}*"]
+    if flash: lines.append(flash)
+    lines.append(f"👑 {leader['username'] if leader else '?'}"
+                 + ("  ·  you're the *leader*" if role == "leader" else "  ·  you're a *member*"))
+    lines.append(f"⭐ Lv {glvl}/10" + (f"  ({safe_int(g.get('exp'))}/{nxt} EXP)" if nxt else "  · MAX")
+                 + f"   👥 {len(members)}/50   🏆 {safe_int(g.get('war_wins'))}W")
+    lines.append(f"🏦 Bank: *{_guild_bank(g):,}g*")
+    lines.append(f"🎁 Perk: _{perk.get('desc','—')}_")
+    if war:
+        lines.append("⚔️ *AT WAR!* Hit enemy guild members to score points.")
+    rows = [
+        [InlineKeyboardButton("🏦 Bank", callback_data=f"gh_bank_{uid}"),
+         InlineKeyboardButton(f"👥 Members ({len(members)})", callback_data=f"gh_members_{uid}")],
+        [InlineKeyboardButton("💰 Donate", callback_data=f"gh_donate_{uid}"),
+         InlineKeyboardButton("⚔️ War", callback_data=f"gh_war_{uid}")],
+        [InlineKeyboardButton("🤝 Alliance", callback_data=f"gh_alliance_{uid}"),
+         InlineKeyboardButton("📋 Browse", callback_data=f"gh_browse_{uid}")],
+    ]
+    if role == "leader":
+        rows.append([InlineKeyboardButton("👑 Manage Guild", callback_data=f"gh_manage_{uid}")])
+    else:
+        rows.append([InlineKeyboardButton("🚪 Leave Guild", callback_data=f"gh_leave_{uid}")])
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _gh_nav(uid):
+    return [InlineKeyboardButton("🔙 Guild", callback_data=f"gh_home_{uid}"),
+            InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
+
+def _build_gh_bank(p, uid, flash=""):
+    g, role = _guild_of(p)
+    if not g: return _build_guild_hub(p, uid)
+    g = _guild_consolidate_bank(g)
+    bank = _guild_bank(g); gold = safe_int(p.get("gold"))
+    lines = [f"🏦 *{g['name']} — Guild Bank*"]
+    if flash: lines.append(flash)
+    lines.append(f"Balance: *{bank:,}g*    ·    your gold: {gold:,}g")
+    lines.append("_Anyone can deposit; only the leader withdraws._")
+    rows = []
+    dep = [InlineKeyboardButton(f"➕ {a:,}", callback_data=f"gh_dep_{uid}_{a}") for a in _GH_BANK_PRESETS if gold >= a]
+    if dep: rows.append(dep)
+    else: lines.append("\n_Not enough gold to deposit a preset amount._")
+    if role == "leader" and bank > 0:
+        wd = [InlineKeyboardButton(f"➖ {a:,}", callback_data=f"gh_wd_{uid}_{a}") for a in _GH_BANK_PRESETS if bank >= a]
+        wd.append(InlineKeyboardButton("➖ All", callback_data=f"gh_wd_{uid}_all"))
+        rows.append(wd)
+    rows.append(_gh_nav(uid))
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_gh_donate(p, uid, flash=""):
+    g, role = _guild_of(p)
+    if not g: return _build_guild_hub(p, uid)
+    gold = safe_int(p.get("gold"))
+    lines = [f"💰 *Donate to {g['name']}*"]
+    if flash: lines.append(flash)
+    lines.append(f"Your gold: {gold:,}g\n_Donations fund the bank AND grant Guild EXP (1 per 10g) to level the guild._")
+    rows = [[InlineKeyboardButton(f"💰 {a:,}", callback_data=f"gh_don_{uid}_{a}") for a in _GH_DONATE_PRESETS if gold >= a]]
+    if not rows[0]:
+        rows = []; lines.append("\n_Not enough gold to donate right now._")
+    rows.append(_gh_nav(uid))
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_gh_members(p, uid):
+    g, role = _guild_of(p)
+    if not g: return _build_guild_hub(p, uid)
+    members = sjl(g.get("members"), [])
+    lines = [f"👥 *{g['name']} — Members ({len(members)}/50)*\n"]
+    for mid in members[:50]:
+        mp = get_player(mid)
+        crown = "👑 " if mid == g["leader_id"] else "• "
+        if mp:
+            lines.append(f"{crown}*{mp['username']}* — Lv {mp.get('level',1)}")
+        else:
+            lines.append(f"{crown}`{mid}`")
+    rows = [_gh_nav(uid)]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_gh_manage(p, uid):
+    g, role = _guild_of(p)
+    if not g or role != "leader":
+        return _build_guild_hub(p, uid)
+    lines = [f"👑 *Manage {g['name']}*\n",
+             "• *Invite:* reply to a player's message with `/guild`",
+             "• *Kick:* `/guildkick` (reply to the member)",
+             "• *Rename:* `/guildrename <new name>`",
+             "• *Declare war:* `/guildwar <guild name>`",
+             "\n_Or use the buttons below._"]
+    rows = [
+        [InlineKeyboardButton("✏️ Rename", callback_data=f"grename_{g['guild_id']}")],
+        [InlineKeyboardButton("💥 Disband Guild", callback_data=f"gh_disband_{uid}")],
+        _gh_nav(uid),
+    ]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_gh_browse(p, uid):
+    conn = _connect_db(); conn.row_factory = sqlite3.Row
+    rows_db = conn.execute("SELECT guild_id,name,level,members FROM guilds ORDER BY level DESC, guild_id ASC LIMIT 10").fetchall()
+    conn.close()
+    _, role = _guild_of(p)
+    lines = ["📋 *Guilds*\n"]
+    rows = []
+    if not rows_db:
+        lines.append("_No guilds exist yet — be the first with ➕ Create!_")
+    for r in rows_db:
+        mc = len(sjl(r["members"], []))
+        lines.append(f"🏰 *{r['name']}* — Lv {safe_int(r['level'],1)} · {mc}/50")
+        if role is None:
+            rows.append([InlineKeyboardButton(f"➕ Join {r['name']}", callback_data=f"guildjoin_{r['guild_id']}")])
+    if role is not None:
+        lines.append("\n_Leave your current guild to join another._")
+    rows.append(_gh_nav(uid))
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
 async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     p = get_player(user.id)
     if not p: await send_group(update, "Use /ascend first!", delay=9); return
 
-    # Reply-to invite flow
+    # Reply-to invite flow (leader invites the replied-to player)
     if update.message and update.message.reply_to_message:
         du = update.message.reply_to_message.from_user
         if du.is_bot:
@@ -19314,7 +19473,7 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update, "You can't invite yourself!", delay=9); return
         gid = p.get("guild_id")
         if not gid or str(gid) in ("None", "", "0"):
-            await send_group(update, "You're not in a guild! Use /guildcreate to start one.", delay=9); return
+            await send_group(update, "You're not in a guild! Use /guild → Create.", delay=9); return
         g = get_guild(gid)
         if not g:
             await send_group(update, "Guild not found.", delay=9); return
@@ -19331,24 +19490,175 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tp.get("guild_id") and str(tp.get("guild_id")) not in ("None", "", "0"):
             await send_group(update, f"{du.first_name} is already in a guild!", delay=9); return
         pending_guild_inv[user.id] = {
-            "target_id": du.id,
-            "guild_id":  gid,
-            "chat_id":   update.effective_chat.id,
-            "expires":   (datetime.now() + timedelta(minutes=5)).isoformat(),
+            "target_id": du.id, "guild_id": gid,
+            "chat_id": update.effective_chat.id,
+            "expires": (datetime.now() + timedelta(minutes=5)).isoformat(),
         }
-        a_name = _social_name(user)
-        d_name = _social_name(du)
         markup = InlineKeyboardMarkup([[
             InlineKeyboardButton("🏰 Accept",  callback_data=f"ginv_accept_{user.id}"),
             InlineKeyboardButton("❌ Decline", callback_data=f"ginv_decline_{user.id}"),
         ]])
         await send_group(update,
-            f"🏰 {a_name} invites {d_name} to join *{g['name']}*!\n\n"
+            f"🏰 {_social_name(user)} invites {_social_name(du)} to join *{g['name']}*!\n\n"
             f"_{du.first_name}, do you accept?_\n_Expires in 5m._",
             permanent=False, delay=300, reply_markup=markup)
         return
 
-    await _social_hub(update, p)
+    text, markup = _build_guild_hub(p, user.id)
+    await send_group(update, text, delay=60, reply_markup=markup)
+
+async def guild_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Persistent guild hub. gh_home/bank/donate/members/manage/browse/war/
+    alliance/create + actions (dep/wd/don/leave/disband)."""
+    query = update.callback_query
+    data = query.data
+    head = data.split("_", 1)[0] + "_" + data.split("_")[1]   # e.g. "gh_bank"
+    toks = data.split("_")
+    try:
+        uid = int(toks[2]) if len(toks) > 2 else 0
+    except ValueError:
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your guild menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+
+    async def render(built):
+        text, markup = built
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+
+    action = toks[1] if len(toks) > 1 else ""
+
+    if action == "home":
+        await query.answer(); await render(_build_guild_hub(p, uid)); return
+    if action == "bank":
+        await query.answer(); await render(_build_gh_bank(p, uid)); return
+    if action == "donate":
+        await query.answer(); await render(_build_gh_donate(p, uid)); return
+    if action == "members":
+        await query.answer(); await render(_build_gh_members(p, uid)); return
+    if action == "manage":
+        await query.answer(); await render(_build_gh_manage(p, uid)); return
+    if action == "browse":
+        await query.answer(); await render(_build_gh_browse(p, uid)); return
+    if action == "create":
+        await query.answer()
+        await render(("➕ *Create a Guild*\n\nUse `/guildcreate <name>` in the group chat to found your guild "
+                      "(costs nothing — you become the leader).",
+                      InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Guild", callback_data=f"gh_home_{uid}"),
+                                             InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]])))
+        return
+    if action == "war":
+        g, _ = _guild_of(p)
+        await query.answer()
+        if not g:
+            await render(_build_guild_hub(p, uid)); return
+        war = get_active_war(g["guild_id"])
+        if war:
+            txt = f"⚔️ *Guild War — ACTIVE*\n\n*{g['name']}* is at war!\nHit enemy guild members in PvP to score war points. Most points when the war ends wins."
+        else:
+            txt = (f"⚔️ *Guild War*\n\n*{g['name']}* — no active war.\n\n"
+                   "The leader can declare war with `/guildwar <guild name>`. Both guilds battle 24h for glory and war wins.")
+        await render((txt, InlineKeyboardMarkup([_gh_nav(uid)]))); return
+    if action == "alliance":
+        await query.answer()
+        await render(("🤝 *Alliances*\n\nForm and manage alliances with `/alliance` in the group chat. "
+                      "Allied guilds don't lose PvP to each other and can coordinate wars.",
+                      InlineKeyboardMarkup([_gh_nav(uid)])))
+        return
+
+    # ── Actions that mutate ──────────────────────────────────────────────────
+    g, role = _guild_of(p)
+    if not g:
+        await query.answer("You're not in a guild.", show_alert=True)
+        await render(_build_guild_hub(p, uid)); return
+    g = _guild_consolidate_bank(g)
+
+    if action == "dep":
+        try: amt = int(toks[3])
+        except (IndexError, ValueError): await query.answer(); return
+        if safe_int(p.get("gold")) < amt:
+            await query.answer("Not enough gold!", show_alert=True)
+            await render(_build_gh_bank(p, uid)); return
+        p["gold"] = safe_int(p.get("gold")) - amt
+        g["bank_gold"] = _guild_bank(g) + amt; g["bank"] = 0
+        save_player(p); save_guild(g)
+        await query.answer(f"Deposited {amt:,}g")
+        await render(_build_gh_bank(p, uid, flash=f"✅ Deposited *{amt:,}g* to the bank.")); return
+
+    if action == "wd":
+        if role != "leader":
+            await query.answer("Only the leader can withdraw!", show_alert=True); return
+        bank = _guild_bank(g)
+        amt = bank if toks[3] == "all" else int(toks[3])
+        amt = min(amt, bank)
+        if amt <= 0:
+            await query.answer("Bank is empty.", show_alert=True); return
+        g["bank_gold"] = bank - amt; g["bank"] = 0
+        p["gold"] = safe_int(p.get("gold")) + amt
+        save_player(p); save_guild(g)
+        await query.answer(f"Withdrew {amt:,}g")
+        await render(_build_gh_bank(p, uid, flash=f"✅ Withdrew *{amt:,}g* to your wallet.")); return
+
+    if action == "don":
+        try: amt = int(toks[3])
+        except (IndexError, ValueError): await query.answer(); return
+        if safe_int(p.get("gold")) < amt:
+            await query.answer("Not enough gold!", show_alert=True)
+            await render(_build_gh_donate(p, uid)); return
+        p["gold"] = safe_int(p.get("gold")) - amt
+        g["bank_gold"] = _guild_bank(g) + amt; g["bank"] = 0
+        lvmsgs = add_guild_exp(g, amt // 10)
+        save_player(p); save_guild(g)
+        await query.answer(f"Donated {amt:,}g!")
+        _fl = f"💰 Donated *{amt:,}g* (+{amt//10} Guild EXP)."
+        if lvmsgs: _fl += "\n" + "\n".join(lvmsgs)
+        await render(_build_gh_donate(p, uid, flash=_fl)); return
+
+    if action == "leave":
+        await query.answer()
+        if role == "leader":
+            await render(("🚪 *Leave Guild*\n\nYou're the *leader* — leaving disbands the guild. "
+                          "Use 👑 Manage → 💥 Disband instead, or pass leadership first.",
+                          InlineKeyboardMarkup([_gh_nav(uid)]))); return
+        await render(("🚪 *Leave Guild?*\n\nYou'll lose the guild's perks and bank access.",
+                      InlineKeyboardMarkup([
+                          [InlineKeyboardButton("✅ Yes, leave", callback_data=f"gh_leaveyes_{uid}")],
+                          _gh_nav(uid)]))); return
+
+    if action == "leaveyes":
+        if role == "leader":
+            await query.answer("Leaders must disband instead.", show_alert=True); return
+        members = sjl(g.get("members"), [])
+        if uid in members: members.remove(uid)
+        g["members"] = json.dumps(members); save_guild(g)
+        p["guild_id"] = None; p["guild_stat_bonus"] = 0; save_player(p)
+        await query.answer("You left the guild.")
+        await render(_build_guild_hub(p, uid, flash="🚪 You left the guild.")); return
+
+    if action == "disband":
+        if role != "leader":
+            await query.answer("Only the leader can disband.", show_alert=True); return
+        await query.answer()
+        await render((f"💥 *Disband {g['name']}?*\n\nThis permanently deletes the guild and removes all members. "
+                      "This cannot be undone.",
+                      InlineKeyboardMarkup([
+                          [InlineKeyboardButton("💥 Yes, disband forever", callback_data=f"gh_disbandyes_{uid}")],
+                          _gh_nav(uid)]))); return
+
+    if action == "disbandyes":
+        if role != "leader":
+            await query.answer("Only the leader can disband.", show_alert=True); return
+        conn = _connect_db(); c = conn.cursor()
+        c.execute("UPDATE players SET guild_id=NULL, guild_stat_bonus=0 WHERE guild_id=?", (g["guild_id"],))
+        c.execute("DELETE FROM guilds WHERE guild_id=?", (g["guild_id"],))
+        conn.commit(); conn.close()
+        p["guild_id"] = None; p["guild_stat_bonus"] = 0; save_player(p)
+        await query.answer("Guild disbanded.")
+        await render(_build_guild_hub(p, uid, flash="💥 Your guild was disbanded.")); return
+
+    await query.answer()
 
 
 async def guild_invite_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -19493,7 +19803,7 @@ def _build_guildinfo_overview(g, viewer_id=None):
         f"👑 Leader: {leader['username'] if leader else '?'}\n"
         f"⭐ Level: {glvl}/10  |  EXP: {safe_int(g.get('exp'))}/{nxt}\n"
         f"🏆 War Wins: {wins}\n"
-        f"💰 Bank: {safe_int(g.get('bank'))}g\n"
+        f"💰 Bank: {_guild_bank(g):,}g\n"
         f"🎁 Perks: _{perk.get('desc', 'None')}_"
     )
     rows = [[InlineKeyboardButton(f"👥 Members ({len(member_ids)})", callback_data=f"ginfoM_{gid}")]]
@@ -19664,9 +19974,9 @@ async def guilddonate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: await send_group(update, "Usage: /guilddonate [amount]", delay=9); return
         if amount <= 0 or p.get("gold", 0) < amount:
             await send_group(update, f"Not enough gold! Have {p.get('gold',0)}g.", delay=9); return
-        p["gold"] -= amount; g["bank"] = safe_int(g.get("bank")) + amount
+        p["gold"] -= amount; g["bank_gold"] = _guild_bank(g) + amount; g["bank"] = 0
         gmsgs = add_guild_exp(g, amount//10); save_player(p); save_guild(g)
-        msg = f"💰 *{user.first_name}* donated {amount}g to *{g['name']}*! Bank: {safe_int(g.get('bank'))}g"
+        msg = f"💰 *{user.first_name}* donated {amount}g to *{g['name']}*! Bank: {_guild_bank(g):,}g"
         if gmsgs: msg += "\n" + "\n".join(gmsgs)
         await send_group(update, msg, delay=15)
         return
@@ -19689,7 +19999,7 @@ async def guilddonate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     glvl = safe_int(g.get("level"), 1)
     nxt = guild_exp_for_level(glvl) if glvl < 10 else "MAX"
     await send_group(update,
-        f"🏰 *{g['name']}* — Guild Bank: {safe_int(g.get('bank'))}g\n"
+        f"🏰 *{g['name']}* — Guild Bank: {_guild_bank(g):,}g\n"
         f"⭐ Level {glvl} | EXP: {safe_int(g.get('exp'))}/{nxt}\n"
         f"Your gold: *{gold}g*\n\nHow much to donate?",
         reply_markup=markup, delay=30)
@@ -19709,13 +20019,13 @@ async def guilddonate_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer(f"Not enough gold! Have {p.get('gold',0)}g.", show_alert=True); return
     g = get_guild(p["guild_id"])
     if not g: await query.answer("Guild not found.", show_alert=True); return
-    p["gold"] -= amount; g["bank"] = safe_int(g.get("bank")) + amount
+    p["gold"] -= amount; g["bank_gold"] = _guild_bank(g) + amount; g["bank"] = 0
     gmsgs = add_guild_exp(g, amount//10); save_guild(g); save_player(p)
     lv_note = (" ".join(gmsgs) + " ") if gmsgs else ""
     await query.answer(f"Donated {amount}g!")
     await _q_edit(query, 
         f"💰 *{query.from_user.first_name}* donated *{amount}g* to *{g['name']}*!\n"
-        f"Guild Bank: *{safe_int(g.get('bank'))}g* {lv_note}",
+        f"Guild Bank: *{_guild_bank(g):,}g* {lv_note}",
         parse_mode="Markdown")
 
 
@@ -37831,6 +38141,7 @@ def main():
     app.add_handler(CallbackQueryHandler(inventory_callback,    pattern="^inv_s_"))
     app.add_handler(CallbackQueryHandler(guide_callback,        pattern="^guide_p_"))
     app.add_handler(CallbackQueryHandler(stats_callback,        pattern="^stats_p_"))
+    app.add_handler(CallbackQueryHandler(guild_hub_callback,       pattern="^gh_"))
     app.add_handler(CallbackQueryHandler(guildjoin_callback,       pattern="^guildjoin_"))
     app.add_handler(CallbackQueryHandler(guildwar_declare_callback, pattern="^gwdeclare_"))
     app.add_handler(CallbackQueryHandler(war_page_callback,        pattern="^war_p_"))
