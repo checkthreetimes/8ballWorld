@@ -3729,11 +3729,13 @@ def get_pet_def_proc_chance(pet):
     bond_bonus = _get_bond_proc_bonus(pet)
     return round(min(0.80, base + level_bonus + bond_bonus), 3)
 
-def apply_pet_defense(pet, attacker, dmg_after_def, extra_notes, owner_max_hp=0):
+def apply_pet_defense(pet, attacker, dmg_after_def, extra_notes, owner_max_hp=0, owner_name=None):
     """
     Check if the defender's pet triggers its defensive ability.
     Mutates dmg_after_def (returns new value) and appends to extra_notes.
     Also returns any status to apply to attacker: ("poison"|"stun"|None, value).
+    When owner_name is given, every line is tagged with whose pet acted so all
+    parties can tell which side's pet is absorbing/reflecting.
     """
     if dmg_after_def <= 0:
         return dmg_after_def, None, None
@@ -3746,7 +3748,16 @@ def apply_pet_defense(pet, attacker, dmg_after_def, extra_notes, owner_max_hp=0)
     pers   = sp.get("personality", "calm")
     emoji  = sp.get("emoji", "🐾")
     pname  = pet.get("nickname") or sp.get("name", "Your Pet")
+    if owner_name:
+        pname = f"{pname} ({owner_name}'s pet)"
     defend_flavor = PERSONALITY_DEFEND.get(pers, "steps in to defend you!")
+    if owner_name:
+        # third-person the flavor so it's unambiguous in a shared card
+        defend_flavor = defend_flavor.replace("you take", f"{owner_name} take") \
+                                     .replace("between you", f"between {owner_name}") \
+                                     .replace("protects you", f"protects {owner_name}") \
+                                     .replace("for you", f"for {owner_name}") \
+                                     .replace("front of you", f"front of {owner_name}")
     ability_info  = PET_DEF_ABILITIES.get(da, {})
     ab_emoji = ability_info.get("emoji", "🐾")
     status_type = None
@@ -3792,7 +3803,8 @@ def apply_pet_defense(pet, attacker, dmg_after_def, extra_notes, owner_max_hp=0)
         # reuse the owner-heal channel the callers already apply
         status_type = "lifesteal_to_owner"
         status_val  = heal_amt
-        extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Mend!* Restored *{heal_amt} HP* to you!")
+        _mend_who = owner_name or "you"
+        extra_notes.append(f"{emoji} *{pname}* {defend_flavor}\n{ab_emoji} *Mend!* Restored *{heal_amt} HP* to {_mend_who}!")
 
     elif da == "thorns":
         reflect = round(dmg_after_def * min(0.45, 0.20 + lvl * 0.004))
@@ -6300,11 +6312,23 @@ def _enc_monster_attack(enc):
                 dmg = max(1, dmg - 30)
         if enc.pop("e_weakened", False):
             dmg = max(1, int(dmg * 0.75))
+        # Armour layer: base DEF + enhance + reinforce + armor_def/block enchants
+        _mit = pve_mitigate(p, dmg) if p else dmg
+        _armor_txt = ""
+        if _mit == 0 and dmg > 0:
+            _armor_txt = " 🛡️ *Blocked!*"
+        dmg = _mit
         # Cap single hit at 40% of player max HP
-        dmg = min(dmg, max(1, int(enc["p_max_hp"] * 0.40)))
+        dmg = min(dmg, max(1, int(enc["p_max_hp"] * 0.40))) if dmg > 0 else 0
         enc["p_hp"] = max(0, enc["p_hp"] - dmg)
+        # Thorned (reflect_flat) enchant bounces damage back to the attacker
+        _refl = pve_reflect_dmg(p, dmg) if p else 0
+        _refl_txt = ""
+        if _refl:
+            enc["e_hp"] = max(0, enc["e_hp"] - _refl)
+            _refl_txt = f" 🌵 *Reflected {_refl}!*"
         eff = _apply_move_effect(enc, move_key) if mv.get("effect") else ""
-        return f"*{enc['e_name']}* used *{mv['name']}* — {dmg} damage!{eff}"
+        return f"*{enc['e_name']}* used *{mv['name']}* — {dmg} damage!{_armor_txt}{_refl_txt}{eff}"
 
 # ── BOSSES ────────────────────────────────────────────────────────────────────
 BOSSES = {
@@ -7893,15 +7917,26 @@ def _dng_execute_enemy_move(e, state, p):
 
     def_val = get_stat(p, "DEF") if p else 0
     actual_dmg = max(1, int(raw_dmg * guard_mult) - def_val // 5)
+    # Armour layer: base DEF + enhance + reinforce + armor_def/block enchants
+    if p:
+        _mit = pve_mitigate(p, actual_dmg)
+        if _mit == 0 and actual_dmg > 0:
+            lines.append("🛡️ *Blocked!* Your armour turned the blow aside.")
+        actual_dmg = _mit if _mit > 0 else 0
 
     # Counter stance: reflect 50% back to enemy
-    if e.get("countering"):
+    if e.get("countering") and actual_dmg > 0:
         reflect = max(1, int(actual_dmg * 0.50))
         e["hp"] = max(0, e["hp"] - reflect)
         e.pop("countering", None)
         lines.append(f"🔄 *Counter!* Reflected *{reflect}* damage back!")
 
     state["p_hp"] = max(0, state["p_hp"] - actual_dmg)
+    # Thorned (reflect_flat) enchant bounces damage back to the attacker
+    _refl = pve_reflect_dmg(p, actual_dmg) if p else 0
+    if _refl:
+        e["hp"] = max(0, e["hp"] - _refl)
+        lines.append(f"🌵 *Thorns!* Reflected *{_refl}* damage back to *{e['name']}*!")
     move_label = move_data[0]
     lines.append(f"💥 *{e['name']}* — {move_label} — *{actual_dmg}* damage!")
 
@@ -8796,6 +8831,19 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
                 proc_txt += f"\n💜 *Lifesteal!* +{_steal} HP!"
             elif _eff == "exposed":
                 proc_txt += f"\n🗡️ *Rend!* Next hits deal +15% dmg!"
+        # Enchant procs (same coverage as encounter/hunt): burn / lifesteal / kill-heal
+        if get_enchant_bonus(p, "burn_proc") and random.random() < 0.10:
+            e["burning"] = True; e["burn_turns"] = max(safe_int(e.get("burn_turns", 0)), 3)
+            proc_txt += "\n🔥 *Ignite!* Your enchanted weapon sets the enemy ablaze!"
+        if get_enchant_bonus(p, "lifesteal_flat") and dmg > 0:
+            _enc_ls = max(1, round(dmg * 0.15))
+            state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + _enc_ls)
+            proc_txt += f"\n💜 *Lifesteal!* +{_enc_ls} HP!"
+        if e["hp"] <= 0:
+            _enc_kh = get_enchant_bonus(p, "kill_heal")
+            if _enc_kh:
+                state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + _enc_kh)
+                proc_txt += f"\n⚰️ *Executioner!* Kill restores +{_enc_kh} HP!"
         action = f"⚔️ You strike *{e['name']}* for *{dmg}*!{crit_txt}{proc_txt}"
         if state.get("floor_buff") == "double_strike" and random.random() < 0.25:
             dmg2 = calc_attack_damage(p, w)
@@ -9202,32 +9250,25 @@ def get_weapon_atk(p):
     name = p.get("equipped_weapon")
     ok, _ = can_equip_weapon(p, name)
     if not ok: return 0
+    # NOTE: atk/flat_dmg enchants are applied in calc_attack_damage via the
+    # slot-aware get_enchant_bonus (weapon + accessory slots). They are NOT
+    # summed here to avoid double-counting legacy item-name-keyed enchant data.
     base = w["atk"] + get_enhance_bonus(p, name) + reinforce_atk_bonus(p, name)
-    for enchant in get_enchant(p, name):
-        if enchant.get("type") == "flat_dmg":
-            base += enchant["val"]
-        if enchant.get("type") == "atk":
-            base += enchant["val"]
     return base
 
 def get_armor_def(p):
     a = get_equipped_armor(p); s = get_equipped_shield(p)
     a_name = p.get("equipped_armor"); s_name = p.get("equipped_shield")
     a_ok, _ = can_equip_armor(p, a_name) if a_name else (True, "")
-    s_ok = True
-    if s_name:
-        s_data = SHIELDS.get(s_name, {})
-        cls_line = get_class_line(p); path = p.get("class_path")
-        if s_data.get("type") == "claw":
-            s_ok = cls_line == "thief" and path == "B"
-        else:
-            s_ok = cls_line == "warrior" and path == "A"
+    # Shields (defensive) are open to every class; only claws are class-gated.
+    # Honour _can_equip_shield so a legitimately-equipped shield's DEF actually counts.
+    s_ok = _can_equip_shield(p, s_name)[0] if s_name else True
     a_val = (a.get("def", 0) + get_enhance_bonus(p, a_name) + reinforce_atk_bonus(p, a_name)) if (a and a_ok) else 0
     s_val = (s.get("def", 0) + get_enhance_bonus(p, s_name) + reinforce_atk_bonus(p, s_name)) if (s and s_ok) else 0
-    for enc in (get_enchant(p, a_name) if a_name else []):
-        if enc.get("type") == "armor_def": a_val += enc["val"]
-    for enc in (get_enchant(p, s_name) if s_name else []):
-        if enc.get("type") == "armor_def": s_val += enc["val"]
+    if a and a_ok:
+        a_val += _armor_def_enchant(p, "equipped_armor", a_name)
+    if s and s_ok:
+        s_val += _armor_def_enchant(p, "equipped_shield", s_name)
     bonus = 0
     for slot_key, pool in [("equipped_hat", HATS), ("equipped_gloves", GLOVES),
                             ("equipped_boots", BOOTS), ("equipped_mask", MASKS)]:
@@ -9236,10 +9277,16 @@ def get_armor_def(p):
         item = pool.get(name)
         if not item: continue
         val = item["def"] + get_enhance_bonus(p, name) + reinforce_atk_bonus(p, name)
-        for enc in get_enchant(p, name):
-            if enc.get("type") == "armor_def": val += enc["val"]
+        val += _armor_def_enchant(p, slot_key, name)
         bonus += val
     return a_val + s_val + bonus
+
+def _armor_def_enchant(p, slot_key, item_name):
+    """Sum of armor_def enchant values on a slot. Reads slot-keyed enchants
+    first (current storage) and falls back to item-name keys (legacy data) so
+    the 🛡️ Reinforced enchant actually adds DEF — it is consumed nowhere else."""
+    encs = get_enchant(p, slot_key) or (get_enchant(p, item_name) if item_name else [])
+    return sum(e.get("val", 0) for e in encs if e.get("type") == "armor_def")
 
 def _get_secondary_armor_def(p):
     """DEF from hat/gloves/boots/mask only — used to apply a separate DR cap."""
@@ -9251,8 +9298,7 @@ def _get_secondary_armor_def(p):
         item = pool.get(name)
         if not item: continue
         val = item["def"] + get_enhance_bonus(p, name) + reinforce_atk_bonus(p, name)
-        for enc in get_enchant(p, name):
-            if enc.get("type") == "armor_def": val += enc["val"]
+        val += _armor_def_enchant(p, slot_key, name)
         bonus += val
     return bonus
 
@@ -9983,6 +10029,40 @@ def calc_defense(defender, dmg):
 
     return final
 
+def pve_armor_reduction(p):
+    """Bounded armour-based % damage reduction for the PvE modes (encounter,
+    hunt, dungeon). Mirrors calc_defense's armour cap (20% chest/shield + 10%
+    accessories = 30% max) so armour base DEF, enhancement, reinforcement and
+    armor_def enchants have a real effect outside PvP — without stacking the
+    full class-passive/dodge defensive chain that PvP and raids run through
+    calc_defense."""
+    armor_def = get_armor_def(p)
+    secondary = _get_secondary_armor_def(p)
+    primary   = max(0, armor_def - secondary)
+    return min(0.20, primary / 300) + min(0.10, secondary / 300)
+
+def pve_mitigate(p, dmg):
+    """Apply the PvE armour layer to one incoming hit. Honours the block_chance
+    enchant/accessory (full negate) and the bounded armour reduction. Returns
+    the mitigated damage (0 = blocked). reflect_flat is handled by the caller
+    since the enemy state differs per mode."""
+    if dmg <= 0:
+        return dmg
+    block = get_enchant_bonus(p, "block_chance") + get_accessory_bonus(p, "block_chance")
+    if block and random.random() < block:
+        return 0
+    red = pve_armor_reduction(p)
+    if red <= 0:
+        return dmg
+    return max(1, round(dmg * (1 - red)))
+
+def pve_reflect_dmg(p, dmg):
+    """Flat damage the reflect_flat enchant (🌵 Thorned) bounces back to a PvE
+    attacker on a landed hit, or 0 if the player has no reflect enchant."""
+    if dmg <= 0:
+        return 0
+    return get_enchant_bonus(p, "reflect_flat")
+
 def apply_pvp_death(p, killer_name="the enemy", cause="PvP", killer_id=None):
     """Apply full PvP-style death: 6min defeat, 10% EXP loss, losses++"""
     exp_loss = round(p.get("exp", 0) * 0.10)
@@ -10483,6 +10563,11 @@ def raid_enemy_counter(p, raid_state, lines):
         return False
 
     p["hp"] = max(0, p["hp"] - edm)
+    # Thorned (reflect_flat) enchant bounces flat damage back to the raid boss
+    _refl = pve_reflect_dmg(p, edm)
+    if _refl:
+        raid_state["enemy_hp"] = max(0, raid_state.get("enemy_hp", 0) - _refl)
+        lines.append(f"🌵 *Thorns!* Reflected *{_refl}* back to *{enemy['name']}*!")
     if p["hp"] == 0:
         exp_loss = apply_pvp_death(p, killer_name=enemy["name"], cause="Solo Raid")
         lines.append(
@@ -10644,6 +10729,11 @@ async def _enemy_phase(bot, chat_id, raid_state):
 
         edm = calc_defense(p, raw)
         raid_state["player_hp"][uid] = max(0, raid_state["player_hp"].get(uid, 1) - edm)
+        # Thorned (reflect_flat) enchant bounces flat damage back to the raid boss
+        _refl = pve_reflect_dmg(p, edm)
+        if _refl:
+            raid_state["enemy_hp"] = max(0, raid_state.get("enemy_hp", 0) - _refl)
+            lines.append(f"🌵 *{p['username']}'s* thorns reflect *{_refl}* back!")
         php  = raid_state["player_hp"][uid]
         pmhp = raid_state["player_max_hp"].get(uid, php)
 
@@ -13839,7 +13929,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, kit_skill=None):
                     else 0.18 if ("armored_scales" in _serp_pks_d or "serpents_resolve" in _serp_pks_d)
                     else 0.15)
         _sabsorbed = round(dmg * _sabsorb)
-        extra_notes.append(f"🐍 *Serpent Companion* coils to absorb *{_sabsorbed} dmg*!")
+        extra_notes.append(f"🐍 *{d.get('username','the defender')}'s Serpent Companion* coils to absorb *{_sabsorbed} dmg*!")
 
     if _ts_active(d, "holy_field_until"):
         wis_dmg = round(safe_stats(d).get("WIS", 5) * 2)
@@ -13854,7 +13944,9 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, kit_skill=None):
 
     def_pet_rec = get_active_pet_record(du_id)
     if def_pet_rec:
-        dmg_after_def, pet_status_type, pet_status_val = apply_pet_defense(def_pet_rec, a, dmg_after_def, extra_notes, calc_max_hp(d))
+        dmg_after_def, pet_status_type, pet_status_val = apply_pet_defense(
+            def_pet_rec, a, dmg_after_def, extra_notes, calc_max_hp(d),
+            owner_name=d.get("username", "the defender"))
         if pet_status_type == "stun" and safe_int(a.get("stun_turns", 0)) < 3: add_charges(a, "stun_turns", 1)
         elif pet_status_type == "poison" and pet_status_val:
             a["poison_damage"] = pet_status_val; add_charges(a, "poison_stacks", 2)
@@ -14168,13 +14260,17 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, kit_skill=None):
         pet_atk = round(pet_atk * elem_mult * get_weather().get("dmg_mod", 1.0))
         d["hp"]  = max(0, d["hp"] - pet_atk)
         battle_msg  = PERSONALITY_BATTLE.get(pers, "attacks")
+        # Attribute the pet to its owner and name its target so a shared card
+        # never leaves it unclear whose pet just hit whom.
+        _own_tag   = f" ({a.get('username','attacker')}'s pet)"
+        _target    = d.get("username", "the foe")
         elem_tag    = " 🌟*(type adv!)*" if elem_mult > 1.0 else (" *(resisted)*" if elem_mult < 1.0 else "")
         if _p_hunger >= 70 and _p_mood >= 70:
-            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*{skill_tag}{elem_tag}! ✨"
+            action += f"\n{emoji_p} *{pname}*{_own_tag} {battle_msg} *{_target}* for *{pet_atk} dmg*{skill_tag}{elem_tag}! ✨"
         elif _p_hunger < 40 or _p_mood < 40:
-            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*{skill_tag}{elem_tag} 😞"
+            action += f"\n{emoji_p} *{pname}*{_own_tag} {battle_msg} *{_target}* for *{pet_atk} dmg*{skill_tag}{elem_tag} 😞"
         else:
-            action += f"\n{emoji_p} *{pname}* {battle_msg} for *{pet_atk} dmg*{skill_tag}{elem_tag}!"
+            action += f"\n{emoji_p} *{pname}*{_own_tag} {battle_msg} *{_target}* for *{pet_atk} dmg*{skill_tag}{elem_tag}!"
 
     # Class companion auto-proc (all classes get a unique built-in companion)
     _d_dng_fx_cc = _dng_pvp_effects(d)
@@ -21857,7 +21953,8 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
         # Pet defensive ability for skill damage
         sk_def_pet = get_active_pet_record(tp.get("user_id")) if tp.get("user_id") else None
         if sk_def_pet:
-            dmg, sk_pet_st, sk_pet_val = apply_pet_defense(sk_def_pet, p, dmg, out, calc_max_hp(tp))
+            dmg, sk_pet_st, sk_pet_val = apply_pet_defense(sk_def_pet, p, dmg, out, calc_max_hp(tp),
+                                                           owner_name=tp.get("username", "the defender"))
             if sk_pet_st == "stun" and safe_int(p.get("stun_turns", 0)) < 3:
                 add_charges(p, "stun_turns", 1)
             elif sk_pet_st == "poison" and sk_pet_val:
