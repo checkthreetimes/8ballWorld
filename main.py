@@ -40142,8 +40142,10 @@ TD_START_GOLD   = 10
 TD_REROLL_COST  = 2
 TD_SHOP_SIZE    = 5
 TD_SQUAD_CAP    = 9   # one hero per formation slot (3×3)
-TD_STAR_MULT    = {1: 1.0, 2: 1.9, 3: 3.4}   # ⭐ scales atk & hp
-TD_MAX_STAR     = 3
+# Merge rank ladder: base troop (no medal) → 🥉 → 🥈 → 🥇 → 🎖️ (final).
+TD_STAR_MULT    = {1: 1.0, 2: 1.9, 3: 3.4, 4: 6.0, 5: 10.5}   # rank scales atk & hp
+TD_RANK_MEDAL   = {1: "", 2: "🥉", 3: "🥈", 4: "🥇", 5: "🎖️"}
+TD_MAX_STAR     = 5
 TD_BOSS_EVERY   = 5
 
 # id, name, emoji, role, cost, atk, hp, ult{name,emoji,cost(charges),type,val,desc}
@@ -40222,12 +40224,9 @@ def _td_hrow(h):
     return _td_slot_row(h.get("slot", 0))
 
 def _td_star_tag(star, always=False):
-    """Compact merge-rank badge (⭐2 / ⭐3) instead of stacked stars.
-    ⭐1 is hidden in tight spots unless always=True."""
-    star = safe_int(star, 1)
-    if star <= 1 and not always:
-        return ""
-    return f"⭐{star}"
+    """Merge-rank medal: base troop has none, then 🥉 → 🥈 → 🥇 → 🎖️.
+    (`always` kept for call compatibility — a base troop still shows no medal.)"""
+    return TD_RANK_MEDAL.get(safe_int(star, 1), "🎖️")
 
 # ── Expedition chapters (finite story runs + an endless siege) ─────────────────
 # archs: (name, emoji, hp_mult, atk_mult).  waves=None ⇒ endless.
@@ -41120,7 +41119,7 @@ def _build_td_info(uid, where="menu"):
         "ℹ️ *How to Play — Kingdom Expedition*", "",
         "🎯 *Goal:* survive each wave. If 🏰 *Castle HP* hits 0 the run ends. Clear a chapter's final boss to win it.",
         "",
-        "⚜️ *Recruit* heroes with 💰 *Silver*. Buy the *same* hero again to *merge* it — a ⭐2 or ⭐3 hero is far stronger.",
+        "⚜️ *Recruit* heroes with 💰 *Silver*. Buy the *same* hero again to *merge* — each merge promotes its rank 🥉→🥈→🥇→🎖️, a big power jump.",
         "🧭 *Formation:* Front rows soak enemy hits, Back rows stay safe — put tanks up front, mages/archers in back.",
         "⚡ *Ultimates:* heroes charge a little each wave; tap a ready ⚡ ult to unleash it.",
         "🎒 *Armory:* gear drops from waves (always from bosses) — equip it to heroes for +⚔️/+❤️.",
@@ -41365,7 +41364,11 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _td_add_hero(st, hid)
         merged = len(st["heroes"]) <= len(before)
         st["shop"][idx] = None
-        await query.answer("⭐ Merged!" if merged else f"{_TD_BY_ID[hid]['name']} hired!")
+        if merged:
+            rank = max((h["star"] for h in st["heroes"] if h["id"] == hid), default=2)
+            await query.answer(f"{_td_star_tag(rank) or '⬆️'} Ranked up!")
+        else:
+            await query.answer(f"{_TD_BY_ID[hid]['name']} hired!")
         await render(); return
 
     if action == "ult":
