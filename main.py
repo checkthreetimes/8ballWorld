@@ -584,11 +584,12 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
         _notes.append("🛡️ _You're recovering — you can't start an attack until your invincibility ends._")
     _grace = _pvp_grace_active(pair) if pair is not None else None
     if _grace:
+        _gs = max(1, int(_grace.get("until", 0) - time.time()) + 1)
         if _grace.get("protected") == _vu:
-            _notes.append("⏳ _Opening grace active — you're shielded for a moment. Jump in when you're ready._")
+            _notes.append(f"⏳ _Opening grace — you're shielded for ~{_gs}s. Strike back any time to end it early._")
         else:
-            _notes.append(f"⏳ _Opening grace — {str(opp_p.get('username','?'))[:16]} gets a moment to respond "
-                          "before your attacks land._")
+            _notes.append(f"⏳ _Opening grace (~{_gs}s): your first strike is held so "
+                          f"{str(opp_p.get('username','?'))[:16]} can respond — no instant spam-kills at the start._")
     if _notes:
         lines.append("")
         lines.extend(_notes)
@@ -15495,8 +15496,9 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Can't attack your own guild member!", show_alert=True); return
         _g_rem = _pvp_grace_remaining(pair, uid)
         if _g_rem > 0:
-            await query.answer(f"⏳ Opening grace — give {d['username']} a moment to jump in! "
-                               f"({int(_g_rem) + 1}s)", show_alert=True); return
+            await query.answer(f"⏳ Hold — your first strike lands in {int(_g_rem) + 1}s. "
+                               f"Opening grace lets {d['username']} respond first (no more instant spam-kills).",
+                               show_alert=True); return
         try: await query.answer("⚔️ Attacking...")
         except Exception: pass
 
@@ -15581,8 +15583,9 @@ async def kit_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sk.get("kind") == "strike":
             _g_rem = _pvp_grace_remaining(pair, uid)
             if _g_rem > 0:
-                await query.answer(f"⏳ Opening grace — give {d['username']} a moment to jump in! "
-                                   f"({int(_g_rem) + 1}s)", show_alert=True); return
+                await query.answer(f"⏳ Hold — your first strike lands in {int(_g_rem) + 1}s. "
+                                   f"Opening grace lets {d['username']} respond first (no more instant spam-kills).",
+                                   show_alert=True); return
         if is_silenced(a):
             await query.answer(f"🤐 Silenced — can't use {sk['name']}!", show_alert=True); return
         if _kit_on_cd(uid, slot):
@@ -30809,7 +30812,7 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _ACTIVITIES_HUB_PAGES = [
     # Page 1 — Daily Activities
     [
-        [("⚡ Do It All",     "acthub_hustle"),     ("📅 Daily",          "acthub_daily")],
+        [("⚡ Grind",     "acthub_hustle"),     ("📅 Daily",          "acthub_daily")],
         [("🎁 Claim",         "acthub_claim"),      ("🏋️ Train",         "acthub_train")],
         [("📜 Quest",         "acthub_quest"),      ("🌍 Explore",        "acthub_explore")],
     ],
@@ -30827,7 +30830,7 @@ _ACTIVITIES_HUB_PAGES = [
 ]
 
 _ACTIVITIES_HUB_TIPS = {
-    "hustle":      ("⚡ *Do It All*",         "Use */hustle* to run all ready activities at once — daily, train, quest, pool, claim, and explore."),
+    "hustle":      ("⚡ *Grind*",         "Use */hustle* to run all ready activities at once — daily, train, quest, pool, claim, and explore."),
     "daily":       ("📅 *Daily*",              "Use */daily* for your 24-hour gold + EXP reward. Consecutive-day streak bonuses apply."),
     "claim":       ("🎁 *Claim*",              "Use */claim* for your daily streak reward — Iron Shards on Day 3+, Enchanting Scrolls on Day 14+."),
     "train":       ("🏋️ *Train*",             "Use */train* to gain EXP. 30-minute cooldown. Class bonus applies."),
@@ -31242,7 +31245,7 @@ def _build_master_hub(p, uid):
         [InlineKeyboardButton("⚔️  COMBAT — Fights · Dungeon · Modes",
                               callback_data=f"empire_combat_{uid}")],
         # Frequent actions, one tap away
-        [InlineKeyboardButton("⚡ Do It All", callback_data=f"acthub_hustle_{uid}"),
+        [InlineKeyboardButton("⚡ Grind", callback_data=f"acthub_hustle_{uid}"),
          InlineKeyboardButton("🌍 Explore",   callback_data=f"acthub_explore_{uid}")],
         # System hubs — everything else the game has, grouped
         [InlineKeyboardButton("🌍 Activities",   callback_data=f"empire_activities_{uid}"),
@@ -31454,7 +31457,7 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💬 *Social* — marriage, emotes, guilds & alliances, influence, ranks\n"
             "🏰 *Empire* — build passive-income buildings for resources & stat bonuses\n"
             "🛒 *Shop* · 🎲 *Casino* — spend your gold\n\n"
-            "*Quick tip:* ⚡ Do It All runs every ready activity at once.\n"
+            "*Quick tip:* ⚡ Grind runs every ready activity at once.\n"
             "_Type */guide* for the full manual, or */firststeps* for the new-player quest._"
         )
         rows = [[InlineKeyboardButton("🏠 Menu", callback_data=f"empire_home_{uid}"),
