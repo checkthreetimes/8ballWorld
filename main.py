@@ -40182,6 +40182,27 @@ TD_HEROES = [
 _TD_BY_ID = {h["id"]: h for h in TD_HEROES}
 _TD_FRONT_ROLES = {"tank", "warrior"}
 
+# ── Hero locking ──────────────────────────────────────────────────────────────
+# A few heroes come free (a workable starter squad — a tank, a warrior, an
+# archer, a healer). The stronger roster is LOCKED until unlocked with Crowns in
+# the Barracks; locked heroes never appear in the summon pool.
+TD_FREE_HEROES = {"knight", "berserker", "archer", "druid"}
+
+def _td_unlock_cost(hid):
+    """Crowns to permanently unlock a locked hero (scaled by its gold cost)."""
+    return {2: 30, 3: 55, 4: 80}.get(_TD_BY_ID[hid]["cost"], 55)
+
+def _td_is_unlocked(p, hid):
+    if hid in TD_FREE_HEROES:
+        return True
+    return hid in safe_cds(p).get("td_heroes", {})
+
+def _td_unlocked_ids(p):
+    owned = set(safe_cds(p).get("td_heroes", {}).keys())
+    return [h["id"] for h in TD_HEROES if h["id"] in TD_FREE_HEROES or h["id"] in owned]
+
+TD_ANIM_DELAY = 1.2   # seconds between battle-playback frames
+
 TD_GRACE = [
     {"id":"warcry","name":"War Cry","emoji":"⚔️","desc":"+15% squad damage."},
     {"id":"fortify","name":"Fortify","emoji":"🏰","desc":"King max HP +25% (heals to it)."},
@@ -40255,8 +40276,12 @@ def _td_add_hero(state, hid):
                 break
 
 def _td_gen_shop(state):
-    weights = [max(1, 5 - h["cost"]) for h in TD_HEROES]
-    return [random.choices(TD_HEROES, weights=weights, k=1)[0]["id"] for _ in range(TD_SHOP_SIZE)]
+    unlocked = set(state.get("unlocked") or [])
+    pool = [h for h in TD_HEROES if h["id"] in unlocked] if unlocked else []
+    if not pool:  # fall back to the free starters so the shop is never empty
+        pool = [h for h in TD_HEROES if h["id"] in TD_FREE_HEROES]
+    weights = [max(1, 5 - h["cost"]) for h in pool]
+    return [random.choices(pool, weights=weights, k=1)[0]["id"] for _ in range(TD_SHOP_SIZE)]
 
 def _td_gen_wave(state):
     wave = state["wave"]
@@ -40294,7 +40319,9 @@ def _td_new_run(p, uid):
              "fx": {}, "log": [], "cur_enemies": None, "secondwind_used": False,
              "chat_id": None, "msg_id": None, "win_streak": 0,
              # snapshot permanent Barracks levels so runs don't re-read the DB
-             "hero_lvls": dict(safe_cds(p).get("td_heroes", {}))}
+             "hero_lvls": dict(safe_cds(p).get("td_heroes", {})),
+             # snapshot unlocked heroes so only owned heroes appear in the shop
+             "unlocked": _td_unlocked_ids(p)}
     state["shop"] = _td_gen_shop(state)
     _active_throne[uid] = state
     return state
@@ -40332,12 +40359,53 @@ def _td_cast_ult(state, idx):
         fx["buff"] = fx.get("buff", 0) + ult["val"] * amp
     return f"{ult['emoji']} *{ult['name']}!* readied for this wave."
 
+def _td_anim_heroes_line(state):
+    if not state["heroes"]:
+        return "_no defenders_"
+    return "  ".join(f"{'⭐' * h['star']}{_TD_BY_ID[h['id']]['emoji']}" for h in state["heroes"])
+
+def _td_anim_enemy_block(enemies):
+    """Return (boss_line_or_None, grouped-alive-counts-line) for a battle frame."""
+    boss_txt = None
+    counts = {}
+    for e in enemies:
+        if e.get("boss"):
+            if e["hp"] > 0:
+                _, pct = _siege_bar(max(0, e["hp"]), e["max_hp"])
+                boss_txt = f"{e['emoji']} *{e['name']}* {pct}%"
+            else:
+                boss_txt = f"{e['emoji']} {e['name']} 💀"
+            continue
+        k = (e["emoji"], e["name"])
+        counts.setdefault(k, 0)
+        if e["hp"] > 0:
+            counts[k] += 1
+    segs = [f"{em}×{n}" for (em, nm), n in counts.items() if n]
+    return boss_txt, ("  ".join(segs) if segs else "—")
+
+def _td_anim_frame(state, header, enemies, note=""):
+    """One read-only playback card (no buttons) for KGC-style battle animation."""
+    _, kpct = _siege_bar(state["king_hp"], state["king_max"])
+    lines = [f"👑 *THRONE DEFENSE* — Wave *{state['wave']}*", header,
+             f"👑 King *{kpct}%*", "🛡️ " + _td_anim_heroes_line(state)]
+    boss_txt, eline = _td_anim_enemy_block(enemies)
+    if boss_txt:
+        lines.append(boss_txt)
+    alive = sum(1 for e in enemies if e["hp"] > 0)
+    lines.append(f"👹 Horde ({alive} left): {eline}")
+    if note:
+        lines += ["", note]
+    return "\n".join(lines)
+
 def _td_resolve(p, state):
-    """Fight the current wave. Returns (log, outcome) outcome 'win'|'loss'."""
+    """Fight the current wave. Returns (log, outcome) outcome 'win'|'loss'.
+    Also records KGC-style playback frames into state['_anim']."""
     wave = state["wave"]
     enemies = _td_ensure_wave(state)
     fx = state.get("fx", {})
     log = []
+    frames = [_td_anim_frame(state, "⚔️ *The horde charges the gate!*", enemies,
+                             "_Your heroes brace…_")]
 
     # Squad damage
     dmg_mult = 1.0
@@ -40366,10 +40434,15 @@ def _td_resolve(p, state):
             e["hp"] -= eff; pool = 0; break
     survivors = [e for e in enemies if e["hp"] > 0]
     log.append(f"⚔️ Your heroes strike — *{kills}* slain, *{len(survivors)}* break through.")
+    strike_note = f"⚔️ *{kills}* destroyed · *{len(survivors)}* breach the gate!"
+    if any(fx.get(k) for k in ("nuke", "aoe", "stun", "shield", "weaken", "buff")):
+        strike_note = "💥 _Ultimates unleashed!_\n" + strike_note
+    frames.append(_td_anim_frame(state, "🗡️ *Your heroes strike!*", enemies, strike_note))
 
     # Enemy assault on the King (front heroes soak first)
     if fx.get("stun"):
         log.append("🧊 The wave is frozen — no King damage this turn!")
+        assault_note = "🧊 The horde is frozen — the gate holds!"
     else:
         soak = sum(_td_hero_stats(state, h)[1] for h in state["heroes"] if h.get("row") == "front")
         raw = sum(e["atk"] * (2 if e.get("boss") else 1) for e in survivors)
@@ -40381,15 +40454,23 @@ def _td_resolve(p, state):
         if leaked > 0:
             state["king_hp"] -= leaked
             log.append(f"👑 The King takes *{fmt_num(leaked)}* damage.")
+            assault_note = f"👑 The King takes *{fmt_num(leaked)}* damage!"
         elif raw > 0:
             log.append("🛡️ Your front line holds — the King is untouched!")
+            assault_note = "🛡️ The front line holds — King untouched!"
+        else:
+            assault_note = "🛡️ The gate holds."
 
     state["fx"] = {}
     if state["king_hp"] <= 0 and _td_has(state, "secondwind") and not state["secondwind_used"]:
         state["secondwind_used"] = True; state["king_hp"] = 1
         log.append("🩹 *Second Wind!* The King clings to life at 1 HP!")
+        assault_note += "\n🩹 *Second Wind!* The King clings on at 1 HP!"
     if state["king_hp"] <= 0:
         state["king_hp"] = 0
+    frames.append(_td_anim_frame(state, "🛡️ *The horde crashes the gate!*", enemies, assault_note))
+    state["_anim"] = frames
+    if state["king_hp"] <= 0:
         log.append("💥 *THE THRONE HAS FALLEN.*")
         return log, "loss"
 
@@ -40446,10 +40527,30 @@ def _td_hero_level(p, hid):
 def _td_upgrade_cost(lvl):
     return 5 + lvl * 4   # Crowns to go from lvl -> lvl+1
 
+def _td_barracks_unlock(p, hid):
+    """Spend Crowns to permanently unlock a locked hero. Returns a flash string."""
+    if hid not in _TD_BY_ID:
+        return ""
+    if _td_is_unlocked(p, hid):
+        return f"{_TD_BY_ID[hid]['name']} is already unlocked."
+    cds = safe_cds(p)
+    cost = _td_unlock_cost(hid)
+    have = safe_int(cds.get("td_crowns", 0))
+    if have < cost:
+        return f"🔒 Need {cost}👑 to unlock (you have {have})."
+    cds["td_crowns"] = have - cost
+    heroes = dict(cds.get("td_heroes", {}))
+    heroes[hid] = 0   # unlocked at level 0
+    cds["td_heroes"] = heroes
+    p["passive_cooldowns"] = json.dumps(cds); save_player(p)
+    return f"🔓 *{_TD_BY_ID[hid]['name']}* unlocked! Summon them in any run."
+
 def _td_barracks_upgrade(p, hid):
     """Spend Crowns to level a hero once. Returns a flash string."""
     if hid not in _TD_BY_ID:
         return ""
+    if not _td_is_unlocked(p, hid):
+        return f"🔒 Unlock {_TD_BY_ID[hid]['name']} first ({_td_unlock_cost(hid)}👑)."
     cds = safe_cds(p)
     lvl = safe_int(cds.get("td_heroes", {}).get(hid, 0))
     if lvl >= TD_HERO_MAX_LVL:
@@ -40465,22 +40566,38 @@ def _td_barracks_upgrade(p, hid):
     return f"⬆️ *{_TD_BY_ID[hid]['name']}* → Lv {lvl + 1}!"
 
 def _build_td_barracks(p, uid, flash=""):
-    lines = ["🏰 *BARRACKS* — permanently level your Heroes",
-             "_Higher level = +6% base ATK & HP in every run._"]
+    lines = ["🏰 *BARRACKS* — unlock & level your Heroes",
+             "_A few heroes are free; unlock the rest with 👑. Each level = +6% ATK & HP._"]
     if flash:
         lines.append(flash)
-    lines.append(f"\n👑 Crowns: *{_td_crowns(p)}*\n")
-    rows = []
+    lines.append(f"\n👑 Crowns: *{_td_crowns(p)}*")
+    unlock_rows, level_rows = [], []
+    locked_lines, unlocked_lines = [], []
     for h in TD_HEROES:
-        lvl = _td_hero_level(p, h["id"])
+        hid = h["id"]
+        if not _td_is_unlocked(p, hid):
+            cost = _td_unlock_cost(hid)
+            locked_lines.append(f"🔒 {h['emoji']} *{h['name']}* {h['role']} — {cost}👑")
+            unlock_rows.append([InlineKeyboardButton(
+                f"🔓 {h['emoji']} {h['name']} ({cost}👑)", callback_data=f"td_unlock_{uid}_{hid}")])
+            continue
+        lvl = _td_hero_level(p, hid)
+        free_tag = " (free)" if hid in TD_FREE_HEROES and lvl == 0 else ""
         if lvl >= TD_HERO_MAX_LVL:
-            lines.append(f"{h['emoji']} *{h['name']}*  Lv *{lvl}* ✅ MAX")
+            unlocked_lines.append(f"{h['emoji']} *{h['name']}*  Lv *{lvl}* ✅ MAX")
             continue
         cost = _td_upgrade_cost(lvl)
         bonus = round(lvl * TD_HERO_LVL_PCT * 100)
-        lines.append(f"{h['emoji']} *{h['name']}*  Lv *{lvl}* (+{bonus}%)  →  {cost}👑")
-        rows.append([InlineKeyboardButton(f"{h['emoji']} {h['name']} Lv{lvl}→{lvl+1} ({cost}👑)",
-                                          callback_data=f"td_lvl_{uid}_{h['id']}")])
+        unlocked_lines.append(f"{h['emoji']} *{h['name']}*  Lv *{lvl}* (+{bonus}%){free_tag}  →  {cost}👑")
+        level_rows.append([InlineKeyboardButton(f"{h['emoji']} {h['name']} Lv{lvl}→{lvl+1} ({cost}👑)",
+                                                callback_data=f"td_lvl_{uid}_{hid}")])
+    if unlocked_lines:
+        lines.append("\n*Your Heroes:*")
+        lines += unlocked_lines
+    if locked_lines:
+        lines.append("\n🔒 *Locked* — unlock to summon:")
+        lines += locked_lines
+    rows = level_rows + unlock_rows
     rows.append([InlineKeyboardButton("👑 Play", callback_data=f"td_again_{uid}"),
                  InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
@@ -40645,7 +40762,9 @@ async def thronedefense_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["👑 *THRONE DEFENSE*",
              "_Summon Heroes, **merge** duplicates to raise their ⭐, and unleash"
              " their **ultimates** as waves march on your King. Draft a Grace after"
-             " each wave. When the King falls, the run ends._"]
+             " each wave. When the King falls, the run ends._",
+             "_A few heroes come free — **unlock** the stronger roster with 👑 Crowns"
+             " in the 🏰 Barracks._"]
     if best:
         lines.append(f"\n🏅 Your best: *Wave {best}*   ·   👑 Crowns: *{_td_crowns(p)}*")
     rows = [[InlineKeyboardButton("👑 Defend the Throne", callback_data=f"td_again_{user.id}")],
@@ -40697,6 +40816,12 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         flash = _td_barracks_upgrade(get_player(uid), hid)
         text, markup = _build_td_barracks(get_player(uid), uid, flash=flash)
         await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+    if action == "unlock":
+        hid = toks[3] if len(toks) > 3 else ""
+        flash = _td_barracks_unlock(get_player(uid), hid)
+        text, markup = _build_td_barracks(get_player(uid), uid, flash=flash)
+        await query.answer(flash.replace("*", "") if flash else None)
         await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
 
     st = _active_throne.get(uid)
@@ -40762,13 +40887,25 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "fight":
         if not st["heroes"]:
             await query.answer("Summon at least one hero first!", show_alert=True); return
+        if st.get("_animating"):
+            await query.answer("⚔️ The battle is already raging!"); return
+        st["_animating"] = True
+        st["chat_id"] = query.message.chat_id; st["msg_id"] = query.message.message_id
+        await query.answer("⚔️ To battle!")
         log, outcome = _td_resolve(p, st)
         st["log"] = log
+        # KGC-style playback: edit the card through each phase, buttons hidden.
+        for i, frame in enumerate(st.pop("_anim", [])):
+            try:
+                await _q_edit(query, frame, parse_mode="Markdown", reply_markup=None)
+            except Exception:
+                pass
+            await asyncio.sleep(TD_ANIM_DELAY)
+        st.pop("_animating", None)
         if outcome == "loss":
             st["phase"] = "over"
             summary, milestone = _td_grant_rewards(p, st)
             text, markup = _build_td_end(p, st, summary, milestone)
-            await query.answer("The throne falls!")
             await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
             _active_throne.pop(uid, None)
             return
@@ -40777,7 +40914,6 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             random.shuffle(pool); st["draft"] = pool[:3]; st["phase"] = "draft"
         else:
             st["phase"] = "plan"
-        await query.answer("Wave held!")
         await render(); return
 
     if action == "grace":
