@@ -578,6 +578,21 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     lines.append("")
     lines += _side(opp_p, False)
 
+    # Status notes — explain why the Attack button might not fire right now.
+    _notes = []
+    if is_invincible(viewer_p):
+        _notes.append("🛡️ _You're recovering — you can't start an attack until your invincibility ends._")
+    _grace = _pvp_grace_active(pair) if pair is not None else None
+    if _grace:
+        if _grace.get("protected") == _vu:
+            _notes.append("⏳ _Opening grace active — you're shielded for a moment. Jump in when you're ready._")
+        else:
+            _notes.append(f"⏳ _Opening grace — {str(opp_p.get('username','?'))[:16]} gets a moment to respond "
+                          "before your attacks land._")
+    if _notes:
+        lines.append("")
+        lines.extend(_notes)
+
     # Live damage tally (who's dealt more)
     if pair is not None:
         _dst = _pvp_stats.get(pair)
@@ -919,6 +934,14 @@ def _pvp_grace_remaining(pair, attacker_uid):
         _pvp_grace.pop(pair, None)
         return 0
     return rem
+
+def _pvp_grace_active(pair):
+    """Read-only peek at an active opening grace (no side effects, safe to call
+    while rendering a card). Returns the grace dict or None."""
+    g = _pvp_grace.get(pair)
+    if not g or g.get("until", 0) - time.time() <= 0:
+        return None
+    return g
 
 def _cancel_card_timer(pair):
     old = _pvp_card_tasks.pop(pair, None)
@@ -35719,6 +35742,15 @@ async def _resolve_fight_bets(bot, pair, winner_id, result_text=""):
                     save_player(bp)
             lines.append("💰 *All bets refunded.*")
     else:
+        if not st["bets"]:
+            # Nobody wagered — the "💀 defeated" announcement + recap already
+            # report the result, so drop the betting card instead of posting a
+            # redundant second "WINS!" banner.
+            try:
+                await bot.delete_message(chat_id=st["chat_id"], message_id=st["msg_id"])
+            except Exception:
+                pass
+            return
         lines = [f"🏁 *{names.get(winner_id, '?')} WINS!*"]
         w_names, l_names = [], []
         for uid, (side, amt, nm) in st["bets"].items():
