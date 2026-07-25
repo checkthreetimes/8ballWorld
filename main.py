@@ -40270,6 +40270,61 @@ def _td_kingdom_power(p):
             total += (h["atk"] * 2 + h["hp"] // 8) * (1.0 + lvl * TD_HERO_LVL_PCT)
     return round(total)
 
+# ── Equipment (in-run gear: drops from waves, equip to heroes) ─────────────────
+TD_GEAR_SLOTS = ("weapon", "armor", "trinket")
+TD_GEAR_TIERS = {0: ("Common", "⚪", 1.0), 1: ("Rare", "🔵", 1.85), 2: ("Epic", "🟣", 3.0)}
+TD_BAG_CAP = 12
+# base mods: atk (flat), atkp (%), hp (flat), hpp (%)
+TD_GEAR_TEMPLATES = [
+    {"id":"sword","name":"Iron Sword","emoji":"🗡️","slot":"weapon","atk":16,"atkp":0.0,"hp":0,"hpp":0.0},
+    {"id":"bow","name":"Longbow","emoji":"🏹","slot":"weapon","atk":10,"atkp":0.10,"hp":0,"hpp":0.0},
+    {"id":"staff","name":"Mage Staff","emoji":"🪄","slot":"weapon","atk":0,"atkp":0.22,"hp":0,"hpp":0.0},
+    {"id":"axe","name":"War Axe","emoji":"🪓","slot":"weapon","atk":22,"atkp":0.06,"hp":0,"hpp":0.0},
+    {"id":"leather","name":"Leather Armor","emoji":"🥋","slot":"armor","atk":0,"atkp":0.0,"hp":90,"hpp":0.0},
+    {"id":"plate","name":"Plate Armor","emoji":"🛡️","slot":"armor","atk":0,"atkp":0.0,"hp":40,"hpp":0.14},
+    {"id":"robe","name":"Mage Robe","emoji":"🧥","slot":"armor","atk":0,"atkp":0.05,"hp":60,"hpp":0.0},
+    {"id":"ring","name":"Ring of Might","emoji":"💍","slot":"trinket","atk":0,"atkp":0.12,"hp":0,"hpp":0.0},
+    {"id":"amulet","name":"Vigor Amulet","emoji":"📿","slot":"trinket","atk":0,"atkp":0.0,"hp":0,"hpp":0.15},
+    {"id":"charm","name":"Lucky Charm","emoji":"🍀","slot":"trinket","atk":12,"atkp":0.0,"hp":70,"hpp":0.0},
+]
+_TD_GEAR_BY_ID = {g["id"]: g for g in TD_GEAR_TEMPLATES}
+
+def _td_gear_tier_for(wave):
+    r = random.random()
+    if wave >= 10 and r < 0.30: return 2
+    if wave >= 5 and r < 0.55:  return 1
+    if r < 0.18:                return 1
+    return 0
+
+def _td_make_gear(wave, tier=None):
+    t = random.choice(TD_GEAR_TEMPLATES)
+    if tier is None:
+        tier = _td_gear_tier_for(wave)
+    _, _, tmult = TD_GEAR_TIERS[tier]
+    flat = tmult * (1 + 0.12 * (max(1, wave) - 1))
+    return {"gid": t["id"], "name": t["name"], "emoji": t["emoji"], "slot": t["slot"], "tier": tier,
+            "atk": round(t["atk"] * flat), "atkp": round(t["atkp"] * tmult, 3),
+            "hp": round(t["hp"] * flat), "hpp": round(t["hpp"] * tmult, 3)}
+
+def _td_gear_desc(it):
+    parts = []
+    if it.get("atk"):  parts.append(f"+{fmt_num(it['atk'])}⚔️")
+    if it.get("atkp"): parts.append(f"+{round(it['atkp'] * 100)}%⚔️")
+    if it.get("hp"):   parts.append(f"+{fmt_num(it['hp'])}❤️")
+    if it.get("hpp"):  parts.append(f"+{round(it['hpp'] * 100)}%❤️")
+    return " ".join(parts) or "—"
+
+def _td_gear_name(it):
+    return f"{TD_GEAR_TIERS[it['tier']][1]}{it['emoji']} {it['name']}"
+
+def _td_gear_mods(h):
+    """Summed (atk_flat, atk_pct, hp_flat, hp_pct) from a hero's equipped gear."""
+    a = ap = hp = hpp = 0.0
+    for it in (h.get("gear") or {}).values():
+        a += it.get("atk", 0); ap += it.get("atkp", 0)
+        hp += it.get("hp", 0); hpp += it.get("hpp", 0)
+    return a, ap, hp, hpp
+
 TD_GRACE = [
     {"id":"warcry","name":"War Cry","emoji":"⚔️","desc":"+15% squad damage."},
     {"id":"fortify","name":"Fortify","emoji":"🏰","desc":"King max HP +25% (heals to it)."},
@@ -40309,6 +40364,10 @@ def _td_hero_stats(state, h):
     if _td_hrow(h) == "front" and _td_has(state, "vanguard"): hp *= 1.40
     # back-row attackers strike a touch harder from safety
     if _td_hrow(h) == "back" and base["role"] in ("mage", "archer"): atk *= 1.10
+    # equipped gear
+    g_atk, g_atkp, g_hp, g_hpp = _td_gear_mods(h)
+    atk = atk * (1 + g_atkp) + g_atk
+    hp = hp * (1 + g_hpp) + g_hp
     return round(atk), round(hp)
 
 def _td_ult_ready(state, h):
@@ -40355,6 +40414,9 @@ def _td_add_hero(state, hid):
                 # value-equal, so list.remove(b) would delete the wrong one.
                 a["star"] += 1
                 a["chg"] = max(a.get("chg", 0), b.get("chg", 0))
+                # keep a's gear; return the merged-away hero's gear to the bag
+                for it in (b.get("gear") or {}).values():
+                    state.setdefault("bag", []).append(it)
                 state["heroes"] = [h for h in state["heroes"] if h is not b]
                 changed = True
                 break
@@ -40416,7 +40478,7 @@ def _td_new_run(p, uid, chapter=_TD_ENDLESS, diff=0):
              "fx": {}, "log": [], "cur_enemies": None, "secondwind_used": False,
              "chat_id": None, "msg_id": None, "win_streak": 0,
              "chapter": chapter, "max_waves": ch.get("waves"), "diff": diff,
-             "move_sel": None, "report": None,
+             "move_sel": None, "report": None, "bag": [], "gear_sel": None,
              # snapshot permanent Barracks levels so runs don't re-read the DB
              "hero_lvls": dict(safe_cds(p).get("td_heroes", {})),
              # snapshot unlocked heroes so only owned heroes appear in the shop
@@ -40591,12 +40653,24 @@ def _td_resolve(p, state):
     state["gold"] += gain
     state["win_streak"] += 1
 
+    # Loot: guaranteed on boss waves, a chance otherwise (if the bag has room).
+    bag = state.setdefault("bag", [])
+    loot = None
+    is_boss = _td_is_boss_wave(state)
+    if len(bag) < TD_BAG_CAP and (is_boss or random.random() < 0.34):
+        tier = _td_gear_tier_for(wave)
+        if is_boss:
+            tier = max(1, tier)
+        loot = _td_make_gear(wave, tier=tier)
+        bag.append(loot)
+        log.append(f"🎁 Loot: {_td_gear_name(loot)} ({_td_gear_desc(loot)})")
+
     # Wave-complete report data (rendered as an interactive card after playback,
     # so the outcome stays on screen as long as the player wants).
     top = sorted(range(len(state["heroes"])), key=lambda i: dmg_by_hero[i], reverse=True)
     rows = [(_TD_BY_ID[state["heroes"][i]["id"]]["emoji"],
              _TD_BY_ID[state["heroes"][i]["id"]]["name"], dmg_by_hero[i]) for i in top]
-    state["report"] = {"wave": wave, "rows": rows, "leaked": leaked, "gain": gain,
+    state["report"] = {"wave": wave, "rows": rows, "leaked": leaked, "gain": gain, "loot": loot,
                        "kills": kills, "kpct": _siege_bar(state["king_hp"], state["king_max"])[1]}
 
     state["wave"] += 1
@@ -40812,10 +40886,12 @@ def _build_td_card(p, state, flash=""):
         rows.append([InlineKeyboardButton(f"{b['emoji']} {b['name']} ({_td_summon_cost(state, hid)}💰)",
                                           callback_data=f"td_buy_{uid}_{i}")])
     action = [InlineKeyboardButton(f"🔄 Reroll ({TD_REROLL_COST}💰)", callback_data=f"td_reroll_{uid}")]
-    if state["heroes"]:
-        action.append(InlineKeyboardButton("🧭 Formation", callback_data=f"td_move_{uid}"))
-        action.append(InlineKeyboardButton("👥 Manage", callback_data=f"td_manage_{uid}"))
+    bag_n = len(state.get("bag", []))
+    action.append(InlineKeyboardButton(f"🎒 Armory{f' ({bag_n})' if bag_n else ''}", callback_data=f"td_armory_{uid}"))
     rows.append(action)
+    if state["heroes"]:
+        rows.append([InlineKeyboardButton("🧭 Formation", callback_data=f"td_move_{uid}"),
+                     InlineKeyboardButton("👥 Manage", callback_data=f"td_manage_{uid}")])
     rows.append([InlineKeyboardButton("⚔️ Begin Battle", callback_data=f"td_fight_{uid}")])
     util = [InlineKeyboardButton("ℹ️ Help", callback_data=f"td_info_{uid}_home")]
     if state.get("log"):
@@ -40864,6 +40940,9 @@ def _build_td_manage(p, state):
         b = _TD_BY_ID[h["id"]]; atk, hp = _td_hero_stats(state, h)
         u = b["ult"]
         lines.append(f"{b['emoji']} *{b['name']}* {_td_star_tag(h['star'], always=True)} ⚔️{atk} ❤️{hp}")
+        g = h.get("gear") or {}
+        if g:
+            lines.append("     🎒 " + " ".join(f"{it['emoji']}{it['name']}" for it in g.values()))
         lines.append(f"     {u['emoji']} _{u['name']}: {u['desc']}_")
         refund = max(0, b["cost"] - 1)
         rows.append([InlineKeyboardButton(f"💸 {b['emoji']} {b['name']} (+{refund}💰)", callback_data=f"td_sell_{uid}_{i}")])
@@ -40971,8 +41050,58 @@ def _build_td_report(p, state):
         lines.append(f"{emoji} {name} — *{fmt_num(dmg)}*")
     lines += ["", f"🏰 Castle damage taken: *{fmt_num(r.get('leaked', 0))}*",
               f"💰 Silver earned: *+{r.get('gain', 0)}*"]
-    rows = [[InlineKeyboardButton("▶️ Continue", callback_data=f"td_cont_{uid}"),
-             InlineKeyboardButton("📜 Battle Log", callback_data=f"td_log_{uid}")]]
+    loot = r.get("loot")
+    if loot:
+        lines.append(f"🎁 Loot: {_td_gear_name(loot)}  {_td_gear_desc(loot)}")
+    row1 = [InlineKeyboardButton("▶️ Continue", callback_data=f"td_cont_{uid}")]
+    if loot:
+        row1.append(InlineKeyboardButton("🎒 Equip", callback_data=f"td_armory_{uid}"))
+    rows = [row1, [InlineKeyboardButton("📜 Battle Log", callback_data=f"td_log_{uid}")]]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_td_armory(p, state):
+    uid = state["uid"]
+    bag = state.get("bag", [])
+    sel = state.get("gear_sel")
+    if sel is not None and sel >= len(bag):
+        sel = state["gear_sel"] = None
+    lines = ["🎒 *Armory* — equip gear to your heroes", ""]
+    rows = []
+    if sel is None:
+        lines.append("*Bag* — tap gear to equip:" if bag else "_Bag empty — win waves to find loot._")
+        for i, it in enumerate(bag):
+            lines.append(f"{_td_gear_name(it)}  _{it['slot']}_  {_td_gear_desc(it)}")
+            rows.append([InlineKeyboardButton(f"{it['emoji']} {it['name']} ({_td_gear_desc(it)})",
+                                              callback_data=f"td_gear_{uid}_{i}")])
+        lines.append("\n*Equipped:*")
+        any_eq = False
+        for hi, h in enumerate(state["heroes"]):
+            g = h.get("gear") or {}
+            if not g:
+                continue
+            any_eq = True
+            b = _TD_BY_ID[h["id"]]
+            worn = " ".join(it["emoji"] for it in g.values())
+            lines.append(f"{b['emoji']} {b['name']} {_td_star_tag(h['star'])}: {worn}")
+            for slot in TD_GEAR_SLOTS:
+                if slot in g:
+                    it = g[slot]
+                    rows.append([InlineKeyboardButton(f"➖ {b['name']}: {it['emoji']} {it['name']}",
+                                                      callback_data=f"td_unequip_{uid}_{hi}_{slot}")])
+        if not any_eq:
+            lines.append("_none yet_")
+    else:
+        it = bag[sel]
+        lines.append(f"Equip *{_td_gear_name(it)}* _{it['slot']}_ — {_td_gear_desc(it)}")
+        lines.append("_Tap a hero (replaces that slot):_")
+        for hi, h in enumerate(state["heroes"]):
+            b = _TD_BY_ID[h["id"]]
+            cur = (h.get("gear") or {}).get(it["slot"])
+            tag = f"  (↔ {cur['emoji']})" if cur else ""
+            rows.append([InlineKeyboardButton(f"{b['emoji']} {b['name']} {_td_star_tag(h['star'])}{tag}",
+                                              callback_data=f"td_equipto_{uid}_{hi}")])
+        rows.append([InlineKeyboardButton("↩️ Pick another", callback_data=f"td_armory_{uid}")])
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"td_home_{uid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 def _build_td_log(p, state):
@@ -40994,6 +41123,7 @@ def _build_td_info(uid, where="menu"):
         "⚜️ *Recruit* heroes with 💰 *Silver*. Buy the *same* hero again to *merge* it — a ⭐2 or ⭐3 hero is far stronger.",
         "🧭 *Formation:* Front rows soak enemy hits, Back rows stay safe — put tanks up front, mages/archers in back.",
         "⚡ *Ultimates:* heroes charge a little each wave; tap a ready ⚡ ult to unleash it.",
+        "🎒 *Armory:* gear drops from waves (always from bosses) — equip it to heroes for +⚔️/+❤️.",
         "✨ *Blessings:* choose a run-long buff every few waves.",
         "⚔️ *Begin Battle* fights the wave — watch it play out, then read the report (📜 Log for details).",
         "",
@@ -41009,6 +41139,8 @@ def _td_render(p, state, flash=""):
         return _build_td_manage(p, state)
     if state["phase"] == "move":
         return _build_td_move(p, state)
+    if state["phase"] == "armory":
+        return _build_td_armory(p, state)
     if state["phase"] == "report":
         return _build_td_report(p, state)
     if state["phase"] == "draft":
@@ -41138,6 +41270,43 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         st["phase"] = "manage"; await query.answer(); await render(); return
     if action == "move":
         st["phase"] = "move"; st["move_sel"] = None; await query.answer(); await render(); return
+    if action == "armory":
+        st["phase"] = "armory"; st["gear_sel"] = None; await query.answer(); await render(); return
+    if action == "gear":
+        try:
+            gi = int(toks[3])
+        except (IndexError, ValueError):
+            await query.answer(); return
+        if 0 <= gi < len(st.get("bag", [])):
+            st["gear_sel"] = gi
+        await query.answer(); await render(); return
+    if action == "equipto":
+        try:
+            hi = int(toks[3]); gi = st.get("gear_sel")
+        except (IndexError, ValueError):
+            await query.answer(); return
+        bag = st.get("bag", [])
+        if gi is None or not (0 <= gi < len(bag)) or not (0 <= hi < len(st["heroes"])):
+            await query.answer(); return
+        it = bag.pop(gi)
+        h = st["heroes"][hi]; g = h.setdefault("gear", {})
+        old = g.get(it["slot"])
+        if old:
+            bag.append(old)   # swap the previous piece back into the bag
+        g[it["slot"]] = it
+        st["gear_sel"] = None
+        await query.answer(f"Equipped {it['name']}!")
+        await render(); return
+    if action == "unequip":
+        try:
+            hi = int(toks[3]); slot = toks[4]
+        except (IndexError, ValueError):
+            await query.answer(); return
+        if 0 <= hi < len(st["heroes"]):
+            g = st["heroes"][hi].get("gear") or {}
+            if slot in g:
+                st.setdefault("bag", []).append(g.pop(slot))
+        await query.answer("Unequipped."); await render(); return
     if action == "log":
         text, markup = _build_td_log(p, st)
         await query.answer()
@@ -41224,6 +41393,8 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except (IndexError, ValueError):
             await query.answer(); return
         st["gold"] += max(0, _TD_BY_ID[h["id"]]["cost"] - 1)
+        for it in (h.get("gear") or {}).values():   # return worn gear to the bag
+            st.setdefault("bag", []).append(it)
         st["heroes"].pop(idx)
         await query.answer(f"Dismissed {_TD_BY_ID[h['id']]['name']}.")
         await render(); return
