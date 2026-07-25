@@ -40341,6 +40341,61 @@ TD_GRACE = [
 ]
 _TD_GRACE_BY_ID = {g["id"]: g for g in TD_GRACE}
 
+# ── Hero Bonds — deploy the right pair for a passive team buff ─────────────────
+# eff keys: atk/hp (team %), soak (front-line %), weaken (enemy dmg −%),
+#           bossdmg (+focus vs bosses).
+TD_BONDS = [
+    {"ids":("knight","cleric"),   "name":"Holy Order","emoji":"⛪","desc":"+12% team HP.","eff":{"hp":0.12}},
+    {"ids":("berserker","warlord"),"name":"Bloodbrothers","emoji":"🩸","desc":"+12% team ATK.","eff":{"atk":0.12}},
+    {"ids":("mage","archer"),     "name":"Arcane Volley","emoji":"🎯","desc":"+12% team ATK.","eff":{"atk":0.12}},
+    {"ids":("assassin","ninja"),  "name":"Shadow Pact","emoji":"🌑","desc":"+30% damage to bosses.","eff":{"bossdmg":0.30}},
+    {"ids":("frost","warlock"),   "name":"Hexfrost","emoji":"🥶","desc":"Enemies deal 10% less.","eff":{"weaken":0.10}},
+    {"ids":("templar","golem"),   "name":"Bulwark Oath","emoji":"🧱","desc":"Front line soaks +20%.","eff":{"soak":0.20}},
+    {"ids":("valkyrie","dragoon"),"name":"Sky Lancers","emoji":"🕊️","desc":"+12% team ATK.","eff":{"atk":0.12}},
+    {"ids":("druid","cleric"),    "name":"Circle of Life","emoji":"🌿","desc":"+10% team HP.","eff":{"hp":0.10}},
+]
+
+def _td_active_bonds(state):
+    ids = {h["id"] for h in state.get("heroes", [])}
+    return [b for b in TD_BONDS if b["ids"][0] in ids and b["ids"][1] in ids]
+
+def _td_bond_mods(state):
+    mods = {"atk": 0.0, "hp": 0.0, "soak": 0.0, "weaken": 0.0, "bossdmg": 0.0}
+    for b in _td_active_bonds(state):
+        for k, v in b["eff"].items():
+            mods[k] = mods.get(k, 0.0) + v
+    return mods
+
+# ── Kingdom Events / Crossroads — branching choices between waves ──────────────
+TD_EVENTS = [
+    {"id":"treasure","emoji":"💰","title":"Treasure Vault","desc":"A locked vault glitters in the ruins.",
+     "opts":[{"emoji":"🔑","label":"Crack it open","desc":"+80 Silver & a gear drop.","eff":{"silver":80,"gear":1}},
+             {"emoji":"⛏️","label":"Search deeper","desc":"A Rare+ piece, nothing else.","eff":{"gear":1,"geartier":1}}]},
+    {"id":"merchant","emoji":"🧺","title":"Wandering Merchant","desc":"A caravan offers a bargain — or a mark.",
+     "opts":[{"emoji":"🛡️","label":"Protect them","desc":"Next wave is Elite, but richer rewards.","eff":{"elite":True,"silver":20}},
+             {"emoji":"🤝","label":"Trade fairly","desc":"−30 Silver, gain a Rare+ gear.","eff":{"silver":-30,"gear":1,"geartier":1}},
+             {"emoji":"🗡️","label":"Rob them","desc":"+90 Silver, but the Castle takes a hit.","eff":{"silver":90,"castle":0.10}}]},
+    {"id":"shrine","emoji":"⛩️","title":"Ancient Shrine","desc":"A quiet shrine hums with power.",
+     "opts":[{"emoji":"🙏","label":"Pray","desc":"Heal the Castle 22%.","eff":{"heal":0.22}},
+             {"emoji":"✨","label":"Tithe (−40 Silver)","desc":"Receive a Blessing.","eff":{"silver":-40,"blessing":True}}]},
+    {"id":"recruit","emoji":"🧎","title":"Lost Recruit","desc":"A hero seeks to join your cause.",
+     "opts":[{"emoji":"⚔️","label":"Enlist them","desc":"A free hero joins your line.","eff":{"hero":True}},
+             {"emoji":"💰","label":"Send them off","desc":"They leave you 60 Silver.","eff":{"silver":60}}]},
+    {"id":"altar","emoji":"🔮","title":"Cursed Altar","desc":"Dark power, for a price of blood.",
+     "opts":[{"emoji":"🩸","label":"Sacrifice 15% Castle","desc":"A Blessing + charge every ult.","eff":{"castle":0.15,"blessing":True,"charge":1}},
+             {"emoji":"🚫","label":"Refuse","desc":"Walk away untouched.","eff":{}}]},
+    {"id":"smith","emoji":"🔨","title":"Forgotten Forge","desc":"An old forge still burns.",
+     "opts":[{"emoji":"⚒️","label":"Reforge gear","desc":"Upgrade a bag piece one tier.","eff":{"reforge":True}},
+             {"emoji":"🛠️","label":"Commission (−50 Silver)","desc":"Craft a Rare+ piece.","eff":{"silver":-50,"gear":1,"geartier":1}}]},
+    {"id":"drill","emoji":"🎯","title":"Training Grounds","desc":"Your heroes can hone their craft.",
+     "opts":[{"emoji":"⚡","label":"Drill ultimates","desc":"+1 ult charge to every hero.","eff":{"charge":1}},
+             {"emoji":"🏕️","label":"Rest","desc":"Heal the Castle 12%.","eff":{"heal":0.12}}]},
+    {"id":"warband","emoji":"⚔️","title":"Elite Warband","desc":"A hardened warband blocks the road.",
+     "opts":[{"emoji":"💥","label":"Ambush them","desc":"Next wave Elite — bonus loot & Silver.","eff":{"elite":True}},
+             {"emoji":"🌲","label":"Slip past","desc":"Avoid it, pocket 40 Silver.","eff":{"silver":40}}]},
+]
+_TD_EVENT_BY_ID = {e["id"]: e for e in TD_EVENTS}
+
 def _td_has(state, gid):
     return gid in state.get("grace", [])
 
@@ -40363,6 +40418,9 @@ def _td_hero_stats(state, h):
     if _td_hrow(h) == "front" and _td_has(state, "vanguard"): hp *= 1.40
     # back-row attackers strike a touch harder from safety
     if _td_hrow(h) == "back" and base["role"] in ("mage", "archer"): atk *= 1.10
+    # hero bonds (team-wide ATK/HP)
+    bm = _td_bond_mods(state)
+    atk *= (1 + bm["atk"]); hp *= (1 + bm["hp"])
     # equipped gear
     g_atk, g_atkp, g_hp, g_hpp = _td_gear_mods(h)
     atk = atk * (1 + g_atkp) + g_atk
@@ -40440,8 +40498,10 @@ def _td_gen_wave(state):
     # chapters ramp within their own length; the endless siege ramps forever
     span = maxw if maxw else 12
     scale = (TD_ENEMY_GROWTH ** (wave - 1)) * (1.0 + 0.12 * diff) * (1.0 + 0.05 * state.get("chapter", 0))
+    if state.get("elite_next"):   # an Elite crossroads made this wave tougher
+        scale *= 1.30
     is_boss = _td_is_boss_wave(state)
-    count = min(30, 3 + wave)
+    count = min(30, 3 + wave + (2 if state.get("elite_next") else 0))
     if is_boss:
         count = max(2, count - 3)
     enemies = []
@@ -40477,7 +40537,7 @@ def _td_new_run(p, uid, chapter=_TD_ENDLESS, diff=0):
              "fx": {}, "log": [], "cur_enemies": None, "secondwind_used": False,
              "chat_id": None, "msg_id": None, "win_streak": 0,
              "chapter": chapter, "max_waves": ch.get("waves"), "diff": diff,
-             "move_sel": None, "report": None, "bag": [], "gear_sel": None,
+             "move_sel": None, "report": None, "bag": [], "gear_sel": None, "event": None,
              # snapshot permanent Barracks levels so runs don't re-read the DB
              "hero_lvls": dict(safe_cds(p).get("td_heroes", {})),
              # snapshot unlocked heroes so only owned heroes appear in the shop
@@ -40518,6 +40578,63 @@ def _td_cast_ult(state, idx):
     elif t == "buff":
         fx["buff"] = fx.get("buff", 0) + ult["val"] * amp
     return f"{ult['emoji']} *{ult['name']}!* readied for this wave."
+
+def _td_apply_event(state, ev, oi):
+    """Resolve a Kingdom Event choice against the run. Returns a flash string."""
+    try:
+        opt = ev["opts"][oi]
+    except (IndexError, KeyError, TypeError):
+        return ""
+    eff = opt.get("eff", {}); notes = []
+    if "silver" in eff:
+        state["gold"] = max(0, state["gold"] + eff["silver"])
+        notes.append(f"{'+' if eff['silver'] >= 0 else ''}{eff['silver']}💰")
+    if eff.get("heal"):
+        h = round(state["king_max"] * eff["heal"])
+        state["king_hp"] = min(state["king_max"], state["king_hp"] + h)
+        notes.append(f"+{fmt_num(h)} Castle HP")
+    if eff.get("castle"):
+        d = round(state["king_max"] * eff["castle"])
+        state["king_hp"] = max(1, state["king_hp"] - d)   # events never end the run
+        notes.append(f"−{fmt_num(d)} Castle HP")
+    if eff.get("charge"):
+        for hh in state["heroes"]:
+            hh["chg"] = hh.get("chg", 0) + eff["charge"]
+        notes.append(f"+{eff['charge']} ult charge")
+    if eff.get("gear"):
+        bag = state.setdefault("bag", [])
+        for _ in range(eff["gear"]):
+            if len(bag) >= TD_BAG_CAP:
+                break
+            g = _td_make_gear(max(1, state["wave"]), tier=eff.get("geartier"))
+            bag.append(g); notes.append(f"🎁 {_td_gear_name(g)}")
+    if eff.get("hero"):
+        pool = state.get("unlocked") or [x["id"] for x in TD_HEROES]
+        if len(state["heroes"]) >= TD_SQUAD_CAP:
+            state["gold"] += 50; notes.append("line full → +50💰")
+        else:
+            hid = random.choice(pool); _td_add_hero(state, hid)
+            notes.append(f"{_TD_BY_ID[hid]['emoji']} {_TD_BY_ID[hid]['name']} joins")
+    if eff.get("blessing"):
+        avail = [g["id"] for g in TD_GRACE if g["id"] not in state["grace"]]
+        if avail:
+            gid = random.choice(avail); state["grace"].append(gid)
+            if gid == "fortify":
+                nm = _td_king_max(state); state["king_hp"] += (nm - state["king_max"]); state["king_max"] = nm
+            notes.append(f"✨ {_TD_GRACE_BY_ID[gid]['name']}")
+    if eff.get("elite"):
+        state["elite_next"] = 1; notes.append("⚔️ next wave Elite")
+    if eff.get("reforge"):
+        cand = [it for it in state.get("bag", []) if it["tier"] < 2]
+        if cand:
+            it = random.choice(cand); old = TD_GEAR_TIERS[it["tier"]][2]
+            it["tier"] += 1; new = TD_GEAR_TIERS[it["tier"]][2]; r = new / old
+            it["atk"] = round(it["atk"] * r); it["hp"] = round(it["hp"] * r)
+            it["atkp"] = round(it["atkp"] * r, 3); it["hpp"] = round(it["hpp"] * r, 3)
+            notes.append(f"⚒️ {_td_gear_name(it)}")
+        else:
+            notes.append("no gear to reforge")
+    return f"{ev['emoji']} *{opt['label']}* — " + (", ".join(notes) if notes else "done.")
 
 def _td_anim_heroes_line(state):
     if not state["heroes"]:
@@ -40567,6 +40684,7 @@ def _td_resolve(p, state):
     frames = [_td_anim_frame(state, "⚔️ *The horde charges the gate!*", enemies,
                              "_Your heroes brace…_")]
 
+    bmods = _td_bond_mods(state)
     # Squad damage
     dmg_mult = 1.0
     if _td_has(state, "warcry"): dmg_mult += 0.15
@@ -40574,7 +40692,7 @@ def _td_resolve(p, state):
     atk_list = [_td_hero_stats(state, h)[0] for h in state["heroes"]]
     sum_atk = sum(atk_list) or 1
     squad_dmg = sum(atk_list) * dmg_mult
-    focus = 1.35 if _td_has(state, "focusfire") else 1.0
+    focus = (1.35 if _td_has(state, "focusfire") else 1.0) + bmods["bossdmg"]
 
     # Ultimate pre-damage (nuke hits toughest; aoe hits all)
     if fx.get("nuke"):
@@ -40611,9 +40729,11 @@ def _td_resolve(p, state):
         assault_note = "🧊 The horde is frozen — the gate holds!"
     else:
         soak = sum(_td_hero_stats(state, h)[1] * TD_SOAK_WEIGHT[_td_hrow(h)] for h in state["heroes"])
+        soak *= (1 + bmods["soak"])
         raw = sum(e["atk"] * (2 if e.get("boss") else 1) for e in survivors)
-        if fx.get("weaken"):
-            raw = round(raw * (1 - fx["weaken"]))
+        total_wk = min(0.85, fx.get("weaken", 0) + bmods["weaken"])
+        if total_wk:
+            raw = round(raw * (1 - total_wk))
         leaked = max(0, raw - soak)
         if fx.get("shield"): leaked = round(leaked * (1 - fx["shield"]))
         if _td_has(state, "aegis"): leaked = round(leaked * 0.85)
@@ -40649,16 +40769,19 @@ def _td_resolve(p, state):
     gain = 5 + min(5, state["gold"] // 10) + (2 if _td_has(state, "tithe") else 0) + min(3, state["win_streak"]) + 2
     if _td_has(state, "greed"):
         gain = round(gain * 1.25)
+    was_elite = bool(state.pop("elite_next", 0))   # cleared an Elite crossroads wave
+    if was_elite:
+        gain += 8
     state["gold"] += gain
     state["win_streak"] += 1
 
-    # Loot: guaranteed on boss waves, a chance otherwise (if the bag has room).
+    # Loot: guaranteed on boss/elite waves, a chance otherwise (if the bag has room).
     bag = state.setdefault("bag", [])
     loot = None
     is_boss = _td_is_boss_wave(state)
-    if len(bag) < TD_BAG_CAP and (is_boss or random.random() < 0.34):
+    if len(bag) < TD_BAG_CAP and (is_boss or was_elite or random.random() < 0.34):
         tier = _td_gear_tier_for(wave)
-        if is_boss:
+        if is_boss or was_elite:
             tier = max(1, tier)
         loot = _td_make_gear(wave, tier=tier)
         bag.append(loot)
@@ -40827,10 +40950,23 @@ def _td_wave_preview(state):
             boss = (e["emoji"], e["name"]); continue
         k = (e["emoji"], e["name"]); counts[k] = counts.get(k, 0) + 1
     body = "  ".join(f"{e} {n}×{c}" for (e, n), c in counts.items()) or "—"
-    head = f"⚠️ *Wave {state['wave']}* ({len(enemies)})"
+    elite = " ⚔️_ELITE_" if state.get("elite_next") else ""
+    head = f"⚠️ *Wave {state['wave']}* ({len(enemies)}){elite}"
     if boss:
         return f"{head}\n   {boss[0]} *{boss[1]}* 💀\n   {body}"
     return f"{head}: {body}"
+
+def _build_td_event(p, state):
+    uid = state["uid"]
+    ev = _TD_EVENT_BY_ID.get(state.get("event"))
+    if not ev:
+        return _build_td_card(p, state)
+    lines = [f"{ev['emoji']} *{ev['title']}*", "", f"_{ev['desc']}_", ""]
+    rows = []
+    for i, opt in enumerate(ev["opts"]):
+        lines.append(f"{opt['emoji']} *{opt['label']}*\n    _{opt['desc']}_")
+        rows.append([InlineKeyboardButton(f"{opt['emoji']} {opt['label']}", callback_data=f"td_evt_{uid}_{i}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 def _td_formation_block(state):
     by_slot = {h["slot"]: h for h in state["heroes"] if "slot" in h}
@@ -40862,6 +40998,9 @@ def _build_td_card(p, state, flash=""):
         lines.append(flash)
     lines.append(f"🏰 Castle {bar} {kpct}%")
     lines.append(f"💰 Silver *{state['gold']}*   🛡️ *{len(state['heroes'])}/{TD_SQUAD_CAP}*   ✨ {grace}")
+    bonds = _td_active_bonds(state)
+    if bonds:
+        lines.append("🤝 " + "  ".join(f"{b['emoji']}{b['name']}" for b in bonds))
     if state.get("fx"):
         lines.append("💥 _Ultimate readied — fight to unleash it!_")
     lines.append("")
@@ -40956,6 +41095,12 @@ def _build_td_move(p, state):
 def _build_td_manage(p, state):
     uid = state["uid"]
     lines = ["👥 *Your Heroes* — tap to dismiss (refund cost−1):", ""]
+    bonds = _td_active_bonds(state)
+    if bonds:
+        lines.append("🤝 *Active Bonds:*")
+        for b in bonds:
+            lines.append(f"{b['emoji']} *{b['name']}* — _{b['desc']}_")
+        lines.append("")
     rows = []
     for i, h in enumerate(state["heroes"]):
         b = _TD_BY_ID[h["id"]]; atk, hp = _td_hero_stats(state, h)
@@ -41145,6 +41290,8 @@ def _build_td_info(uid, where="menu"):
         "🧭 *Formation:* Front rows soak enemy hits, Back rows stay safe — put tanks up front, mages/archers in back.",
         "⚡ *Ultimates:* heroes charge a little each wave. Tap *⚡ Ultimates* to see every ready ult, read what it does, and cast it before battle.",
         "🎒 *Armory:* gear drops from waves (always from bosses) — equip it to heroes for +⚔️/+❤️.",
+        "🤝 *Bonds:* deploy the right hero pair (e.g. Knight+Cleric) for an automatic team buff.",
+        "🗺️ *Events:* between waves you'll hit crossroads — treasure, shrines, merchants, elite paths — each choice shapes the run.",
         "✨ *Blessings:* choose a run-long buff every few waves.",
         "⚔️ *Begin Battle* fights the wave — watch it play out, then read the report (📜 Log for details).",
         "",
@@ -41166,6 +41313,8 @@ def _td_render(p, state, flash=""):
         return _build_td_armory(p, state)
     if state["phase"] == "report":
         return _build_td_report(p, state)
+    if state["phase"] == "event":
+        return _build_td_event(p, state)
     if state["phase"] == "draft":
         return _build_td_draft(p, state)
     return _build_td_card(p, state, flash=flash)
@@ -41339,15 +41488,26 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "resume":
         await query.answer(); await render(); return
     if action == "cont":
-        # Advance from the Wave Report → a Blessing draft (every few waves) or plan.
+        # Advance from the Wave Report → Blessing draft, a Kingdom Event, or plan.
         cleared = st["wave"] - 1
-        due = (cleared % 3 == 0) or (cleared % TD_BOSS_EVERY == 0)
+        bless_due = (cleared % 3 == 0) or (cleared % TD_BOSS_EVERY == 0)
         pool = [g["id"] for g in TD_GRACE if g["id"] not in st["grace"]]
-        if due and pool:
+        if bless_due and pool:
             random.shuffle(pool); st["draft"] = pool[:3]; st["phase"] = "draft"
+        elif cleared >= 2 and cleared % 3 == 2:
+            st["event"] = random.choice(TD_EVENTS)["id"]; st["phase"] = "event"
         else:
             st["phase"] = "plan"
         await query.answer(); await render(); return
+    if action == "evt":
+        try:
+            oi = int(toks[3])
+        except (IndexError, ValueError):
+            oi = 0
+        ev = _TD_EVENT_BY_ID.get(st.get("event"))
+        flash = _td_apply_event(st, ev, oi) if ev else ""
+        st["event"] = None; st["phase"] = "plan"
+        await query.answer(); await render(flash=flash); return
     if action == "movsel":
         try:
             hi = int(toks[3])
