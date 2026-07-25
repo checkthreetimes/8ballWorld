@@ -8510,9 +8510,11 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
     # ── STALE-CARD GUARD ──────────────────────────────────────────────────────
     # Only the NEWEST card may act. If an old card survived (its delete failed),
     # its buttons would replay rooms — re-spawning the same battle or re-opening
-    # shrine picks. Reject the tap and disarm that old card. (🔄 refresh is
-    # exempt — it exists to unstick.)
-    if not data.startswith("dng_refresh_") and state.get("msg_id") \
+    # shrine picks. Reject the tap and disarm that old card. (🔄 refresh AND
+    # 🚪 extract are exempt — both exist to unstick, and extract is terminal so
+    # it can never replay a room. This is the fix for "couldn't extract / 🔄
+    # didn't help": both now work from ANY dungeon card the player can see.)
+    if not data.startswith(("dng_refresh_", "dng_extract_")) and state.get("msg_id") \
             and query.message and query.message.message_id != state["msg_id"]:
         await query.answer("🕰️ That's an old card — use the newest one (or tap 🔄).", show_alert=True)
         try:
@@ -8520,6 +8522,12 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
         except Exception:
             pass
         return
+
+    # Re-anchor unstick actions to the card the player actually tapped, so the
+    # result always lands where they're looking (not on a lost "newest" card).
+    if data.startswith(("dng_refresh_", "dng_extract_")) and query.message:
+        state["msg_id"] = query.message.message_id
+        state["chat_id"] = query.message.chat_id
 
     # ── REFRESH: re-render the current state (instant unstick) ────────────────
     if data.startswith("dng_refresh_"):
