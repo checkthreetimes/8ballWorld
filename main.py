@@ -30796,8 +30796,7 @@ _ACTIVITIES_HUB_PAGES = [
     ],
     # Page 2 — Challenges
     [
-        [("🏚️ Dungeon",      "acthub_dungeon"),    ("🔥 Dungeon Hard",    "acthub_dungeonhard")],
-        [("💀 Dungeon Leg.",  "acthub_dungeonleg"), ("🎱 Hold the Pocket", "acthub_siege")],
+        [("🏚️ Dungeon",      "acthub_dungeon"),    ("🎱 Hold the Pocket", "acthub_siege")],
         [("🗼 The Ascension", "acthub_ascension"),  ("⚔️ War Table",       "acthub_wartable")],
         [("🔮 Oracle",        "acthub_oracle"),     ("🎯 Objectives",      "acthub_objectives")],
         [("⏱️ Cooldowns",     "acthub_cooldowns")],
@@ -30907,80 +30906,11 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     # ── Hustle: run all ready cooldowns inline ──────────────────────
     if action == "hustle":
-        if is_defeated(p):
-            await _show("⚡ *Hustle*\n\n💀 Too beaten up to hustle right now."); return
-        now = datetime.now(); ran = []; skipped = []
-        if check_cooldown(p.get("last_daily"), 86400):
-            p["last_daily"] = now.isoformat()
-            gold = scaled_gold(p["level"], 100); p["gold"] = p.get("gold", 0) + gold
-            daily_exp = exp_share(p["level"], 0.10)
-            lmsgs, _ = add_exp(p, daily_exp)
-            entry = f"🎁 Daily: +{fmt_num(daily_exp)} EXP, +{gold}g"
-            if random.random() < 0.10:
-                item = random.choice(["Health Potion","Greater Health Potion","Grand Restorative Flask"])
-                add_item(p, item); entry += f", *{item}*"
-            ran.append(entry)
-        else: skipped.append(f"🎁 Daily — {time_remaining(p.get('last_daily'), 86400)}")
-        if check_cooldown(p.get("last_train"), 1800):
-            p["last_train"] = now.isoformat()
-            base = exp_share(p["level"], 0.04)
-            cls = get_player_class(p)
-            if cls:
-                pk = cls.get("passive_key","")
-                if pk in ("arcane_mind","spell_surge","arcane_mastery","mana_overload","eternal_wisdom"): base = round(base*1.30)
-                elif pk in ("iron_will","holy_stance","devotion","bulwark","divine_judgment"):            base = round(base*1.20)
-                elif pk in ("quick_hands","evasion","shadowstep","ghost_form","deaths_shadow",
-                            "eagle_eye","trailblazer","natures_bond","guardian_stance","pathfinder"):    base = round(base*1.35)
-                elif pk in ("mending_aura","divine_grace","sacred_ground","resurrection","divine_presence",
-                            "dark_sense","purge","judgement","wrath_of_the_righteous"):                 base = round(base*1.15)
-            lmsgs, _ = add_exp(p, base); ran.append(f"🏋️ Train: +{fmt_num(base)} EXP")
-        else: skipped.append(f"🏋️ Train — {time_remaining(p.get('last_train'), 1800)}")
-        today = now.strftime("%Y-%m-%d"); yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-        last_claim = p.get("last_claim")
-        if last_claim != today:
-            streak = safe_int(p.get("claim_streak")); streak = streak+1 if last_claim==yesterday else 1
-            gold_reward = 50 + min(streak*10, 200); p["gold"] = p.get("gold",0) + gold_reward
-            _sh = _daily_shard_reward(streak)
-            for _ in range(_sh): add_item(p, "Iron Shard")
-            if streak >= 14: add_item(p, "Enchanting Scroll")
-            p["last_claim"] = today; p["claim_streak"] = streak
-            ran.append(f"🎁 Claim: +{gold_reward}g" + (f", +{_sh}🪨" if _sh else "") + f" (Day {streak})")
-        else: skipped.append("🎁 Claim — already claimed today")
-        s_cd = get_shadow(uid)
-        pool_ts = p.get("last_pool") or (s_cd.get("last_pool") if s_cd else None)
-        pool_ready = True
-        if pool_ts:
-            try:
-                if (now - datetime.fromisoformat(pool_ts)).total_seconds() < 8: pool_ready = False
-            except Exception: pass
-        if pool_ready:
-            shot = roll_pool_shot_with_luk(p)
-            exp_gain = _scaled_shot_exp(p["level"], shot["exp"])
-            gold_gain = (max(5 + p["level"], int(shot["gold"] * max(1.0, 1.0+(p["level"]-1)*0.12))) if shot["gold"] > 0 else 0)
-            p["gold"] = p.get("gold",0)+gold_gain; p["last_pool"] = now.isoformat()
-            if s_cd: s_cd["last_pool"] = p["last_pool"]; save_shadow(s_cd)
-            lmsgs, _ = add_exp(p, exp_gain)
-            entry = f"🎱 Pool ({shot['rarity']}): +{fmt_num(exp_gain)} EXP, +{gold_gain}g"
-            if shot.get("loot"):
-                loot = roll_loot_table(shot["loot"])
-                if loot: add_item(p, loot); entry += f", *{loot}*"
-            ran.append(entry)
-        else: skipped.append("🎱 Pool — on cooldown")
-        # Empire: bank accrued passive resources
-        if sjl(p.get("empire_buildings"), {}):
-            _emp_notes = _empire_collect(p)
-            if _emp_notes:
-                ran.append("🏰 Empire: " + "  ".join(n.split(" (")[0] for n in _emp_notes[:4]))
-            else:
-                skipped.append("🏰 Empire — nothing to collect yet")
-        save_player(p)
-        lines = ["⚡ *Hustle Results*\n"]
-        if ran:
-            lines.append("*Completed:*"); lines.extend(f"✅ {r}" for r in ran)
-        if skipped:
-            lines.append("\n*On cooldown:*"); lines.extend(f"⏳ {s}" for s in skipped)
-        if not ran and not skipped: lines.append("_Nothing ready to run._")
-        await _show("\n".join(lines))
+        # Unified with /hustle so the button runs the FULL set in one tap —
+        # daily, train, quest, pool, claim, explore (a random eligible zone) and
+        # Empire collection — instead of a partial subset. Results go to DM; the
+        # hub card is untouched (callback updates carry no update.message).
+        await hustle_cmd(update, context); return
 
     # ── Claim: execute inline ────────────────────────────────────────
     elif action == "claim":
@@ -35652,9 +35582,11 @@ def _bet_k(n):
     return str(n)
 
 def _fight_bet_markup(au, du, a_name, d_name):
+    # Buttons show only the stake (with a side colour) so the row never overflows
+    # and gets clipped. The header maps 🔵/🔴 to each fighter.
     rows = []
-    for side, nm in ((au, a_name), (du, d_name)):
-        rows.append([InlineKeyboardButton(f"💰 {nm[:9]} {_bet_k(amt)}",
+    for side, dot in ((au, "🔵"), (du, "🔴")):
+        rows.append([InlineKeyboardButton(f"{dot} {_bet_k(amt)}",
                      callback_data=f"bet_{au}_{du}_{side}_{amt}") for amt in _BET_TIERS])
     return InlineKeyboardMarkup(rows)
 
@@ -35664,9 +35596,9 @@ async def _open_fight_bets(bot, chat_id, pair, a, d):
     au, du = a.get("user_id"), d.get("user_id")
     try:
         msg = await bot.send_message(chat_id,
-            f"⚔️ *FIGHT!*  *{a['username']}* (Lv {a.get('level',1)})  vs  "
-            f"*{d['username']}* (Lv {d.get('level',1)})\n\n"
-            f"💰 _Spectators: tap a stake on who you think wins — 60s window, *2x payout!*_\n"
+            f"⚔️ *FIGHT!*  🔵 *{a['username']}* (Lv {a.get('level',1)})  vs  "
+            f"🔴 *{d['username']}* (Lv {d.get('level',1)})\n\n"
+            f"💰 _Spectators: tap 🔵 or 🔴 with your stake — 60s window, *2x payout!*_\n"
             f"_Wager from 1k up to 1M gold._",
             parse_mode="Markdown",
             reply_markup=_fight_bet_markup(au, du, a["username"], d["username"]))
