@@ -40869,14 +40869,10 @@ def _build_td_card(p, state, flash=""):
     lines.append("\n" + _td_wave_preview(state))
     lines.append("\n⚜️ *Recruit* — tap to hire")
     rows = []
-    # ult-cast buttons for ready heroes
-    ult_row = []
-    for i, h in enumerate(state["heroes"]):
-        if _td_ult_ready(state, h):
-            u = _TD_BY_ID[h["id"]]["ult"]
-            ult_row.append(InlineKeyboardButton(f"{u['emoji']} {u['name']}", callback_data=f"td_ult_{uid}_{i}"))
-    for i in range(0, len(ult_row), 2):
-        rows.append(ult_row[i:i+2])
+    # a single Ultimates button → panel that lists & describes every ready ult
+    ready_n = sum(1 for h in state["heroes"] if _td_ult_ready(state, h))
+    if ready_n:
+        rows.append([InlineKeyboardButton(f"⚡ Ultimates ({ready_n} ready)", callback_data=f"td_ults_{uid}")])
     # summon list + buttons
     for i, hid in enumerate(state["shop"]):
         if hid is None: continue
@@ -40898,6 +40894,32 @@ def _build_td_card(p, state, flash=""):
     util.append(InlineKeyboardButton("🏳️ Retreat", callback_data=f"td_quit_{uid}"))
     rows.append(util)
     rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_td_ults(p, state, flash=""):
+    uid = state["uid"]
+    lines = ["⚡ *Ultimates* — unleash before you Begin Battle"]
+    if flash:
+        lines.append(flash)
+    ready = [(i, h) for i, h in enumerate(state["heroes"]) if _td_ult_ready(state, h)]
+    charging = [(i, h) for i, h in enumerate(state["heroes"]) if not _td_ult_ready(state, h)]
+    rows = []
+    if not ready:
+        lines.append("\n_No ultimates ready — heroes charge a little each wave._")
+    else:
+        lines.append("")
+        for i, h in ready:
+            b = _TD_BY_ID[h["id"]]; u = b["ult"]
+            lines.append(f"{u['emoji']} *{u['name']}*  ·  {b['emoji']}{_td_star_tag(h['star'])} {b['name']}")
+            lines.append(f"    _{u['desc']}_")
+            rows.append([InlineKeyboardButton(f"{u['emoji']} Cast {u['name']}",
+                                              callback_data=f"td_ult_{uid}_{i}")])
+    if charging:
+        lines.append("\n⏳ *Charging:*")
+        for i, h in charging:
+            b = _TD_BY_ID[h["id"]]; u = b["ult"]
+            lines.append(f"{u['emoji']} {u['name']} — {b['emoji']} {b['name']}  _({h.get('chg', 0)}/{u['cost']})_")
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"td_home_{uid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 def _build_td_move(p, state):
@@ -41121,7 +41143,7 @@ def _build_td_info(uid, where="menu"):
         "",
         "⚜️ *Recruit* heroes with 💰 *Silver*. Buy the *same* hero again to *merge* — each merge promotes its rank 🥉→🥈→🥇→🎖️, a big power jump.",
         "🧭 *Formation:* Front rows soak enemy hits, Back rows stay safe — put tanks up front, mages/archers in back.",
-        "⚡ *Ultimates:* heroes charge a little each wave; tap a ready ⚡ ult to unleash it.",
+        "⚡ *Ultimates:* heroes charge a little each wave. Tap *⚡ Ultimates* to see every ready ult, read what it does, and cast it before battle.",
         "🎒 *Armory:* gear drops from waves (always from bosses) — equip it to heroes for +⚔️/+❤️.",
         "✨ *Blessings:* choose a run-long buff every few waves.",
         "⚔️ *Begin Battle* fights the wave — watch it play out, then read the report (📜 Log for details).",
@@ -41138,6 +41160,8 @@ def _td_render(p, state, flash=""):
         return _build_td_manage(p, state)
     if state["phase"] == "move":
         return _build_td_move(p, state)
+    if state["phase"] == "ults":
+        return _build_td_ults(p, state, flash=flash)
     if state["phase"] == "armory":
         return _build_td_armory(p, state)
     if state["phase"] == "report":
@@ -41269,6 +41293,8 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         st["phase"] = "manage"; await query.answer(); await render(); return
     if action == "move":
         st["phase"] = "move"; st["move_sel"] = None; await query.answer(); await render(); return
+    if action == "ults":
+        st["phase"] = "ults"; await query.answer(); await render(); return
     if action == "armory":
         st["phase"] = "armory"; st["gear_sel"] = None; await query.answer(); await render(); return
     if action == "gear":
