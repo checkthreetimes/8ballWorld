@@ -29686,22 +29686,23 @@ async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── /combat Hub ────────────────────────────────────────────────────────────────
 _COMBAT_HUB_PAGES = [
-    # Page 1 — Direct Combat (Encounter first)
+    # Page 1 — Fight & Solo Modes (the marquee content, up front)
     [
         [("🗡️ Encounter",     "combathub_encounter"), ("⚔️ Attack (PvP)", "combathub_attack")],
-        [("✨ Use Skill",      "combathub_skill"),     ("🛡️ Defend",       "combathub_defend")],
+        [("🏚️ Dungeon",        "combathub_dungeon"),   ("🎱 Hold the Pocket", "combathub_siege")],
+        [("🗼 The Ascension",  "combathub_ascension"), ("⚔️ War Table",    "combathub_wartable")],
     ],
-    # Page 2 — War & Exploration
+    # Page 2 — Skills, War & Exploration
     [
+        [("✨ Use Skill",      "combathub_skill"),     ("🛡️ Defend",       "combathub_defend")],
         [("💊 Heal",           "combathub_heal"),      ("⚔️ Guild War",    "combathub_war")],
-        [("📊 Combat Power",   "combathub_cp"),        ("🌍 Explore",      "combathub_explore")],
-        [("🏚️ Dungeon",        "combathub_dungeon"),   ("⚔️ Solo Raid",    "combathub_soloraid")],
+        [("🌍 Explore",        "combathub_explore"),   ("⚔️ Solo Raid",    "combathub_soloraid")],
     ],
     # Page 3 — Info & Tools
     [
-        [("🎯 Kill Condition", "combathub_killcondition"), ("💊 Cure Priority", "combathub_curepriority")],
-        [("⏳ Cooldowns",      "combathub_cooldowns"),    ("🐾 Pet (battle)",  "combathub_petbattle")],
-        [("📊 Combat Power",   "combathub_cp")],
+        [("📊 Combat Power",   "combathub_cp"),           ("🎯 Kill Condition", "combathub_killcondition")],
+        [("💊 Cure Priority",  "combathub_curepriority"), ("⏳ Cooldowns",      "combathub_cooldowns")],
+        [("🐾 Pet (battle)",   "combathub_petbattle")],
     ],
 ]
 
@@ -29731,7 +29732,7 @@ async def combat_hub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚔️ *{p['username']}'s Combat Hub*\n\n"
         f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
         f"⚡ CP: {cp:,}  |  {status}\n\n"
-        f"Page 1: Encounter & Combat  |  Page 2: War & Explore  |  Page 3: Info & Tools"
+        f"Page 1: Fight & Solo Modes  |  Page 2: Skills, War & Explore  |  Page 3: Info & Tools"
     )
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
@@ -29763,7 +29764,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         header = (f"⚔️ *{p['username']}'s Combat Hub*\n\n"
                   f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
                   f"⚡ CP: {cp:,}  |  {status}\n\n"
-                  f"Page 1: Encounter & Combat  |  Page 2: War & Explore  |  Page 3: Info & Tools")
+                  f"Page 1: Fight & Solo Modes  |  Page 2: Skills, War & Explore  |  Page 3: Info & Tools")
         try: await _q_edit(query, header, parse_mode="Markdown",
                                            reply_markup=_combat_hub_markup(uid, page=page))
         except Exception: pass
@@ -29780,8 +29781,9 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not p:
         await query.answer("Register first.", show_alert=True); return
 
-    _PAGE = {"attack":1,"skill":1,"defend":1,"heal":1,
-             "war":2,"cp":3,"explore":2,"encounter":1,"dungeon":2,"soloraid":2,
+    _PAGE = {"attack":1,"skill":2,"defend":2,"heal":2,
+             "war":2,"cp":3,"explore":2,"encounter":1,"dungeon":1,"soloraid":2,
+             "siege":1,"ascension":1,"wartable":1,
              "killcondition":3,"curepriority":3,"cooldowns":3,"petbattle":3}
     page = _PAGE.get(action, 1)
     back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"combathub_back_{page}_{uid}")]])
@@ -30015,6 +30017,15 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     elif action == "soloraid":
         await soloraid_cmd(update, context)
+
+    elif action == "siege":
+        await siege_cmd(update, context)
+
+    elif action == "ascension":
+        await ascension_cmd(update, context)
+
+    elif action == "wartable":
+        await wartable_cmd(update, context)
 
     elif action == "petbattle":
         pet_rec = get_active_pet_record(uid)
@@ -30798,16 +30809,14 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _ACTIVITIES_HUB_PAGES = [
     # Page 1 — Daily Activities
     [
-        [("⚡ Hustle All",    "acthub_hustle"),     ("📅 Daily",          "acthub_daily")],
+        [("⚡ Do It All",     "acthub_hustle"),     ("📅 Daily",          "acthub_daily")],
         [("🎁 Claim",         "acthub_claim"),      ("🏋️ Train",         "acthub_train")],
         [("📜 Quest",         "acthub_quest"),      ("🌍 Explore",        "acthub_explore")],
     ],
-    # Page 2 — Challenges
+    # Page 2 — Challenges  (solo combat modes now live in the ⚔️ Combat hub)
     [
-        [("🏚️ Dungeon",      "acthub_dungeon"),    ("🎱 Hold the Pocket", "acthub_siege")],
-        [("🗼 The Ascension", "acthub_ascension"),  ("⚔️ War Table",       "acthub_wartable")],
-        [("🔮 Oracle",        "acthub_oracle"),     ("🎯 Objectives",      "acthub_objectives")],
-        [("⏱️ Cooldowns",     "acthub_cooldowns")],
+        [("🏚️ Dungeon",      "acthub_dungeon"),    ("🔮 Oracle",          "acthub_oracle")],
+        [("🎯 Objectives",    "acthub_objectives"), ("⏱️ Cooldowns",      "acthub_cooldowns")],
     ],
     # Page 3 — Character
     [
@@ -30818,7 +30827,7 @@ _ACTIVITIES_HUB_PAGES = [
 ]
 
 _ACTIVITIES_HUB_TIPS = {
-    "hustle":      ("⚡ *Hustle All*",        "Use */hustle* to run all ready cooldowns at once — daily, train, quest, pool, claim, and explore."),
+    "hustle":      ("⚡ *Do It All*",         "Use */hustle* to run all ready activities at once — daily, train, quest, pool, claim, and explore."),
     "daily":       ("📅 *Daily*",              "Use */daily* for your 24-hour gold + EXP reward. Consecutive-day streak bonuses apply."),
     "claim":       ("🎁 *Claim*",              "Use */claim* for your daily streak reward — Iron Shards on Day 3+, Enchanting Scrolls on Day 14+."),
     "train":       ("🏋️ *Train*",             "Use */train* to gain EXP. 30-minute cooldown. Class bonus applies."),
@@ -31228,20 +31237,23 @@ def _build_master_hub(p, uid):
         rows.append([InlineKeyboardButton("🚀 First Steps — rewards inside!",
                                           callback_data=f"menu_fsteps_{uid}")])
     rows += [
+        # ⚔️ Combat at the forefront — full-width, first, since it's where the
+        # fights, dungeon and the Pocket/Ascension/War Table modes now live.
+        [InlineKeyboardButton("⚔️  COMBAT — Fights · Dungeon · Modes",
+                              callback_data=f"empire_combat_{uid}")],
         # Frequent actions, one tap away
-        [InlineKeyboardButton("⚡ Hustle All", callback_data=f"acthub_hustle_{uid}"),
-         InlineKeyboardButton("🌍 Explore",    callback_data=f"acthub_explore_{uid}")],
-        # System hubs — everything the game has, grouped
-        [InlineKeyboardButton("⚔️ Combat",       callback_data=f"empire_combat_{uid}"),
-         InlineKeyboardButton("🌍 Activities",   callback_data=f"empire_activities_{uid}")],
-        [InlineKeyboardButton("⚙️ Gear & Craft", callback_data=f"empire_gear_{uid}"),
-         InlineKeyboardButton("🐾 Pets",         callback_data=f"empire_pethub_{uid}")],
-        [InlineKeyboardButton("💬 Social",       callback_data=f"empire_social_{uid}"),
-         InlineKeyboardButton("🏰 Empire",       callback_data=f"empire_tab_{uid}_overview")],
-        [InlineKeyboardButton("🛒 Shop",         callback_data=f"empire_shop_{uid}"),
-         InlineKeyboardButton("🎲 Casino",       callback_data=f"empire_casino_{uid}")],
-        [InlineKeyboardButton("📖 Guide",        callback_data=f"empire_guide_{uid}"),
-         InlineKeyboardButton("❌ Close",        callback_data=f"close_msg_{uid}")],
+        [InlineKeyboardButton("⚡ Do It All", callback_data=f"acthub_hustle_{uid}"),
+         InlineKeyboardButton("🌍 Explore",   callback_data=f"acthub_explore_{uid}")],
+        # System hubs — everything else the game has, grouped
+        [InlineKeyboardButton("🌍 Activities",   callback_data=f"empire_activities_{uid}"),
+         InlineKeyboardButton("⚙️ Gear & Craft", callback_data=f"empire_gear_{uid}")],
+        [InlineKeyboardButton("🐾 Pets",         callback_data=f"empire_pethub_{uid}"),
+         InlineKeyboardButton("💬 Social",       callback_data=f"empire_social_{uid}")],
+        [InlineKeyboardButton("🏰 Empire",       callback_data=f"empire_tab_{uid}_overview"),
+         InlineKeyboardButton("🛒 Shop",         callback_data=f"empire_shop_{uid}")],
+        [InlineKeyboardButton("🎲 Casino",       callback_data=f"empire_casino_{uid}"),
+         InlineKeyboardButton("📖 Guide",        callback_data=f"empire_guide_{uid}")],
+        [InlineKeyboardButton("❌ Close",        callback_data=f"close_msg_{uid}")],
     ]
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
@@ -31442,7 +31454,7 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💬 *Social* — marriage, emotes, guilds & alliances, influence, ranks\n"
             "🏰 *Empire* — build passive-income buildings for resources & stat bonuses\n"
             "🛒 *Shop* · 🎲 *Casino* — spend your gold\n\n"
-            "*Quick tip:* ⚡ Hustle All runs every ready daily cooldown at once.\n"
+            "*Quick tip:* ⚡ Do It All runs every ready activity at once.\n"
             "_Type */guide* for the full manual, or */firststeps* for the new-player quest._"
         )
         rows = [[InlineKeyboardButton("🏠 Menu", callback_data=f"empire_home_{uid}"),
