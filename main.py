@@ -40168,6 +40168,16 @@ TD_HEROES = [
      "ult":{"name":"Sanctuary","emoji":"💚","cost":2,"type":"heal","val":0.25,"desc":"Heal the King 25%."}},
     {"id":"druid","name":"Druid","emoji":"🌿","role":"healer","cost":2,"atk":24,"hp":140,
      "ult":{"name":"Regrow","emoji":"🍃","cost":2,"type":"heal","val":0.15,"desc":"Heal the King 15%."}},
+    {"id":"dragoon","name":"Dragoon","emoji":"🐲","role":"warrior","cost":4,"atk":88,"hp":180,
+     "ult":{"name":"Dragon Dive","emoji":"🐉","cost":3,"type":"aoe","val":2.2,"desc":"Dive on ALL foes for 2.2× ATK."}},
+    {"id":"warlock","name":"Warlock","emoji":"🧙","role":"mage","cost":3,"atk":64,"hp":115,
+     "ult":{"name":"Hex","emoji":"🟣","cost":2,"type":"weaken","val":0.45,"desc":"Curse the wave — foes deal 45% less."}},
+    {"id":"warlord","name":"Warlord","emoji":"🦁","role":"warrior","cost":4,"atk":85,"hp":210,
+     "ult":{"name":"Warhorn","emoji":"📯","cost":3,"type":"buff","val":0.85,"desc":"+85% squad damage this wave."}},
+    {"id":"templar","name":"Templar","emoji":"⛑️","role":"tank","cost":4,"atk":45,"hp":400,
+     "ult":{"name":"Divine Wall","emoji":"⛨","cost":2,"type":"shield","val":0.6,"desc":"King takes 60% less this wave."}},
+    {"id":"ninja","name":"Ninja","emoji":"🥷","role":"warrior","cost":3,"atk":98,"hp":95,
+     "ult":{"name":"Assassinate","emoji":"🌀","cost":2,"type":"nuke","val":3.5,"desc":"Delete the toughest foe (3.5× ATK)."}},
 ]
 _TD_BY_ID = {h["id"]: h for h in TD_HEROES}
 _TD_FRONT_ROLES = {"tank", "warrior"}
@@ -40194,10 +40204,16 @@ def _td_has(state, gid):
 def _td_row(hid):
     return "front" if _TD_BY_ID[hid]["role"] in _TD_FRONT_ROLES else "back"
 
+TD_HERO_LVL_PCT = 0.06   # +6% base atk & hp per permanent Barracks level
+TD_HERO_MAX_LVL = 20
+
 def _td_hero_stats(state, h):
-    """Effective (atk, hp) for a squad hero dict {id,star,...} with ⭐ + grace."""
+    """Effective (atk, hp) for a squad hero dict {id,star,...} with permanent
+    Barracks level + ⭐ merge + grace."""
     base = _TD_BY_ID[h["id"]]
-    mult = TD_STAR_MULT.get(h["star"], 1.0)
+    lvl = safe_int(state.get("hero_lvls", {}).get(h["id"], 0))
+    lvl_mult = 1.0 + lvl * TD_HERO_LVL_PCT
+    mult = TD_STAR_MULT.get(h["star"], 1.0) * lvl_mult
     atk = base["atk"] * mult
     hp = base["hp"] * mult
     if _td_has(state, "veterans"): atk *= 1.20
@@ -40276,7 +40292,9 @@ def _td_new_run(p, uid):
     state = {"uid": uid, "wave": 1, "king_hp": km, "king_max": km, "gold": TD_START_GOLD,
              "heroes": [], "shop": [], "grace": [], "phase": "plan", "draft": None,
              "fx": {}, "log": [], "cur_enemies": None, "secondwind_used": False,
-             "chat_id": None, "msg_id": None, "win_streak": 0}
+             "chat_id": None, "msg_id": None, "win_streak": 0,
+             # snapshot permanent Barracks levels so runs don't re-read the DB
+             "hero_lvls": dict(safe_cds(p).get("td_heroes", {}))}
     state["shop"] = _td_gen_shop(state)
     _active_throne[uid] = state
     return state
@@ -40308,6 +40326,8 @@ def _td_cast_ult(state, idx):
         fx["stun"] = True
     elif t == "shield":
         fx["shield"] = max(fx.get("shield", 0), min(0.85, ult["val"] * amp))
+    elif t == "weaken":
+        fx["weaken"] = max(fx.get("weaken", 0), min(0.85, ult["val"] * amp))
     elif t == "buff":
         fx["buff"] = fx.get("buff", 0) + ult["val"] * amp
     return f"{ult['emoji']} *{ult['name']}!* readied for this wave."
@@ -40353,6 +40373,8 @@ def _td_resolve(p, state):
     else:
         soak = sum(_td_hero_stats(state, h)[1] for h in state["heroes"] if h.get("row") == "front")
         raw = sum(e["atk"] * (2 if e.get("boss") else 1) for e in survivors)
+        if fx.get("weaken"):
+            raw = round(raw * (1 - fx["weaken"]))
         leaked = max(0, raw - soak)
         if fx.get("shield"): leaked = round(leaked * (1 - fx["shield"]))
         if _td_has(state, "aegis"): leaked = round(leaked * 0.85)
@@ -40396,6 +40418,10 @@ def _td_grant_rewards(p, state):
     for _ in range(scrolls): add_item(p, "Enchanting Scroll")
     if scrolls: lines.append(f"✨ *Enchanting Scroll ×{scrolls}*")
     cds = safe_cds(p)
+    # Crowns — the meta currency spent in the Barracks to level heroes.
+    crowns = 3 + waves + (waves // TD_BOSS_EVERY) * 3
+    cds["td_crowns"] = safe_int(cds.get("td_crowns", 0)) + crowns
+    lines.append(f"👑 *{crowns} Crowns* → level heroes in the Barracks (`/tdbarracks`)")
     best_prev = safe_int(cds.get("td_best_wave", 0))
     milestone = ""
     if waves > best_prev:
@@ -40409,6 +40435,62 @@ def _td_grant_rewards(p, state):
     p["passive_cooldowns"] = json.dumps(cds)
     save_player(p)
     return "\n".join(lines), milestone
+
+# ── Throne Defense: Barracks (permanent hero levels, spent with Crowns) ────────
+def _td_crowns(p):
+    return safe_int(safe_cds(p).get("td_crowns", 0))
+
+def _td_hero_level(p, hid):
+    return safe_int(safe_cds(p).get("td_heroes", {}).get(hid, 0))
+
+def _td_upgrade_cost(lvl):
+    return 5 + lvl * 4   # Crowns to go from lvl -> lvl+1
+
+def _td_barracks_upgrade(p, hid):
+    """Spend Crowns to level a hero once. Returns a flash string."""
+    if hid not in _TD_BY_ID:
+        return ""
+    cds = safe_cds(p)
+    lvl = safe_int(cds.get("td_heroes", {}).get(hid, 0))
+    if lvl >= TD_HERO_MAX_LVL:
+        return f"{_TD_BY_ID[hid]['name']} is already maxed (Lv {TD_HERO_MAX_LVL})."
+    cost = _td_upgrade_cost(lvl)
+    if safe_int(cds.get("td_crowns", 0)) < cost:
+        return f"❌ Need {cost}👑 (you have {safe_int(cds.get('td_crowns', 0))})."
+    cds["td_crowns"] = safe_int(cds.get("td_crowns", 0)) - cost
+    heroes = dict(cds.get("td_heroes", {}))
+    heroes[hid] = lvl + 1
+    cds["td_heroes"] = heroes
+    p["passive_cooldowns"] = json.dumps(cds); save_player(p)
+    return f"⬆️ *{_TD_BY_ID[hid]['name']}* → Lv {lvl + 1}!"
+
+def _build_td_barracks(p, uid, flash=""):
+    lines = ["🏰 *BARRACKS* — permanently level your Heroes",
+             "_Higher level = +6% base ATK & HP in every run._"]
+    if flash:
+        lines.append(flash)
+    lines.append(f"\n👑 Crowns: *{_td_crowns(p)}*\n")
+    rows = []
+    for h in TD_HEROES:
+        lvl = _td_hero_level(p, h["id"])
+        if lvl >= TD_HERO_MAX_LVL:
+            lines.append(f"{h['emoji']} *{h['name']}*  Lv *{lvl}* ✅ MAX")
+            continue
+        cost = _td_upgrade_cost(lvl)
+        bonus = round(lvl * TD_HERO_LVL_PCT * 100)
+        lines.append(f"{h['emoji']} *{h['name']}*  Lv *{lvl}* (+{bonus}%)  →  {cost}👑")
+        rows.append([InlineKeyboardButton(f"{h['emoji']} {h['name']} Lv{lvl}→{lvl+1} ({cost}👑)",
+                                          callback_data=f"td_lvl_{uid}_{h['id']}")])
+    rows.append([InlineKeyboardButton("👑 Play", callback_data=f"td_again_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+async def tdbarracks_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    text, markup = _build_td_barracks(p, user.id)
+    await send_group(update, text, delay=120, permanent=True, reply_markup=markup)
 
 # ── Throne Defense UI ─────────────────────────────────────────────────────────
 def _td_wave_preview(state):
@@ -40565,10 +40647,11 @@ async def thronedefense_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
              " their **ultimates** as waves march on your King. Draft a Grace after"
              " each wave. When the King falls, the run ends._"]
     if best:
-        lines.append(f"\n🏅 Your best: *Wave {best}*")
+        lines.append(f"\n🏅 Your best: *Wave {best}*   ·   👑 Crowns: *{_td_crowns(p)}*")
     rows = [[InlineKeyboardButton("👑 Defend the Throne", callback_data=f"td_again_{user.id}")],
-            [InlineKeyboardButton("🏆 Leaderboard", callback_data=f"td_board_{user.id}"),
-             InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")]]
+            [InlineKeyboardButton("🏰 Barracks", callback_data=f"td_barracks_{user.id}"),
+             InlineKeyboardButton("🏆 Leaderboard", callback_data=f"td_board_{user.id}")],
+            [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")]]
     await send_group(update, "\n".join(lines), delay=9, permanent=True,
                      reply_markup=InlineKeyboardMarkup(rows))
 
@@ -40603,6 +40686,16 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await render(); return
     if action == "board":
         text, markup = _td_leaderboard_card(uid, highlight=uid)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+    if action == "barracks":
+        text, markup = _build_td_barracks(get_player(uid), uid)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+    if action == "lvl":
+        hid = toks[3] if len(toks) > 3 else ""
+        flash = _td_barracks_upgrade(get_player(uid), hid)
+        text, markup = _build_td_barracks(get_player(uid), uid, flash=flash)
         await query.answer()
         await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
 
@@ -40860,6 +40953,8 @@ def main():
     app.add_handler(CommandHandler("throne",      thronedefense_cmd))
     app.add_handler(CommandHandler("td",          thronedefense_cmd))
     app.add_handler(CommandHandler("tdboard",     tdboard_cmd))
+    app.add_handler(CommandHandler("tdbarracks",  tdbarracks_cmd))
+    app.add_handler(CommandHandler("barracks",    tdbarracks_cmd))
     app.add_handler(CallbackQueryHandler(throne_callback, pattern="^td_"))
 
     # Empire master hub
