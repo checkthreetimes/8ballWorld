@@ -40141,7 +40141,7 @@ TD_ENEMY_GROWTH = 1.16
 TD_START_GOLD   = 10
 TD_REROLL_COST  = 2
 TD_SHOP_SIZE    = 5
-TD_SQUAD_CAP    = 6
+TD_SQUAD_CAP    = 9   # one hero per formation slot (3×3)
 TD_STAR_MULT    = {1: 1.0, 2: 1.9, 3: 3.4}   # ⭐ scales atk & hp
 TD_MAX_STAR     = 3
 TD_BOSS_EVERY   = 5
@@ -40203,6 +40203,65 @@ def _td_unlocked_ids(p):
 
 TD_ANIM_DELAY = 1.2   # seconds between battle-playback frames
 
+# ── Formation (3×3: front soaks, back is protected) ───────────────────────────
+TD_ROWS = ("front", "middle", "back")
+TD_SLOTS = 9
+TD_SLOT_NUMS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
+TD_SOAK_WEIGHT = {"front": 1.0, "middle": 0.45, "back": 0.0}
+# preferred slots per role for auto-placement (front melee up front, casters back)
+_TD_ROLE_SLOTPREF = {
+    "tank":    [0, 1, 2, 3, 4, 5, 6, 7, 8],
+    "warrior": [1, 0, 2, 3, 4, 5, 6, 7, 8],
+    "healer":  [4, 3, 5, 7, 6, 8, 1, 0, 2],
+    "mage":    [7, 6, 8, 4, 3, 5, 1, 0, 2],
+    "archer":  [8, 7, 6, 5, 4, 3, 2, 1, 0],
+}
+def _td_slot_row(slot):
+    return TD_ROWS[max(0, min(2, safe_int(slot) // 3))]
+def _td_hrow(h):
+    return _td_slot_row(h.get("slot", 0))
+
+# ── Expedition chapters (finite story runs + an endless siege) ─────────────────
+# archs: (name, emoji, hp_mult, atk_mult).  waves=None ⇒ endless.
+TD_CHAPTERS = [
+    {"name": "The Border Marches", "emoji": "🌾", "waves": 8, "types": "Raiders · Beasts",
+     "archs": [("Goblin", "👺", 0.8, 0.95), ("Bandit", "🥷", 0.7, 1.05), ("Wolf", "🐺", 0.6, 1.15)],
+     "boss": ("Goblin Warlord", "👹")},
+    {"name": "The Forgotten Forest", "emoji": "🌲", "waves": 10, "types": "Beasts · Poison · Spirits",
+     "archs": [("Spider", "🕷️", 0.7, 1.1), ("Sprite", "🧚", 0.55, 1.25), ("Treant", "🌳", 2.0, 0.7)],
+     "boss": ("The Rotten King", "🎃")},
+    {"name": "The Sunken Crypt", "emoji": "⚰️", "waves": 12, "types": "Undead · Spirits",
+     "archs": [("Skeleton", "💀", 0.7, 1.05), ("Ghoul", "🧟", 1.1, 0.9), ("Wraith", "👻", 0.6, 1.3)],
+     "boss": ("Undead Lich", "🧟")},
+    {"name": "The Ashen Keep", "emoji": "🌋", "waves": 14, "types": "Demons · Elementals",
+     "archs": [("Imp", "😈", 0.6, 1.25), ("Hellhound", "🐗", 0.9, 1.05), ("Magma Golem", "🗿", 2.1, 0.7)],
+     "boss": ("Demon Lord", "👿")},
+    {"name": "The Dragon's Roost", "emoji": "🐉", "waves": 15, "types": "Dragons · Beasts",
+     "archs": [("Drake", "🦎", 0.9, 1.1), ("Wyvern", "🐲", 0.8, 1.2), ("Wyrmling", "🐍", 0.7, 1.15)],
+     "boss": ("Ancient Dragon", "🐉")},
+    {"name": "Endless Siege", "emoji": "♾️", "waves": None, "types": "Everything · forever",
+     "archs": [("Goblin", "👺", 0.8, 0.95), ("Bone Archer", "💀", 0.55, 1.15), ("Ogre", "👹", 1.9, 0.7)],
+     "boss": None},
+]
+_TD_ENDLESS = len(TD_CHAPTERS) - 1
+
+def _td_ch_cleared(p):
+    return safe_int(safe_cds(p).get("td_chapters_cleared", -1))
+def _td_ch_unlocked(p, idx):
+    if idx == _TD_ENDLESS:
+        return True
+    return 0 <= idx <= _td_ch_cleared(p) + 1
+def _td_rec_power(idx):
+    return round(300 + idx * 480)
+def _td_kingdom_power(p):
+    cds = safe_cds(p); heroes = cds.get("td_heroes", {})
+    total = 0
+    for h in TD_HEROES:
+        if h["id"] in TD_FREE_HEROES or h["id"] in heroes:
+            lvl = safe_int(heroes.get(h["id"], 0))
+            total += (h["atk"] * 2 + h["hp"] // 8) * (1.0 + lvl * TD_HERO_LVL_PCT)
+    return round(total)
+
 TD_GRACE = [
     {"id":"warcry","name":"War Cry","emoji":"⚔️","desc":"+15% squad damage."},
     {"id":"fortify","name":"Fortify","emoji":"🏰","desc":"King max HP +25% (heals to it)."},
@@ -40216,6 +40275,7 @@ TD_GRACE = [
     {"id":"conscript","name":"Conscription","emoji":"🪖","desc":"Summon costs −1 gold (min 1)."},
     {"id":"focusfire","name":"Focus Fire","emoji":"🎯","desc":"+35% damage to bosses."},
     {"id":"secondwind","name":"Second Wind","emoji":"🩹","desc":"Once, survive a lethal wave at 1 HP."},
+    {"id":"greed","name":"Greed","emoji":"🤑","desc":"+25% Silver from each wave."},
 ]
 _TD_GRACE_BY_ID = {g["id"]: g for g in TD_GRACE}
 
@@ -40238,7 +40298,9 @@ def _td_hero_stats(state, h):
     atk = base["atk"] * mult
     hp = base["hp"] * mult
     if _td_has(state, "veterans"): atk *= 1.20
-    if h.get("row") == "front" and _td_has(state, "vanguard"): hp *= 1.40
+    if _td_hrow(h) == "front" and _td_has(state, "vanguard"): hp *= 1.40
+    # back-row attackers strike a touch harder from safety
+    if _td_hrow(h) == "back" and base["role"] in ("mage", "archer"): atk *= 1.10
     return round(atk), round(hp)
 
 def _td_ult_ready(state, h):
@@ -40256,10 +40318,24 @@ def _td_summon_cost(state, hid):
         cost = max(1, cost - 1)
     return cost
 
+def _td_slots_used(state):
+    return {h["slot"] for h in state["heroes"] if "slot" in h}
+
+def _td_free_slot(state, role):
+    used = _td_slots_used(state)
+    for s in _TD_ROLE_SLOTPREF.get(role, list(range(TD_SLOTS))):
+        if s not in used:
+            return s
+    for s in range(TD_SLOTS):
+        if s not in used:
+            return s
+    return 0
+
 def _td_add_hero(state, hid):
     """Add a ⭐1 hero and cascade-merge duplicates of equal star into ⭐+1."""
+    slot = _td_free_slot(state, _TD_BY_ID[hid]["role"])
     state["heroes"].append({"id": hid, "star": 1, "chg": 1 if _td_has(state, "zeal") else 0,
-                            "row": _td_row(hid)})
+                            "row": _td_row(hid), "slot": slot})
     changed = True
     while changed:
         changed = False
@@ -40283,26 +40359,38 @@ def _td_gen_shop(state):
     weights = [max(1, 5 - h["cost"]) for h in pool]
     return [random.choices(pool, weights=weights, k=1)[0]["id"] for _ in range(TD_SHOP_SIZE)]
 
+def _td_is_boss_wave(state):
+    wave = state["wave"]; maxw = state.get("max_waves")
+    return (wave == maxw) if maxw else (wave % TD_BOSS_EVERY == 0)
+
 def _td_gen_wave(state):
-    wave = state["wave"]
-    scale = TD_ENEMY_GROWTH ** (wave - 1)
-    is_boss = wave % TD_BOSS_EVERY == 0
+    wave = state["wave"]; maxw = state.get("max_waves")
+    ch = TD_CHAPTERS[state.get("chapter", _TD_ENDLESS)]
+    archs = ch["archs"]
+    diff = safe_int(state.get("diff", 0))
+    # chapters ramp within their own length; the endless siege ramps forever
+    span = maxw if maxw else 12
+    scale = (TD_ENEMY_GROWTH ** (wave - 1)) * (1.0 + 0.12 * diff) * (1.0 + 0.05 * state.get("chapter", 0))
+    is_boss = _td_is_boss_wave(state)
     count = min(30, 3 + wave)
     if is_boss:
         count = max(2, count - 3)
     enemies = []
-    _archs = [("Goblin", "👺", 0.8, 0.95), ("Bone Archer", "💀", 0.55, 1.15), ("Ogre", "👹", 1.9, 0.7)]
     for _ in range(count):
         r = random.random()
-        a = _archs[2] if (wave >= 6 and r < 0.28) else (_archs[1] if r < 0.42 else _archs[0])
+        a = archs[2] if (wave >= max(4, span // 2) and r < 0.28) else (archs[1] if r < 0.45 else archs[0])
         hp = max(1, round(TD_ENEMY_HP0 * a[2] * scale))
         enemies.append({"name": a[0], "emoji": a[1], "hp": hp, "max_hp": hp,
                         "atk": max(1, round(TD_ENEMY_ATK0 * a[3] * scale)), "boss": False})
     if is_boss:
-        tier = wave // TD_BOSS_EVERY
-        bn, be = {1:("Goblin Warlord","👹"),2:("Ogre King","👺"),3:("Undead Lich","🧟"),
-                  4:("Demon Lord","😈"),5:("Ancient Dragon","🐉")}.get(tier, (f"Horde Sovereign ×{tier}","👑"))
-        bhp = max(1, round(TD_ENEMY_HP0 * 9 * scale))
+        if ch.get("boss"):
+            bn, be = ch["boss"]; bmult = 12.0
+        else:  # endless — escalating tiered bosses
+            tier = wave // TD_BOSS_EVERY
+            bn, be = {1:("Goblin Warlord","👹"),2:("Ogre King","👺"),3:("Undead Lich","🧟"),
+                      4:("Demon Lord","😈"),5:("Ancient Dragon","🐉")}.get(tier, (f"Horde Sovereign ×{tier}","👑"))
+            bmult = 9.0
+        bhp = max(1, round(TD_ENEMY_HP0 * bmult * scale))
         enemies.insert(0, {"name": bn, "emoji": be, "hp": bhp, "max_hp": bhp,
                            "atk": max(1, round(TD_ENEMY_ATK0 * 1.7 * scale)), "boss": True})
     return enemies
@@ -40312,12 +40400,15 @@ def _td_ensure_wave(state):
         state["cur_enemies"] = _td_gen_wave(state)
     return state["cur_enemies"]
 
-def _td_new_run(p, uid):
+def _td_new_run(p, uid, chapter=_TD_ENDLESS, diff=0):
     km = TD_KING_HP0
+    ch = TD_CHAPTERS[max(0, min(len(TD_CHAPTERS) - 1, chapter))]
     state = {"uid": uid, "wave": 1, "king_hp": km, "king_max": km, "gold": TD_START_GOLD,
              "heroes": [], "shop": [], "grace": [], "phase": "plan", "draft": None,
              "fx": {}, "log": [], "cur_enemies": None, "secondwind_used": False,
              "chat_id": None, "msg_id": None, "win_streak": 0,
+             "chapter": chapter, "max_waves": ch.get("waves"), "diff": diff,
+             "move_sel": None, "report": None,
              # snapshot permanent Barracks levels so runs don't re-read the DB
              "hero_lvls": dict(safe_cds(p).get("td_heroes", {})),
              # snapshot unlocked heroes so only owned heroes appear in the shop
@@ -40411,7 +40502,9 @@ def _td_resolve(p, state):
     dmg_mult = 1.0
     if _td_has(state, "warcry"): dmg_mult += 0.15
     dmg_mult += fx.get("buff", 0)
-    squad_dmg = sum(_td_hero_stats(state, h)[0] for h in state["heroes"]) * dmg_mult
+    atk_list = [_td_hero_stats(state, h)[0] for h in state["heroes"]]
+    sum_atk = sum(atk_list) or 1
+    squad_dmg = sum(atk_list) * dmg_mult
     focus = 1.35 if _td_has(state, "focusfire") else 1.0
 
     # Ultimate pre-damage (nuke hits toughest; aoe hits all)
@@ -40433,24 +40526,29 @@ def _td_resolve(p, state):
         else:
             e["hp"] -= eff; pool = 0; break
     survivors = [e for e in enemies if e["hp"] > 0]
+    # per-hero damage attribution (share of what actually connected + ults)
+    connected = max(0.0, squad_dmg - pool) + fx.get("nuke", 0) + fx.get("aoe", 0) * len(enemies)
+    dmg_by_hero = [round(connected * (a / sum_atk)) for a in atk_list]
     log.append(f"⚔️ Your heroes strike — *{kills}* slain, *{len(survivors)}* break through.")
     strike_note = f"⚔️ *{kills}* destroyed · *{len(survivors)}* breach the gate!"
     if any(fx.get(k) for k in ("nuke", "aoe", "stun", "shield", "weaken", "buff")):
         strike_note = "💥 _Ultimates unleashed!_\n" + strike_note
     frames.append(_td_anim_frame(state, "🗡️ *Your heroes strike!*", enemies, strike_note))
 
-    # Enemy assault on the King (front heroes soak first)
+    # Enemy assault on the King (front rows soak most, back rows none)
+    leaked = 0
     if fx.get("stun"):
         log.append("🧊 The wave is frozen — no King damage this turn!")
         assault_note = "🧊 The horde is frozen — the gate holds!"
     else:
-        soak = sum(_td_hero_stats(state, h)[1] for h in state["heroes"] if h.get("row") == "front")
+        soak = sum(_td_hero_stats(state, h)[1] * TD_SOAK_WEIGHT[_td_hrow(h)] for h in state["heroes"])
         raw = sum(e["atk"] * (2 if e.get("boss") else 1) for e in survivors)
         if fx.get("weaken"):
             raw = round(raw * (1 - fx["weaken"]))
         leaked = max(0, raw - soak)
         if fx.get("shield"): leaked = round(leaked * (1 - fx["shield"]))
         if _td_has(state, "aegis"): leaked = round(leaked * 0.85)
+        leaked = round(leaked)
         if leaked > 0:
             state["king_hp"] -= leaked
             log.append(f"👑 The King takes *{fmt_num(leaked)}* damage.")
@@ -40480,18 +40578,41 @@ def _td_resolve(p, state):
     if _td_has(state, "bloodpact"):
         state["king_hp"] = min(state["king_max"], state["king_hp"] + round(state["king_max"] * 0.04))
     gain = 5 + min(5, state["gold"] // 10) + (2 if _td_has(state, "tithe") else 0) + min(3, state["win_streak"]) + 2
+    if _td_has(state, "greed"):
+        gain = round(gain * 1.25)
     state["gold"] += gain
     state["win_streak"] += 1
+
+    # Wave-complete report (per-hero damage, castle damage, silver earned)
+    top = sorted(range(len(state["heroes"])), key=lambda i: dmg_by_hero[i], reverse=True)
+    rep = [f"⚔️ *Wave {wave} Complete!*", f"👑 King *{_siege_bar(state['king_hp'], state['king_max'])[1]}%*"]
+    for i in top[:4]:
+        b = _TD_BY_ID[state["heroes"][i]["id"]]
+        rep.append(f"{b['emoji']} {b['name']} — *{fmt_num(dmg_by_hero[i])}*")
+    rep.append(f"🏰 Castle damage: *{fmt_num(leaked)}*")
+    rep.append(f"💰 Silver earned: *+{gain}*")
+    state["report"] = {"wave": wave, "text": "\n".join(rep)}
+    frames.append("\n".join(rep))
+
     state["wave"] += 1
     state["cur_enemies"] = None
     log.append(f"✅ *Wave {wave} held!* +{gain}💰")
+    # A finite chapter is won when its final (boss) wave falls.
+    if state.get("max_waves") and state["wave"] > state["max_waves"]:
+        state["_anim"] = frames
+        return log, "victory"
+    state["_anim"] = frames
     return log, "win"
 
-def _td_grant_rewards(p, state):
+def _td_grant_rewards(p, state, outcome="loss"):
     waves = state["wave"] - 1
-    gold = round(1300 * max(1, waves))
-    shards = int(waves * 0.7)
-    scrolls = int(waves * 0.25)
+    diff = safe_int(state.get("diff", 0))
+    ch_idx = state.get("chapter", _TD_ENDLESS)
+    victory = outcome == "victory"
+    rmult = (1.0 + 0.25 * diff) * (1.5 if victory else 1.0)
+    gold = round(1300 * max(1, waves) * rmult)
+    shards = int(waves * 0.7 * rmult)
+    scrolls = int(waves * 0.25 * rmult)
     p["gold"] = safe_int(p.get("gold", 0)) + gold
     lines = [f"💰 *{fmt_num(gold)}* gold"]
     for _ in range(shards):  add_item(p, "Iron Shard")
@@ -40499,12 +40620,22 @@ def _td_grant_rewards(p, state):
     for _ in range(scrolls): add_item(p, "Enchanting Scroll")
     if scrolls: lines.append(f"✨ *Enchanting Scroll ×{scrolls}*")
     cds = safe_cds(p)
-    # Crowns — the meta currency spent in the Barracks to level heroes.
-    crowns = 3 + waves + (waves // TD_BOSS_EVERY) * 3
+    # Crowns — the meta currency spent in the Barracks to level/unlock heroes.
+    crowns = round((3 + waves + (waves // TD_BOSS_EVERY) * 3) * rmult)
     cds["td_crowns"] = safe_int(cds.get("td_crowns", 0)) + crowns
-    lines.append(f"👑 *{crowns} Crowns* → level heroes in the Barracks (`/tdbarracks`)")
-    best_prev = safe_int(cds.get("td_best_wave", 0))
+    lines.append(f"👑 *{crowns} Crowns* → unlock & level heroes in the Barracks")
     milestone = ""
+    # Chapter clear → unlock the next expedition (finite chapters only).
+    if victory and ch_idx != _TD_ENDLESS:
+        prev = safe_int(cds.get("td_chapters_cleared", -1))
+        if ch_idx > prev:
+            cds["td_chapters_cleared"] = ch_idx
+            nxt = ch_idx + 1
+            if nxt < _TD_ENDLESS:
+                milestone += f"\n🗺️ *Chapter {nxt + 1} unlocked: {TD_CHAPTERS[nxt]['name']}!*"
+            elif nxt == _TD_ENDLESS:
+                milestone += "\n♾️ *All chapters cleared — the Endless Siege awaits!*"
+    best_prev = safe_int(cds.get("td_best_wave", 0))
     if waves > best_prev:
         cds["td_best_wave"] = waves
         for thr, title in ((10, "King's Squire"), (20, "Throne Guardian"), (35, "King's Champion")):
@@ -40623,31 +40754,42 @@ def _td_wave_preview(state):
         return f"{head}\n   {boss[0]} *{boss[1]}* 💀\n   {body}"
     return f"{head}: {body}"
 
-def _td_heroes_block(state):
-    if not state["heroes"]:
-        return "  _none — summon below_"
+def _td_formation_block(state):
+    by_slot = {h["slot"]: h for h in state["heroes"] if "slot" in h}
+    labels = ["🛡️ Front", "⚔️ Mid", "🏹 Back"]
     out = []
-    for h in state["heroes"]:
-        b = _TD_BY_ID[h["id"]]
-        rdy = " ⚡" if _td_ult_ready(state, h) else ""
-        out.append(f"  {'⭐' * h['star']} {b['emoji']} {b['name']}{rdy}")
+    for r in range(3):
+        cells = []
+        for c in range(3):
+            slot = r * 3 + c
+            h = by_slot.get(slot)
+            if h:
+                b = _TD_BY_ID[h["id"]]
+                rdy = "⚡" if _td_ult_ready(state, h) else ""
+                cells.append(f"{b['emoji']}{'⭐' * h['star']}{rdy}")
+            else:
+                cells.append(TD_SLOT_NUMS[slot])
+        out.append(f"{labels[r]} " + " ".join(cells))
     return "\n".join(out)
 
 def _build_td_card(p, state, flash=""):
     uid = state["uid"]
-    _, kpct = _siege_bar(state["king_hp"], state["king_max"])
+    ch = TD_CHAPTERS[state.get("chapter", _TD_ENDLESS)]
+    maxw = state.get("max_waves")
+    wtag = f"{state['wave']}/{maxw}" if maxw else f"{state['wave']} ♾️"
+    bar, kpct = _siege_bar(state["king_hp"], state["king_max"])
     grace = " ".join(_TD_GRACE_BY_ID[g]["emoji"] for g in state["grace"]) or "—"
-    lines = [f"👑 *THRONE DEFENSE* — Wave *{state['wave']}*"]
+    lines = [f"{ch['emoji']} *{ch['name']}* — Wave *{wtag}*"]
     if flash:
         lines.append(flash)
-    lines.append(f"👑 King *{kpct}%*   💰 *{state['gold']}*   🛡️ *{len(state['heroes'])}/{TD_SQUAD_CAP}*")
-    lines.append(f"✨ Grace: {grace}")
+    lines.append(f"🏰 Castle {bar} {kpct}%")
+    lines.append(f"💰 Silver *{state['gold']}*   🛡️ *{len(state['heroes'])}/{TD_SQUAD_CAP}*   ✨ {grace}")
     if state.get("fx"):
-        lines.append("💥 _Ultimate empowered — fight to unleash it!_")
-    lines.append("\n🛡️ *Heroes*  _(⭐ merge · ⚡ ult ready)_")
-    lines.append(_td_heroes_block(state))
+        lines.append("💥 _Ultimate readied — fight to unleash it!_")
+    lines.append("")
+    lines.append(_td_formation_block(state))
     lines.append("\n" + _td_wave_preview(state))
-    lines.append("\n⚜️ *Summon* — tap to hire · 🔄 2💰")
+    lines.append("\n⚜️ *Recruit* — tap to hire")
     rows = []
     # ult-cast buttons for ready heroes
     ult_row = []
@@ -40666,11 +40808,43 @@ def _build_td_card(p, state, flash=""):
                                           callback_data=f"td_buy_{uid}_{i}")])
     action = [InlineKeyboardButton(f"🔄 Reroll ({TD_REROLL_COST}💰)", callback_data=f"td_reroll_{uid}")]
     if state["heroes"]:
+        action.append(InlineKeyboardButton("🧭 Formation", callback_data=f"td_move_{uid}"))
         action.append(InlineKeyboardButton("👥 Manage", callback_data=f"td_manage_{uid}"))
     rows.append(action)
-    rows.append([InlineKeyboardButton("⚔️ Defend! (Fight Wave)", callback_data=f"td_fight_{uid}")])
-    rows.append([InlineKeyboardButton("🏳️ Surrender", callback_data=f"td_quit_{uid}"),
+    rows.append([InlineKeyboardButton("⚔️ Begin Battle", callback_data=f"td_fight_{uid}")])
+    rows.append([InlineKeyboardButton("🏳️ Retreat", callback_data=f"td_quit_{uid}"),
                  InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_td_move(p, state):
+    uid = state["uid"]
+    sel = state.get("move_sel")
+    if sel is not None and sel >= len(state["heroes"]):
+        sel = state["move_sel"] = None
+    lines = ["🧭 *Formation* — front rows soak, back rows stay safe",
+             _td_formation_block(state), ""]
+    rows = []
+    if sel is None:
+        lines.append("_Tap a hero to reposition._")
+        for i, h in enumerate(state["heroes"]):
+            b = _TD_BY_ID[h["id"]]
+            rows.append([InlineKeyboardButton(
+                f"{TD_SLOT_NUMS[h['slot']]} {b['emoji']} {b['name']} {'⭐' * h['star']}",
+                callback_data=f"td_movsel_{uid}_{i}")])
+    else:
+        h = state["heroes"][sel]; b = _TD_BY_ID[h["id"]]
+        lines.append(f"_Move {b['emoji']} *{b['name']}* — tap a destination slot (swaps if taken)._")
+        by_slot = {x["slot"]: x for x in state["heroes"] if "slot" in x}
+        for r in range(3):
+            grid = []
+            for c in range(3):
+                slot = r * 3 + c
+                occ = by_slot.get(slot)
+                label = TD_SLOT_NUMS[slot] + (_TD_BY_ID[occ["id"]]["emoji"] if occ else "")
+                grid.append(InlineKeyboardButton(label, callback_data=f"td_movto_{uid}_{slot}"))
+            rows.append(grid)
+        rows.append([InlineKeyboardButton("↩️ Pick another hero", callback_data=f"td_move_{uid}")])
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"td_home_{uid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 def _build_td_manage(p, state):
@@ -40716,9 +40890,70 @@ def _build_td_end(p, state, summary, milestone):
             [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
+def _build_td_victory(p, state, summary, milestone):
+    uid = state["uid"]
+    ch = TD_CHAPTERS[state.get("chapter", _TD_ENDLESS)]
+    _, kpct = _siege_bar(state["king_hp"], state["king_max"])
+    lines = ["🎉 *VICTORY!*", f"{ch['emoji']} *{ch['name']}* cleared!",
+             f"🏰 Castle HP *{kpct}%*", "", "*Rewards:*", summary or "_—_"]
+    if milestone:
+        lines.append(milestone)
+    cur = state.get("chapter", _TD_ENDLESS); diff = state.get("diff", 0)
+    nxt = cur + 1
+    rows = []
+    if cur != _TD_ENDLESS and nxt < len(TD_CHAPTERS) and _td_ch_unlocked(p, nxt):
+        rows.append([InlineKeyboardButton("➡️ Next Chapter", callback_data=f"td_ch_{uid}_{nxt}_0")])
+    rows.append([InlineKeyboardButton("🔁 Replay", callback_data=f"td_ch_{uid}_{cur}_{diff}"),
+                 InlineKeyboardButton("🏆 Board", callback_data=f"td_board_{uid}")])
+    rows.append([InlineKeyboardButton("🏰 Expeditions", callback_data=f"td_menu_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_td_select(p, uid, idx=0, diff=0):
+    idx = max(0, min(len(TD_CHAPTERS) - 1, idx))
+    diff = max(0, min(4, diff))
+    ch = TD_CHAPTERS[idx]
+    unlocked = _td_ch_unlocked(p, idx)
+    is_endless = idx == _TD_ENDLESS
+    stars = min(10, idx + 1 + diff)
+    lines = [f"⚔️ *EXPEDITION*  ·  Chapter {idx + 1}/{len(TD_CHAPTERS)}",
+             f"{ch['emoji']} *{ch['name']}*",
+             f"Difficulty {'★' * stars}{'☆' * (10 - stars)}",
+             f"Foes: {ch['types']}"]
+    if ch.get("boss"):
+        lines.append(f"Boss: {ch['boss'][1]} *{ch['boss'][0]}*")
+    lines.append(f"Waves: *{ch['waves']}*" if ch.get("waves") else "Waves: *Endless ♾️*")
+    power = _td_kingdom_power(p)
+    if not is_endless:
+        rec = round(_td_rec_power(idx) * (1 + 0.15 * diff))
+        lines.append(f"Recommended Power: *{rec}*  {'✅' if power >= rec else '⚠️'}")
+    lines.append(f"Your Power: *{power}*")
+    if not unlocked:
+        prev = TD_CHAPTERS[idx - 1]["name"] if idx > 0 else ""
+        lines.append(f"\n🔒 _Clear {prev} to unlock this chapter._")
+    rows = []
+    nav = []
+    if idx > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"td_ch_{uid}_{idx - 1}_{diff}"))
+    nav.append(InlineKeyboardButton("· · ·", callback_data=f"td_ch_{uid}_{idx}_{diff}"))
+    if idx < len(TD_CHAPTERS) - 1:
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"td_ch_{uid}_{idx + 1}_{diff}"))
+    rows.append(nav)
+    if not is_endless:
+        rows.append([InlineKeyboardButton(f"⚙️ Difficulty: {('★' * diff) or '—'} (raise)",
+                                          callback_data=f"td_diff_{uid}_{idx}_{(diff + 1) % 5}")])
+    if unlocked:
+        rows.append([InlineKeyboardButton("⚔️ Start Expedition", callback_data=f"td_start_{uid}_{idx}_{diff}")])
+    rows.append([InlineKeyboardButton("🏰 Barracks", callback_data=f"td_barracks_{uid}"),
+                 InlineKeyboardButton("🏆 Leaderboard", callback_data=f"td_board_{uid}")])
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
 def _td_render(p, state, flash=""):
     if state["phase"] == "manage":
         return _build_td_manage(p, state)
+    if state["phase"] == "move":
+        return _build_td_move(p, state)
     if state["phase"] == "draft":
         return _build_td_draft(p, state)
     return _build_td_card(p, state, flash=flash)
@@ -40758,21 +40993,9 @@ async def thronedefense_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg:
             st["chat_id"] = msg.chat_id; st["msg_id"] = msg.message_id
         return
-    best = safe_int(safe_cds(p).get("td_best_wave", 0))
-    lines = ["👑 *THRONE DEFENSE*",
-             "_Summon Heroes, **merge** duplicates to raise their ⭐, and unleash"
-             " their **ultimates** as waves march on your King. Draft a Grace after"
-             " each wave. When the King falls, the run ends._",
-             "_A few heroes come free — **unlock** the stronger roster with 👑 Crowns"
-             " in the 🏰 Barracks._"]
-    if best:
-        lines.append(f"\n🏅 Your best: *Wave {best}*   ·   👑 Crowns: *{_td_crowns(p)}*")
-    rows = [[InlineKeyboardButton("👑 Defend the Throne", callback_data=f"td_again_{user.id}")],
-            [InlineKeyboardButton("🏰 Barracks", callback_data=f"td_barracks_{user.id}"),
-             InlineKeyboardButton("🏆 Leaderboard", callback_data=f"td_board_{user.id}")],
-            [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")]]
-    await send_group(update, "\n".join(lines), delay=9, permanent=True,
-                     reply_markup=InlineKeyboardMarkup(rows))
+    idx = max(0, min(_td_ch_cleared(p) + 1, _TD_ENDLESS))
+    text, markup = _build_td_select(p, user.id, idx, 0)
+    await send_group(update, text, delay=9, permanent=True, reply_markup=markup)
 
 async def tdboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -40799,9 +41022,28 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         st["chat_id"] = query.message.chat_id; st["msg_id"] = query.message.message_id
         await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
 
-    if action == "again":
-        _td_new_run(p, uid)
-        await query.answer("To arms!")
+    if action in ("menu", "again"):
+        idx = max(0, min(_td_ch_cleared(p) + 1, _TD_ENDLESS))
+        text, markup = _build_td_select(p, uid, idx, 0)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+    if action in ("ch", "diff"):
+        try:
+            c_idx = int(toks[3]); c_diff = int(toks[4])
+        except (IndexError, ValueError):
+            c_idx, c_diff = 0, 0
+        text, markup = _build_td_select(p, uid, c_idx, c_diff)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+    if action == "start":
+        try:
+            c_idx = int(toks[3]); c_diff = int(toks[4])
+        except (IndexError, ValueError):
+            c_idx, c_diff = 0, 0
+        if not _td_ch_unlocked(p, c_idx):
+            await query.answer("🔒 Locked — clear the previous chapter first!", show_alert=True); return
+        _td_new_run(p, uid, c_idx, c_diff)
+        await query.answer("⚔️ Expedition begins!")
         await render(); return
     if action == "board":
         text, markup = _td_leaderboard_card(uid, highlight=uid)
@@ -40829,9 +41071,33 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("This run has ended — /thronedefense to play again.", show_alert=True); return
 
     if action == "home":
-        st["phase"] = "plan"; await query.answer(); await render(); return
+        st["phase"] = "plan"; st["move_sel"] = None; await query.answer(); await render(); return
     if action == "manage":
         st["phase"] = "manage"; await query.answer(); await render(); return
+    if action == "move":
+        st["phase"] = "move"; st["move_sel"] = None; await query.answer(); await render(); return
+    if action == "movsel":
+        try:
+            hi = int(toks[3])
+        except (IndexError, ValueError):
+            await query.answer(); return
+        if 0 <= hi < len(st["heroes"]):
+            st["move_sel"] = hi
+        await query.answer(); await render(); return
+    if action == "movto":
+        try:
+            slot = int(toks[3]); hi = st.get("move_sel")
+        except (IndexError, ValueError):
+            await query.answer(); return
+        if hi is None or not (0 <= hi < len(st["heroes"])) or not (0 <= slot < TD_SLOTS):
+            await query.answer(); return
+        mover = st["heroes"][hi]
+        occ = next((x for x in st["heroes"] if x.get("slot") == slot), None)
+        if occ is not None and occ is not mover:
+            occ["slot"] = mover["slot"]   # swap
+        mover["slot"] = slot
+        st["move_sel"] = None
+        await query.answer("Repositioned!"); await render(); return
 
     if action == "buy":
         try:
@@ -40904,13 +41170,23 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         st.pop("_animating", None)
         if outcome == "loss":
             st["phase"] = "over"
-            summary, milestone = _td_grant_rewards(p, st)
+            summary, milestone = _td_grant_rewards(p, st, outcome="loss")
             text, markup = _build_td_end(p, st, summary, milestone)
             await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
             _active_throne.pop(uid, None)
             return
+        if outcome == "victory":
+            st["phase"] = "over"
+            summary, milestone = _td_grant_rewards(p, st, outcome="victory")
+            text, markup = _build_td_victory(p, st, summary, milestone)
+            await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+            _active_throne.pop(uid, None)
+            return
+        # Blessings come every 3 waves and after every boss (not every wave).
+        cleared = st["wave"] - 1
+        due = (cleared % 3 == 0) or (cleared % TD_BOSS_EVERY == 0)
         pool = [g["id"] for g in TD_GRACE if g["id"] not in st["grace"]]
-        if pool:
+        if due and pool:
             random.shuffle(pool); st["draft"] = pool[:3]; st["phase"] = "draft"
         else:
             st["phase"] = "plan"
