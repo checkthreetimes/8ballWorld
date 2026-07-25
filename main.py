@@ -38876,22 +38876,41 @@ def _asc_grant_rewards(p, state, died):
 # ── Ascension UI ──────────────────────────────────────────────────────────────
 def _asc_hpbar(state):
     bar, pct = _siege_bar(state["hp"], state["max_hp"])
-    return f"❤️ `{bar}` *{pct}%*  ({fmt_num(state['hp'])}/{fmt_num(state['max_hp'])})"
+    return f"❤️ `{bar}` *{pct}%*   {fmt_num(state['hp'])}/{fmt_num(state['max_hp'])}"
+
+_ASC_NODE_DESC = {
+    "fight":    "A lone foe blocks the way.",
+    "elite":    "Tougher fight — *drops a relic*.",
+    "rest":     f"Recover {int(ASC_REST_HEAL * 100)}% of max HP.",
+    "treasure": "Claim a *free relic*.",
+    "event":    "A mystery — risk or reward.",
+    "boss":     "A boss guards the stair.",
+}
+
+def _asc_boss_countdown(floor):
+    """Floors until the next boss (0 = this floor is a boss)."""
+    return (ASC_BOSS_EVERY - floor % ASC_BOSS_EVERY) % ASC_BOSS_EVERY
 
 def _build_asc_map_card(p, state, flash=""):
     uid = state["uid"]
-    relics = " ".join(_ASC_RELIC_BY_ID[r]["emoji"] for r in state["relics"]) or "_none_"
+    relics = " ".join(_ASC_RELIC_BY_ID[r]["emoji"] for r in state["relics"]) or "—"
+    rem = _asc_boss_countdown(state["floor"])
+    boss_line = "👑 *BOSS FLOOR*" if rem == 0 else f"👑 Boss in {rem}"
     lines = [f"🗼 *THE ASCENSION* — Floor *{state['floor']}*"]
     if flash:
-        lines.append(flash)
-    lines += [_asc_hpbar(state), f"🎒 Relics: {relics}", ""]
+        lines.append("\n" + flash)
+    lines += [
+        _asc_hpbar(state),
+        f"🎒 Relics *{len(state['relics'])}*: {relics}   ·   {boss_line}",
+        "",
+    ]
     if state["choices"] and state["choices"][0]["type"] == "boss":
         boss = _asc_make_enemy(state["floor"], "boss")
-        lines.append(f"🔴 *BOSS — {boss['name']}* blocks the stair. No way but through.")
+        lines.append(f"🔴 *{boss['name']}* blocks the stair — no way but through!")
     else:
-        lines.append("Choose your path:")
-        for i, n in enumerate(state["choices"]):
-            lines.append(f"{n['emoji']} *{n['label']}*")
+        lines.append("*Choose your path:*")
+        for n in state["choices"]:
+            lines.append(f"{n['emoji']} *{n['label']}* — _{_ASC_NODE_DESC.get(n['type'], '')}_")
     rows = []
     for i, n in enumerate(state["choices"]):
         rows.append([InlineKeyboardButton(f"{n['emoji']} {n['label']}", callback_data=f"clm_pick_{uid}_{i}")])
@@ -38901,33 +38920,33 @@ def _build_asc_map_card(p, state, flash=""):
 
 def _build_asc_draft_card(p, state):
     uid = state["uid"]
-    lines = ["🎁 *Choose a relic:*", _asc_hpbar(state), ""]
-    for ln in state.get("log", [])[-3:]:
-        lines.append(f"_{ln}_")
+    lines = ["🎁 *Choose a relic reward:*", _asc_hpbar(state)]
+    if state.get("log"):
+        lines.append(f"_{state['log'][-1]}_")
     lines.append("")
     rows = []
     for i, rid in enumerate(state["draft"]):
         r = _ASC_RELIC_BY_ID[rid]
         lines.append(f"{r['emoji']} *{r['name']}* — _{r['desc']}_")
         rows.append([InlineKeyboardButton(f"{r['emoji']} {r['name']}", callback_data=f"clm_draft_{uid}_{i}")])
-    rows.append([InlineKeyboardButton("⏭️ Skip (heal 8%)", callback_data=f"clm_draft_{uid}_skip")])
+    rows.append([InlineKeyboardButton("⏭️ Skip (heal 8% HP instead)", callback_data=f"clm_draft_{uid}_skip")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 def _build_asc_event_card(p, state):
     uid = state["uid"]; ev = state["event"]
-    lines = [f"❓ *{ev['title']}*", _asc_hpbar(state), "", ev["desc"], ""]
+    lines = [f"❓ *{ev['title']}*", _asc_hpbar(state), "", f"_{ev['desc']}_", ""]
     rows = [[InlineKeyboardButton(ev["a_label"], callback_data=f"clm_event_{uid}_a")],
             [InlineKeyboardButton(ev["b_label"], callback_data=f"clm_event_{uid}_b")]]
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 def _build_asc_boss_extract_card(p, state):
     uid = state["uid"]
-    lines = ["🏆 *BOSS FELLED!*", _asc_hpbar(state), "",
-             f"You've conquered floor *{state['floor']}*. The stair keeps climbing…",
-             "_Extract now to bank your full haul, or push deeper for greater rewards —"
-             " but death past here costs you half._"]
+    lines = ["🏆 *BOSS DEFEATED!*", _asc_hpbar(state), "",
+             f"You've conquered floor *{state['floor']}*. The stair climbs ever higher…", "",
+             "⬆️ *Climb On* — deeper floors, richer loot; but a fall past here costs *half* your haul.",
+             "🎖️ *Extract* — bank your *full* haul now and walk away a victor."]
     rows = [[InlineKeyboardButton("⬆️ Climb On", callback_data=f"clm_push_{uid}")],
-            [InlineKeyboardButton("💰 Extract (bank rewards)", callback_data=f"clm_extract_{uid}")]]
+            [InlineKeyboardButton("🎖️ Extract (bank rewards)", callback_data=f"clm_extract_{uid}")]]
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 def _build_asc_relics_card(p, state):
@@ -39833,11 +39852,16 @@ def _wt_grant_rewards(p, state):
 # ── War Table UI ──────────────────────────────────────────────────────────────
 def _wt_squad_line(squad):
     if not squad:
-        return "_empty — buy units below_"
+        return "  _empty — recruit units below_"
+    def side(units):
+        counts = {}
+        for u in units:
+            k = (u["emoji"], u["name"])
+            counts[k] = counts.get(k, 0) + 1
+        return "   ".join(f"{e} {n}×{c}" for (e, n), c in counts.items()) or "—"
     front = [u for u in squad if _wt_row(u) == "front"]
     back = [u for u in squad if _wt_row(u) == "back"]
-    def fmt(us): return " ".join(f"{u['emoji']}" for u in us) or "—"
-    return f"  🛡️ Front: {fmt(front)}\n  🎯 Back:  {fmt(back)}"
+    return f"  🛡️ Front: {side(front)}\n  🎯 Back:  {side(back)}"
 
 def _build_wt_card(p, state, flash=""):
     uid = state["uid"]
@@ -39846,19 +39870,22 @@ def _build_wt_card(p, state, flash=""):
     hpbar, hppct = _siege_bar(state["command_hp"], state["command_max"])
     lines = [f"⚔️ *WAR TABLE* — Round *{state['round']}*"]
     if flash:
-        lines.append(flash)
+        lines.append("\n" + flash)
     lines += [
-        f"❤️ Command `{hpbar}` *{hppct}%*   💰 Gold: *{state['gold']}*",
-        f"👥 Squad: *{len(state['squad'])}/{cap}*",
+        f"❤️ Command `{hpbar}` *{hppct}%*   ·   💰 Gold *{state['gold']}*",
+        f"👥 Squad *{len(state['squad'])}/{cap}*",
     ]
     if active:
-        lines.append("✨ *Synergies:* " + "  ·  ".join(active))
-    lines += ["", "*Your squad:*", _wt_squad_line(state["squad"]), "", "*Recruits* (tap to buy):"]
+        lines.append("✨ *Synergies:* " + "   ".join(active))
+    else:
+        lines.append("✨ _Synergies: none — stack 2+ of an element or role for buffs._")
+    lines += ["", "*🛡️ Your squad:*", _wt_squad_line(state["squad"]), "",
+              f"*🏪 Recruits* — buy with gold, or 🔄 reroll ({WT_REROLL_COST}💰):"]
     rows = []
     for i, u in enumerate(state["shop"]):
         if u is None: continue
-        lines.append(f"{u['emoji']} *{u['name']}* — {u['element']}/{u['role']} — {u['cost']}💰 "
-                     f"(⚔️{u['atk']} ❤️{u['hp']})")
+        lines.append(f"{u['emoji']} *{u['name']}*  {u['cost']}💰  ·  {u['element']}/{u['role']}  ·  "
+                     f"⚔️{u['atk']} ❤️{u['hp']}")
         rows.append([InlineKeyboardButton(f"{u['emoji']} {u['name']} ({u['cost']}💰)",
                                           callback_data=f"wt_buy_{uid}_{i}")])
     action_row = [InlineKeyboardButton(f"🔄 Reroll ({WT_REROLL_COST}💰)", callback_data=f"wt_reroll_{uid}")]
@@ -39866,7 +39893,7 @@ def _build_wt_card(p, state, flash=""):
         action_row.append(InlineKeyboardButton("🐾 Add Pet (free)", callback_data=f"wt_pet_{uid}"))
     rows.append(action_row)
     rows.append([InlineKeyboardButton("👥 Manage Squad", callback_data=f"wt_squad_{uid}"),
-                 InlineKeyboardButton("⚔️ FIGHT ROUND", callback_data=f"wt_fight_{uid}")])
+                 InlineKeyboardButton("⚔️ Fight Round", callback_data=f"wt_fight_{uid}")])
     rows.append([InlineKeyboardButton("🏳️ Forfeit", callback_data=f"wt_quit_{uid}"),
                  InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
