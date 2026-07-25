@@ -40201,7 +40201,7 @@ def _td_unlocked_ids(p):
     owned = set(safe_cds(p).get("td_heroes", {}).keys())
     return [h["id"] for h in TD_HEROES if h["id"] in TD_FREE_HEROES or h["id"] in owned]
 
-TD_ANIM_DELAY = 1.2   # seconds between battle-playback frames
+TD_ANIM_DELAY = 1.6   # seconds between battle-playback frames
 
 # ── Formation (3×3: front soaks, back is protected) ───────────────────────────
 TD_ROWS = ("front", "middle", "back")
@@ -40220,6 +40220,14 @@ def _td_slot_row(slot):
     return TD_ROWS[max(0, min(2, safe_int(slot) // 3))]
 def _td_hrow(h):
     return _td_slot_row(h.get("slot", 0))
+
+def _td_star_tag(star, always=False):
+    """Compact merge-rank badge (⭐2 / ⭐3) instead of stacked stars.
+    ⭐1 is hidden in tight spots unless always=True."""
+    star = safe_int(star, 1)
+    if star <= 1 and not always:
+        return ""
+    return f"⭐{star}"
 
 # ── Expedition chapters (finite story runs + an endless siege) ─────────────────
 # archs: (name, emoji, hp_mult, atk_mult).  waves=None ⇒ endless.
@@ -40453,7 +40461,7 @@ def _td_cast_ult(state, idx):
 def _td_anim_heroes_line(state):
     if not state["heroes"]:
         return "_no defenders_"
-    return "  ".join(f"{'⭐' * h['star']}{_TD_BY_ID[h['id']]['emoji']}" for h in state["heroes"])
+    return "  ".join(f"{_TD_BY_ID[h['id']]['emoji']}{_td_star_tag(h['star'])}" for h in state["heroes"])
 
 def _td_anim_enemy_block(enemies):
     """Return (boss_line_or_None, grouped-alive-counts-line) for a battle frame."""
@@ -40583,16 +40591,13 @@ def _td_resolve(p, state):
     state["gold"] += gain
     state["win_streak"] += 1
 
-    # Wave-complete report (per-hero damage, castle damage, silver earned)
+    # Wave-complete report data (rendered as an interactive card after playback,
+    # so the outcome stays on screen as long as the player wants).
     top = sorted(range(len(state["heroes"])), key=lambda i: dmg_by_hero[i], reverse=True)
-    rep = [f"⚔️ *Wave {wave} Complete!*", f"👑 King *{_siege_bar(state['king_hp'], state['king_max'])[1]}%*"]
-    for i in top[:4]:
-        b = _TD_BY_ID[state["heroes"][i]["id"]]
-        rep.append(f"{b['emoji']} {b['name']} — *{fmt_num(dmg_by_hero[i])}*")
-    rep.append(f"🏰 Castle damage: *{fmt_num(leaked)}*")
-    rep.append(f"💰 Silver earned: *+{gain}*")
-    state["report"] = {"wave": wave, "text": "\n".join(rep)}
-    frames.append("\n".join(rep))
+    rows = [(_TD_BY_ID[state["heroes"][i]["id"]]["emoji"],
+             _TD_BY_ID[state["heroes"][i]["id"]]["name"], dmg_by_hero[i]) for i in top]
+    state["report"] = {"wave": wave, "rows": rows, "leaked": leaked, "gain": gain,
+                       "kills": kills, "kpct": _siege_bar(state["king_hp"], state["king_max"])[1]}
 
     state["wave"] += 1
     state["cur_enemies"] = None
@@ -40766,7 +40771,7 @@ def _td_formation_block(state):
             if h:
                 b = _TD_BY_ID[h["id"]]
                 rdy = "⚡" if _td_ult_ready(state, h) else ""
-                cells.append(f"{b['emoji']}{'⭐' * h['star']}{rdy}")
+                cells.append(f"{b['emoji']}{_td_star_tag(h['star'])}{rdy}")
             else:
                 cells.append(TD_SLOT_NUMS[slot])
         out.append(f"{labels[r]} " + " ".join(cells))
@@ -40812,8 +40817,12 @@ def _build_td_card(p, state, flash=""):
         action.append(InlineKeyboardButton("👥 Manage", callback_data=f"td_manage_{uid}"))
     rows.append(action)
     rows.append([InlineKeyboardButton("⚔️ Begin Battle", callback_data=f"td_fight_{uid}")])
-    rows.append([InlineKeyboardButton("🏳️ Retreat", callback_data=f"td_quit_{uid}"),
-                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    util = [InlineKeyboardButton("ℹ️ Help", callback_data=f"td_info_{uid}_home")]
+    if state.get("log"):
+        util.append(InlineKeyboardButton("📜 Log", callback_data=f"td_log_{uid}"))
+    util.append(InlineKeyboardButton("🏳️ Retreat", callback_data=f"td_quit_{uid}"))
+    rows.append(util)
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 def _build_td_move(p, state):
@@ -40829,7 +40838,7 @@ def _build_td_move(p, state):
         for i, h in enumerate(state["heroes"]):
             b = _TD_BY_ID[h["id"]]
             rows.append([InlineKeyboardButton(
-                f"{TD_SLOT_NUMS[h['slot']]} {b['emoji']} {b['name']} {'⭐' * h['star']}",
+                f"{TD_SLOT_NUMS[h['slot']]} {b['emoji']} {b['name']} {_td_star_tag(h['star'])}".rstrip(),
                 callback_data=f"td_movsel_{uid}_{i}")])
     else:
         h = state["heroes"][sel]; b = _TD_BY_ID[h["id"]]
@@ -40854,7 +40863,7 @@ def _build_td_manage(p, state):
     for i, h in enumerate(state["heroes"]):
         b = _TD_BY_ID[h["id"]]; atk, hp = _td_hero_stats(state, h)
         u = b["ult"]
-        lines.append(f"{'⭐' * h['star']} {b['emoji']} *{b['name']}* ⚔️{atk} ❤️{hp}")
+        lines.append(f"{b['emoji']} *{b['name']}* {_td_star_tag(h['star'], always=True)} ⚔️{atk} ❤️{hp}")
         lines.append(f"     {u['emoji']} _{u['name']}: {u['desc']}_")
         refund = max(0, b["cost"] - 1)
         rows.append([InlineKeyboardButton(f"💸 {b['emoji']} {b['name']} (+{refund}💰)", callback_data=f"td_sell_{uid}_{i}")])
@@ -40946,14 +40955,62 @@ def _build_td_select(p, uid, idx=0, diff=0):
         rows.append([InlineKeyboardButton("⚔️ Start Expedition", callback_data=f"td_start_{uid}_{idx}_{diff}")])
     rows.append([InlineKeyboardButton("🏰 Barracks", callback_data=f"td_barracks_{uid}"),
                  InlineKeyboardButton("🏆 Leaderboard", callback_data=f"td_board_{uid}")])
-    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    rows.append([InlineKeyboardButton("ℹ️ How to Play", callback_data=f"td_info_{uid}_menu"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_td_report(p, state):
+    uid = state["uid"]
+    r = state.get("report") or {}
+    maxw = state.get("max_waves")
+    wtag = f"{r.get('wave', '?')}/{maxw}" if maxw else f"{r.get('wave', '?')}"
+    lines = [f"⚔️ *Wave {wtag} — Complete!*",
+             f"🏰 Castle HP *{r.get('kpct', 0)}%*   🗡️ *{r.get('kills', 0)}* enemies slain", "",
+             "*Damage dealt*"]
+    for emoji, name, dmg in r.get("rows", [])[:6]:
+        lines.append(f"{emoji} {name} — *{fmt_num(dmg)}*")
+    lines += ["", f"🏰 Castle damage taken: *{fmt_num(r.get('leaked', 0))}*",
+              f"💰 Silver earned: *+{r.get('gain', 0)}*"]
+    rows = [[InlineKeyboardButton("▶️ Continue", callback_data=f"td_cont_{uid}"),
+             InlineKeyboardButton("📜 Battle Log", callback_data=f"td_log_{uid}")]]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_td_log(p, state):
+    uid = state["uid"]
+    lines = ["📜 *Battle Log — last wave*", ""]
+    lg = state.get("log", [])
+    if not lg:
+        lines.append("_No battle fought yet._")
+    for ln in lg:
+        lines.append(f"• {ln}")
+    return "\n".join(lines), InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔙 Back", callback_data=f"td_resume_{uid}")]])
+
+def _build_td_info(uid, where="menu"):
+    lines = [
+        "ℹ️ *How to Play — Kingdom Expedition*", "",
+        "🎯 *Goal:* survive each wave. If 🏰 *Castle HP* hits 0 the run ends. Clear a chapter's final boss to win it.",
+        "",
+        "⚜️ *Recruit* heroes with 💰 *Silver*. Buy the *same* hero again to *merge* it — a ⭐2 or ⭐3 hero is far stronger.",
+        "🧭 *Formation:* Front rows soak enemy hits, Back rows stay safe — put tanks up front, mages/archers in back.",
+        "⚡ *Ultimates:* heroes charge a little each wave; tap a ready ⚡ ult to unleash it.",
+        "✨ *Blessings:* choose a run-long buff every few waves.",
+        "⚔️ *Begin Battle* fights the wave — watch it play out, then read the report (📜 Log for details).",
+        "",
+        "🏰 *Barracks* (between runs): spend 👑 *Crowns* to *unlock* locked heroes and *level* them permanently.",
+        "⚙️ *Difficulty* raises enemy power — and rewards.",
+    ]
+    back = f"td_menu_{uid}" if where == "menu" else f"td_home_{uid}"
+    return "\n".join(lines), InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔙 Back", callback_data=back)]])
 
 def _td_render(p, state, flash=""):
     if state["phase"] == "manage":
         return _build_td_manage(p, state)
     if state["phase"] == "move":
         return _build_td_move(p, state)
+    if state["phase"] == "report":
+        return _build_td_report(p, state)
     if state["phase"] == "draft":
         return _build_td_draft(p, state)
     return _build_td_card(p, state, flash=flash)
@@ -41065,6 +41122,11 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, markup = _build_td_barracks(get_player(uid), uid, flash=flash)
         await query.answer(flash.replace("*", "") if flash else None)
         await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+    if action == "info":
+        where = toks[3] if len(toks) > 3 else "menu"
+        text, markup = _build_td_info(uid, where)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
 
     st = _active_throne.get(uid)
     if not st or st["phase"] == "over":
@@ -41076,6 +41138,22 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         st["phase"] = "manage"; await query.answer(); await render(); return
     if action == "move":
         st["phase"] = "move"; st["move_sel"] = None; await query.answer(); await render(); return
+    if action == "log":
+        text, markup = _build_td_log(p, st)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+    if action == "resume":
+        await query.answer(); await render(); return
+    if action == "cont":
+        # Advance from the Wave Report → a Blessing draft (every few waves) or plan.
+        cleared = st["wave"] - 1
+        due = (cleared % 3 == 0) or (cleared % TD_BOSS_EVERY == 0)
+        pool = [g["id"] for g in TD_GRACE if g["id"] not in st["grace"]]
+        if due and pool:
+            random.shuffle(pool); st["draft"] = pool[:3]; st["phase"] = "draft"
+        else:
+            st["phase"] = "plan"
+        await query.answer(); await render(); return
     if action == "movsel":
         try:
             hi = int(toks[3])
@@ -41182,14 +41260,9 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
             _active_throne.pop(uid, None)
             return
-        # Blessings come every 3 waves and after every boss (not every wave).
-        cleared = st["wave"] - 1
-        due = (cleared % 3 == 0) or (cleared % TD_BOSS_EVERY == 0)
-        pool = [g["id"] for g in TD_GRACE if g["id"] not in st["grace"]]
-        if due and pool:
-            random.shuffle(pool); st["draft"] = pool[:3]; st["phase"] = "draft"
-        else:
-            st["phase"] = "plan"
+        # Land on the interactive Wave Report — it stays up until the player taps
+        # Continue, so the outcome no longer flashes by.
+        st["phase"] = "report"
         await render(); return
 
     if action == "grace":
