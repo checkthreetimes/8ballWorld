@@ -29693,6 +29693,7 @@ _COMBAT_HUB_PAGES = [
         [("🗡️ Encounter",     "combathub_encounter"), ("⚔️ Attack (PvP)", "combathub_attack")],
         [("🏚️ Dungeon",        "combathub_dungeon"),   ("🛡️ Hold the Line","combathub_siege")],
         [("🗼 The Ascension",  "combathub_ascension"), ("⚔️ War Table",    "combathub_wartable")],
+        [("👑 Throne Defense", "combathub_throne")],
     ],
     # Page 2 — Skills, War & Exploration
     [
@@ -29785,7 +29786,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     _PAGE = {"attack":1,"skill":2,"defend":2,"heal":2,
              "war":2,"cp":3,"explore":2,"encounter":1,"dungeon":1,"soloraid":2,
-             "siege":1,"ascension":1,"wartable":1,
+             "siege":1,"ascension":1,"wartable":1,"throne":1,
              "killcondition":3,"curepriority":3,"cooldowns":3,"petbattle":3}
     page = _PAGE.get(action, 1)
     back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"combathub_back_{page}_{uid}")]])
@@ -30027,6 +30028,9 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     elif action == "wartable":
         await wartable_cmd(update, context)
+
+    elif action == "throne":
+        await thronedefense_cmd(update, context)
 
     elif action == "petbattle":
         pet_rec = get_active_pet_record(uid)
@@ -31166,6 +31170,10 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
     elif action == "wartable":
         # Launch War Table — the squad auto-battler.
         await wartable_cmd(update, context)
+
+    elif action == "throne":
+        # Launch Throne Defense — the hero-merge King defense.
+        await thronedefense_cmd(update, context)
 
     elif action == "oracle":
         # Execute pool shot inline (same logic as pool button)
@@ -40116,6 +40124,598 @@ async def wartable_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# THRONE DEFENSE — hero-merge King-defense (King God Castle-style)
+# ══════════════════════════════════════════════════════════════════════════════
+# Summon Heroes with gold, MERGE duplicates to raise their ⭐ (big power jumps),
+# and cast each hero's ULTIMATE on demand as escalating waves march on your King.
+# Enemies that break the line chip the King's HP; at 0 the run ends. Draft a
+# Grace after every wave. How many waves can the throne hold?
+
+_active_throne = {}   # uid -> run state
+
+TD_KING_HP0     = 1000
+TD_ENEMY_HP0    = 130
+TD_ENEMY_ATK0   = 24
+TD_ENEMY_GROWTH = 1.16
+TD_START_GOLD   = 10
+TD_REROLL_COST  = 2
+TD_SHOP_SIZE    = 5
+TD_SQUAD_CAP    = 6
+TD_STAR_MULT    = {1: 1.0, 2: 1.9, 3: 3.4}   # ⭐ scales atk & hp
+TD_MAX_STAR     = 3
+TD_BOSS_EVERY   = 5
+
+# id, name, emoji, role, cost, atk, hp, ult{name,emoji,cost(charges),type,val,desc}
+TD_HEROES = [
+    {"id":"knight","name":"Knight","emoji":"🛡️","role":"tank","cost":3,"atk":30,"hp":420,
+     "ult":{"name":"Bulwark","emoji":"🏰","cost":2,"type":"shield","val":0.5,"desc":"King takes 50% less this wave."}},
+    {"id":"golem","name":"Golem","emoji":"🗿","role":"tank","cost":4,"atk":40,"hp":460,
+     "ult":{"name":"Quake","emoji":"🌋","cost":3,"type":"stun","val":1,"desc":"Stun the wave — no King damage."}},
+    {"id":"berserker","name":"Berserker","emoji":"🪓","role":"warrior","cost":2,"atk":72,"hp":150,
+     "ult":{"name":"Rampage","emoji":"💢","cost":2,"type":"buff","val":0.6,"desc":"+60% squad damage this wave."}},
+    {"id":"assassin","name":"Assassin","emoji":"🗡️","role":"warrior","cost":3,"atk":95,"hp":100,
+     "ult":{"name":"Deathmark","emoji":"☠️","cost":2,"type":"nuke","val":3.0,"desc":"Hit the toughest foe for 3× ATK."}},
+    {"id":"valkyrie","name":"Valkyrie","emoji":"⚔️","role":"warrior","cost":4,"atk":90,"hp":190,
+     "ult":{"name":"Judgment","emoji":"⚡","cost":3,"type":"aoe","val":2.0,"desc":"Smite ALL foes for 2× ATK."}},
+    {"id":"mage","name":"Mage","emoji":"🔮","role":"mage","cost":3,"atk":70,"hp":120,
+     "ult":{"name":"Meteor","emoji":"☄️","cost":3,"type":"aoe","val":1.6,"desc":"Blast ALL foes for 1.6× ATK."}},
+    {"id":"frost","name":"Frost Mage","emoji":"❄️","role":"mage","cost":3,"atk":58,"hp":125,
+     "ult":{"name":"Blizzard","emoji":"🧊","cost":2,"type":"stun","val":1,"desc":"Freeze the wave — no King damage."}},
+    {"id":"archer","name":"Archer","emoji":"🏹","role":"archer","cost":2,"atk":60,"hp":110,
+     "ult":{"name":"Volley","emoji":"🎯","cost":2,"type":"aoe","val":0.9,"desc":"Rain arrows on ALL foes."}},
+    {"id":"cleric","name":"Cleric","emoji":"✨","role":"healer","cost":3,"atk":20,"hp":150,
+     "ult":{"name":"Sanctuary","emoji":"💚","cost":2,"type":"heal","val":0.25,"desc":"Heal the King 25%."}},
+    {"id":"druid","name":"Druid","emoji":"🌿","role":"healer","cost":2,"atk":24,"hp":140,
+     "ult":{"name":"Regrow","emoji":"🍃","cost":2,"type":"heal","val":0.15,"desc":"Heal the King 15%."}},
+]
+_TD_BY_ID = {h["id"]: h for h in TD_HEROES}
+_TD_FRONT_ROLES = {"tank", "warrior"}
+
+TD_GRACE = [
+    {"id":"warcry","name":"War Cry","emoji":"⚔️","desc":"+15% squad damage."},
+    {"id":"fortify","name":"Fortify","emoji":"🏰","desc":"King max HP +25% (heals to it)."},
+    {"id":"tithe","name":"Tithe","emoji":"💰","desc":"+2 gold each wave."},
+    {"id":"zeal","name":"Zeal","emoji":"⚡","desc":"Ultimates charge +1 faster."},
+    {"id":"aegis","name":"Aegis","emoji":"🛡️","desc":"King takes 15% less damage."},
+    {"id":"bloodpact","name":"Blood Pact","emoji":"🩸","desc":"Heal King 4% each wave cleared."},
+    {"id":"vanguard","name":"Vanguard","emoji":"🧱","desc":"Front heroes soak +40% more."},
+    {"id":"arcane","name":"Arcane Might","emoji":"🔮","desc":"Ultimate effects +30% stronger."},
+    {"id":"veterans","name":"Veterans","emoji":"🎖️","desc":"All heroes +20% ATK."},
+    {"id":"conscript","name":"Conscription","emoji":"🪖","desc":"Summon costs −1 gold (min 1)."},
+    {"id":"focusfire","name":"Focus Fire","emoji":"🎯","desc":"+35% damage to bosses."},
+    {"id":"secondwind","name":"Second Wind","emoji":"🩹","desc":"Once, survive a lethal wave at 1 HP."},
+]
+_TD_GRACE_BY_ID = {g["id"]: g for g in TD_GRACE}
+
+def _td_has(state, gid):
+    return gid in state.get("grace", [])
+
+def _td_row(hid):
+    return "front" if _TD_BY_ID[hid]["role"] in _TD_FRONT_ROLES else "back"
+
+def _td_hero_stats(state, h):
+    """Effective (atk, hp) for a squad hero dict {id,star,...} with ⭐ + grace."""
+    base = _TD_BY_ID[h["id"]]
+    mult = TD_STAR_MULT.get(h["star"], 1.0)
+    atk = base["atk"] * mult
+    hp = base["hp"] * mult
+    if _td_has(state, "veterans"): atk *= 1.20
+    if h.get("row") == "front" and _td_has(state, "vanguard"): hp *= 1.40
+    return round(atk), round(hp)
+
+def _td_ult_ready(state, h):
+    return h.get("chg", 0) >= _TD_BY_ID[h["id"]]["ult"]["cost"]
+
+def _td_king_max(state):
+    base = TD_KING_HP0
+    if _td_has(state, "fortify"):
+        base = round(base * 1.25)
+    return base
+
+def _td_summon_cost(state, hid):
+    cost = _TD_BY_ID[hid]["cost"]
+    if _td_has(state, "conscript"):
+        cost = max(1, cost - 1)
+    return cost
+
+def _td_add_hero(state, hid):
+    """Add a ⭐1 hero and cascade-merge duplicates of equal star into ⭐+1."""
+    state["heroes"].append({"id": hid, "star": 1, "chg": 1 if _td_has(state, "zeal") else 0,
+                            "row": _td_row(hid)})
+    changed = True
+    while changed:
+        changed = False
+        for star in range(1, TD_MAX_STAR):
+            same = [h for h in state["heroes"] if h["id"] == hid and h["star"] == star]
+            if len(same) >= 2:
+                a, b = same[0], same[1]
+                # Upgrade a FIRST, then drop b by identity — the two hero dicts are
+                # value-equal, so list.remove(b) would delete the wrong one.
+                a["star"] += 1
+                a["chg"] = max(a.get("chg", 0), b.get("chg", 0))
+                state["heroes"] = [h for h in state["heroes"] if h is not b]
+                changed = True
+                break
+
+def _td_gen_shop(state):
+    weights = [max(1, 5 - h["cost"]) for h in TD_HEROES]
+    return [random.choices(TD_HEROES, weights=weights, k=1)[0]["id"] for _ in range(TD_SHOP_SIZE)]
+
+def _td_gen_wave(state):
+    wave = state["wave"]
+    scale = TD_ENEMY_GROWTH ** (wave - 1)
+    is_boss = wave % TD_BOSS_EVERY == 0
+    count = min(30, 3 + wave)
+    if is_boss:
+        count = max(2, count - 3)
+    enemies = []
+    _archs = [("Goblin", "👺", 0.8, 0.95), ("Bone Archer", "💀", 0.55, 1.15), ("Ogre", "👹", 1.9, 0.7)]
+    for _ in range(count):
+        r = random.random()
+        a = _archs[2] if (wave >= 6 and r < 0.28) else (_archs[1] if r < 0.42 else _archs[0])
+        hp = max(1, round(TD_ENEMY_HP0 * a[2] * scale))
+        enemies.append({"name": a[0], "emoji": a[1], "hp": hp, "max_hp": hp,
+                        "atk": max(1, round(TD_ENEMY_ATK0 * a[3] * scale)), "boss": False})
+    if is_boss:
+        tier = wave // TD_BOSS_EVERY
+        bn, be = {1:("Goblin Warlord","👹"),2:("Ogre King","👺"),3:("Undead Lich","🧟"),
+                  4:("Demon Lord","😈"),5:("Ancient Dragon","🐉")}.get(tier, (f"Horde Sovereign ×{tier}","👑"))
+        bhp = max(1, round(TD_ENEMY_HP0 * 9 * scale))
+        enemies.insert(0, {"name": bn, "emoji": be, "hp": bhp, "max_hp": bhp,
+                           "atk": max(1, round(TD_ENEMY_ATK0 * 1.7 * scale)), "boss": True})
+    return enemies
+
+def _td_ensure_wave(state):
+    if not state.get("cur_enemies"):
+        state["cur_enemies"] = _td_gen_wave(state)
+    return state["cur_enemies"]
+
+def _td_new_run(p, uid):
+    km = TD_KING_HP0
+    state = {"uid": uid, "wave": 1, "king_hp": km, "king_max": km, "gold": TD_START_GOLD,
+             "heroes": [], "shop": [], "grace": [], "phase": "plan", "draft": None,
+             "fx": {}, "log": [], "cur_enemies": None, "secondwind_used": False,
+             "chat_id": None, "msg_id": None, "win_streak": 0}
+    state["shop"] = _td_gen_shop(state)
+    _active_throne[uid] = state
+    return state
+
+def _td_cast_ult(state, idx):
+    """Cast hero idx's ultimate. Heal resolves now; others queue for the wave.
+    Returns a flash string, or '' if not castable."""
+    try:
+        h = state["heroes"][idx]
+    except (IndexError, KeyError):
+        return ""
+    if not _td_ult_ready(state, h):
+        return ""
+    base = _TD_BY_ID[h["id"]]; ult = base["ult"]
+    amp = 1.30 if _td_has(state, "arcane") else 1.0
+    atk, _ = _td_hero_stats(state, h)
+    h["chg"] = 0
+    t = ult["type"]
+    if t == "heal":
+        heal = round(state["king_max"] * ult["val"] * amp)
+        state["king_hp"] = min(state["king_max"], state["king_hp"] + heal)
+        return f"{ult['emoji']} *{ult['name']}!* King +{fmt_num(heal)} HP."
+    fx = state["fx"]
+    if t == "nuke":
+        fx["nuke"] = fx.get("nuke", 0) + round(atk * ult["val"] * amp)
+    elif t == "aoe":
+        fx["aoe"] = fx.get("aoe", 0) + round(atk * ult["val"] * amp)
+    elif t == "stun":
+        fx["stun"] = True
+    elif t == "shield":
+        fx["shield"] = max(fx.get("shield", 0), min(0.85, ult["val"] * amp))
+    elif t == "buff":
+        fx["buff"] = fx.get("buff", 0) + ult["val"] * amp
+    return f"{ult['emoji']} *{ult['name']}!* readied for this wave."
+
+def _td_resolve(p, state):
+    """Fight the current wave. Returns (log, outcome) outcome 'win'|'loss'."""
+    wave = state["wave"]
+    enemies = _td_ensure_wave(state)
+    fx = state.get("fx", {})
+    log = []
+
+    # Squad damage
+    dmg_mult = 1.0
+    if _td_has(state, "warcry"): dmg_mult += 0.15
+    dmg_mult += fx.get("buff", 0)
+    squad_dmg = sum(_td_hero_stats(state, h)[0] for h in state["heroes"]) * dmg_mult
+    focus = 1.35 if _td_has(state, "focusfire") else 1.0
+
+    # Ultimate pre-damage (nuke hits toughest; aoe hits all)
+    if fx.get("nuke"):
+        tough = max(enemies, key=lambda e: e["hp"], default=None)
+        if tough: tough["hp"] -= fx["nuke"]
+    if fx.get("aoe"):
+        for e in enemies: e["hp"] -= fx["aoe"]
+
+    order = sorted(range(len(enemies)), key=lambda i: enemies[i]["hp"])
+    pool = squad_dmg; kills = 0
+    for i in order:
+        e = enemies[i]
+        if e["hp"] <= 0:
+            kills += 1; continue
+        eff = pool * (focus if e.get("boss") else 1.0)
+        if eff >= e["hp"]:
+            pool -= e["hp"] / (focus if e.get("boss") else 1.0); e["hp"] = 0; kills += 1
+        else:
+            e["hp"] -= eff; pool = 0; break
+    survivors = [e for e in enemies if e["hp"] > 0]
+    log.append(f"⚔️ Your heroes strike — *{kills}* slain, *{len(survivors)}* break through.")
+
+    # Enemy assault on the King (front heroes soak first)
+    if fx.get("stun"):
+        log.append("🧊 The wave is frozen — no King damage this turn!")
+    else:
+        soak = sum(_td_hero_stats(state, h)[1] for h in state["heroes"] if h.get("row") == "front")
+        raw = sum(e["atk"] * (2 if e.get("boss") else 1) for e in survivors)
+        leaked = max(0, raw - soak)
+        if fx.get("shield"): leaked = round(leaked * (1 - fx["shield"]))
+        if _td_has(state, "aegis"): leaked = round(leaked * 0.85)
+        if leaked > 0:
+            state["king_hp"] -= leaked
+            log.append(f"👑 The King takes *{fmt_num(leaked)}* damage.")
+        elif raw > 0:
+            log.append("🛡️ Your front line holds — the King is untouched!")
+
+    state["fx"] = {}
+    if state["king_hp"] <= 0 and _td_has(state, "secondwind") and not state["secondwind_used"]:
+        state["secondwind_used"] = True; state["king_hp"] = 1
+        log.append("🩹 *Second Wind!* The King clings to life at 1 HP!")
+    if state["king_hp"] <= 0:
+        state["king_hp"] = 0
+        log.append("💥 *THE THRONE HAS FALLEN.*")
+        return log, "loss"
+
+    # Wave cleared → economy, charges, healing
+    for h in state["heroes"]:
+        h["chg"] = h.get("chg", 0) + (2 if _td_has(state, "zeal") else 1)
+    if _td_has(state, "bloodpact"):
+        state["king_hp"] = min(state["king_max"], state["king_hp"] + round(state["king_max"] * 0.04))
+    gain = 5 + min(5, state["gold"] // 10) + (2 if _td_has(state, "tithe") else 0) + min(3, state["win_streak"]) + 2
+    state["gold"] += gain
+    state["win_streak"] += 1
+    state["wave"] += 1
+    state["cur_enemies"] = None
+    log.append(f"✅ *Wave {wave} held!* +{gain}💰")
+    return log, "win"
+
+def _td_grant_rewards(p, state):
+    waves = state["wave"] - 1
+    gold = round(1300 * max(1, waves))
+    shards = int(waves * 0.7)
+    scrolls = int(waves * 0.25)
+    p["gold"] = safe_int(p.get("gold", 0)) + gold
+    lines = [f"💰 *{fmt_num(gold)}* gold"]
+    for _ in range(shards):  add_item(p, "Iron Shard")
+    if shards:  lines.append(f"⛏️ *Iron Shard ×{shards}*")
+    for _ in range(scrolls): add_item(p, "Enchanting Scroll")
+    if scrolls: lines.append(f"✨ *Enchanting Scroll ×{scrolls}*")
+    cds = safe_cds(p)
+    best_prev = safe_int(cds.get("td_best_wave", 0))
+    milestone = ""
+    if waves > best_prev:
+        cds["td_best_wave"] = waves
+        for thr, title in ((10, "King's Squire"), (20, "Throne Guardian"), (35, "King's Champion")):
+            if best_prev < thr <= waves:
+                titles = sjl(p.get("titles"), [])
+                if title not in titles:
+                    titles.append(title); p["titles"] = json.dumps(titles)
+                    milestone += f"\n🏅 New title: *{title}*!"
+    p["passive_cooldowns"] = json.dumps(cds)
+    save_player(p)
+    return "\n".join(lines), milestone
+
+# ── Throne Defense UI ─────────────────────────────────────────────────────────
+def _td_wave_preview(state):
+    enemies = _td_ensure_wave(state)
+    counts, boss = {}, None
+    for e in enemies:
+        if e.get("boss"):
+            boss = (e["emoji"], e["name"]); continue
+        k = (e["emoji"], e["name"]); counts[k] = counts.get(k, 0) + 1
+    body = "  ".join(f"{e} {n}×{c}" for (e, n), c in counts.items()) or "—"
+    head = f"⚠️ *Wave {state['wave']}* ({len(enemies)})"
+    if boss:
+        return f"{head}\n   {boss[0]} *{boss[1]}* 💀\n   {body}"
+    return f"{head}: {body}"
+
+def _td_heroes_block(state):
+    if not state["heroes"]:
+        return "  _none — summon below_"
+    out = []
+    for h in state["heroes"]:
+        b = _TD_BY_ID[h["id"]]
+        rdy = " ⚡" if _td_ult_ready(state, h) else ""
+        out.append(f"  {'⭐' * h['star']} {b['emoji']} {b['name']}{rdy}")
+    return "\n".join(out)
+
+def _build_td_card(p, state, flash=""):
+    uid = state["uid"]
+    _, kpct = _siege_bar(state["king_hp"], state["king_max"])
+    grace = " ".join(_TD_GRACE_BY_ID[g]["emoji"] for g in state["grace"]) or "—"
+    lines = [f"👑 *THRONE DEFENSE* — Wave *{state['wave']}*"]
+    if flash:
+        lines.append(flash)
+    lines.append(f"👑 King *{kpct}%*   💰 *{state['gold']}*   🛡️ *{len(state['heroes'])}/{TD_SQUAD_CAP}*")
+    lines.append(f"✨ Grace: {grace}")
+    if state.get("fx"):
+        lines.append("💥 _Ultimate empowered — fight to unleash it!_")
+    lines.append("\n🛡️ *Heroes*  _(⭐ merge · ⚡ ult ready)_")
+    lines.append(_td_heroes_block(state))
+    lines.append("\n" + _td_wave_preview(state))
+    lines.append("\n⚜️ *Summon* — tap to hire · 🔄 2💰")
+    rows = []
+    # ult-cast buttons for ready heroes
+    ult_row = []
+    for i, h in enumerate(state["heroes"]):
+        if _td_ult_ready(state, h):
+            u = _TD_BY_ID[h["id"]]["ult"]
+            ult_row.append(InlineKeyboardButton(f"{u['emoji']} {u['name']}", callback_data=f"td_ult_{uid}_{i}"))
+    for i in range(0, len(ult_row), 2):
+        rows.append(ult_row[i:i+2])
+    # summon list + buttons
+    for i, hid in enumerate(state["shop"]):
+        if hid is None: continue
+        b = _TD_BY_ID[hid]
+        lines.append(f"{b['emoji']} *{b['name']}* {b['role']} ⚔️{b['atk']} ❤️{b['hp']}")
+        rows.append([InlineKeyboardButton(f"{b['emoji']} {b['name']} ({_td_summon_cost(state, hid)}💰)",
+                                          callback_data=f"td_buy_{uid}_{i}")])
+    action = [InlineKeyboardButton(f"🔄 Reroll ({TD_REROLL_COST}💰)", callback_data=f"td_reroll_{uid}")]
+    if state["heroes"]:
+        action.append(InlineKeyboardButton("👥 Manage", callback_data=f"td_manage_{uid}"))
+    rows.append(action)
+    rows.append([InlineKeyboardButton("⚔️ Defend! (Fight Wave)", callback_data=f"td_fight_{uid}")])
+    rows.append([InlineKeyboardButton("🏳️ Surrender", callback_data=f"td_quit_{uid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_td_manage(p, state):
+    uid = state["uid"]
+    lines = ["👥 *Your Heroes* — tap to dismiss (refund cost−1):", ""]
+    rows = []
+    for i, h in enumerate(state["heroes"]):
+        b = _TD_BY_ID[h["id"]]; atk, hp = _td_hero_stats(state, h)
+        u = b["ult"]
+        lines.append(f"{'⭐' * h['star']} {b['emoji']} *{b['name']}* ⚔️{atk} ❤️{hp}")
+        lines.append(f"     {u['emoji']} _{u['name']}: {u['desc']}_")
+        refund = max(0, b["cost"] - 1)
+        rows.append([InlineKeyboardButton(f"💸 {b['emoji']} {b['name']} (+{refund}💰)", callback_data=f"td_sell_{uid}_{i}")])
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"td_home_{uid}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_td_draft(p, state):
+    uid = state["uid"]
+    lines = ["✨ *Wave held! Choose a Grace:*"]
+    if state.get("log"):
+        lines.append(f"_{state['log'][-1]}_")
+    lines.append("")
+    rows = []
+    for i, gid in enumerate(state["draft"]):
+        g = _TD_GRACE_BY_ID[gid]
+        lines.append(f"{g['emoji']} *{g['name']}* — _{g['desc']}_")
+        rows.append([InlineKeyboardButton(f"{g['emoji']} {g['name']}", callback_data=f"td_grace_{uid}_{i}")])
+    rows.append([InlineKeyboardButton("⏭️ Skip (+3 gold)", callback_data=f"td_grace_{uid}_skip")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _build_td_end(p, state, summary, milestone):
+    uid = state["uid"]
+    waves = state["wave"] - 1
+    lines = ["💥 *THE THRONE HAS FALLEN*", ""]
+    for ln in state.get("log", [])[-3:]:
+        lines.append(f"_{ln}_")
+    lines += ["", f"🏰 The throne held *{waves}* wave{'s' if waves != 1 else ''}.",
+              "", "*Rewards:*", summary or "_—_"]
+    if milestone:
+        lines.append(milestone)
+    rows = [[InlineKeyboardButton("🔁 Defend Again", callback_data=f"td_again_{uid}"),
+             InlineKeyboardButton("🏆 Leaderboard", callback_data=f"td_board_{uid}")],
+            [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _td_render(p, state, flash=""):
+    if state["phase"] == "manage":
+        return _build_td_manage(p, state)
+    if state["phase"] == "draft":
+        return _build_td_draft(p, state)
+    return _build_td_card(p, state, flash=flash)
+
+def _td_leaderboard_card(uid, highlight=None, limit=10):
+    rows_out = []
+    try:
+        c = _db().cursor()
+        c.execute("SELECT user_id, username, passive_cooldowns FROM players "
+                  "WHERE user_id NOT IN (SELECT user_id FROM banned_users)")
+        for row in c.fetchall():
+            best = safe_int(sjl(row["passive_cooldowns"], {}).get("td_best_wave", 0))
+            if best > 0:
+                rows_out.append((best, row["username"] or "—", row["user_id"]))
+    except Exception:
+        pass
+    rows_out.sort(key=lambda x: x[0], reverse=True)
+    lines = ["🏆 *THRONE DEFENSE — Waves Held*", ""]
+    if not rows_out:
+        lines.append("_No defenders yet. Hold the throne!_")
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    for i, (best, name, ruid) in enumerate(rows_out[:limit], 1):
+        star = " ⬅️ *you*" if ruid == highlight else ""
+        lines.append(f"{medals.get(i, f'#{i}')} *{name}* — Wave *{best}*{star}")
+    back = [InlineKeyboardButton("👑 Play", callback_data=f"td_again_{uid}"),
+            InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
+    return "\n".join(lines), InlineKeyboardMarkup([back])
+
+async def thronedefense_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    st = _active_throne.get(user.id)
+    if st and st["phase"] != "over":
+        text, markup = _td_render(p, st)
+        msg = await send_group(update, text, delay=9, permanent=True, reply_markup=markup)
+        if msg:
+            st["chat_id"] = msg.chat_id; st["msg_id"] = msg.message_id
+        return
+    best = safe_int(safe_cds(p).get("td_best_wave", 0))
+    lines = ["👑 *THRONE DEFENSE*",
+             "_Summon Heroes, **merge** duplicates to raise their ⭐, and unleash"
+             " their **ultimates** as waves march on your King. Draft a Grace after"
+             " each wave. When the King falls, the run ends._"]
+    if best:
+        lines.append(f"\n🏅 Your best: *Wave {best}*")
+    rows = [[InlineKeyboardButton("👑 Defend the Throne", callback_data=f"td_again_{user.id}")],
+            [InlineKeyboardButton("🏆 Leaderboard", callback_data=f"td_board_{user.id}"),
+             InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")]]
+    await send_group(update, "\n".join(lines), delay=9, permanent=True,
+                     reply_markup=InlineKeyboardMarkup(rows))
+
+async def tdboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text, markup = _td_leaderboard_card(user.id, highlight=user.id)
+    await send_group(update, text, delay=120, permanent=True, reply_markup=markup)
+
+async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    toks = query.data.split("_")
+    action = toks[1] if len(toks) > 1 else ""
+    try:
+        uid = int(toks[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your throne!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+
+    async def render(flash=""):
+        st = _active_throne.get(uid)
+        text, markup = _td_render(p, st, flash=flash)
+        st["chat_id"] = query.message.chat_id; st["msg_id"] = query.message.message_id
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+
+    if action == "again":
+        _td_new_run(p, uid)
+        await query.answer("To arms!")
+        await render(); return
+    if action == "board":
+        text, markup = _td_leaderboard_card(uid, highlight=uid)
+        await query.answer()
+        await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+
+    st = _active_throne.get(uid)
+    if not st or st["phase"] == "over":
+        await query.answer("This run has ended — /thronedefense to play again.", show_alert=True); return
+
+    if action == "home":
+        st["phase"] = "plan"; await query.answer(); await render(); return
+    if action == "manage":
+        st["phase"] = "manage"; await query.answer(); await render(); return
+
+    if action == "buy":
+        try:
+            idx = int(toks[3]); hid = st["shop"][idx]
+        except (IndexError, ValueError, TypeError):
+            await query.answer(); return
+        if hid is None:
+            await query.answer(); return
+        cost = _td_summon_cost(st, hid)
+        # Buying a duplicate merges (doesn't grow the roster), so it's allowed at cap.
+        dupe = any(h["id"] == hid for h in st["heroes"])
+        if not dupe and len(st["heroes"]) >= TD_SQUAD_CAP:
+            await query.answer("Roster full — merge or dismiss first!", show_alert=True); return
+        if st["gold"] < cost:
+            await query.answer("Not enough gold!", show_alert=True); return
+        st["gold"] -= cost
+        before = [(h["id"], h["star"]) for h in st["heroes"]]
+        _td_add_hero(st, hid)
+        merged = len(st["heroes"]) <= len(before)
+        st["shop"][idx] = None
+        await query.answer("⭐ Merged!" if merged else f"{_TD_BY_ID[hid]['name']} hired!")
+        await render(); return
+
+    if action == "ult":
+        try:
+            hi = int(toks[3])
+        except (IndexError, ValueError):
+            await query.answer(); return
+        flash = _td_cast_ult(st, hi)
+        if not flash:
+            await query.answer("Not ready!"); return
+        await query.answer("⚡ Cast!")
+        await render(flash=flash); return
+
+    if action == "reroll":
+        if st["gold"] < TD_REROLL_COST:
+            await query.answer("Not enough gold!", show_alert=True); return
+        st["gold"] -= TD_REROLL_COST
+        st["shop"] = _td_gen_shop(st)
+        await query.answer("New recruits!")
+        await render(); return
+
+    if action == "sell":
+        try:
+            idx = int(toks[3]); h = st["heroes"][idx]
+        except (IndexError, ValueError):
+            await query.answer(); return
+        st["gold"] += max(0, _TD_BY_ID[h["id"]]["cost"] - 1)
+        st["heroes"].pop(idx)
+        await query.answer(f"Dismissed {_TD_BY_ID[h['id']]['name']}.")
+        await render(); return
+
+    if action == "fight":
+        if not st["heroes"]:
+            await query.answer("Summon at least one hero first!", show_alert=True); return
+        log, outcome = _td_resolve(p, st)
+        st["log"] = log
+        if outcome == "loss":
+            st["phase"] = "over"
+            summary, milestone = _td_grant_rewards(p, st)
+            text, markup = _build_td_end(p, st, summary, milestone)
+            await query.answer("The throne falls!")
+            await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+            _active_throne.pop(uid, None)
+            return
+        pool = [g["id"] for g in TD_GRACE if g["id"] not in st["grace"]]
+        if pool:
+            random.shuffle(pool); st["draft"] = pool[:3]; st["phase"] = "draft"
+        else:
+            st["phase"] = "plan"
+        await query.answer("Wave held!")
+        await render(); return
+
+    if action == "grace":
+        pick = toks[3] if len(toks) > 3 else "skip"
+        if pick == "skip":
+            st["gold"] += 3
+            await query.answer("Skipped (+3💰)")
+        else:
+            try:
+                gid = st["draft"][int(pick)]
+                if gid not in st["grace"]:
+                    st["grace"].append(gid)
+                    if gid == "fortify":
+                        nm = _td_king_max(st)
+                        st["king_hp"] += (nm - st["king_max"]); st["king_max"] = nm
+                await query.answer(f"{_TD_GRACE_BY_ID[gid]['name']} blessed!")
+            except (ValueError, IndexError, KeyError):
+                await query.answer()
+        st["draft"] = None; st["phase"] = "plan"
+        await render(); return
+
+    if action == "quit":
+        _active_throne.pop(uid, None)
+        await query.answer("You abandon the throne.")
+        await _q_edit(query, "🏳️ *You abandon the throne.* No rewards banked.\n\n_/thronedefense to try again._",
+                      parse_mode="Markdown",
+                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]))
+        return
+    await query.answer()
+
+
 def main():
     init_db()
     # concurrent_updates: PTB's default processes ONE update at a time for the
@@ -40256,6 +40856,11 @@ def main():
     app.add_handler(CommandHandler("wt",          wartable_cmd))
     app.add_handler(CommandHandler("wtboard",     wtboard_cmd))
     app.add_handler(CallbackQueryHandler(wartable_callback, pattern="^wt_"))
+    app.add_handler(CommandHandler("thronedefense", thronedefense_cmd))
+    app.add_handler(CommandHandler("throne",      thronedefense_cmd))
+    app.add_handler(CommandHandler("td",          thronedefense_cmd))
+    app.add_handler(CommandHandler("tdboard",     tdboard_cmd))
+    app.add_handler(CallbackQueryHandler(throne_callback, pattern="^td_"))
 
     # Empire master hub
     app.add_handler(CommandHandler("empire",       empire_cmd))
