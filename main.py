@@ -14761,6 +14761,16 @@ async def pvp_rematch_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("Opponent not found.", show_alert=True); return
     if is_defeated(a):
         await query.answer("You're still defeated — heal up first!", show_alert=True); return
+    # Attacker-side gates — mirror /attack so an invincible/vanished/CC'd player
+    # can't use the Rematch button to bypass the same restrictions.
+    if is_invincible(a):
+        await query.answer("🛡️ You're still under your invincibility grace period — "
+                           "you can't attack until it ends.", show_alert=True); return
+    if is_vanished(a):
+        await query.answer("👻 You're vanished — you can't attack while hidden.", show_alert=True); return
+    _rm_cc = _consume_cc(a)
+    if _rm_cc:
+        await query.answer(_rm_cc.replace("*", "")[:190], show_alert=True); return
     if is_defeated(d):
         await query.answer(f"{d['username']} is still recovering — try again in a few minutes!",
                            show_alert=True); return
