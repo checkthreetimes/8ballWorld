@@ -213,6 +213,8 @@ _enc_sessions      = {}   # uid -> {"gold":0,"exp":0,"wins":0,"losses":0,"items"
 _dng_timers        = {}   # user_id -> asyncio.Task (real-time combat ticker)
 _pvp_cards         = {}   # (attacker_uid, defender_uid) -> message_id — used to clean up stale cards
 _pvp_card_tasks    = {}   # (attacker_uid, defender_uid) -> asyncio.Task for auto-delete timer
+_pvp_grace         = {}   # pair -> {"until": ts, "protected": uid} — opening grace so a fresh
+                          # defender can't be spam-killed before they jump into the chat
 _pvp_battle_logs   = {}   # pair -> list[str], one entry per round (chronological)
 _pvp_cur_page      = {}   # pair -> int, current page index (0 = oldest)
 _pvp_player_cards  = {}   # uid -> (chat_id, message_id) — each player's own battle card
@@ -763,6 +765,7 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
     _pvp_cur_page.pop(pair, None)
     _pvp_origin_chat.pop(pair, None)
     _pvp_last_action.pop(pair, None)
+    _pvp_grace.pop(pair, None)
     _cancel_card_timer(pair)  # cancel, don't just drop — or the pending
                               # auto-delete later removes the final result card
     if len(pair) == 2:
@@ -892,6 +895,30 @@ def _pvp_attack_allowed(a, d):
         return (False, "⚔️ You're mid-encounter — finish it before starting PvP.")
     return (True, "")
 
+
+_PVP_OPENING_GRACE = 10   # seconds a fresh defender is shielded from the aggressor's hits
+
+def _pvp_start_grace(pair, protected_uid, secs=_PVP_OPENING_GRACE):
+    """At the start of a fresh fight, shield the just-attacked player: the
+    aggressor can't land hits for `secs` seconds, giving the defender time to
+    open their card and jump in. The moment the protected player acts, the
+    shield lifts (see _pvp_grace_remaining)."""
+    _pvp_grace[pair] = {"until": time.time() + secs, "protected": safe_int(protected_uid)}
+
+def _pvp_grace_remaining(pair, attacker_uid):
+    """Seconds the aggressor is still locked out, or 0. The protected defender is
+    never blocked, and their first action lifts the shield for everyone."""
+    g = _pvp_grace.get(pair)
+    if not g:
+        return 0
+    if safe_int(attacker_uid) == g.get("protected"):
+        _pvp_grace.pop(pair, None)   # the defender jumped in — grace no longer needed
+        return 0
+    rem = g["until"] - time.time()
+    if rem <= 0:
+        _pvp_grace.pop(pair, None)
+        return 0
+    return rem
 
 def _cancel_card_timer(pair):
     old = _pvp_card_tasks.pop(pair, None)
@@ -14790,6 +14817,8 @@ async def pvp_rematch_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         _pvp_battle_logs.pop(pair, None)
         _pk_grp = _resolve_pvp_group_chat(uid, query.message.chat_id if query.message else uid)
         _pvp_origin_chat[pair] = _pk_grp
+        # Opening grace protects the challenged player at the rematch's start.
+        _pvp_start_grace(pair, opp_uid)
         # Fresh battle state for per-fight items/companions
         _dng_pvp_init(uid, a); _dng_pvp_init(opp_uid, d)
         try:
@@ -15144,6 +15173,9 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Fresh battle → reset each fighter's per-battle potion budget.
         for _bu in (au.id, du_id):
             _pvp_battle_state.setdefault(_bu, {})["potions_used"] = 0
+        # Opening grace: shield the just-attacked player so the aggressor can't
+        # burst them down before they've even opened their card.
+        _pvp_start_grace(pair, du_id)
         asyncio.create_task(announce(bot, _grp_chat, _pvp_fight_start_line(a["username"], d["username"]), permanent=True))
     start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
     _pvp_log_append(pair, start_txt)
@@ -15430,6 +15462,10 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(f"{d['username']} is invincible right now!", show_alert=True); return
         if a.get("guild_id") and str(a.get("guild_id")) == str(d.get("guild_id")):
             await query.answer("Can't attack your own guild member!", show_alert=True); return
+        _g_rem = _pvp_grace_remaining(pair, uid)
+        if _g_rem > 0:
+            await query.answer(f"⏳ Opening grace — give {d['username']} a moment to jump in! "
+                               f"({int(_g_rem) + 1}s)", show_alert=True); return
         try: await query.answer("⚔️ Attacking...")
         except Exception: pass
 
@@ -15511,6 +15547,11 @@ async def kit_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("You don't have that skill."); return
         if is_defeated(a) or is_invincible(a):
             await query.answer("You can't act right now!", show_alert=True); return
+        if sk.get("kind") == "strike":
+            _g_rem = _pvp_grace_remaining(pair, uid)
+            if _g_rem > 0:
+                await query.answer(f"⏳ Opening grace — give {d['username']} a moment to jump in! "
+                                   f"({int(_g_rem) + 1}s)", show_alert=True); return
         if is_silenced(a):
             await query.answer(f"🤐 Silenced — can't use {sk['name']}!", show_alert=True); return
         if _kit_on_cd(uid, slot):
