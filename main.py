@@ -25335,13 +25335,12 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⚔️ Battle — fight an NPC", callback_data=f"enc_mode_{uid}_battle")],
         [InlineKeyboardButton("🌿 Hunt — fight wild monsters", callback_data=f"enc_mode_{uid}_hunt")],
-        [InlineKeyboardButton("🏚️ Dungeon — JRPG turn-based, 4 difficulties", callback_data=f"enc_mode_{uid}_dungeon")],
         [InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")],
     ])
     await send_group(update, "🎱 *Encounter*\nChoose your mode:\n\n"
                     "⚔️ *Battle* — fight NPCs for EXP and gear\n"
-                    "🌿 *Hunt* — fight wild monsters; weaken them to 🎯 catch for *Monster Cores*\n"
-                    "🏚️ *Dungeon* — JRPG turn-based · Easy/Hard/Extreme/Hell",
+                    "🌿 *Hunt* — fight wild monsters; weaken them to 🎯 catch for *Monster Cores*\n\n"
+                    "_🏚️ For the dungeon, use /dungeon (pick your difficulty)._",
                     reply_markup=markup, permanent=True)
 
 
@@ -29699,7 +29698,7 @@ _COMBAT_HUB_PAGES = [
     [
         [("✨ Use Skill",      "combathub_skill"),     ("🛡️ Defend",       "combathub_defend")],
         [("💊 Heal",           "combathub_heal"),      ("⚔️ Guild War",    "combathub_war")],
-        [("🌍 Explore",        "combathub_explore"),   ("⚔️ Solo Raid",    "combathub_soloraid")],
+        [("🌍 Explore",        "combathub_explore")],
     ],
     # Page 3 — Info & Tools
     [
@@ -29923,14 +29922,13 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             enc_markup = InlineKeyboardMarkup([
                 [InlineKeyboardButton("⚔️ Battle — fight an NPC",              callback_data=f"enc_mode_{uid}_battle")],
                 [InlineKeyboardButton("🌿 Hunt — fight wild monsters",         callback_data=f"enc_mode_{uid}_hunt")],
-                [InlineKeyboardButton("🏚️ Dungeon — JRPG turn-based, 4 difficulties", callback_data=f"enc_mode_{uid}_dungeon")],
                 [InlineKeyboardButton("← Back", callback_data=f"combathub_back_1_{uid}")],
             ])
-            try: await _q_edit(query, 
+            try: await _q_edit(query,
                 "🗡️ *Encounter*\n\n"
                 "⚔️ *Battle* — fight NPCs for EXP and gear\n"
-                "🌿 *Hunt* — fight wild monsters; weaken them to catch for *Monster Cores*\n"
-                "🏚️ *Dungeon* — JRPG turn-based · Easy/Hard/Extreme/Hell",
+                "🌿 *Hunt* — fight wild monsters; weaken them to catch for *Monster Cores*\n\n"
+                "_🏚️ For the dungeon, use /dungeon._",
                 parse_mode="Markdown", reply_markup=enc_markup)
             except Exception: pass
 
