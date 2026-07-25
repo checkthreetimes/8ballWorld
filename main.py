@@ -39653,20 +39653,21 @@ WT_ROSTER = [
     {"id":"ranger","name":"Ranger","emoji":"🏹","element":"nature","role":"archer","cost":2,"atk":58,"hp":110},
     {"id":"berserker","name":"Berserker","emoji":"🪓","element":"fire","role":"warrior","cost":2,"atk":74,"hp":150},
     {"id":"druid","name":"Druid","emoji":"🌿","element":"nature","role":"healer","cost":2,"atk":24,"hp":140},
-    {"id":"pyro","name":"Pyromancer","emoji":"🔥","element":"fire","role":"mage","cost":3,"atk":66,"hp":120},
-    {"id":"knight","name":"Iron Knight","emoji":"🛡️","element":"earth","role":"tank","cost":3,"atk":32,"hp":340},
-    {"id":"tide","name":"Tide Caller","emoji":"🌊","element":"water","role":"mage","cost":3,"atk":60,"hp":135},
+    {"id":"pyro","name":"Pyro","emoji":"🔥","element":"fire","role":"mage","cost":3,"atk":66,"hp":120},
+    {"id":"knight","name":"Knight","emoji":"🛡️","element":"earth","role":"tank","cost":3,"atk":32,"hp":340},
+    {"id":"tide","name":"Tide","emoji":"🌊","element":"water","role":"mage","cost":3,"atk":60,"hp":135},
     {"id":"assassin","name":"Assassin","emoji":"🗡️","element":"shadow","role":"warrior","cost":3,"atk":100,"hp":100},
     {"id":"cleric","name":"Cleric","emoji":"✨","element":"holy","role":"healer","cost":3,"atk":22,"hp":160},
-    {"id":"shade","name":"Night Shade","emoji":"🌑","element":"shadow","role":"archer","cost":3,"atk":80,"hp":100},
-    {"id":"golem","name":"Stone Golem","emoji":"🗿","element":"earth","role":"tank","cost":4,"atk":42,"hp":460},
-    {"id":"storm","name":"Storm Caller","emoji":"⚡","element":"lightning","role":"mage","cost":4,"atk":92,"hp":150},
+    {"id":"shade","name":"Shade","emoji":"🌑","element":"shadow","role":"archer","cost":3,"atk":80,"hp":100},
+    {"id":"golem","name":"Golem","emoji":"🗿","element":"earth","role":"tank","cost":4,"atk":42,"hp":460},
+    {"id":"storm","name":"Storm","emoji":"⚡","element":"lightning","role":"mage","cost":4,"atk":92,"hp":150},
     {"id":"valkyrie","name":"Valkyrie","emoji":"⚔️","element":"holy","role":"warrior","cost":4,"atk":96,"hp":200},
 ]
 _WT_BY_ID = {u["id"]: u for u in WT_ROSTER}
 _WT_FRONT_ROLES = {"tank", "warrior"}
 _WT_ELEM_EMOJI = {"fire":"🔥","water":"🌊","earth":"🗿","lightning":"⚡","nature":"🌿",
                   "shadow":"🌑","holy":"✨","beast":"🐾"}
+_WT_ROLE_EMOJI = {"tank":"🛡️","warrior":"⚔️","mage":"🔮","archer":"🏹","healer":"➕"}
 
 def _wt_row(unit):
     return "front" if unit.get("role") in _WT_FRONT_ROLES else "back"
@@ -39849,48 +39850,50 @@ def _wt_grant_rewards(p, state):
 
 # ── War Table UI ──────────────────────────────────────────────────────────────
 def _wt_squad_line(squad):
+    """Compact one-line-per-lane view: just emojis with ×count, so a long pet
+    name can't blow out the width."""
     if not squad:
-        return "  _empty — recruit units below_"
+        return "  _empty — recruit below_"
     def side(units):
-        counts = {}
+        counts, order = {}, []
         for u in units:
-            k = (u["emoji"], u["name"])
-            counts[k] = counts.get(k, 0) + 1
-        return "   ".join(f"{e} {n}×{c}" for (e, n), c in counts.items()) or "—"
+            e = u["emoji"]
+            if e not in counts: order.append(e)
+            counts[e] = counts.get(e, 0) + 1
+        return "  ".join(f"{e}×{counts[e]}" if counts[e] > 1 else e for e in order) or "—"
     front = [u for u in squad if _wt_row(u) == "front"]
     back = [u for u in squad if _wt_row(u) == "back"]
-    return f"  🛡️ Front: {side(front)}\n  🎯 Back:  {side(back)}"
+    return f"  Front: {side(front)}\n  Back:  {side(back)}"
 
 def _build_wt_card(p, state, flash=""):
     uid = state["uid"]
     cap = _wt_squad_cap(state)
     buffs, active = _wt_synergies(state["squad"])
-    hpbar, hppct = _siege_bar(state["command_hp"], state["command_max"])
+    _, hppct = _siege_bar(state["command_hp"], state["command_max"])
     lines = [f"⚔️ *WAR TABLE* — Round *{state['round']}*"]
     if flash:
-        lines.append("\n" + flash)
-    lines += [
-        f"❤️ Command `{hpbar}` *{hppct}%*   ·   💰 Gold *{state['gold']}*",
-        f"👥 Squad *{len(state['squad'])}/{cap}*",
-    ]
+        lines.append(flash)
+    lines.append(f"❤️ Command *{hppct}%*   💰 *{state['gold']}*   👥 *{len(state['squad'])}/{cap}*")
     if active:
-        lines.append("✨ *Synergies:* " + "   ".join(active))
+        lines.append("\n✨ *Synergies*")
+        lines.extend("  " + a for a in active)
     else:
-        lines.append("✨ _Synergies: none — stack 2+ of an element or role for buffs._")
-    lines += ["", "*🛡️ Your squad:*", _wt_squad_line(state["squad"]), "",
-              f"*🏪 Recruits* — buy with gold, or 🔄 reroll ({WT_REROLL_COST}💰):"]
+        lines.append("\n✨ _No synergies yet — stack 2+ of an element or role._")
+    lines.append("\n🛡️ *Squad*")
+    lines.append(_wt_squad_line(state["squad"]))
+    lines.append("\n🏪 *Recruits* — tap to buy · 🔄 2💰")
     rows = []
     for i, u in enumerate(state["shop"]):
         if u is None: continue
-        lines.append(f"{u['emoji']} *{u['name']}*  {u['cost']}💰  ·  {u['element']}/{u['role']}  ·  "
-                     f"⚔️{u['atk']} ❤️{u['hp']}")
+        tag = _WT_ELEM_EMOJI.get(u["element"], "")
+        lines.append(f"{u['emoji']} *{u['name']}* {tag}  ⚔️{u['atk']} ❤️{u['hp']}")
         rows.append([InlineKeyboardButton(f"{u['emoji']} {u['name']} ({u['cost']}💰)",
                                           callback_data=f"wt_buy_{uid}_{i}")])
     action_row = [InlineKeyboardButton(f"🔄 Reroll ({WT_REROLL_COST}💰)", callback_data=f"wt_reroll_{uid}")]
     if not state["pet_added"] and get_active_pet_record(uid):
-        action_row.append(InlineKeyboardButton("🐾 Add Pet (free)", callback_data=f"wt_pet_{uid}"))
+        action_row.append(InlineKeyboardButton("🐾 Add Pet", callback_data=f"wt_pet_{uid}"))
     rows.append(action_row)
-    rows.append([InlineKeyboardButton("👥 Manage Squad", callback_data=f"wt_squad_{uid}"),
+    rows.append([InlineKeyboardButton("👥 Manage", callback_data=f"wt_squad_{uid}"),
                  InlineKeyboardButton("⚔️ Fight Round", callback_data=f"wt_fight_{uid}")])
     rows.append([InlineKeyboardButton("🏳️ Forfeit", callback_data=f"wt_quit_{uid}"),
                  InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
@@ -39898,14 +39901,16 @@ def _build_wt_card(p, state, flash=""):
 
 def _build_wt_squad_manage(p, state):
     uid = state["uid"]
-    lines = ["👥 *Manage Squad* — tap a unit to sell (refund cost−1):", ""]
+    lines = ["👥 *Manage Squad* — tap to sell (refund cost−1):", ""]
     rows = []
     for i, u in enumerate(state["squad"]):
         refund = max(0, u["cost"] - 1)
-        tag = " 🐾" if u.get("is_pet") else ""
-        lines.append(f"{u['emoji']} *{u['name']}*{tag} — {u['element']}/{u['role']} (⚔️{u['atk']} ❤️{u['hp']})")
+        nm = (u["name"][:14] + "…") if len(u["name"]) > 15 else u["name"]
+        tag = _WT_ELEM_EMOJI.get(u["element"], "")
+        pet = " 🐾" if u.get("is_pet") else ""
+        lines.append(f"{u['emoji']} *{nm}*{pet} {tag}  ⚔️{u['atk']} ❤️{u['hp']}")
         if not u.get("is_pet"):
-            rows.append([InlineKeyboardButton(f"💸 Sell {u['emoji']} {u['name']} (+{refund}💰)",
+            rows.append([InlineKeyboardButton(f"💸 Sell {u['emoji']} {nm} (+{refund}💰)",
                                               callback_data=f"wt_sell_{uid}_{i}")])
     rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"wt_home_{uid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
