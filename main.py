@@ -29689,7 +29689,7 @@ _COMBAT_HUB_PAGES = [
     # Page 1 — Fight & Solo Modes (the marquee content, up front)
     [
         [("🗡️ Encounter",     "combathub_encounter"), ("⚔️ Attack (PvP)", "combathub_attack")],
-        [("🏚️ Dungeon",        "combathub_dungeon"),   ("🎱 Hold the Pocket", "combathub_siege")],
+        [("🏚️ Dungeon",        "combathub_dungeon"),   ("🛡️ Hold the Line","combathub_siege")],
         [("🗼 The Ascension",  "combathub_ascension"), ("⚔️ War Table",    "combathub_wartable")],
     ],
     # Page 2 — Skills, War & Exploration
@@ -31155,7 +31155,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
         await dungeon_cmd(update, context)
 
     elif action == "siege":
-        # Launch Hold the Pocket — the endgame siege/command roguelite.
+        # Launch Hold the Line — the endgame siege/command roguelite.
         await siege_cmd(update, context)
 
     elif action == "ascension":
@@ -38158,7 +38158,7 @@ async def _post_init(application):
     except Exception: pass
 
 # ══════════════════════════════════════════════════════════════════════════════
-# HOLD THE POCKET — solo siege / command roguelite for endgame players
+# HOLD THE LINE — solo siege / command roguelite for endgame players
 # ══════════════════════════════════════════════════════════════════════════════
 # Fail state is your Barricade, not your HP, so the mode is about defensive
 # allocation rather than out-tanking. Your real calc_attack_damage powers the
@@ -38180,51 +38180,51 @@ SIEGE_ABILITY_CD = 3        # racks between hero-ability uses
 SIEGE_CLOCK_SECS = 28       # timed-mode shot clock
 
 SIEGE_UNITS = {
-    "bruiser":  {"name":"Bruiser","emoji":"🛡️","cost":3,"hp":420,"atk":55,"lane":"front",
-                 "desc":"Front-line wall. Soaks rushers so the barricade doesn't."},
-    "marksman": {"name":"Marksman","emoji":"🏹","cost":3,"hp":150,"atk":120,"lane":"back",
-                 "desc":"Snipes ranged balls first & intercepts their fire."},
-    "medic":    {"name":"Medic","emoji":"✨","cost":4,"hp":180,"atk":0,"lane":"mid",
-                 "desc":"Repairs the barricade every rack. No attack."},
-    "bombard":  {"name":"Bombard","emoji":"💣","cost":5,"hp":200,"atk":85,"lane":"mid",
-                 "desc":"Splash — hits EVERY enemy each rack. Great vs swarms."},
+    "bruiser":  {"name":"Knight","emoji":"🛡️","cost":3,"hp":420,"atk":55,"lane":"front",
+                 "desc":"Front-line wall — soaks the charge so your rampart doesn't."},
+    "marksman": {"name":"Archer","emoji":"🏹","cost":3,"hp":150,"atk":120,"lane":"back",
+                 "desc":"Picks off enemy skirmishers first & intercepts their volleys."},
+    "medic":    {"name":"Cleric","emoji":"✨","cost":4,"hp":180,"atk":0,"lane":"mid",
+                 "desc":"Mends the barricade every wave. Doesn't attack."},
+    "bombard":  {"name":"Mage","emoji":"🔮","cost":5,"hp":200,"atk":85,"lane":"mid",
+                 "desc":"Arcane blast — hits EVERY enemy each wave. Great vs hordes."},
 }
 _SIEGE_LANES = ("front", "mid", "back")
 
 SIEGE_ENEMIES = {
-    "rush":   {"name":"Cue Ball","emoji":"🎱","hp":0.80,"atk":0.95,"kind":"rush"},
-    "ranged": {"name":"Striped Ball","emoji":"🟡","hp":0.55,"atk":1.15,"kind":"ranged"},
-    "tank":   {"name":"Solid Ball","emoji":"⚫","hp":1.90,"atk":0.70,"kind":"tank"},
+    "rush":   {"name":"Goblin","emoji":"👺","hp":0.80,"atk":0.95,"kind":"rush"},
+    "ranged": {"name":"Bone Archer","emoji":"💀","hp":0.55,"atk":1.15,"kind":"ranged"},
+    "tank":   {"name":"Ogre","emoji":"👹","hp":1.90,"atk":0.70,"kind":"tank"},
 }
 
 SIEGE_RELICS = [
-    {"id":"momentum","name":"Break Momentum","emoji":"🎱","desc":"Each kill refunds 1 Supply (max +6/rack)."},
-    {"id":"felt","name":"Reinforced Felt","emoji":"🛡️","desc":"Barricade auto-repairs 12% each rack."},
-    {"id":"sharpshoot","name":"Sharpshooter","emoji":"🏹","desc":"Marksmen deal +60% damage."},
-    {"id":"phalanx","name":"Phalanx","emoji":"🧱","desc":"Bruisers get +50% HP."},
-    {"id":"overcharge","name":"Overcharged Cue","emoji":"⚡","desc":"Hero ability cooldown −1 rack."},
+    {"id":"momentum","name":"Scavenger","emoji":"♻️","desc":"Each kill refunds 1 Supply (max +6/wave)."},
+    {"id":"felt","name":"Stone Ramparts","emoji":"🏰","desc":"Barricade auto-repairs 12% each wave."},
+    {"id":"sharpshoot","name":"Sharpshooter","emoji":"🏹","desc":"Archers deal +60% damage."},
+    {"id":"phalanx","name":"Phalanx","emoji":"🧱","desc":"Knights get +50% HP."},
+    {"id":"overcharge","name":"War Horn","emoji":"📯","desc":"Rally cooldown −1 wave."},
     {"id":"suddendeath","name":"Sudden Death","emoji":"☠️","desc":"+50% damage dealt AND taken."},
-    {"id":"quartermaster","name":"Quartermaster","emoji":"📦","desc":"+2 Supply income each rack."},
-    {"id":"medkit","name":"Field Medicine","emoji":"➕","desc":"Medics repair +100%."},
-    {"id":"bounty","name":"Bounty Contract","emoji":"💰","desc":"+30% Break Tokens earned."},
-    {"id":"artillery","name":"Artillery Doctrine","emoji":"💣","desc":"Bombard splash +80%."},
+    {"id":"quartermaster","name":"Quartermaster","emoji":"📦","desc":"+2 Supply income each wave."},
+    {"id":"medkit","name":"Field Medicine","emoji":"➕","desc":"Clerics repair +100%."},
+    {"id":"bounty","name":"Plunder","emoji":"💰","desc":"+30% Valor earned."},
+    {"id":"artillery","name":"Arcane Doctrine","emoji":"🔮","desc":"Mage blast +80%."},
     {"id":"veteran","name":"Veterans","emoji":"🎖️","desc":"All units +25% damage."},
     {"id":"conscript","name":"Conscription","emoji":"🪖","desc":"Deploy costs −1 Supply (min 1)."},
     {"id":"petpact","name":"Beast Pact","emoji":"🐾","desc":"Pet deals +80% and never dies."},
     {"id":"focusfire","name":"Focus Fire","emoji":"🎯","desc":"+35% damage to bosses."},
     {"id":"aegis","name":"Aegis Plating","emoji":"🔰","desc":"Barricade max +40% (repairs to it)."},
-    {"id":"lastditch","name":"Last Ditch","emoji":"🩹","desc":"Once per run, survive a lethal rack at 1 HP."},
+    {"id":"lastditch","name":"Last Stand","emoji":"🩹","desc":"Once per run, survive a lethal wave at 1 HP."},
 ]
 _SIEGE_RELIC_BY_ID = {r["id"]: r for r in SIEGE_RELICS}
 
 SIEGE_MUTATORS = [
-    {"id":"none","name":"Standard Rack","emoji":"🎱","desc":"No modifier — a clean break."},
-    {"id":"split","name":"Split Shot","emoji":"✳️","desc":"+40% more enemies per rack."},
-    {"id":"armored","name":"Reinforced Rack","emoji":"🪨","desc":"Enemy HP +25%."},
-    {"id":"blitz","name":"Blitz","emoji":"⚡","desc":"Enemy ATK +25%, but +1 Supply income."},
-    {"id":"frugal","name":"Rationing","emoji":"📉","desc":"−1 Supply income, but +25% Tokens."},
-    {"id":"glass","name":"Glass Break","emoji":"💥","desc":"Everyone deals +40% damage."},
-    {"id":"fog","name":"Corner Fog","emoji":"🌫️","desc":"Next-rack preview is hidden."},
+    {"id":"none","name":"Standard Assault","emoji":"⚔️","desc":"No modifier — a fair fight."},
+    {"id":"split","name":"Endless Horde","emoji":"👥","desc":"+40% more enemies per wave."},
+    {"id":"armored","name":"Ironhide","emoji":"🪨","desc":"Enemy HP +25%."},
+    {"id":"blitz","name":"Frenzy","emoji":"⚡","desc":"Enemy ATK +25%, but +1 Supply income."},
+    {"id":"frugal","name":"Rationing","emoji":"📉","desc":"−1 Supply income, but +25% Valor."},
+    {"id":"glass","name":"Bloodlust","emoji":"🩸","desc":"Everyone deals +40% damage."},
+    {"id":"fog","name":"Fog of War","emoji":"🌫️","desc":"Next-wave preview is hidden."},
 ]
 
 def _siege_scale(rack):
@@ -38240,11 +38240,13 @@ def _siege_today_mutator():
 def _siege_has(state, relic_id):
     return relic_id in state.get("relics", [])
 
+_SIEGE_BOSSES = {1:("Goblin Warlord","👺"), 2:("Ogre King","👹"), 3:("Undead Lich","🧟"),
+                 4:("Demon Lord","😈"), 5:("Ancient Dragon","🐉"), 6:("Horde Sovereign","👑")}
+
 def _siege_boss_name(rack):
+    """Return (name, emoji) for the boss at this wave's tier."""
     tier = rack // 5
-    names = {1:"The 1-Ball", 2:"The 8-Ball", 3:"The 9-Ball", 4:"The Money Ball",
-             5:"The Break Master", 6:"The Rack Breaker"}
-    return names.get(tier, f"Rack Sovereign ×{tier}")
+    return _SIEGE_BOSSES.get(tier, (f"Horde Sovereign ×{tier}", "👑"))
 
 def _siege_gen_rack(state):
     """Build the enemy list for the current rack, applying the day's mutator."""
@@ -38277,7 +38279,8 @@ def _siege_gen_rack(state):
                         "hp":hp,"max_hp":hp,"atk":max(1, round(SIEGE_ATK0 * a["atk"] * scale * atk_mod))})
     if is_boss:
         bhp = max(1, round(SIEGE_HP0 * 9 * scale * hp_mod))
-        enemies.insert(0, {"name":_siege_boss_name(rack),"emoji":"🔴","kind":"boss",
+        bname, bemoji = _siege_boss_name(rack)
+        enemies.insert(0, {"name":bname,"emoji":bemoji,"kind":"boss",
                            "hp":bhp,"max_hp":bhp,"atk":max(1, round(SIEGE_ATK0 * 1.7 * scale * atk_mod)),
                            "boss":True})
     return enemies
@@ -38394,11 +38397,11 @@ def _siege_resolve(p, state, fire_ability=False):
 
     survivors = [e for e in enemies if e["hp"] > 0]
     log.append(f"⚔️ Your line hits for *{fmt_num(hero_dmg + pet_dmg + unit_atk_total + bombard_atk * len(enemies))}* — "
-               f"*{kills}* balls sunk, *{len(survivors)}* break through.")
+               f"*{kills}* slain, *{len(survivors)}* break through.")
     if pet_name and pet_dmg:
         log.append(f"🐾 *{pet_name}* (your pet) adds *{fmt_num(pet_dmg)}*.")
 
-    # ── Hero ability (Break Shot) ──────────────────────────────────────────────
+    # ── Hero ability (Rally) ───────────────────────────────────────────────────
     if fire_ability and state.get("fire_ready"):
         nuke = hero_dmg * 3
         for e in survivors:
@@ -38409,7 +38412,7 @@ def _siege_resolve(p, state, fire_ability=False):
         state["barricade"] = min(state["barricade_max"], state["barricade"] + repair)
         state["hero_cd"] = SIEGE_ABILITY_CD - (1 if _siege_has(state, "overcharge") else 0)
         state["fire_ready"] = False
-        log.append(f"🎱 *BREAK SHOT!* Cue smashes the rack — {len(newly)} balls shattered, +{fmt_num(repair)} barricade!")
+        log.append(f"⚔️ *RALLY!* Your hero cuts through the horde — {len(newly)} slain, +{fmt_num(repair)} barricade!")
 
     # ── Enemy retaliation ──────────────────────────────────────────────────────
     front = [u for u in units if u.get("lane") == "front" and u["hp"] > 0]
@@ -38498,7 +38501,7 @@ def _siege_resolve(p, state, fire_ability=False):
             state["fire_ready"] = True
     state["rack"] += 1
     state["cur_enemies"] = None   # next rack regenerates (and re-telegraphs)
-    log.append(f"✅ *Rack cleared!* +{fmt_num(gain)} Break Tokens, +{max(0, inc)} Supply.")
+    log.append(f"✅ *Wave cleared!* +{fmt_num(gain)} Valor, +{max(0, inc)} Supply.")
     return log, "win"
 
 def _siege_grant_rewards(p, state, wiped):
@@ -38527,7 +38530,7 @@ def _siege_grant_rewards(p, state, wiped):
     milestone_msg = ""
     if racks_cleared > best_prev:
         cds["siege_best_rack"] = racks_cleared
-        for thr, title in ((10, "Rack Warden"), (20, "Break Master"), (30, "Pocket Sovereign")):
+        for thr, title in ((10, "Gatekeeper"), (20, "Wall Warden"), (30, "Legendary Defender")):
             if best_prev < thr <= racks_cleared:
                 titles = sjl(p.get("titles"), [])
                 if title not in titles:
@@ -38538,10 +38541,10 @@ def _siege_grant_rewards(p, state, wiped):
     p["passive_cooldowns"] = json.dumps(cds)
     save_player(p)
     if total:
-        lines.append(f"🎫 *{fmt_num(total)} Break Tokens* → spend at the Break Shop (`/siegeshop`).")
+        lines.append(f"🎫 *{fmt_num(total)} Valor* → spend at the War Camp (`/siegeshop`).")
     return "\n".join(lines), milestone_msg
 
-# ── Break Tokens: spendable currency, shop & leaderboard ──────────────────────
+# ── Valor: spendable currency, shop & leaderboard ──────────────────────
 def _siege_token_balance(p):
     return safe_int(safe_cds(p).get("siege_tokens", 0))
 
@@ -38569,7 +38572,7 @@ SIEGE_SHOP = [
 _SIEGE_SHOP_BY_ID = {s["id"]: s for s in SIEGE_SHOP}
 
 def _siege_shop_purchase(p, item_id):
-    """Attempt a Break-Shop purchase. Returns a flash string; saves on success."""
+    """Attempt a War Camp purchase. Returns a flash string; saves on success."""
     item = _SIEGE_SHOP_BY_ID.get(item_id)
     if not item:
         return ""
@@ -38578,9 +38581,9 @@ def _siege_shop_purchase(p, item_id):
     if item["kind"] == "title" and item["title"] in sjl(p.get("titles"), []):
         return "🏅 You already own that title."
     if _siege_token_balance(p) < item["cost"]:
-        return f"❌ Need *{item['cost']}* Break Tokens (you have {_siege_token_balance(p)})."
+        return f"❌ Need *{item['cost']}* Valor (you have {_siege_token_balance(p)})."
     if not _siege_spend_tokens(p, item["cost"]):
-        return "❌ Not enough Break Tokens."
+        return "❌ Not enough Valor."
     if item["kind"] == "item":
         for _ in range(item["qty"]):
             add_item(p, item["item"])
@@ -38605,10 +38608,10 @@ def _siege_shop_purchase(p, item_id):
 
 def _build_siege_shop_card(p, uid, flash=""):
     bal = _siege_token_balance(p)
-    lines = ["🎫 *BREAK SHOP*", "_Spend Break Tokens earned in Hold the Pocket._"]
+    lines = ["🎫 *WAR CAMP*", "_Spend Valor earned in Hold the Line._"]
     if flash:
         lines.append(flash)
-    lines.append(f"\n💠 Balance: *{fmt_num(bal)}* Break Tokens\n")
+    lines.append(f"\n💠 Balance: *{fmt_num(bal)}* Valor\n")
     rows = []
     for s in SIEGE_SHOP:
         owned = s["kind"] == "title" and s["title"] in sjl(p.get("titles"), [])
@@ -38637,20 +38640,20 @@ def _siege_leaderboard_card(uid, highlight=None, limit=10):
     except Exception:
         pass
     rows_out.sort(key=lambda x: x[0], reverse=True)
-    lines = ["🏆 *HOLD THE POCKET — Deepest Racks*", ""]
+    lines = ["🏆 *HOLD THE LINE — Deepest Waves*", ""]
     if not rows_out:
-        lines.append("_No runs recorded yet. Be the first to hold the break!_")
+        lines.append("_No runs recorded yet. Be the first to hold the line!_")
     medals = {1: "🥇", 2: "🥈", 3: "🥉"}
     for i, (best, name, ruid) in enumerate(rows_out[:limit], 1):
         badge = medals.get(i, f"#{i}")
         star = " ⬅️ *you*" if ruid == highlight else ""
-        lines.append(f"{badge} *{name}* — Rack *{best}*{star}")
+        lines.append(f"{badge} *{name}* — Wave *{best}*{star}")
     if highlight is not None:
         pos = next((i for i, (_, _, ruid) in enumerate(rows_out, 1) if ruid == highlight), None)
         if pos and pos > limit:
             best = next(b for b, _, ru in rows_out if ru == highlight)
-            lines.append(f"\n…\n*#{pos}* *you* — Rack *{best}*")
-    back = [InlineKeyboardButton("🎫 Break Shop", callback_data=f"sg_shop_{uid}"),
+            lines.append(f"\n…\n*#{pos}* *you* — Wave *{best}*")
+    back = [InlineKeyboardButton("🎫 War Camp", callback_data=f"sg_shop_{uid}"),
             InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]
     return "\n".join(lines), InlineKeyboardMarkup([back])
 
@@ -38684,12 +38687,12 @@ ASC_REST_HEAL  = 0.35     # Rest node heals 35% max HP
 ASC_BOSS_EVERY = 10
 
 ASC_ENEMY_NAMES = [
-    ("Chalk Wraith", "👻"), ("Rack Golem", "🗿"), ("Felt Stalker", "🐾"),
-    ("Cue Revenant", "💀"), ("Break Fiend", "😈"), ("Pocket Horror", "🕳️"),
-    ("Bank-Shot Beast", "🦎"), ("Spinbound Shade", "🌀"),
+    ("Hollow Wraith", "👻"), ("Stone Golem", "🗿"), ("Shadow Stalker", "🐾"),
+    ("Grave Revenant", "💀"), ("Flame Fiend", "😈"), ("Abyssal Horror", "🕳️"),
+    ("Scaled Beast", "🦎"), ("Spectral Shade", "🌀"),
 ]
-ASC_BOSS_NAMES = {1:"The 1-Ball Colossus", 2:"The 8-Ball Leviathan",
-                  3:"The 9-Ball Tyrant", 4:"The Money-Ball Devourer"}
+ASC_BOSS_NAMES = {1:"The Iron Colossus", 2:"The Drowned Leviathan",
+                  3:"The Bone Tyrant", 4:"The Void Devourer"}
 
 ASC_RELICS = [
     {"id":"whetstone","name":"Whetstone","emoji":"🗡️","desc":"+15% damage."},
@@ -39202,7 +39205,7 @@ async def ascension_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer()
 
 
-# ── HOLD THE POCKET — UI / interaction layer ──────────────────────────────────
+# ── HOLD THE LINE — UI / interaction layer ──────────────────────────────────
 def _siege_bar(cur, mx, width=10):
     cur = max(0, cur); pct = (cur / mx) if mx else 0
     filled = int(round(pct * width))
@@ -39218,31 +39221,40 @@ def _siege_ensure_rack(state):
 def _siege_enemy_preview(state):
     if state["mutator"] == "fog":
         _siege_ensure_rack(state)
-        return "🌫️ _Corner Fog — the next rack is hidden!_"
+        return "⚠️ *Fog of War* — the next wave is hidden. Brace yourself!"
     enemies = _siege_ensure_rack(state)
     counts = {}
     boss = None
     for e in enemies:
         if e.get("boss"):
-            boss = e["name"]; continue
-        counts[e["emoji"]] = counts.get(e["emoji"], 0) + 1
-    parts = [f"{emo}×{n}" for emo, n in counts.items()]
-    line = "  ".join(parts) if parts else "—"
+            boss = (e["emoji"], e["name"]); continue
+        k = (e["emoji"], e["name"])
+        counts[k] = counts.get(k, 0) + 1
+    parts = [f"{emo} {nm}×{n}" for (emo, nm), n in counts.items()]
+    body = "   ".join(parts) if parts else "—"
+    head = f"⚠️ *Incoming — Wave {state['rack']}*  ({len(enemies)} foes)"
     if boss:
-        line = f"🔴 *{boss}*  +  " + line
-    return f"⚠️ *Incoming Rack {state['rack']}* ({len(enemies)} enemies):\n   {line}"
+        return f"{head}\n   {boss[0]} *{boss[1]}*  💀 BOSS\n   {body}"
+    return f"{head}\n   {body}"
 
 def _siege_units_block(state):
-    lanes = {"front": [], "mid": [], "back": []}
+    lanes = {"front": {}, "mid": {}, "back": {}}
     for u in state["units"]:
         b = SIEGE_UNITS[u["code"]]
-        lanes.setdefault(u.get("lane", b["lane"]), []).append(f"{b['emoji']}")
-    def row(lbl, key):
-        items = lanes.get(key, [])
-        return f"  {lbl} " + ("".join(items) if items else "_empty_")
-    out = [row("🛡️Front:", "front"), row("💠 Mid: ", "mid"), row("🎯Back: ", "back")]
+        lane = u.get("lane", b["lane"])
+        lanes.setdefault(lane, {})
+        lanes[lane][u["code"]] = lanes[lane].get(u["code"], 0) + 1
+    def fmt_lane(lbl, key):
+        d = lanes.get(key, {})
+        if not d:
+            return f"  {lbl} _—_"
+        parts = [f"{SIEGE_UNITS[c]['emoji']} {SIEGE_UNITS[c]['name']}×{n}" for c, n in d.items()]
+        return f"  {lbl} " + "   ".join(parts)
+    out = [fmt_lane("🛡️ Front:", "front"),
+           fmt_lane("🏰 Mid: ", "mid"),
+           fmt_lane("🏹 Back: ", "back")]
     if state.get("pet"):
-        out.append("  🐾 Pet on the field")
+        out.append("  🐾 Pet fights with you")
     return "\n".join(out)
 
 def _build_siege_mode_select(uid, p=None):
@@ -39251,26 +39263,27 @@ def _build_siege_mode_select(uid, p=None):
         best = safe_int(safe_cds(p).get("siege_best_rack", 0))
     mut = _siege_today_mutator()
     lines = [
-        "🎱 *HOLD THE POCKET*",
-        "_Command the break. Deploy your line, ride your gear early, out-think the swarm late._",
+        "🛡️ *HOLD THE LINE*",
+        "_Defend the rampart against an endless horde. Your gear carries you early;"
+        " your army, relics and nerve carry you deep._",
         "",
-        f"🌀 *Today's Mutator:* {mut['emoji']} *{mut['name']}* — _{mut['desc']}_",
+        f"🌀 *Today's Modifier:* {mut['emoji']} *{mut['name']}* — _{mut['desc']}_",
     ]
     if best:
-        lines.append(f"🏅 Your deepest rack: *{best}*")
+        lines.append(f"🏅 Your best: *Wave {best}*")
     lines += [
         "",
-        "*How it works:* survive endless racks of enemies. Your Barricade is your"
-        " life — if it shatters, the run ends. Spend *Supply* on troops, draft a"
-        " *relic* after every rack, and *cash out* your Break Tokens before you"
-        " push too far. Bosses every 5 racks.",
+        "*How it works:* survive endless waves. Your *Barricade* is your life — if"
+        " it falls, the run ends. Spend *Supply* on troops (Knight/Archer/Cleric/"
+        "Mage), draft a *relic* after every wave, and *cash out* your Valor before"
+        " you push too far. A boss storms in every 5 waves.",
         "",
         "Choose your tempo:",
     ]
     rows = [
         [InlineKeyboardButton("🧠 Turn-Based (think freely)", callback_data=f"sg_mode_{uid}_turn")],
-        [InlineKeyboardButton(f"⏱️ Timed ({SIEGE_CLOCK_SECS}s shot clock)", callback_data=f"sg_mode_{uid}_timed")],
-        [InlineKeyboardButton("🎫 Break Shop", callback_data=f"sg_shop_{uid}"),
+        [InlineKeyboardButton(f"⏱️ Timed ({SIEGE_CLOCK_SECS}s turn timer)", callback_data=f"sg_mode_{uid}_timed")],
+        [InlineKeyboardButton("⚜️ War Camp", callback_data=f"sg_shop_{uid}"),
          InlineKeyboardButton("🏆 Leaderboard", callback_data=f"sg_board_{uid}")],
         [InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")],
     ]
@@ -39280,61 +39293,67 @@ def _build_siege_command_card(p, state, flash=""):
     uid = state["uid"]
     bar, pct = _siege_bar(state["barricade"], state["barricade_max"])
     mut = next((mm for mm in SIEGE_MUTATORS if mm["id"] == state["mutator"]), SIEGE_MUTATORS[0])
-    fire = "🎱 READY" if state.get("fire_ready") else f"CD {state['hero_cd']}"
+    fire = "READY" if state.get("fire_ready") else f"cd {state['hero_cd']}"
     tokens = state["pending_tokens"] + state["banked_tokens"]
-    relics = " ".join(_SIEGE_RELIC_BY_ID[r]["emoji"] for r in state["relics"]) or "_none yet_"
-    lines = [f"🎱 *HOLD THE POCKET* — Rack *{state['rack']}*   ({mut['emoji']} {mut['name']})"]
+    relics = " ".join(_SIEGE_RELIC_BY_ID[r]["emoji"] for r in state["relics"]) or "—"
+    n_units = len(state["units"]) + (1 if state.get("pet") else 0)
+    lines = [f"🛡️ *HOLD THE LINE* — Wave *{state['rack']}*",
+             f"{mut['emoji']} _{mut['name']}: {mut['desc']}_"]
     if flash:
-        lines.append(flash)
+        lines.append("\n" + flash)
     lines += [
-        f"🏰 Barricade `{bar}` *{pct}%*  ({fmt_num(state['barricade'])}/{fmt_num(state['barricade_max'])})",
-        f"⚡ Supply: *{state['supply']}*     🎱 Break Shot: *{fire}*",
-        f"🏅 Break Tokens: *{fmt_num(tokens)}*   ·   Relics: {relics}",
         "",
-        "*Your line:*",
+        f"🏰 Barricade  `{bar}`  *{pct}%*",
+        f"       {fmt_num(state['barricade'])} / {fmt_num(state['barricade_max'])}",
+        f"⚡ Supply *{state['supply']}*   ·   🎖️ Valor *{fmt_num(tokens)}*   ·   💥 Rally *{fire}*",
+        f"🧿 Relics: {relics}",
+        "",
+        f"*🛡️ Your defenders* ({n_units}):",
         _siege_units_block(state),
         "",
         _siege_enemy_preview(state),
     ]
     if state["mode"] == "timed":
-        lines.append(f"\n⏱️ _Shot clock ~{SIEGE_CLOCK_SECS}s — the rack auto-starts if you stall._")
+        lines.append(f"\n⏱️ _Turn timer ~{SIEGE_CLOCK_SECS}s — the wave auto-starts if you stall._")
     rows = [
-        [InlineKeyboardButton("⚡ Deploy", callback_data=f"sg_deploy_{uid}"),
+        [InlineKeyboardButton("⚔️ Deploy Troops", callback_data=f"sg_deploy_{uid}"),
          InlineKeyboardButton("🔧 Repair (3⚡)", callback_data=f"sg_repair_{uid}")],
     ]
     fire_row = []
     if state.get("fire_ready"):
-        fire_row.append(InlineKeyboardButton("🎱 BREAK SHOT + Start", callback_data=f"sg_fire_{uid}"))
-    fire_row.append(InlineKeyboardButton("▶️ Start Rack", callback_data=f"sg_start_{uid}"))
+        fire_row.append(InlineKeyboardButton("💥 Rally + Fight", callback_data=f"sg_fire_{uid}"))
+    fire_row.append(InlineKeyboardButton("⚔️ Fight Wave", callback_data=f"sg_start_{uid}"))
     rows.append(fire_row)
-    rows.append([InlineKeyboardButton("💰 Cash Out", callback_data=f"sg_cash_{uid}"),
+    rows.append([InlineKeyboardButton("🎖️ Cash Out", callback_data=f"sg_cash_{uid}"),
                  InlineKeyboardButton("🏳️ Retreat", callback_data=f"sg_quit_{uid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 def _build_siege_deploy_card(p, state):
     uid = state["uid"]
-    lines = [f"⚡ *DEPLOY*  —  Supply: *{state['supply']}*", "_Pick a unit for your line:_", ""]
+    lines = [f"⚔️ *DEPLOY TROOPS*  —  Supply: *{state['supply']}*⚡",
+             "_Build a balanced line: Knights soak the front, Archers pick off_"
+             " _skirmishers, Clerics mend the wall, Mages blast the whole horde._", ""]
     rows = []
     for code, u in SIEGE_UNITS.items():
         cost = _siege_deploy_cost(state, code)
-        afford = state["supply"] >= cost
-        lines.append(f"{u['emoji']} *{u['name']}* ({cost}⚡, {u['lane']}) — _{u['desc']}_")
-        if afford:
+        have = sum(1 for x in state["units"] if x["code"] == code)
+        have_txt = f"  _(have {have})_" if have else ""
+        lines.append(f"{u['emoji']} *{u['name']}* — {cost}⚡ · {u['lane']}{have_txt}\n    _{u['desc']}_")
+        if state["supply"] >= cost:
             rows.append([InlineKeyboardButton(f"{u['emoji']} {u['name']} ({cost}⚡)",
                                               callback_data=f"sg_buy_{uid}_{code}")])
     petrec = get_active_pet_record(uid)
     if petrec and not state.get("pet"):
-        pcost = _siege_deploy_cost(state, "bruiser")  # pet costs like a mid unit
-        pcost = 4 if not _siege_has(state, "conscript") else 3
-        lines.append(f"🐾 *{_pet_display_name(petrec)}* ({pcost}⚡) — _your pet joins the line._")
+        pcost = 3 if _siege_has(state, "conscript") else 4
+        lines.append(f"🐾 *{_pet_display_name(petrec)}* — {pcost}⚡\n    _Your pet joins the fight._")
         if state["supply"] >= pcost:
             rows.append([InlineKeyboardButton(f"🐾 Deploy Pet ({pcost}⚡)", callback_data=f"sg_pet_{uid}")])
-    rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"sg_home_{uid}")])
+    rows.append([InlineKeyboardButton("🔙 Back to Battle", callback_data=f"sg_home_{uid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 def _build_siege_draft_card(p, state):
     uid = state["uid"]
-    lines = ["✅ *Rack cleared!*  Choose a relic:", ""]
+    lines = ["✅ *Wave cleared!*  Choose a relic reward:", ""]
     for ln in state.get("log", [])[-4:]:
         lines.append(f"_{ln}_")
     lines.append("")
@@ -39349,15 +39368,15 @@ def _build_siege_draft_card(p, state):
 def _build_siege_end_card(p, state, summary, milestone, wiped):
     uid = state["uid"]
     racks = state["rack"] - 1
-    head = "💥 *THE BARRICADE FELL*" if wiped else "💰 *CASHED OUT*"
+    head = "💥 *THE BARRICADE HAS FALLEN*" if wiped else "🎖️ *VICTORY — YOU WITHDREW*"
     lines = [head, ""]
     for ln in state.get("log", [])[-3:]:
         lines.append(f"_{ln}_")
     lines += [
         "",
-        f"🏁 You held *{racks}* rack{'s' if racks != 1 else ''}"
+        f"🏁 You held *{racks}* wave{'s' if racks != 1 else ''}"
         + (f" on {next((mm['name'] for mm in SIEGE_MUTATORS if mm['id']==state['mutator']),'')}." if racks else "."),
-        f"{'_Half your unbanked tokens were lost in the rout._' if wiped else '_Full haul secured._'}",
+        f"{'_Half your unbanked Valor was lost in the rout._' if wiped else '_Full haul secured._'}",
         "",
         "*Rewards:*",
         summary or "_—_",
@@ -39365,7 +39384,7 @@ def _build_siege_end_card(p, state, summary, milestone, wiped):
     if milestone:
         lines.append(milestone)
     rows = [[InlineKeyboardButton("🔁 Play Again", callback_data=f"sg_again_{uid}"),
-             InlineKeyboardButton("🎫 Break Shop", callback_data=f"sg_shop_{uid}")],
+             InlineKeyboardButton("⚜️ War Camp", callback_data=f"sg_shop_{uid}")],
             [InlineKeyboardButton("🏆 Leaderboard", callback_data=f"sg_board_{uid}"),
              InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]
     return "\n".join(lines), InlineKeyboardMarkup(rows)
@@ -39466,7 +39485,7 @@ async def siege_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "mode":
         mode = toks[3] if len(toks) > 3 else "turn"
         st = _siege_new_run(p, uid, "timed" if mode == "timed" else "turn")
-        await query.answer("The break racks up…")
+        await query.answer("To the walls!")
         await render()
         if st["mode"] == "timed":
             _siege_arm_clock(context.bot, st)
@@ -39583,7 +39602,7 @@ async def siege_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "quit":
         _active_sieges.pop(uid, None)
         await query.answer("Retreated — run abandoned, no rewards.")
-        await _q_edit(query, "🏳️ *You abandon the break.* No Break Tokens banked.\n\n_/siege to try again._",
+        await _q_edit(query, "🏳️ *You abandon the break.* No Valor banked.\n\n_/siege to try again._",
                       parse_mode="Markdown",
                       reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]))
         return
@@ -40189,7 +40208,8 @@ def main():
     app.add_handler(CommandHandler("dungeon",      dungeon_cmd))
     app.add_handler(CallbackQueryHandler(dungeon_callback, pattern="^dng_"))
     app.add_handler(CommandHandler("siege",       siege_cmd))
-    app.add_handler(CommandHandler("holdthepocket", siege_cmd))
+    app.add_handler(CommandHandler("holdtheline", siege_cmd))
+    app.add_handler(CommandHandler("holdthepocket", siege_cmd))   # legacy alias
     app.add_handler(CommandHandler("htp",         siege_cmd))
     app.add_handler(CommandHandler("siegeshop",   siegeshop_cmd))
     app.add_handler(CommandHandler("breakshop",   siegeshop_cmd))
