@@ -18119,38 +18119,88 @@ async def inventory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_inventory_section(update, p, section="Equipped", edit=False, uid=user.id)
 
 
-def _build_equip_page_markup(p, uid, page, page_size=5):
-    """Return (has_items, InlineKeyboardMarkup) for the given equip page."""
+_EQUIP_SLOT_POOLS = [
+    ("⚔️", "Weapon",    None),   # weapons resolved via _weapon_def (static + unique)
+    ("🛡️", "Armor",     ARMORS),
+    ("🔰", "Shield",    SHIELDS),
+    ("💍", "Accessory", ACCESSORIES),
+    ("🎩", "Hat",       HATS),
+    ("🧤", "Gloves",    GLOVES),
+    ("👢", "Boots",     BOOTS),
+    ("🎭", "Mask",      MASKS),
+]
+
+def _equip_candidates(p):
+    """Deterministic, slot-grouped list of equippable items in the bag — shared
+    by the /equip picker markup and its tap handler. A short *index* into this
+    list is what rides in the callback, because unique-weapon names are far too
+    long and emoji-heavy for Telegram's 64-byte callback_data. Weapons include
+    rolled UNIQUE drops (resolved through _weapon_def), which the old picker
+    dropped entirely because it only scanned the static WEAPONS table.
+
+    Each entry: {name, emoji, slot, rarity, stat, stat_key, bonus, count, ok}."""
     inv = sjl(p.get("inventory"), [])
-    all_btns = []
-    for slot_emoji, slot_label, pool in [
-        ("⚔️", "Weapon",    WEAPONS),
-        ("🛡️", "Armor",     ARMORS),
-        ("🔰", "Shield",    SHIELDS),
-        ("💍", "Accessory", ACCESSORIES),
-        ("🎩", "Hat",       HATS),
-        ("🧤", "Gloves",    GLOVES),
-        ("👢", "Boots",     BOOTS),
-        ("🎭", "Mask",      MASKS),
-    ]:
-        for it in sorted(set(k for k in inv if k in pool)):
-            d_it = pool[it]
-            rarity = RARITY_EMOJI.get(d_it.get("rarity", ""), "⚪")
-            enh = get_enhancement(p, it)
-            enh_str = f" +{enh}" if enh else ""
-            stat_val = d_it.get("atk") or d_it.get("def", 0)
-            stat_key = "ATK" if "atk" in d_it else "DEF"
-            wtag = _weapon_class_tag(it)
-            tag_str = f" [{wtag}]" if wtag else ""
-            all_btns.append(InlineKeyboardButton(
-                f"{slot_emoji} [{slot_label}] {rarity}{it}{enh_str} (+{stat_val} {stat_key}){tag_str}",
-                callback_data=f"eqp_{uid}_{it}"))
-    if not all_btns:
+    ustore = _unique_store(p)
+    groups = {lbl: [] for _, lbl, _ in _EQUIP_SLOT_POOLS}
+    seen = set()
+    for name in inv:
+        if name in seen:
+            continue
+        seen.add(name)
+        cnt = inv.count(name)
+        # ── Weapons (static or unique) ──
+        if name in WEAPONS or name in ustore:
+            wd = _weapon_def(p, name)
+            if not wd:
+                continue
+            enh = get_enhancement(p, name)
+            if wd.get("unique"):
+                rar = _UNIQUE_RARITY_EMOJI.get(wd.get("rarity", ""), "✦")
+                sb  = wd.get("stat_bonus") or {}
+                bonus = ("  " + " ".join(f"+{v} {k}" for k, v in sb.items())) if sb else ""
+            else:
+                rar = RARITY_EMOJI.get(wd.get("rarity", ""), "⚪")
+                bonus = ""
+            ok, _ = can_equip_weapon(p, name)
+            groups["Weapon"].append({
+                "name": name, "emoji": "⚔️", "slot": "Weapon", "rarity": rar,
+                "stat": safe_int(wd.get("atk")) + enh, "stat_key": "ATK",
+                "bonus": bonus, "count": cnt, "ok": ok})
+            continue
+        # ── Everything else (static pools) ──
+        for emoji, label, pool in _EQUIP_SLOT_POOLS[1:]:
+            if name in pool:
+                d = pool[name]
+                rar = RARITY_EMOJI.get(d.get("rarity", ""), "⚪")
+                groups[label].append({
+                    "name": name, "emoji": emoji, "slot": label, "rarity": rar,
+                    "stat": safe_int(d.get("def")) + get_enhancement(p, name),
+                    "stat_key": "DEF", "bonus": "", "count": cnt, "ok": True})
+                break
+    out = []
+    for _, label, _ in _EQUIP_SLOT_POOLS:
+        g = groups[label]
+        g.sort(key=lambda e: (-e["stat"], e["name"]))   # best-in-slot first
+        out.extend(g)
+    return out
+
+def _build_equip_page_markup(p, uid, page, page_size=6):
+    """Return (has_items, InlineKeyboardMarkup) for the given equip page.
+    Buttons carry a stable INDEX into _equip_candidates (not the item name)."""
+    cands = _equip_candidates(p)
+    if not cands:
         return False, InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]])
-    total = len(all_btns)
+    total = len(cands)
     total_pages = max(1, (total + page_size - 1) // page_size)
     page = max(0, min(page, total_pages - 1))
-    rows = [[btn] for btn in all_btns[page * page_size:(page + 1) * page_size]]
+    rows = []
+    for idx in range(page * page_size, min((page + 1) * page_size, total)):
+        e = cands[idx]
+        lock = "🔒 " if not e["ok"] else ""
+        cnt  = f"  ×{e['count']}" if e["count"] > 1 else ""
+        stat = "" if e["slot"] == "Accessory" else f"  (+{e['stat']} {e['stat_key']})"
+        label = f"{lock}{e['emoji']} {e['rarity']} {e['name']}{stat}{e['bonus']}{cnt}"
+        rows.append([InlineKeyboardButton(label[:120], callback_data=f"eqp_{uid}_{idx}")])
     if total_pages > 1:
         nav = []
         if page > 0:
@@ -18180,11 +18230,18 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             encs_g = get_enchant(p, name)
             enh_str = f" *+{enh}*" if enh else ""
             enc_str = f" ✨×{len(encs_g)}" if encs_g else ""
-            d_s = pool.get(name, {})
+            # Resolve unique weapons (they live in unique_items, not WEAPONS) so
+            # an equipped rolled weapon shows its real ATK + affix bonuses.
+            d_s = (_weapon_def(p, name) or {}) if pool is WEAPONS else pool.get(name, {})
             stat_val = d_s.get("atk") or d_s.get("def", 0)
             stat_label = "ATK" if "atk" in d_s else "DEF"
-            rarity = RARITY_EMOJI.get(d_s.get("rarity",""), "")
-            return f"{slot}: {rarity} *{name}*{enh_str}{enc_str} (+{stat_val} {stat_label})"
+            if d_s.get("unique"):
+                rarity = _UNIQUE_RARITY_EMOJI.get(d_s.get("rarity",""), "✦")
+            else:
+                rarity = RARITY_EMOJI.get(d_s.get("rarity",""), "")
+            sb = d_s.get("stat_bonus") or {}
+            bonus_str = ("  " + " ".join(f"+{v} {k}" for k, v in sb.items())) if sb else ""
+            return f"{slot}: {rarity} *{name}*{enh_str}{enc_str} (+{stat_val} {stat_label}){bonus_str}"
 
         lines = [f"🎽 *{p['username']}'s Gear:*\n",
                  _gear_summary_line("⚔️ Weapon",  weap, WEAPONS),
@@ -18207,7 +18264,10 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(_gear_summary_line(f"{slot_emoji} {slot_label}", p.get(slot_key) or "None", pool))
 
         has_items, markup = _build_equip_page_markup(p, uid, 0)
-        lines.append("\n_Select an item to equip:_" if has_items else "\n_No equippable items in bag. Visit /shop!_")
+        lines.append(
+            "\n_Tap an item to equip — sorted best-in-slot. ✨ shows a rolled weapon's bonus stats; "
+            "🔒 means your class can't use it yet._"
+            if has_items else "\n_No equippable items in bag. Visit /shop or go hunting!_")
         await send_group(update, "\n".join(lines), delay=60, reply_markup=markup); return
     item_typed = " ".join(context.args)
     inv = sjl(p.get("inventory"), [])
@@ -18579,12 +18639,11 @@ async def settitle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _q_edit(query, f"🏅 Title set to *{title}*!", parse_mode="Markdown")
 
 async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle equip button: eqp_{uid}_{item_name}"""
+    """Handle equip button: eqp_{uid}_{index} — index into _equip_candidates."""
     query = update.callback_query
-    parts = query.data.split("_", 2)
+    parts = query.data.split("_")
     try:
-        uid       = int(parts[1])
-        item_name = parts[2]
+        uid = int(parts[1]); idx = int(parts[2])
     except (IndexError, ValueError):
         await query.answer(); return
     if query.from_user.id != uid:
@@ -18592,10 +18651,14 @@ async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     p = get_player(uid)
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
+    cands = _equip_candidates(p)
+    if idx < 0 or idx >= len(cands):
+        await query.answer("Your bag changed — reopen /equip.", show_alert=True); return
+    item_name = cands[idx]["name"]
     inv = sjl(p.get("inventory"), [])
     if item_name not in inv:
         await query.answer(f"{item_name} not in your inventory!", show_alert=True); return
-    if item_name in WEAPONS:
+    if _is_weapon(p, item_name):
         ok, reason = can_equip_weapon(p, item_name)
         if not ok:
             await query.answer(reason, show_alert=True); return
@@ -18604,9 +18667,13 @@ async def equip_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if old: inv.append(old)
         p["inventory"] = json.dumps(inv); save_player(p)
         new_atk = get_weapon_atk(p)
-        await _q_edit(query, 
+        _wd = _weapon_def(p, item_name) or {}
+        _sb = _wd.get("stat_bonus") or {}
+        _bonus_line = ("\n✨ Bonuses: " + "  ".join(f"+{v} {k}" for k, v in _sb.items())) if _sb else ""
+        await _q_edit(query,
             f"⚔️ *Equipped {item_name}!*\n"
-            f"Weapon ATK is now *{new_atk}*" + (f"\n_Unequipped {old}_" if old else ""),
+            f"Weapon ATK is now *{new_atk}*{_bonus_line}"
+            + (f"\n_Unequipped {old}_" if old else ""),
             parse_mode="Markdown")
     elif item_name in ARMORS:
         ok, reason = can_equip_armor(p, item_name)
