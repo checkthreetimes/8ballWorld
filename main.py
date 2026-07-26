@@ -356,15 +356,27 @@ def _apply_pvp_rating(winner_id, loser_id):
     return dw, -(rl - new_l), new_w, new_l
 
 async def _auto_delete_pvp_card(bot, uid, chat_id, msg_id, delay=300):
-    """Delete a PvP battle card after `delay` seconds if it hasn't been replaced."""
-    await asyncio.sleep(delay)
-    stored = _pvp_dm_last_msg.get(uid)
-    if stored and stored[1] == msg_id:
-        _pvp_dm_last_msg.pop(uid, None)
-        try:
-            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        except Exception:
-            pass
+    """Delete a PvP battle card after `delay` seconds of INACTIVITY. The card is
+    now edited in place for the whole fight (same msg_id throughout), so this
+    can't be a one-shot timer or it would delete an actively-updating card — it
+    waits out the remaining idle time and only removes a card that's gone quiet."""
+    while True:
+        stored = _pvp_dm_last_msg.get(uid)
+        if not (stored and stored[1] == msg_id):
+            return  # card was replaced or already cleaned up
+        idle = time.time() - _pvp_card_ts.get(uid, 0)
+        remaining = delay - idle
+        if remaining > 1:
+            await asyncio.sleep(remaining)   # activity happened — wait out the rest
+            continue
+        stored = _pvp_dm_last_msg.get(uid)
+        if stored and stored[1] == msg_id:
+            _pvp_dm_last_msg.pop(uid, None)
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception:
+                pass
+        return
 
 def _pvp_pair_key(a, b):
     """Return whichever direction of (a,b)/(b,a) exists in _pvp_cards, or (a,b)."""
@@ -640,13 +652,13 @@ _pvp_card_locks = {}  # uid -> asyncio.Lock serializing card delivery per viewer
 _pvp_last_action = {} # pair -> time.time() of last combat action (idle-draw watchdog)
 
 # ── STAMINA BLITZ (real-time, bursty) ─────────────────────────────────────────
-# No strict turns: both fighters act live. Each offensive move (attack / strike
-# skill / finisher) spends 1 STAMINA. Stamina regenerates ~1 every few seconds up
-# to a small cap, so you can unload a quick multi-hit BLITZ to go for a KO, then
-# must catch your breath while your opponent can blitz back — but you can never
-# infinite-spam. Defensive moves (heal/defend/mp) don't cost stamina (they have
-# their own per-battle caps). A fighter who goes silent for PVP_IDLE_FORFEIT
-# loses to whoever last landed a blow.
+# No strict turns: both fighters act live. EVERY move spends 1 STAMINA — attack,
+# strike skill, support skill, heal, mp, defend — with the sole exception of the
+# FINISHER (the execute is always available once its kill condition is met).
+# Stamina regenerates ~1 every few seconds up to a small cap, so you can unload a
+# quick multi-move BLITZ to go for a KO, then must catch your breath while your
+# opponent can blitz back — but you can never infinite-spam. A fighter who goes
+# silent for PVP_IDLE_FORFEIT loses to whoever last landed a blow.
 _pvp_stamina = {}       # (pair, uid) -> {"val": float, "ts": last_update time}
 _pvp_last_actor = {}    # pair -> uid who last took any action (for AFK forfeit)
 PVP_STAMINA_MAX   = 3
@@ -688,11 +700,11 @@ def _pvp_stam_pips(pair, uid):
     return "⚡" * cur + "·" * (PVP_STAMINA_MAX - cur)
 
 async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
-    """Deliver a PvP turn as a FRESH card to each player (send new → delete
-    old), same mechanic as the dungeon revamp. The battle log rides on the
-    card itself, so one send per player replaces what used to be four inline
-    edits per action. Falls back to editing the old card if the send is
-    throttled, so one path always lands.
+    """Deliver a PvP turn by EDITING each player's single persistent fight card
+    in place — one card per player for the whole fight, re-rendered on every
+    action. No send/delete churn, no blink, buttons stay put. The first render
+    (or a render after the card was deleted/expired) sends a fresh card; every
+    render after that edits it. The battle log rides on the card itself.
 
     Deliveries are SEQUENCED per viewer: rapid actions produce overlapping
     renders, and without ordering an older render (with pre-hit HP) could
@@ -730,66 +742,68 @@ async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
     async def _upd_card_locked(viewer_uid, card, markup):
         stored = _pvp_dm_last_msg.get(viewer_uid)
 
-        async def _edit_old():
-            if not stored:
-                raise ValueError("no card to edit")
-            await asyncio.wait_for(bot.edit_message_text(
-                chat_id=stored[0], message_id=stored[1],
-                text=card, parse_mode="Markdown", reply_markup=markup), timeout=8)
+        # PRIMARY: edit the ONE persistent fight card in place. The whole fight
+        # lives on a single card per player that just re-renders on every action
+        # — no send/delete churn, no blink, buttons stay put under your finger.
+        if stored:
+            try:
+                await asyncio.wait_for(bot.edit_message_text(
+                    chat_id=stored[0], message_id=stored[1],
+                    text=card, parse_mode="Markdown", reply_markup=markup), timeout=8)
+                _pvp_card_ts[viewer_uid] = time.time()
+                return
+            except BadRequest as e:
+                if "not modified" in str(e).lower():
+                    _pvp_card_ts[viewer_uid] = time.time()
+                    return
+                # message deleted / too old to edit → fall through and send fresh
+            except RetryAfter as e:
+                await asyncio.sleep(min(6, float(getattr(e, "retry_after", 3)) + 0.5))
+                try:
+                    await asyncio.wait_for(bot.edit_message_text(
+                        chat_id=stored[0], message_id=stored[1],
+                        text=card, parse_mode="Markdown", reply_markup=markup), timeout=8)
+                    _pvp_card_ts[viewer_uid] = time.time()
+                    return
+                except Exception:
+                    pass  # fall through to a fresh send
+            except Exception:
+                pass  # fall through to a fresh send
 
-        # Primary: fresh card, then remove the old one
+        # FIRST RENDER (or edit fell through): send a fresh card, retire the old
+        # one, and arm a single idle-aware auto-delete timer for it.
         try:
             msg = await asyncio.wait_for(bot.send_message(
                 chat_id=viewer_uid, text=card,
                 parse_mode="Markdown", reply_markup=markup), timeout=8)
-            _pvp_dm_last_msg[viewer_uid] = (viewer_uid, msg.message_id)
-            _pvp_card_ts[viewer_uid] = time.time()
-            if stored and stored[1] != msg.message_id:
-                async def _rm_old(cid=stored[0], mid=stored[1]):
-                    # Soft hand-off: strip the old card's buttons IMMEDIATELY (so a
-                    # stray tap on it no-ops instead of double-firing), but delay the
-                    # actual delete ~1.3s so the message doesn't blink out from under
-                    # the player's finger mid-tap — the new card is already live below.
-                    try:
-                        await bot.edit_message_reply_markup(
-                            chat_id=cid, message_id=mid, reply_markup=None)
-                    except Exception:
-                        pass
-                    await asyncio.sleep(1.3)
-                    try:
-                        await bot.delete_message(chat_id=cid, message_id=mid)
-                    except Exception:
-                        pass
-                _t = asyncio.create_task(_rm_old())
-                _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
-            _t2 = asyncio.create_task(_auto_delete_pvp_card(bot, viewer_uid, viewer_uid, msg.message_id))
-            _bg_tasks.add(_t2); _t2.add_done_callback(_bg_tasks.discard)
-            return
         except RetryAfter as e:
-            # Send throttled — update the old card in place instead
-            try:
-                await _edit_old()
-                _pvp_card_ts[viewer_uid] = time.time()
-                return
-            except Exception:
-                pass
             try:
                 await asyncio.sleep(min(6, float(getattr(e, "retry_after", 3)) + 0.5))
                 msg = await asyncio.wait_for(bot.send_message(
                     chat_id=viewer_uid, text=card,
                     parse_mode="Markdown", reply_markup=markup), timeout=8)
-                _pvp_dm_last_msg[viewer_uid] = (viewer_uid, msg.message_id)
-                _pvp_card_ts[viewer_uid] = time.time()
-                return
             except Exception:
                 return
         except Exception:
-            pass  # blocked bot / network — try the in-place edit as last resort
-        try:
-            await _edit_old()
-            _pvp_card_ts[viewer_uid] = time.time()
-        except Exception:
-            pass
+            return
+        _pvp_dm_last_msg[viewer_uid] = (viewer_uid, msg.message_id)
+        _pvp_card_ts[viewer_uid] = time.time()
+        if stored and stored[1] != msg.message_id:
+            async def _rm_old(cid=stored[0], mid=stored[1]):
+                try:
+                    await bot.edit_message_reply_markup(
+                        chat_id=cid, message_id=mid, reply_markup=None)
+                except Exception:
+                    pass
+                await asyncio.sleep(1.3)
+                try:
+                    await bot.delete_message(chat_id=cid, message_id=mid)
+                except Exception:
+                    pass
+            _t = asyncio.create_task(_rm_old())
+            _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+        _t2 = asyncio.create_task(_auto_delete_pvp_card(bot, viewer_uid, viewer_uid, msg.message_id))
+        _bg_tasks.add(_t2); _t2.add_done_callback(_bg_tasks.discard)
     await asyncio.gather(_upd_card(au_id, a, du_id, d), _upd_card(du_id, d, au_id, a))
 
 
@@ -15810,6 +15824,17 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, _cc_entry, context.bot)
                 return
 
+        # ── STAMINA GATE — every move except the Finisher costs ⚡ ──────────────
+        # Peek only (no deduct) so an out-of-stamina tap is refused cleanly; the
+        # charge is actually spent at the moment the move executes, so a no-op
+        # (e.g. "no potions left") never wastes stamina.
+        if action_type in ("atk", "heal", "mp", "def"):
+            _cur_st = _pvp_stam_peek(pair, uid)
+            if _cur_st < 1:
+                _rdy = max(1, int(round(PVP_STAMINA_REGEN * (1 - _cur_st))))
+                await query.answer(f"😮‍💨 Out of stamina — next move ready in ~{_rdy}s.", show_alert=True)
+                return
+
         # ── OPTIONS ───────────────────────────────────────────────────────────
         if action_type == "opts":
             inv = sjl(a.get("inventory"), [])
@@ -15865,6 +15890,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             heal_entry = (f"🧪 *{a['username']}* uses *{potion}* — *+{actual} HP* ❤️ {a['hp']}/{a['max_hp']}"
                           + (f"  _({_pot_left} potion{'s' if _pot_left != 1 else ''} left)_" if _pot_left > 0 else "  _(last potion!)_"))
             _pvp_log_append(pair, heal_entry)
+            _pvp_stam_spend(pair, uid)   # the heal executed — spend the ⚡
             fresh_a = get_player(uid) or a
             fresh_d = get_player(target_id) or d
             _pvp_mark_actor(pair, uid)
@@ -15904,6 +15930,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_player(a)
             mp_entry = f"💙 *{a['username']}* uses *{_mp_item}* — *+{_actual} MP* 💙 {a['mp']}/{_max_mp}"
             _pvp_log_append(pair, mp_entry)
+            _pvp_stam_spend(pair, uid)   # the mp potion executed — spend the ⚡
             fresh_a = get_player(uid) or a
             fresh_d = get_player(target_id) or d
             _pvp_mark_actor(pair, uid)
@@ -15929,6 +15956,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_player(a)
             shield_entry = f"🛡️ *{a['username']}* raises their shield — *{max_sh} HP*"
             _pvp_log_append(pair, shield_entry)
+            _pvp_stam_spend(pair, uid)   # the shield went up — spend the ⚡
             fresh_a = get_player(uid) or a
             fresh_d = get_player(target_id) or d
             _pvp_mark_actor(pair, uid)
@@ -16141,12 +16169,13 @@ async def kit_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _cb_unlock(uid, _tok)
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, _cc_entry, context.bot)
             return
-        # Strike skills are offensive — they cost ⚡ stamina too (support skills don't).
-        if sk.get("kind") == "strike":
-            _st_ok, _st_info = _pvp_stam_spend(pair, uid)
-            if not _st_ok:
-                await query.answer(f"😮‍💨 Out of stamina — your next strike is ready in ~{_st_info}s.",
-                                   show_alert=True); return
+        # EVERY kit skill costs ⚡ stamina — strike or support alike (only the
+        # Finisher is exempt). Spent here after all validity checks pass, so a
+        # blocked skill never wastes a charge.
+        _st_ok, _st_info = _pvp_stam_spend(pair, uid)
+        if not _st_ok:
+            await query.answer(f"😮‍💨 Out of stamina — your next move is ready in ~{_st_info}s.",
+                               show_alert=True); return
         # Pay MP, advance cooldowns, set this skill's cooldown
         a["mp"] = safe_int(a.get("mp")) - cost
         _kit_tick_cds(uid)
