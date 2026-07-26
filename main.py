@@ -10616,20 +10616,6 @@ async def _notify_defeat(bot, p, cause_str):
     except Exception:
         pass
 
-async def _notify_attack(bot, victim, attacker_name, dmg):
-    """DM the victim when attacked but not defeated. Auto-deletes after 5m."""
-    try:
-        hp_pct = round(victim["hp"] / max(1, victim.get("max_hp", victim["hp"])) * 100)
-        msg = await bot.send_message(
-            chat_id=victim["user_id"],
-            text=f"⚠️ *{attacker_name}* attacked you for *{dmg} damage!*\n"
-                 f"❤️ HP: *{victim['hp']}/{victim.get('max_hp', victim['hp'])}* ({hp_pct}%)\n"
-                 f"_Respond in the group chat!_",
-            parse_mode="Markdown")
-        asyncio.create_task(_auto_delete(bot, victim["user_id"], msg.message_id, 300))
-    except Exception:
-        pass
-
 def _fire(coro):
     """Schedule a coroutine as a tracked background task (prevents GC before completion)."""
     t = asyncio.create_task(coro)
@@ -15010,9 +14996,9 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, kit_skill=None):
     # of 10s "database is locked" busy-waits that froze the update pipeline.
     save_player(a); save_player(d)
 
-    if d["hp"] > 0:
-        _total_hp_lost = max(0, _d_hp_before_attack - d["hp"])
-        asyncio.create_task(_notify_attack(bot, d, a["username"], _total_hp_lost))
+    # (No per-hit "you were attacked" DM — it spammed the victim on every swing
+    # while the live fight card already shows the blow. The fight-start alert is
+    # enough of a heads-up.)
 
     statuses = get_active_statuses(d)
     if statuses: action += "\n" + " | ".join(statuses)
