@@ -1211,28 +1211,51 @@ def get_weather():
 # the 10^21+ range near the cap — every save for such a player crashed with
 # OverflowError. Requirements now flatten at _EXP_REQ_CEIL, and stored EXP/gold
 # clamp to _INT_SAFE_MAX at save time, keeping every number storable forever.
-_EXP_REQ_CEIL = 10_000_000_000_000_000       # 1e16 — max EXP needed for one level
+_EXP_REQ_CEIL = 10_000_000_000_000_000       # 1e16 — max EXP/level through Lv250
 _INT_SAFE_MAX = 8_000_000_000_000_000_000    # 8e18 — hard cap for stored counters
 
+LEVEL_CAP = 999   # players may climb to 999; 1-250 keeps its old pace, 251+ is
+                  # a steep "prestige" grind (see the post-250 bands below).
+
 def exp_for_level(level):
-    if level <= 10:   req = level * 20000
-    elif level <= 20: req = level * 100000
-    elif level <= 30: req = level * 500000
-    elif level <= 40: req = level * 3000000
-    elif level <= 50: req = level * 10000000
-    elif level <= 60: req = level * 40000000
-    elif level <= 70: req = level * 150000000
-    # ── POST-70: every 10 levels multiplies requirement by ~4-6× ──
-    elif level <= 80: req = level * 800000000
-    elif level <= 90: req = level * 4000000000
-    elif level <= 100: req = level * 20000000000
-    elif level <= 110: req = level * 100000000000
-    elif level <= 120: req = level * 500000000000
-    elif level <= 130: req = level * 2500000000000
-    elif level <= 140: req = level * 12000000000000
-    elif level <= 150: req = level * 60000000000000
-    else:             req = level * 300000000000000
-    return min(req, _EXP_REQ_CEIL)
+    # ── Levels 1–250: unchanged pace (flattens at _EXP_REQ_CEIL from ~Lv151) ──
+    if level <= 250:
+        if level <= 10:   req = level * 20000
+        elif level <= 20: req = level * 100000
+        elif level <= 30: req = level * 500000
+        elif level <= 40: req = level * 3000000
+        elif level <= 50: req = level * 10000000
+        elif level <= 60: req = level * 40000000
+        elif level <= 70: req = level * 150000000
+        elif level <= 80: req = level * 800000000
+        elif level <= 90: req = level * 4000000000
+        elif level <= 100: req = level * 20000000000
+        elif level <= 110: req = level * 100000000000
+        elif level <= 120: req = level * 500000000000
+        elif level <= 130: req = level * 2500000000000
+        elif level <= 140: req = level * 12000000000000
+        elif level <= 150: req = level * 60000000000000
+        else:             req = level * 300000000000000
+        return min(req, _EXP_REQ_CEIL)
+    # ── Levels 251–999: prestige bands, each ~50% costlier than the last, so a
+    # single high level dwarfs the whole 1–250 journey. Reward sizing (exp_share)
+    # stays capped at Lv250, so the climb slows more the higher you push. ──
+    if   level <= 300: req = 15 * 10**15    # 1.5e16
+    elif level <= 350: req = 22 * 10**15
+    elif level <= 400: req = 33 * 10**15
+    elif level <= 450: req = 50 * 10**15
+    elif level <= 500: req = 75 * 10**15
+    elif level <= 550: req = 110 * 10**15
+    elif level <= 600: req = 160 * 10**15
+    elif level <= 650: req = 230 * 10**15
+    elif level <= 700: req = 330 * 10**15
+    elif level <= 750: req = 480 * 10**15
+    elif level <= 800: req = 700 * 10**15   # 7e17
+    elif level <= 850: req = 1000 * 10**15
+    elif level <= 900: req = 1500 * 10**15
+    elif level <= 950: req = 2200 * 10**15
+    else:              req = 3000 * 10**15   # 3e17 near Lv999
+    return req
 
 def exp_share(level, pct):
     """EXP equal to `pct` (0.10 = 10%) of the EXP required for `level`.
@@ -2868,6 +2891,8 @@ TITLES = {
     "Master Craftsman":         {"type":"crafts","threshold":20},
     "Century Break":         {"type":"level","threshold":100},
     "Absolute Legend":       {"type":"level","threshold":250},
+    "Ascendant":             {"type":"level","threshold":500},
+    "The Eternal":           {"type":"level","threshold":999},
     # Reinforce / Ascend
     "The Forger":            {"type":"reinforce","threshold":1},
     "Diamond Grinder":       {"type":"reinforce","threshold":50},
@@ -2915,6 +2940,8 @@ TITLE_BONUSES = {
     "Master Craftsman":     {"all_stats": 18, "max_hp": 400},
     "Century Break":        {"all_stats": 45, "LUK": 35, "max_hp": 1000},
     "Absolute Legend":      {"all_stats": 100, "LUK": 60, "max_hp": 3000},
+    "Ascendant":            {"all_stats": 175, "LUK": 90, "max_hp": 6000},
+    "The Eternal":          {"all_stats": 300, "LUK": 150, "max_hp": 12000},
     "The Forger":           {"STR": 12, "DEX": 12},
     "Diamond Grinder":      {"STR": 25, "DEX": 25, "max_hp": 500},
     "The Ascendant":        {"all_stats": 18, "max_hp": 400},
@@ -6726,46 +6753,59 @@ def guild_exp_for_level(level): return level * 500
 # DUNGEON SYSTEM — JRPG Turn-Based  (v2)
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Dungeon EXP divisor — larger = slower leveling. A kill grants
+# exp_for_level(min(level,250)) // DNG_XP_DIV × the room multiplier, so this sets
+# the whole mode's leveling pace. Raised sharply (from an effective //200) so the
+# dungeon is a steady climb, not a level-blasting express lane.
+DNG_XP_DIV = 4000
+
 # ── Difficulty configs ────────────────────────────────────────────────────────
+# heal_cap = how many times you may drink a potion in a whole run (resource
+# pressure — you can't out-heal a mistake, so reading telegraphs & Guarding
+# matters). enemy mults tuned up so survivors actually threaten you.
 DNG_DIFF = {
     "easy": {
         "label": "Easy", "emoji": "🟢",
         "min_level": 1, "floors": 4,
         "rooms_per_floor": 8,
-        "enemy_hp_mult": 0.70, "enemy_atk_mult": 0.70,
+        "enemy_hp_mult": 0.85, "enemy_atk_mult": 0.85,
         "boss_phases": 2,
         "exp_mult": 0.80, "gold_mult": 0.80,
         "exclusive_chance": 0.10, "companion_chance": 0.04,
+        "heal_cap": 8,
         "desc": "4 floors · Lv1+ · Lighter enemies · Good for beginners",
     },
     "hard": {
         "label": "Hard", "emoji": "🟡",
         "min_level": 30, "floors": 6,
         "rooms_per_floor": 10,
-        "enemy_hp_mult": 1.00, "enemy_atk_mult": 1.00,
+        "enemy_hp_mult": 1.25, "enemy_atk_mult": 1.25,
         "boss_phases": 3,
         "exp_mult": 1.25, "gold_mult": 1.25,
         "exclusive_chance": 0.20, "companion_chance": 0.08,
+        "heal_cap": 5,
         "desc": "6 floors · Lv30+ · Multi-enemy rooms · Real challenge",
     },
     "extreme": {
         "label": "Extreme", "emoji": "🔴",
         "min_level": 60, "floors": 8,
         "rooms_per_floor": 10,
-        "enemy_hp_mult": 1.40, "enemy_atk_mult": 1.40,
+        "enemy_hp_mult": 1.70, "enemy_atk_mult": 1.75,
         "boss_phases": 4,
         "exp_mult": 1.80, "gold_mult": 1.80,
         "exclusive_chance": 0.35, "companion_chance": 0.14,
+        "heal_cap": 4,
         "desc": "8 floors · Lv60+ · Heavy scaling · Exclusive rewards",
     },
     "hell": {
         "label": "Hell", "emoji": "💀",
         "min_level": 100, "floors": 10,
         "rooms_per_floor": 12,
-        "enemy_hp_mult": 2.00, "enemy_atk_mult": 2.00,
+        "enemy_hp_mult": 2.50, "enemy_atk_mult": 2.60,
         "boss_phases": 4,
         "exp_mult": 3.00, "gold_mult": 3.00,
         "exclusive_chance": 0.55, "companion_chance": 0.25,
+        "heal_cap": 3,
         "desc": "10 floors · Lv100+ · Max difficulty · Hell-exclusive companions",
     },
 }
@@ -7547,11 +7587,11 @@ def _dng_spawn_enemy(p, floor, room_type, diff="hard"):
     entry = random.choice(pool)
     name, hp_mult, atk_mult, element, moves = entry
     pmhp = calc_max_hp(p)
-    floor_scale = 1.0 + (floor - 1) * 0.15
+    floor_scale = 1.0 + (floor - 1) * 0.22   # deeper floors ramp harder
     level_bonus = min(2.0, 1.0 + (p.get("level", 1) - 1) * 0.008)
     elite_mult = 1.5 if room_type == "elite" else 1.0
     e_hp  = max(40, int(pmhp * hp_mult * floor_scale * cfg["enemy_hp_mult"] * elite_mult))
-    e_atk = max(5,  int(pmhp * 0.12 * atk_mult * floor_scale * level_bonus * cfg["enemy_atk_mult"] * elite_mult))
+    e_atk = max(5,  int(pmhp * 0.145 * atk_mult * floor_scale * level_bonus * cfg["enemy_atk_mult"] * elite_mult))
     return {"name":name,"hp":e_hp,"max_hp":e_hp,"atk":e_atk,"element":element,
             "moves":moves,"room_type":room_type,"phase":0}
 
@@ -7560,8 +7600,8 @@ def _dng_spawn_boss(p, diff="hard"):
     b = random.choice(_DNG_BOSSES)
     pmhp = calc_max_hp(p)
     level_bonus = min(2.0, 1.0 + (p.get("level", 1) - 1) * 0.008)
-    e_hp  = max(300, int(pmhp * b["hp_mult"] * 4.0 * cfg["enemy_hp_mult"]))
-    e_atk = max(20,  int(pmhp * 0.12 * b["atk_mult"] * 2.5 * level_bonus * cfg["enemy_atk_mult"]))
+    e_hp  = max(300, int(pmhp * b["hp_mult"] * 4.5 * cfg["enemy_hp_mult"]))
+    e_atk = max(20,  int(pmhp * 0.145 * b["atk_mult"] * 2.5 * level_bonus * cfg["enemy_atk_mult"]))
     num_phases = min(len(b["phases"]), cfg["boss_phases"])
     phases = b["phases"][:num_phases]
     return {"name":b["name"],"hp":e_hp,"max_hp":e_hp,"atk":e_atk,"base_atk":e_atk,
@@ -7667,10 +7707,11 @@ def _dng_combat_markup(uid, state):
     _mp_pots = sum(1 for i in inv if i in ("MP Tonic", "Minor MP Tonic",
                    "Major MP Elixir", "Grand Mana Crystal"))
     rows = []
+    _heal_left = max(0, state.get("heal_cap", 5) - state.get("heals_used", 0))
     rows.append([
         InlineKeyboardButton("⚔️ Attack",  callback_data=f"dng_atk_{uid}"),
         InlineKeyboardButton("🛡️ Guard",   callback_data=f"dng_guard_{uid}"),
-        InlineKeyboardButton(f"🧪 ({_hp_pots})",  callback_data=f"dng_heal_{uid}"),
+        InlineKeyboardButton(f"🧪 {_heal_left}⧉ ({_hp_pots})",  callback_data=f"dng_heal_{uid}"),
     ])
     if _mp_pots > 0:
         rows.append([InlineKeyboardButton(f"💙 MP Potion ({_mp_pots})", callback_data=f"dng_mp_{uid}")])
@@ -8232,7 +8273,12 @@ async def _dng_on_enemy_killed(uid, bot, p, state):
 
     p_level = p.get("level", 1)
     gold = gold_floor(p_level, int(random.randint(*loot_tier["gold"]) * gold_m * cfg["gold_mult"]))
-    base_exp = exp_for_level(max(1, p_level)) // 200
+    # EXP is a fraction of a level's cost, but FROZEN at the Lv250 magnitude
+    # (min(level,250)) — so past 250 the dungeon becomes a shrinking slice of the
+    # ballooning prestige requirement, making 250→999 a real grind. The larger
+    # divisor (vs the old //200) is the flat nerf that stops players blasting
+    # dozens of levels per run.
+    base_exp = exp_for_level(max(1, min(p_level, 250))) // DNG_XP_DIV
     exp  = int(base_exp * exp_m * cfg["exp_mult"])
     if state.get("floor_buff") == "exp_boost":
         exp = int(exp * 1.60)
@@ -8475,6 +8521,8 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
             "enemy": None,
             "floor_modifier": None,
             "floor_buff": None,
+            "heals_used": 0,
+            "heal_cap": DNG_DIFF.get(diff, DNG_DIFF["hard"]).get("heal_cap", 5),
             "started_at": datetime.now().isoformat(),
             "last_action": datetime.now().isoformat(),
         }
@@ -8772,6 +8820,11 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
 
     # ── POTION ─────────────────────────────────────────────────────────────────
     if data.startswith("dng_heal_"):
+        _hcap = state.get("heal_cap", 5)
+        if state.get("heals_used", 0) >= _hcap:
+            state.setdefault("combat_log", []).append(
+                f"🚫 Out of salves! (heal limit {_hcap}/run) — read the telegraph & 🛡️ Guard.")
+            await _dng_edit(uid, context.bot, _dng_combat_card(state), _dng_combat_markup(uid, state)); return
         inv = sjl(p.get("inventory"), [])
         potion, heal = None, 0
         # Smallest potion that still fills the gap; else the biggest owned
@@ -8793,7 +8846,9 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
         if (state.get("floor_modifier") or {}).get("key") == "cursed":
             heal = max(1, int(heal * 0.60))
         state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + heal)
-        await _do_full_turn([f"🧪 *{potion}* — healed *+{heal} HP!*"])
+        state["heals_used"] = state.get("heals_used", 0) + 1
+        _left = max(0, state.get("heal_cap", 5) - state["heals_used"])
+        await _do_full_turn([f"🧪 *{potion}* — healed *+{heal} HP!* _(salves left: {_left})_"])
         return
 
     # ── MP POTION ──────────────────────────────────────────────────────────────
@@ -12528,7 +12583,7 @@ def check_titles(p):
     return new
 
 def add_exp(p, amount, weather=None):
-    if p["level"] >= 250: return [], False
+    if p["level"] >= LEVEL_CAP: return [], False
     if weather: amount = round(amount * weather.get("exp_mod", 1.0))
     gid = p.get("guild_id")
     if gid and str(gid) != "None":
@@ -12585,7 +12640,7 @@ def add_exp(p, amount, weather=None):
         # player row not in DB yet (mid-creation) — in-memory fallback
         p["exp"]      = min(safe_int(p.get("exp")) + amount, _INT_SAFE_MAX)
         p["total_exp"] = min(safe_int(p.get("total_exp")) + amount, _INT_SAFE_MAX)
-    while p["level"] < 250 and p["exp"] >= exp_for_level(p["level"]):
+    while p["level"] < LEVEL_CAP and p["exp"] >= exp_for_level(p["level"]):
         p["exp"] -= exp_for_level(p["level"])
         p["level"] += 1; leveled_up = True
         p["max_hp"]      = calc_max_hp(p)
@@ -12621,15 +12676,21 @@ def add_exp(p, amount, weather=None):
             _auto_advance_class(p, 60)
         if p["level"] == 100 and p.get("class_path"):
             _auto_advance_class(p, 100)
-            msgs.append("🏆 *LEVEL 100!* Final class evolution unlocked! The journey continues to 250...")
+            msgs.append("🏆 *LEVEL 100!* Final class evolution unlocked! The journey continues...")
             award_title(p, "Century Break")
         if p["level"] == 150:
-            msgs.append("🌟 *LEVEL 150!* You are among the elite. The peak lies at 250...")
+            msgs.append("🌟 *LEVEL 150!* You are among the elite.")
         if p["level"] == 200:
-            msgs.append("💫 *LEVEL 200!* Legendary status achieved. 50 more levels to the summit!")
+            msgs.append("💫 *LEVEL 200!* Legendary status achieved.")
         if p["level"] == 250:
-            msgs.append("👑 *LEVEL 250!* You have reached the absolute pinnacle of power!")
+            msgs.append("👑 *LEVEL 250!* You've mastered the mortal ranks — the *Prestige* climb to 999 begins now.")
             award_title(p, "Absolute Legend")
+        if p["level"] == 500:
+            msgs.append("🔥 *LEVEL 500!* Halfway up the prestige summit.")
+            award_title(p, "Ascendant")
+        if p["level"] == 999:
+            msgs.append("🌌 *LEVEL 999!* You stand at the apex of all things. There is no higher.")
+            award_title(p, "The Eternal")
         for t in check_titles(p):
             msgs.append(f"🏅 New title: *{t}*!")
     # Persist the level-up IMMEDIATELY (atomic, same synchronous block) so a
@@ -16917,7 +16978,7 @@ async def prestige_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🌟 *Path {chosen_path} chosen!* You are now a *{new_cls['name']}*!\n\n"
         f"_{new_cls['desc']}_\n\n"
         f"📜 Your journey: {path_names}\n\n"
-        f"_Your class evolves automatically at Levels 30, 60, and 100. Level cap: 250._",
+        f"_Your class evolves automatically at Levels 30, 60, and 100. Level cap: 999._",
         delay=30)
 
 # ── ALLOCATE ──────────────────────────────────────────────────────────────────
@@ -27158,7 +27219,7 @@ GUIDE_PAGES = [
         "  Path A (Danse Macabre): Combo offense — blade storm, thousand cuts, Macabre Finale\n"
         "  Path B (Ethereal Sovereign): Evasion — phase step, mist form, Ethereal Storm\n"
         "\n"
-        "At Lv 10, choose Path A or B with /class. Class evolves at Lv 30, 60, 100. Level cap: 250.\n"
+        "At Lv 10, choose Path A or B with /class. Class evolves at Lv 30, 60, 100. Level cap: 999.\n"
         "\n"
         "*Stats:* STR — Physical dmg | INT — Magic dmg | AGI — Dodge | DEX — Crit | WIS — Healing | LUK — Loot"
     ),
@@ -31134,7 +31195,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
                 if next_t:
                     await _show(f"⭐ *Path {path}* — {cur_name}\n\n📜 {path_str}\n\nAdvances at Level *{next_t}*. Keep leveling!")
                 else:
-                    await _show(f"👑 *Path {path}* — {cur_name}\n\n📜 {path_str}\n\n🏆 Final class form achieved! Level cap is *250* — keep growing!")
+                    await _show(f"👑 *Path {path}* — {cur_name}\n\n📜 {path_str}\n\n🏆 Final class form achieved! Level cap is *999* — the Prestige climb (250→999) awaits!")
             elif p["level"] < 10:
                 await _show(f"⭐ *Prestige*\n\nPath selection unlocks at Level *10*. You're Level {p['level']}.")
             else:
@@ -34833,7 +34894,7 @@ async def prestige_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (f"🌟 *Path {path} chosen!* You are now a *{new_cls['name']}*!\n\n"
            f"_{new_cls['desc']}_\n\n"
            f"📜 Your journey: {path_names}\n\n"
-           f"_Your class evolves automatically at Levels 30, 60, and 100. Level cap: 250._")
+           f"_Your class evolves automatically at Levels 30, 60, and 100. Level cap: 999._")
     try:
         await _q_edit(query, msg, parse_mode="Markdown")
     except Exception:
@@ -38018,8 +38079,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"{dc['emoji']} {dc['label']} — {dc['desc']}",
                     callback_data=f"dng_diff_{uid}_{dk}")])
         rows.append(back_row)
+        _hc = DNG_DIFF.get("hard", {}).get("heal_cap", 5)
         await _show(f"🏚️ *The Dungeon*\n\nChoose your difficulty. Die and you lose everything. "
-                    f"Extract to keep rewards.\n\n❤️ {p['hp']}/{calc_max_hp(p)} HP", rows)
+                    f"Extract to keep rewards.\n\n"
+                    f"⚔️ *Read the telegraph* (📋 Next) and 🛡️ *Guard* the big hits — "
+                    f"potions are *limited per run* (e.g. {_hc} on Hard), so you can't out-heal mistakes.\n\n"
+                    f"❤️ {p['hp']}/{calc_max_hp(p)} HP", rows)
         return
 
     if section == "pets":
