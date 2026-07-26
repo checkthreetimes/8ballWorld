@@ -7858,6 +7858,10 @@ async def _dng_award_and_extract(uid, bot, p, state, narr_key="extract"):
     p["gold"] = safe_int(p.get("gold", 0)) + state.get("s_gold", 0)
     for item in state.get("s_items", []):
         add_item(p, item)
+    # Commit any unique weapons rolled this run (staged so death forfeits them too)
+    for disp, inst in state.get("s_unique", []):
+        _st = _unique_store(p); _st[disp] = inst; p["unique_items"] = json.dumps(_st)
+        add_item(p, disp)
     # Grant exclusive items/companions earned this run
     for exc_name in state.get("exclusive_earned", []):
         add_item(p, exc_name)
@@ -8297,6 +8301,16 @@ async def _dng_on_enemy_killed(uid, bot, p, state):
             it = random.choice(pool)
             state.setdefault("s_items",[]).append(it)
             items_found.append(it)
+
+    # Unique weapon drop — staged (committed only on Extract). Bosses almost
+    # always drop one (and at better rarity); elites sometimes do.
+    _u_roll = (0.85 if is_boss else (0.22 if e.get("room_type") == "elite" else 0.0))
+    if _u_roll and random.random() < _u_roll:
+        _urar = _unique_rarity_for(p_level, get_stat(p, "LUK"), boss=is_boss)
+        _udisp, _uinst = _roll_unique_weapon(_pick_unique_base_for(p), p_level, _urar)
+        if _udisp:
+            state.setdefault("s_unique", []).append((_udisp, _uinst))
+            items_found.append(_udisp)
 
     extra_txt = ""
     if is_boss:
@@ -9221,10 +9235,95 @@ def _compact_status_emojis(p):
     return " ".join(out)
 
 # ── GEAR HELPERS ──────────────────────────────────────────────────────────────
-def get_equipped_weapon(p):
-    name = p.get("equipped_weapon")
+# ══ Unique (procedurally-rolled) weapons ══════════════════════════════════════
+# Every drop rolls a quality multiplier on a real base weapon's ATK plus 1-3
+# bonus-stat affixes, so no two are identical. Instances live in a per-player lane
+# (p["unique_items"]) keyed by their unique display name; inventory and equip
+# slots store that name. _weapon_def()/_is_weapon() resolve a name to a unique
+# instance OR a static WEAPONS entry, so combat/equip/stat code stays unchanged.
+_UNIQUE_PREFIXES = ["Keen","Cruel","Savage","Honed","Vicious","Brutal","Gilded",
+                    "Fabled","Runic","Bloodforged","Tempered","Ascendant","Wicked","Storied"]
+_UNIQUE_SUFFIXES = {"of the Bear":"STR","of the Fox":"AGI","of the Owl":"INT",
+                    "of the Sage":"WIS","of the Hawk":"DEX","of Fortune":"LUK"}
+# rarity -> (atk-quality lo, hi, affix count, affix-power mult)
+_UNIQUE_RARITY = {"rare":(1.25,1.6,1,1.0), "epic":(1.5,2.0,2,1.4),
+                  "legendary":(1.9,2.6,2,1.9), "mythic":(2.4,3.4,3,2.6)}
+_UNIQUE_RARITY_EMOJI = {"rare":"🔷","epic":"🟪","legendary":"🟧","mythic":"🌟"}
+
+def _unique_store(p):
+    d = sjl(p.get("unique_items"), {})
+    return d if isinstance(d, dict) else {}
+
+def _weapon_def(p, name):
+    """Resolve a weapon name to its stat def — a unique instance if the player
+    owns one by that name, else the static WEAPONS entry."""
     if not name: return None
-    return WEAPONS.get(name)
+    u = _unique_store(p).get(name)
+    return u if u else WEAPONS.get(name)
+
+def _is_weapon(p, name):
+    return bool(name) and (name in WEAPONS or name in _unique_store(p))
+
+def _roll_unique_weapon(base_name, drop_level, rarity):
+    base = WEAPONS.get(base_name)
+    if not base: return None, None
+    lo, hi, n_aff, powmult = _UNIQUE_RARITY.get(rarity, _UNIQUE_RARITY["rare"])
+    quality = random.uniform(lo, hi)
+    lvl = max(1, safe_int(drop_level, 1))
+    atk = max(1, round((base.get("atk", 5) + lvl * 0.8) * quality))
+    suffixes = random.sample(list(_UNIQUE_SUFFIXES.items()), k=min(n_aff, len(_UNIQUE_SUFFIXES)))
+    stat_bonus = {}
+    for _sfx, _stat in suffixes:
+        val = max(1, round((3 + lvl * 0.06) * powmult * random.uniform(0.8, 1.3)))
+        stat_bonus[_stat] = stat_bonus.get(_stat, 0) + val
+    prefix = random.choice(_UNIQUE_PREFIXES)
+    main_suffix = suffixes[0][0] if suffixes else ""
+    tag = f"✦{random.randint(100000, 999999)}"
+    disp = (f"{_UNIQUE_RARITY_EMOJI.get(rarity,'✦')} {prefix} {base_name}"
+            + (f" {main_suffix}" if main_suffix else "") + f" {tag}")
+    inst = {"unique": True, "base": base_name, "class": base.get("class"),
+            "type": base.get("type"), "line": base.get("line"), "rarity": rarity,
+            "atk": atk, "stat_bonus": stat_bonus, "quality": round(quality, 2)}
+    return disp, inst
+
+def _pick_unique_base_for(p):
+    cls_data = CLASS_TREE.get(p.get("class_id") or "", {})
+    raw_line = cls_data.get("line", ""); gear_line = _GEAR_LINE_MAP.get(raw_line, raw_line)
+    allowed = set(cls_data.get("weapon_types", []))
+    pool = [n for n, w in WEAPONS.items()
+            if w.get("class") in (gear_line, raw_line) and (not allowed or w.get("type") in allowed)]
+    return random.choice(pool) if pool else random.choice(list(WEAPONS.keys()))
+
+def _unique_rarity_for(level, luck=0, boss=False):
+    r = random.random() + min(0.15, luck * 0.0008) + (0.18 if boss else 0)
+    if r > 0.96: return "mythic"
+    if r > 0.82: return "legendary"
+    if r > 0.55: return "epic"
+    return "rare"
+
+def award_unique_weapon(p, drop_level=None, rarity=None, boss=False):
+    """Roll a class-appropriate unique weapon, store it, add to the bag.
+    Returns (display_name, instance) or (None, None)."""
+    lvl = drop_level if drop_level is not None else safe_int(p.get("level"), 1)
+    if rarity is None:
+        rarity = _unique_rarity_for(lvl, get_stat(p, "LUK"), boss)
+    disp, inst = _roll_unique_weapon(_pick_unique_base_for(p), lvl, rarity)
+    if not disp: return None, None
+    store = _unique_store(p); store[disp] = inst
+    p["unique_items"] = json.dumps(store)
+    add_item(p, disp)
+    save_player(p)
+    return disp, inst
+
+def unique_weapon_desc(inst):
+    if not inst: return ""
+    bits = [f"⚔️{inst.get('atk', 0)}"]
+    for s, v in (inst.get("stat_bonus") or {}).items():
+        bits.append(f"+{v} {s}")
+    return "  ".join(bits)
+
+def get_equipped_weapon(p):
+    return _weapon_def(p, p.get("equipped_weapon"))
 
 def get_equipped_armor(p):
     name = p.get("equipped_armor")
@@ -9492,7 +9591,7 @@ def _weapon_class_tag(item_name):
 
 
 def can_equip_weapon(p, weapon_name):
-    w = WEAPONS.get(weapon_name)
+    w = _weapon_def(p, weapon_name)
     if not w: return False, "Unknown weapon."
     cls_id = p.get("class_id")
     if not cls_id: return False, "Choose a class first."
@@ -9646,7 +9745,7 @@ def get_stat(p, stat):
     set_all   = set_bonuses.get("all_stats", 0)
     battle_cry_bonus = 80 if stat == "STR" and safe_int(p.get("battle_cry_str_hits")) > 0 else 0
     guild_bonus = safe_int(p.get("guild_stat_bonus", 0)) if stat in ("STR","AGI","INT","WIS","DEX","LUK") else 0
-    weapon_bonus = WEAPONS.get(p.get("equipped_weapon") or "", {}).get("stat_bonus", {}).get(stat, 0)
+    weapon_bonus = (_weapon_def(p, p.get("equipped_weapon")) or {}).get("stat_bonus", {}).get(stat, 0)
     empire_sb = _empire_stat_bonuses(p)
     empire_stat = empire_sb.get(stat, 0) + empire_sb.get("all_stats", 0)
     if stat in ("STR","AGI","INT","WIS","DEX","LUK"):
@@ -11470,7 +11569,8 @@ def init_db():
                 ("holding_hands_with_name","TEXT DEFAULT NULL"),
                 ("holding_hands_since","TEXT DEFAULT NULL"),
                 ("marriages","TEXT DEFAULT NULL"),
-                ("holding_hands_list","TEXT DEFAULT NULL")]:
+                ("holding_hands_list","TEXT DEFAULT NULL"),
+                ("unique_items","TEXT DEFAULT NULL")]:
         try:
             conn.execute(f"ALTER TABLE players ADD COLUMN {_mc[0]} {_mc[1]}")
             conn.commit()
@@ -12379,7 +12479,7 @@ def save_player(p):
         "empire_buildings","empire_resources","empire_last_collect",
         "mp","max_mp","dng_companions","dodge_momentum","collection_log",
         "serpent_revive_used","pet_dex","pvp_rating","pvp_peak_rating",
-        "bonus_stat_points",
+        "bonus_stat_points","unique_items",
     ]
     # dng_companions is held as a list in memory; store as JSON text
     if isinstance(p.get("dng_companions"), list):
@@ -17451,7 +17551,8 @@ def _build_inv_sections(p):
                                            "equipped_hat","equipped_gloves","equipped_boots","equipped_mask"])
     if has_equipped:
         present.append("Equipped")
-    if any(k in WEAPONS for k in inv) or p.get("equipped_weapon"):         present.append("Weapons")
+    _uni = set(_unique_store(p))
+    if any(k in WEAPONS or k in _uni for k in inv) or p.get("equipped_weapon"): present.append("Weapons")
     if any(k in ARMORS for k in inv) or p.get("equipped_armor"):           present.append("Armors")
     if any(k in SHIELDS for k in inv) or p.get("equipped_shield"):         present.append("Shields")
     if any(k in ACCESSORIES for k in inv) or p.get("equipped_accessory"): present.append("Accessories")
@@ -17461,7 +17562,7 @@ def _build_inv_sections(p):
     if any(k in MASKS for k in inv) or p.get("equipped_mask"):             present.append("Masks")
     if any(k in CONSUMABLES for k in inv): present.append("Consumables")
     _all_gear = {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**HATS,**GLOVES,**BOOTS,**MASKS,**CONSUMABLES}
-    if any(k not in _all_gear for k in inv):
+    if any(k not in _all_gear and k not in _uni for k in inv):
         present.append("Materials")
     if not present:
         present.append("Equipped")
@@ -17469,7 +17570,15 @@ def _build_inv_sections(p):
 
 def _render_bag_item(p, item, count):
     """Return formatted line(s) for a single bag item."""
-    if item in WEAPONS:
+    _uinst = _unique_store(p).get(item)
+    if _uinst:
+        line = _uinst.get("line", "")
+        arch = LINE_ARCHETYPE.get(line, line.capitalize())
+        weap_emoji = {"mage": "🪄", "thief": "🔪", "archer": "🏹", "priest": "📿"}.get(line, "⚔️")
+        type_tag = f"{weap_emoji} Unique Weapon [{arch}]" if arch else f"{weap_emoji} Unique Weapon"
+        rarity = _UNIQUE_RARITY_EMOJI.get(_uinst.get("rarity", ""), "✦")
+        stat_str = unique_weapon_desc(_uinst)
+    elif item in WEAPONS:
         d = WEAPONS[item]
         line = d.get("line", "")
         arch = LINE_ARCHETYPE.get(line, line.capitalize())
@@ -17552,8 +17661,9 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False, uid
             lines.append("_Nothing equipped._")
     else:
         _all_gear_inv = {**WEAPONS,**ARMORS,**SHIELDS,**ACCESSORIES,**HATS,**GLOVES,**BOOTS,**MASKS,**CONSUMABLES}
+        _uni_inv = set(_unique_store(p))
         pool_map = {
-            "Weapons":     (WEAPONS,     lambda k: k in WEAPONS),
+            "Weapons":     (WEAPONS,     lambda k: k in WEAPONS or k in _uni_inv),
             "Armors":      (ARMORS,      lambda k: k in ARMORS),
             "Shields":     (SHIELDS,     lambda k: k in SHIELDS),
             "Accessories": (ACCESSORIES, lambda k: k in ACCESSORIES),
@@ -17562,7 +17672,7 @@ async def _send_inventory_section(target, p, section="Equipped", edit=False, uid
             "Boots":       (BOOTS,       lambda k: k in BOOTS),
             "Masks":       (MASKS,       lambda k: k in MASKS),
             "Consumables": (CONSUMABLES, lambda k: k in CONSUMABLES),
-            "Materials":   ({},          lambda k: k not in _all_gear_inv),
+            "Materials":   ({},          lambda k: k not in _all_gear_inv and k not in _uni_inv),
         }
         _, pred = pool_map.get(section, ({}, lambda k: False))
         bucket = [(k, v) for k, v in inv.items() if pred(k)]
@@ -17740,7 +17850,7 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Safety check  -  unknown items are never silently deleted
     all_known = set(WEAPONS) | set(ARMORS) | set(SHIELDS) | set(ACCESSORIES) | set(HATS) | set(GLOVES) | set(BOOTS) | set(MASKS)
-    if item_name not in all_known:
+    if item_name not in all_known and not _is_weapon(p, item_name):
         await send_group(update,
             f"⚠️ *{item_name}* is a legacy item from before the reskin.\n"
             f"It will be exchanged automatically  -  please wait for the next deploy.",
@@ -17748,7 +17858,7 @@ async def equip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Determine item type and equip
-    if item_name in WEAPONS:
+    if _is_weapon(p, item_name):
         ok, reason = can_equip_weapon(p, item_name)
         if not ok:
             await send_group(update, f"❌ {reason}", delay=9); return
@@ -18573,17 +18683,24 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Determine sell price
     price = 0
-    for pool in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS]:
-        if item_name in pool:
-            d = pool[item_name]
-            rarity_prices = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
-            price = rarity_prices.get(d.get("rarity","common"),20)
-            break
+    _uinst = _unique_store(p).get(item_name)
+    if _uinst:
+        price = {"rare":500,"epic":1500,"legendary":4000,"mythic":9000}.get(_uinst.get("rarity","rare"),500)
+    if price == 0:
+        for pool in [WEAPONS, ARMORS, ACCESSORIES, SHIELDS]:
+            if item_name in pool:
+                d = pool[item_name]
+                rarity_prices = {"common":20,"uncommon":60,"rare":200,"epic":600,"legendary":2000}
+                price = rarity_prices.get(d.get("rarity","common"),20)
+                break
     for pool2 in [CONSUMABLES]:
         if item_name in pool2:
             price = pool2[item_name].get("sell",10); break
     if price == 0: price = 10
     inv.remove(item_name); p["inventory"] = json.dumps(inv)
+    # if this was the last copy, drop the instance from the unique store
+    if _uinst and item_name not in inv:
+        _st = _unique_store(p); _st.pop(item_name, None); p["unique_items"] = json.dumps(_st)
     p["gold"] = p.get("gold",0) + price
     save_player(p)
     await send_group(update,
@@ -26283,6 +26400,13 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             loot_item = loot_key if random.random() < 0.60 else None
             if loot_item: add_item(p, loot_item)
 
+            # Rare unique-weapon drop (immediate — encounters have no extract step)
+            uniq_line = ""
+            if random.random() < 0.06:
+                _ud, _ui = award_unique_weapon(p)
+                if _ud:
+                    uniq_line = f"\n{_UNIQUE_RARITY_EMOJI.get(_ui['rarity'],'✦')} *{_ud}*  _{unique_weapon_desc(_ui)}_"
+
             # Track in session
             _sess = _enc_sessions.setdefault(uid, {"gold":0,"exp":0,"wins":0,"losses":0,"items":[]})
             _sess["gold"] = _sess.get("gold", 0) + gold
@@ -26295,6 +26419,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             for _pt in potion_drops: loot_line += f"\n🧪 *{_pt}*"
             if extra_drop:           loot_line += f"\n✨ *{extra_drop}*"
             if loot_item:            loot_line += f"\n📦 *{loot_item}*"
+            loot_line += uniq_line
             await _end_encounter(
                 f"✅ *Victory!*\n*{enc['e_name']}* was defeated!{close_bonus}\n"
                 f"💰 +{fmt_num(gold)} gold | ⭐ +{fmt_num(exp)} EXP{loot_line}")
@@ -40973,6 +41098,12 @@ def _td_grant_rewards(p, state, outcome="loss"):
     crowns = round((3 + waves + (waves // TD_BOSS_EVERY) * 3) * rmult)
     cds["td_crowns"] = safe_int(cds.get("td_crowns", 0)) + crowns
     lines.append(f"👑 *{crowns} Crowns* → unlock & level heroes in the Barracks")
+    # Unique weapon reward — a chapter clear always drops one; deep endless runs
+    # have a rising chance.
+    if victory or (waves >= 10 and random.random() < min(0.6, 0.15 + waves * 0.02)):
+        _ud, _ui = award_unique_weapon(p, boss=victory)
+        if _ud:
+            lines.append(f"{_UNIQUE_RARITY_EMOJI.get(_ui['rarity'],'✦')} *{_ud}*  _{unique_weapon_desc(_ui)}_")
     milestone = ""
     # Chapter clear → unlock the next expedition (finite chapters only).
     if victory and ch_idx != _TD_ENDLESS:
