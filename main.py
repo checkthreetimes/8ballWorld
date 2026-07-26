@@ -11134,13 +11134,12 @@ def check_miss(attacker, defender):
         dodge_stat = get_stat(defender, "LUK")
     else:
         dodge_stat = get_stat(defender, "AGI")
-    # 0.8% per point, cap raised 40%→48% so heavy AGI/DEX/LUK keeps paying out
-    # past 50 points (still under the 60% total-dodge cap below).
-    dodge = min(0.48, dodge_stat * 0.008)
-    # DEX secondary: non-archers gain a dodge benefit from DEX (0.4% per DEX, cap
-    # raised 12%→18% so DEX investment keeps helping evasion past 40 points)
+    # Turn-based pacing: dodge is deliberately low so fights don't drag on
+    # (every dodge = a wasted turn). ~0.5% per point, cap 18%.
+    dodge = min(0.18, dodge_stat * 0.005)
+    # DEX secondary (non-archers): small extra evasion, cap 6%.
     if cls_d_line != "archer":
-        dodge += min(0.18, get_stat(defender, "DEX") * 0.004)
+        dodge += min(0.06, get_stat(defender, "DEX") * 0.003)
 
     # Accessory dodge bonus
     dodge += get_accessory_bonus(defender, "dodge_bonus")
@@ -11203,11 +11202,11 @@ def check_miss(attacker, defender):
     if "dodge_20" in _dng_pvp_effects(defender):
         dodge += 0.20
 
-    # HARD CAP: every dodge source is individually capped but the SUM was not,
-    # so stacked builds (stat + 4 accessories + passive + pet + companion)
-    # exceeded 100% dodge and became unhittable by normal attacks. 60% max —
-    # dodge builds stay strong without invalidating basic attacks.
-    dodge = max(0.0, min(dodge, 0.60))
+    # HARD CAP on total dodge. Lowered 60%→35% for turn-based pacing: even a
+    # full dodge build now whiffs at most ~1 in 3 turns, so fights resolve in a
+    # sane number of exchanges instead of dragging on missed turn after missed
+    # turn. Dodge classes still feel distinct (they reach the cap easily).
+    dodge = max(0.0, min(dodge, 0.35))
 
     # PITY RULE: after 2 consecutive misses against the same target, the 3rd
     # attack always lands. Kills the miss-spiral without weakening dodge.
@@ -15543,6 +15542,18 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _tblock = _pvp_not_your_turn(pair, uid, d)
             if _tblock:
                 await query.answer(_tblock, show_alert=True); return
+            # Crowd control (stun/freeze/entangle) BURNS your turn — you're
+            # incapacitated, so the action fails and control passes to the foe.
+            _cc = _consume_cc(a)
+            if _cc:
+                await query.answer(_cc, show_alert=True)
+                _cc_entry = f"⚡ *{a.get('username','?')}* — {_cc}"
+                _pvp_log_append(pair, _cc_entry)
+                _pvp_end_turn(pair, uid)
+                fresh_a = get_player(uid) or a; fresh_d = get_player(target_id) or d
+                _cb_unlock(uid, _tok)
+                await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, _cc_entry, context.bot)
+                return
 
         # ── OPTIONS ───────────────────────────────────────────────────────────
         if action_type == "opts":
@@ -15758,9 +15769,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("You're invincible — can't attack!", show_alert=True); return
         if is_vanished(a):
             await query.answer("You're vanished — can't attack while hidden!", show_alert=True); return
-        _cc = _consume_cc(a)
-        if _cc:
-            await query.answer(_cc, show_alert=True); return
+        # (crowd control already handled at the turn gate — it burns the turn)
         if is_defeated(d):
             await query.answer(f"{d['username']} is already defeated!", show_alert=True); return
         if is_invincible(d):
@@ -15872,7 +15881,14 @@ async def kit_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(f"❌ Need {cost} MP.", show_alert=True); return
         _cc = _consume_cc(a)
         if _cc:
-            await query.answer(_cc, show_alert=True); return
+            await query.answer(_cc, show_alert=True)
+            _cc_entry = f"⚡ *{a.get('username','?')}* — {_cc}"
+            _pvp_log_append(pair, _cc_entry)
+            _pvp_end_turn(pair, uid)
+            fresh_a = get_player(uid) or a; fresh_d = get_player(target_id) or d
+            _cb_unlock(uid, _tok)
+            await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, _cc_entry, context.bot)
+            return
         # Pay MP, advance cooldowns, set this skill's cooldown
         a["mp"] = safe_int(a.get("mp")) - cost
         _kit_tick_cds(uid)
