@@ -10026,7 +10026,9 @@ def calc_defense(defender, dmg):
 
     # Universal stat bonuses: WIS → DR, AGI → dodge (all classes benefit regardless of primary)
     wis_dr = min(0.10, get_stat(defender, "WIS") * 0.005)   # 0.5% per WIS, cap 10%
-    agi_dodge = min(0.08, get_stat(defender, "AGI") * 0.0015)  # 0.15% per AGI, cap 8%
+    # AGI dodge in PvE: 0.15% per AGI, cap raised 8%→25% so a heavy AGI build is a
+    # real survival lever in the (now harder) dungeon instead of near-useless.
+    agi_dodge = min(0.25, get_stat(defender, "AGI") * 0.0015)
     if random.random() < agi_dodge:
         return 0
     def_reduction += wis_dr
@@ -10970,7 +10972,9 @@ def check_miss(attacker, defender):
         dodge_stat = get_stat(defender, "LUK")
     else:
         dodge_stat = get_stat(defender, "AGI")
-    dodge = min(0.40, dodge_stat * 0.008)
+    # 0.8% per point, cap raised 40%→48% so heavy AGI/DEX/LUK keeps paying out
+    # past 50 points (still under the 60% total-dodge cap below).
+    dodge = min(0.48, dodge_stat * 0.008)
     # DEX secondary: non-archers gain a smaller dodge benefit from DEX (0.3% per DEX, cap 12%)
     if cls_d_line != "archer":
         dodge += min(0.12, get_stat(defender, "DEX") * 0.003)
@@ -17933,6 +17937,83 @@ async def use_full_heal_callback(update: Update, context: ContextTypes.DEFAULT_T
         f"🧪 *Heal to Full*\nUsed: {counts}\n❤️ *{p['hp']:,}/{mx:,} HP*",
         parse_mode="Markdown")
 
+# Permanent stat boosts granted by consuming a Monster Core (shared by single-use
+# and Use-All paths).
+_CORE_STAT_MAP = {
+    "Monster Core (Fire)":      {"STR": 1},
+    "Monster Core (Water)":     {"WIS": 1},
+    "Monster Core (Earth)":     {"DEF": 1},
+    "Monster Core (Wind)":      {"AGI": 1},
+    "Monster Core (Lightning)": {"DEX": 1},
+    "Monster Core (Ice)":       {"INT": 1},
+    "Monster Core (Shadow)":    {"LUK": 1},
+    "Monster Core (Holy)":      {"STR":1,"AGI":1,"INT":1,"WIS":1,"DEX":1,"LUK":1},
+    "Monster Core (Void)":      {"STR":2,"AGI":2,"INT":2},
+    "Rare Monster Core":        {"STR":1,"AGI":1,"INT":1,"WIS":1,"DEX":1,"LUK":1},
+}
+
+def _use_item_buttons(p, uid):
+    """Rows for the /use menu — heal-to-full, each consumable, plus a ⚡ Use All
+    for stackable Monster Cores so players don't tap them one by one."""
+    inv = sjl(p.get("inventory"), [])
+    rows = []
+    if safe_int(p.get("hp")) < calc_max_hp(p) and any(pn in inv for pn in _HP_POTION_PCT):
+        rows.append([InlineKeyboardButton("❤️‍🩹 HEAL TO FULL — auto-use potions",
+                                          callback_data=f"usefull_{uid}")])
+    for item in dict.fromkeys(inv):
+        if item not in CONSUMABLES:
+            continue
+        cnt = inv.count(item)
+        d_c = CONSUMABLES[item]
+        rows.append([InlineKeyboardButton(f"🧪 {item} x{cnt}  —  {d_c.get('desc','')[:40]}",
+                                          callback_data=f"useitem_{uid}_{item}")])
+        if item in _CORE_STAT_MAP and cnt > 1:
+            rows.append([InlineKeyboardButton(f"     ⚡ Use All ×{cnt} (permanent stats)",
+                                              callback_data=f"useall_{uid}_{item}")])
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    return rows
+
+async def use_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle ⚡ Use All button: useall_{uid}_{item_name} — consume every copy of a
+    Monster Core at once and apply the summed permanent stat boost."""
+    query = update.callback_query
+    parts = query.data.split("_", 2)
+    try:
+        uid = int(parts[1]); item_name = parts[2]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your inventory!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    unit = _CORE_STAT_MAP.get(item_name)
+    if not unit:
+        await query.answer("That item can't be bulk-used.", show_alert=True); return
+    inv = sjl(p.get("inventory"), [])
+    cnt = inv.count(item_name)
+    if cnt <= 0:
+        await query.answer(f"No {item_name} left!", show_alert=True); return
+    inv = [i for i in inv if i != item_name]
+    p["inventory"] = json.dumps(inv)
+    stats = safe_stats(p); total = {}
+    for stat, val in unit.items():
+        stats[stat] = stats.get(stat, 0) + val * cnt
+        total[stat] = val * cnt
+    p["stats"] = json.dumps(stats); save_player(p)
+    boost_str = ", ".join(f"+{v} {s}" for s, v in total.items())
+    msg = f"⚡ Used *{cnt}× {item_name}*!\n🔮 Permanent stat boost: *{boost_str}*"
+    await query.answer(f"Used {cnt}× — {boost_str}")
+    rows = _use_item_buttons(p, uid)
+    # only Close left ⇒ bag has no more consumables
+    if len(rows) <= 1:
+        try: await _q_edit(query, f"{msg}\n\n_Bag empty._", parse_mode="Markdown")
+        except Exception: pass
+    else:
+        try: await _q_edit(query, f"{msg}\n\n🧪 *Use another item:*",
+                           parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+        except Exception: pass
+
 async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /use button: useitem_{uid}_{item_name}"""
     query = update.callback_query
@@ -17971,19 +18052,7 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_status(p, "invincible_until", 300)
         msg += f"💚 Revived at {p['hp']} HP (70%)! 5m invincibility granted."
     elif item_name.startswith("Monster Core (") or item_name == "Rare Monster Core":
-        _core_stat_map = {
-            "Monster Core (Fire)":      {"STR": 1},
-            "Monster Core (Water)":     {"WIS": 1},
-            "Monster Core (Earth)":     {"DEF": 1},
-            "Monster Core (Wind)":      {"AGI": 1},
-            "Monster Core (Lightning)": {"DEX": 1},
-            "Monster Core (Ice)":       {"INT": 1},
-            "Monster Core (Shadow)":    {"LUK": 1},
-            "Monster Core (Holy)":      {"STR":1,"AGI":1,"INT":1,"WIS":1,"DEX":1,"LUK":1},
-            "Monster Core (Void)":      {"STR":2,"AGI":2,"INT":2},
-            "Rare Monster Core":        {"STR":1,"AGI":1,"INT":1,"WIS":1,"DEX":1,"LUK":1},
-        }
-        boosts = _core_stat_map.get(item_name, {})
+        boosts = _CORE_STAT_MAP.get(item_name, {})
         if boosts:
             stats = safe_stats(p)
             for stat, val in boosts.items():
@@ -17998,21 +18067,10 @@ async def use_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_player(p)
     await query.answer()
     # Rebuild the menu so the player can use more items without re-opening
-    inv_after = sjl(p.get("inventory"), [])
-    remaining = [(k, inv_after.count(k)) for k in dict.fromkeys(inv_after) if k in CONSUMABLES]
-    if remaining:
-        btns = []
-        if safe_int(p.get("hp")) < calc_max_hp(p) and any(pn in inv_after for pn in _HP_POTION_PCT):
-            btns.append([InlineKeyboardButton(
-                "❤️‍🩹 HEAL TO FULL — auto-use potions", callback_data=f"usefull_{uid}")])
-        for _itm, _cnt in remaining:
-            _dc = CONSUMABLES[_itm]
-            btns.append([InlineKeyboardButton(
-                f"🧪 {_itm} x{_cnt}  —  {_dc.get('desc','')[:40]}",
-                callback_data=f"useitem_{uid}_{_itm}")])
-        btns.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
+    btns = _use_item_buttons(p, uid)
+    if len(btns) > 1:   # more than just the Close row
         try:
-            await _q_edit(query, 
+            await _q_edit(query,
                 f"{msg}\n\n🧪 *Use another item:*",
                 parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(btns))
         except Exception:
@@ -18164,17 +18222,7 @@ async def use_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not consumables_in_bag:
             await send_group(update, "🧪 *Use Item*\n\nNo consumables in your bag.", delay=12); return
         uid = user.id
-        buttons = []
-        if safe_int(p.get("hp")) < calc_max_hp(p) and any(pn in inv for pn in _HP_POTION_PCT):
-            buttons.append([InlineKeyboardButton(
-                "❤️‍🩹 HEAL TO FULL — auto-use potions", callback_data=f"usefull_{uid}")])
-        for item, count in consumables_in_bag:
-            d_c = CONSUMABLES[item]
-            buttons.append([InlineKeyboardButton(
-                f"🧪 {item} x{count}  —  {d_c.get('desc','')[:40]}",
-                callback_data=f"useitem_{uid}_{item}")])
-        buttons.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
-        markup = InlineKeyboardMarkup(buttons)
+        markup = InlineKeyboardMarkup(_use_item_buttons(p, uid))
         await send_group(update, "🧪 *Use Item — Select a consumable:*", delay=60, reply_markup=markup)
         return
     item_typed = " ".join(context.args)
@@ -42063,6 +42111,7 @@ def main():
     app.add_handler(CallbackQueryHandler(equip_item_callback,   pattern="^eqp_"))
     app.add_handler(CallbackQueryHandler(unequip_slot_callback, pattern="^uneqp_"))
     app.add_handler(CallbackQueryHandler(use_item_callback,     pattern="^useitem_"))
+    app.add_handler(CallbackQueryHandler(use_all_callback,      pattern="^useall_"))
     app.add_handler(CallbackQueryHandler(use_full_heal_callback, pattern="^usefull_"))
     app.add_handler(CallbackQueryHandler(settitle_callback,     pattern="^settitle_"))
     app.add_handler(CallbackQueryHandler(sell_item_callback,    pattern="^sll_"))
