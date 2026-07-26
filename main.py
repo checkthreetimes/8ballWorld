@@ -10124,7 +10124,9 @@ def calc_defense(defender, dmg):
     armor_reduction = min(0.20, primary_armor_def / 300) + min(0.10, secondary_armor_def / 300)
 
     # Universal stat bonuses: WIS → DR, AGI → dodge (all classes benefit regardless of primary)
-    wis_dr = min(0.10, get_stat(defender, "WIS") * 0.005)   # 0.5% per WIS, cap 10%
+    # WIS damage reduction: 0.5% per WIS, cap raised 10%→25% (same fix as AGI —
+    # it used to plateau at just 20 WIS, making heavy WIS builds pointless for DR).
+    wis_dr = min(0.25, get_stat(defender, "WIS") * 0.005)
     # AGI dodge in PvE: 0.15% per AGI, cap raised 8%→25% so a heavy AGI build is a
     # real survival lever in the (now harder) dungeon instead of near-useless.
     agi_dodge = min(0.25, get_stat(defender, "AGI") * 0.0015)
@@ -11074,9 +11076,10 @@ def check_miss(attacker, defender):
     # 0.8% per point, cap raised 40%→48% so heavy AGI/DEX/LUK keeps paying out
     # past 50 points (still under the 60% total-dodge cap below).
     dodge = min(0.48, dodge_stat * 0.008)
-    # DEX secondary: non-archers gain a smaller dodge benefit from DEX (0.3% per DEX, cap 12%)
+    # DEX secondary: non-archers gain a dodge benefit from DEX (0.4% per DEX, cap
+    # raised 12%→18% so DEX investment keeps helping evasion past 40 points)
     if cls_d_line != "archer":
-        dodge += min(0.12, get_stat(defender, "DEX") * 0.003)
+        dodge += min(0.18, get_stat(defender, "DEX") * 0.004)
 
     # Accessory dodge bonus
     dodge += get_accessory_bonus(defender, "dodge_bonus")
