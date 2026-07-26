@@ -15148,13 +15148,17 @@ def _auto_recover(p):
     return False
 
 def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=3):
-    """Return (page_list, total) of players attackable right now."""
+    """Return (page_list, total) of users attackable right now. This now spans
+    BOTH ascended players AND recently-active users who haven't ascended yet
+    (shadow profiles) — since anyone can be pulled into the RPG, they're valid
+    targets too and get provisioned into a class-less player when picked."""
     c = _db().cursor()
     c.execute("SELECT * FROM players WHERE user_id != ?", (attacker_uid,))
     rows = c.fetchall()
     results = []
     excl = {"recovering": 0, "protected": 0, "busy": 0, "guild": 0, "offline": 0}
     _now = datetime.now()
+    _seen_ids = set()
     for row in rows:
         tp = dict(row)
         if tp.get("hp", 1) <= 0:
@@ -15175,7 +15179,32 @@ def _get_attackable_players(attacker_uid, attacker_guild_id, page=0, per_page=3)
                     excl["offline"] += 1; continue
             except Exception:
                 pass
-        results.append(tp)
+        results.append(tp); _seen_ids.add(safe_int(tp.get("user_id")))
+    # ── Fold in recently-active, not-yet-ascended chatters (shadow profiles) ──
+    # They light up the picker now that everyone's part of the world. Picking
+    # one provisions them into a class-less player on the spot.
+    try:
+        _cutoff = (_now - timedelta(seconds=_PVP_ACTIVE_WINDOW)).isoformat()
+        c.execute("""SELECT user_id, username, level FROM shadow_profiles
+                     WHERE ascended=0 AND user_id != ? AND last_seen > ?
+                       AND user_id NOT IN (SELECT user_id FROM banned_users)""",
+                  (attacker_uid, _cutoff))
+        for srow in c.fetchall():
+            sd   = dict(srow)
+            suid = safe_int(sd.get("user_id"))
+            if not suid or suid in _seen_ids:
+                continue
+            if safe_int(sd.get("level"), 1) < 10:
+                excl["protected"] += 1; continue  # Newbie Protection applies to shadows too
+            _seen_ids.add(suid)
+            results.append({
+                "user_id": suid, "username": sd.get("username") or "Wanderer",
+                "level": safe_int(sd.get("level"), 1),
+                "hp": 1, "max_hp": 1, "is_wanted": 0, "guild_id": None,
+                "_shadow": True,
+            })
+    except Exception:
+        pass
     _last_pool_exclusions[attacker_uid] = excl
     results.sort(key=lambda x: (-safe_int(x.get("is_wanted", 0)),
                                  -x.get("level", 1),
@@ -15194,9 +15223,10 @@ def _build_target_picker_markup(attacker_uid, guild_id, page, mode="atk"):
         lvl      = tp.get("level", 1)
         hp_pct   = round(tp.get("hp", 0) / max(1, tp.get("max_hp", 1)) * 100)
         wanted   = " 🔴" if safe_int(tp.get("is_wanted")) else ""
+        fresh    = " 🆕" if tp.get("_shadow") else ""   # not-yet-ascended chatter
         cb_pfx   = "atk" if mode == "atk" else "skl2"
         rows.append([InlineKeyboardButton(
-            f"{'⚔️' if mode == 'atk' else '🔮'} {name} (Lv.{lvl}) ❤️{hp_pct}%{wanted}",
+            f"{'⚔️' if mode == 'atk' else '🔮'} {name} (Lv.{lvl}) ❤️{hp_pct}%{wanted}{fresh}",
             callback_data=f"{cb_pfx}_pick_{attacker_uid}_{tp['user_id']}"
         )])
     nav = []
@@ -15258,7 +15288,7 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
         if _cc:
             await query.answer(_cc, show_alert=True); return
 
-        d = get_player(target_uid)
+        d = ensure_player(target_uid)   # provisions a not-yet-ascended target on pick
         if not d:
             await query.answer("Target not found.", show_alert=True); return
         if is_defeated(d):
@@ -15402,7 +15432,7 @@ async def skill_target_picker_callback(update: Update, context: ContextTypes.DEF
     if is_invincible(p):
         await query.answer("You're invincible!", show_alert=True); return
 
-    tp = get_player(target_uid)
+    tp = ensure_player(target_uid)   # provisions a not-yet-ascended target on pick
     if not tp:
         await query.answer("Target not found!", show_alert=True); return
     if is_defeated(tp):
