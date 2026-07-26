@@ -661,7 +661,7 @@ _pvp_last_action = {} # pair -> time.time() of last combat action (idle-draw wat
 # silent for PVP_IDLE_FORFEIT loses to whoever last landed a blow.
 _pvp_stamina = {}       # (pair, uid) -> {"val": float, "ts": last_update time}
 _pvp_last_actor = {}    # pair -> uid who last took any action (for AFK forfeit)
-PVP_STAMINA_MAX   = 3
+PVP_STAMINA_MAX   = 6
 PVP_STAMINA_REGEN = 4.0    # seconds to regenerate +1 stamina
 PVP_IDLE_FORFEIT  = 3600   # 1h of silence = you forfeit (foe who last hit wins)
 
