@@ -264,7 +264,10 @@ def _pvp_stats_record(pair, attacker_uid, dmg):
         ps["biggest"] = dmg
 
 def _pvp_summary_text(pair, winner_id):
-    """Build the end-of-fight group recap: damage totals, biggest hit, MVP."""
+    """Build the end-of-fight group recap. Kept narrow on purpose — the card is
+    slim, so each fighter gets a name line + one short stat line (⚔ dmg · 👊 hits
+    · 💥 biggest) instead of a single long line that wraps. The top-damage dealer
+    is flagged inline with 🏅, so there's no separate 'Most damage' line."""
     st = _pvp_stats.get(pair)
     if not st or len(pair) != 2:
         return ""
@@ -274,18 +277,19 @@ def _pvp_summary_text(pair, winner_id):
         return ""
     dur = int(time.time() - st.get("start", time.time()))
     dur_str = f"{dur // 60}m {dur % 60}s" if dur >= 60 else f"{dur}s"
-    def _line(uid, s):
-        crown = "👑 " if uid == winner_id else ""
-        return (f"{crown}*{s['name']}* — {fmt_num(s['dmg'])} dmg "
-                f"({s['hits']} hits, biggest {fmt_num(s['biggest'])})")
+    draw = winner_id not in (u1, u2)
     top = max((s1, s2), key=lambda s: s["dmg"])
-    lines = [
-        "📊 *FIGHT RECAP*",
-        _line(u1, s1),
-        _line(u2, s2),
-        f"⏱️ {st.get('turns', 0)} actions · {dur_str}",
-        f"🏅 Most damage: *{top['name']}* ({fmt_num(top['dmg'])})",
-    ]
+    def _block(uid, s):
+        badge = "•" if draw else ("👑" if uid == winner_id else "💀")
+        mvp   = "  🏅" if (s is top and s["dmg"] > 0) else ""
+        return [
+            f"{badge} *{s['name']}*{mvp}",
+            f"    ⚔ {fmt_num(s['dmg'])}   👊 {s['hits']}   💥 {fmt_num(s['biggest'])}",
+        ]
+    lines = ["🤝 *DRAW*" if draw else "🏆 *FIGHT RECAP*"]
+    lines += _block(u1, s1)
+    lines += _block(u2, s2)
+    lines.append(f"⏱ {dur_str}  ·  {st.get('turns', 0)} actions")
     return "\n".join(lines)
 
 def _pvp_series_key(au, du):
@@ -305,7 +309,7 @@ def _pvp_series_bump(au, du, winner_id, a_name, d_name):
     ser["name"][du] = d_name
     ser["score"][winner_id] = ser["score"].get(winner_id, 0) + 1
     sa, sd = ser["score"].get(au, 0), ser["score"].get(du, 0)
-    score_str = f"{ser['name'][au]} *{sa}* — *{sd}* {ser['name'][du]}"
+    score_str = f"{ser['name'][au]} {sa}–{sd} {ser['name'][du]}"
     if max(sa, sd) >= _PVP_SERIES_TARGET:
         win_name = ser["name"][winner_id]
         _pvp_series.pop(key, None)
@@ -806,8 +810,8 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
             if _elo:
                 _dw, _dl, _nw, _nl = _elo
                 _wp = get_player(winner_id)
-                _rating_line = (f"📈 *{(_wp or {}).get('username','?')}* +{_dw} rating "
-                                f"→ {_nw} ({_pvp_rank_name(_nw)})")
+                _rating_line = (f"📈 *{(_wp or {}).get('username','?')}* +{_dw} "
+                                f"→ {_nw}  {_pvp_rank_name(_nw)}")
         except Exception:
             logger.error("elo update failed", exc_info=True)
     # ── FIGHT CARD 2.0: group recap + best-of-3 series ──────────────────────
@@ -825,9 +829,9 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
                 _extra.append(_rating_line)
             if _score_str:
                 if _series_over:
-                    _extra.append(f"🏆 *SERIES WON by {_series_win}!*  ({_score_str})")
+                    _extra.append(f"🏆 *SERIES WON — {_series_win}!*\n   {_score_str}")
                 else:
-                    _extra.append(f"🎯 *Series:* {_score_str}  _(first to {_PVP_SERIES_TARGET})_")
+                    _extra.append(f"🎯 *Series* {_score_str}  _(to {_PVP_SERIES_TARGET})_")
             _full_recap = _recap + (("\n\n" + "\n".join(_extra)) if _extra else "")
             if _full_recap.strip():
                 asyncio.create_task(announce(bot, _grp_recap, _full_recap, delay=45))
