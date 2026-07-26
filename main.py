@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-The World of 8Ball  -  RPG Bot v13
+The 8Ball Empire  -  RPG Bot v13
 """
 
 import os, json, random, logging, sqlite3, re, asyncio, time, threading
@@ -1222,7 +1222,7 @@ def resolve_item_ci(typed, collection):
     return None
 
 # ── WORLD & WEATHER ───────────────────────────────────────────────────────────
-WORLD_NAME = "The World of 8Ball"
+WORLD_NAME = "The 8Ball Empire"
 
 WEATHER_TABLE = [
     {"name":"Clear Skies", "emoji":"☀️", "exp_mod":1.20,"dmg_mod":1.00,
@@ -23726,7 +23726,7 @@ async def war_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    text = "🔥 *8Ball World — War Board*\n\n" + _war_page_text(0)
+    text = "🔥 *8Ball Empire — War Board*\n\n" + _war_page_text(0)
     markup = _war_nav_markup(0)
     bot = update.get_bot()
     chat_id = update.effective_chat.id
@@ -23744,7 +23744,7 @@ async def war_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         page = int(query.data.split("_")[-1])
     except Exception:
         return
-    text = "🔥 *8Ball World — War Board*\n\n" + _war_page_text(page)
+    text = "🔥 *8Ball Empire — War Board*\n\n" + _war_page_text(page)
     markup = _war_nav_markup(page)
     try:
         await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
@@ -25270,7 +25270,7 @@ async def bounties_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def changelog_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     entries = CHANGELOG[-3:]  # Last 3 versions
-    lines = [f"📋 *8Ball World  -  Recent Updates*\n"]
+    lines = [f"📋 *8Ball Empire  -  Recent Updates*\n"]
     for entry in reversed(entries):
         lines.append(f"*{entry['version']}* _{entry['date']}_")
         for c in entry["changes"]:
@@ -27653,9 +27653,9 @@ async def rankwins_cmd(update, context):
 GUIDE_PAGES = [
     # Page 1 - Getting Started
     (
-        "🎱 *8Ball World  -  Getting Started*\n"
+        "🎱 *8Ball Empire  -  Getting Started*\n"
         "\n"
-        "Welcome to 8Ball World  -  a fantasy RPG built inside Telegram.\n"
+        "Welcome to 8Ball Empire  -  a fantasy RPG built inside Telegram.\n"
         "\n"
         "*Two ways to play:*\n"
         "Shadow  -  Just chat in the group. You earn EXP automatically from messages and level up over time. No setup needed.\n"
@@ -27672,7 +27672,7 @@ GUIDE_PAGES = [
     ),
     # Page 2 - Character Building
     (
-        "🎱 *8Ball World  -  Building Your Character*\n"
+        "🎱 *8Ball Empire  -  Building Your Character*\n"
         "\n"
         "Use /class at Level 5 to pick your starting class. Browse with arrows to see each class's Path A and Path B.\n"
         "\n"
@@ -27718,7 +27718,7 @@ GUIDE_PAGES = [
     ),
     # Page 3 - Daily Activities
     (
-        "🎱 *8Ball World  -  Daily Activities*\n"
+        "🎱 *8Ball Empire  -  Daily Activities*\n"
         "\n"
         "The fastest way to grow is to run all your activities regularly. Use /hustle to do them all at once.\n"
         "💡 */activities* — Open the Activities Hub for a button menu covering every daily activity, challenge, and character command.\n"
@@ -27747,7 +27747,7 @@ GUIDE_PAGES = [
     ),
     # Page 4 - Combat & Raids
     (
-        "🎱 *8Ball World  -  Combat & Raids*\n"
+        "🎱 *8Ball Empire  -  Combat & Raids*\n"
         "\n"
         "*PvP  -  Player vs Player*\n"
         "Reply to any player's message and use /attack to fight them. Or use /attack with no target to open a live player picker and choose who to hit. Winners steal gold and EXP. Losers are defeated for 6m and lose 10% EXP.\n"
@@ -27803,7 +27803,7 @@ GUIDE_PAGES = [
     ),
     # Page 5 - Gear & Economy
     (
-        "🎱 *8Ball World  -  Gear & Economy*\n"
+        "🎱 *8Ball Empire  -  Gear & Economy*\n"
         "\n"
         "💡 */gearhub* — One hub for all gear commands: equipment, upgrades, and economy (3 pages).\n"
         "\n"
@@ -27852,7 +27852,7 @@ GUIDE_PAGES = [
     ),
     # Page 6 - Command Reference (Core)
     (
-        "🎱 *8Ball World  -  Commands: Core*\n"
+        "🎱 *8Ball Empire  -  Commands: Core*\n"
         "\n"
         "*⚡ Command Hubs*\n"
         "/empire  -  Master hub + idle building system (collect resources, upgrade buildings, earn passive stat bonuses)\n"
@@ -27923,7 +27923,7 @@ GUIDE_PAGES = [
     ),
     # Page 7 - Command Reference (Social)
     (
-        "🎱 *8Ball World  -  Commands: Social*\n"
+        "🎱 *8Ball Empire  -  Commands: Social*\n"
         "\n"
         "*Guilds & Orders*\n"
         "/guild  -  Social hub — your guild + secret order together\n"
@@ -27975,7 +27975,7 @@ GUIDE_PAGES = [
     ),
     # Page 7 - Guilds & Advanced
     (
-        "🎱 *8Ball World  -  Guilds & Advanced Systems*\n"
+        "🎱 *8Ball Empire  -  Guilds & Advanced Systems*\n"
         "\n"
         "*Social Hub*\n"
         "/guild — Opens your combined Social Standing card showing your Guild and Secret Order in one view. Use this as your main social dashboard.\n"
@@ -28019,7 +28019,7 @@ GUIDE_PAGES = [
     ),
     # Page 8 - Pets
     (
-        "🎱 *8Ball World  -  Pets & Pet Hub*\n"
+        "🎱 *8Ball Empire  -  Pets & Pet Hub*\n"
         "\n"
         "*Central Hub: /pethub*\n"
         "Access every pet feature from one place. All actions, info, and management in a single menu.\n"
@@ -28080,7 +28080,7 @@ GUIDE_PAGES = [
     ),
     # Page 9 - Marriage & Social
     (
-        "🎱 *8Ball World  -  Marriage & Social*\n"
+        "🎱 *8Ball Empire  -  Marriage & Social*\n"
         "\n"
         "*Getting Married*\n"
         "Reply to any player's message and type /marry to propose.\n"
@@ -28126,7 +28126,7 @@ GUIDE_PAGES = [
 
     # Page 10 - Encounters & Monsters
     (
-        "🎱 *8Ball World  -  Encounters & Monsters*\n"
+        "🎱 *8Ball Empire  -  Encounters & Monsters*\n"
         "\n"
         "Use /encounter to begin. Choose *Battle*, *Hunt*, or *Dungeon*.\n"
         "\n"
@@ -28161,7 +28161,7 @@ GUIDE_PAGES = [
     ),
     # Page 11 - Influence & Fame
     (
-        "🎱 *8Ball World  -  Influence & Fame*\n"
+        "🎱 *8Ball Empire  -  Influence & Fame*\n"
         "\n"
         "Influence is a silent measure of your standing in the order. It grows through kindness, shrinks through cruelty, and tells the world exactly how you carry yourself.\n"
         "\n"
@@ -28196,7 +28196,7 @@ GUIDE_PAGES = [
     ),
     # Page 12 - Secret Orders
     (
-        "🎱 *8Ball World  -  Secret Orders*\n"
+        "🎱 *8Ball Empire  -  Secret Orders*\n"
         "\n"
         "Orders are cross-guild alliances of up to 30 members — a tier above Guilds. They span multiple guilds, operate in the shadows, share an influence pool, and unlock perks that grow over time.\n"
         "\n"
@@ -28231,7 +28231,7 @@ GUIDE_PAGES = [
         "🎱 _The ball knows. The order watches. Act accordingly._"
     ),
     (
-        "🎱 *8Ball World  -  The Dungeon*\n"
+        "🎱 *8Ball Empire  -  The Dungeon*\n"
         "\n"
         "Access via `/dungeon` or `/encounter` → 🏚️ *Dungeon*\n"
         "\n"
@@ -28268,7 +28268,7 @@ GUIDE_PAGES = [
     ),
     # Page 15 - Empire & Idle System
     (
-        "🎱 *8Ball World  -  Empire & Idle System*\n"
+        "🎱 *8Ball Empire  -  Empire & Idle System*\n"
         "\n"
         "*/empire* — Your idle command center. Resources generate while you're offline and are collected when you return.\n"
         "\n"
@@ -28306,7 +28306,7 @@ GUIDE_PAGES = [
     ),
     # Page 16 - PvP Modes & Arena Rules
     (
-        "🎱 *8Ball World  -  PvP Modes & Arena Rules*\n"
+        "🎱 *8Ball Empire  -  PvP Modes & Arena Rules*\n"
         "\n"
         "*Direct Combat:*\n"
         "/attack (reply or pick a target) — real-time fight on live battle cards in your DMs.\n"
@@ -28343,7 +28343,7 @@ GUIDE_PAGES = [
     ),
     # Page 17 - Group Games & Casino
     (
-        "🎱 *8Ball World  -  Group Games & Casino*\n"
+        "🎱 *8Ball Empire  -  Group Games & Casino*\n"
         "\n"
         "*Chat spawns (appear on their own while the group talks):*\n"
         "🐾 Wild pets — first to catch keeps it (or its core)\n"
@@ -28371,7 +28371,7 @@ GUIDE_PAGES = [
     ),
     # Page 18 - Healing & Potions
     (
-        "🎱 *8Ball World  -  Healing & Potions*\n"
+        "🎱 *8Ball Empire  -  Healing & Potions*\n"
         "\n"
         "All potions heal a *percentage of YOUR max HP/MP* — they matter at every level.\n"
         "\n"
@@ -31621,7 +31621,7 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
     # ── Changelog: display inline ────────────────────────────────────
     elif action == "changelog":
         entries = CHANGELOG[-3:]
-        lines = ["📋 *8Ball World — Recent Updates*\n"]
+        lines = ["📋 *8Ball Empire — Recent Updates*\n"]
         for entry in reversed(entries):
             lines.append(f"*{entry['version']}* _{entry['date']}_")
             for c in entry["changes"][:5]: lines.append(f"• {c}")
@@ -33387,7 +33387,7 @@ async def ban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
         try:
             await context.bot.send_message(chat_id=tid,
-                text="🚫 You have been banned from 8ball World.")
+                text="🚫 You have been banned from The 8Ball Empire.")
         except Exception:
             pass
         try:
@@ -33438,7 +33438,7 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     _do_ban_wipe(tid, tname)
     try:
-        await context.bot.send_message(chat_id=tid, text="🚫 You have been banned from 8ball World.")
+        await context.bot.send_message(chat_id=tid, text="🚫 You have been banned from The 8Ball Empire.")
     except Exception:
         pass
     await send_group(update,
@@ -33536,7 +33536,7 @@ async def unban_picker_callback(update: Update, context: ContextTypes.DEFAULT_TY
         conn.commit(); conn.close()
         try:
             await context.bot.send_message(chat_id=tid,
-                text="✅ You have been unbanned from 8ball World. Your account has been fully restored.")
+                text="✅ You have been unbanned from The 8Ball Empire. Your account has been fully restored.")
         except Exception:
             pass
         try:
@@ -33581,7 +33581,7 @@ async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit(); conn.close()
     try:
         await context.bot.send_message(chat_id=tid,
-            text="✅ You have been unbanned from 8ball World. Your account has been fully restored.")
+            text="✅ You have been unbanned from The 8Ball Empire. Your account has been fully restored.")
     except Exception:
         pass
     await send_group(update,
