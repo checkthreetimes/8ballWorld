@@ -3737,11 +3737,19 @@ PERSONALITY_DEFEND = {
 # EXP needed per pet level
 def pet_exp_for_level(lvl): return lvl * 50 + (lvl * lvl * 5)
 
+PET_LEVEL_HARD_CAP = 250   # absolute ceiling — no pet may ever exceed this
+
 def _pet_level_cap(owner_level):
     """A pet grows with its owner (×3) up to the player's own level ceiling (250),
     instead of dead-ending at 100. Pet combat damage stays bounded to a fraction
     of the owner's hit, so a higher cap is safe — it just lets pets keep leveling."""
-    return min(250, max(1, safe_int(owner_level)) * 3)
+    return min(PET_LEVEL_HARD_CAP, max(1, safe_int(owner_level)) * 3)
+
+def _pet_eff_level(pet):
+    """Effective level for any power calculation — always clamped to the hard cap
+    so a stale/legacy DB row (e.g. a pre-cap level-1000 pet) can NEVER inflate
+    combat damage or HP. This is the last line of defense behind the level cap."""
+    return min(PET_LEVEL_HARD_CAP, max(1, safe_int(pet.get("level", 1), 1)))
 
 # Passive bonus unlocks by pet level
 PET_LEVEL_PASSIVES = {
@@ -3923,8 +3931,9 @@ def get_pet_atk_bonus(pet):
     level×4) so pet quality/investment scales UP toward the cap without ever
     dwarfing the owner's build."""
     sp = PET_SPECIES.get(pet.get("species"), {})
-    base = sp.get("base_atk", 0) * 1.0 + pet.get("level", 1) * 2.0
-    passives = get_pet_passives(pet.get("level", 1))
+    _lvl = _pet_eff_level(pet)   # clamp — legacy over-cap pets can't inflate damage
+    base = sp.get("base_atk", 0) * 1.0 + _lvl * 2.0
+    passives = get_pet_passives(_lvl)
     base += passives.get("atk_flat", 0) * 0.5
     base += _get_bond_atk_bonus(pet)
     evo = pet.get("evolution_stage", 0)
@@ -11801,6 +11810,28 @@ def init_db():
                               (datetime.now().isoformat(),))
             _mig_conn.commit()
             logger.info(f"Migration int_overflow_clamp_v1: clamped {_fixed} out-of-range value(s)")
+
+        # pet_level_cap_v2: hard-repair pet levels. Legacy rows (from before the
+        # cap existed) reached level 1000+, letting pets out-damage players and
+        # break PvP. v1 could no-op on orphaned pets (NULL owner → NULL min); v2
+        # clamps unconditionally to the absolute ceiling first, then tightens to
+        # owner_level*3 where the owner is known (COALESCE handles NULL owners).
+        _mig_cur.execute("SELECT 1 FROM _migrations WHERE name='pet_level_cap_v2'")
+        if not _mig_cur.fetchone():
+            _mig_conn.execute("UPDATE pets SET level=1 WHERE level IS NULL OR level < 1")
+            _pc = _mig_conn.execute(
+                f"UPDATE pets SET level={PET_LEVEL_HARD_CAP} WHERE level > {PET_LEVEL_HARD_CAP}")
+            _over = _pc.rowcount
+            _mig_conn.execute(f"""
+                UPDATE pets SET level = MAX(1, MIN(level,
+                    COALESCE((SELECT p.level * 3 FROM players p WHERE p.user_id = pets.owner_id),
+                             {PET_LEVEL_HARD_CAP})))
+                WHERE level > 1
+            """)
+            _mig_conn.execute("INSERT INTO _migrations (name, ran_at) VALUES ('pet_level_cap_v2', ?)",
+                              (datetime.now().isoformat(),))
+            _mig_conn.commit()
+            logger.info(f"Migration pet_level_cap_v2: hard-capped {_over} over-cap pet level(s)")
 
         # bonus_stat_points_backfill_v1: reconstruct the bonus-stat-point counter
         # from each player's claimed bestiary milestones, so the stat-pool ceiling
@@ -29639,8 +29670,8 @@ async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c_sp  = PET_SPECIES.get(c_pet.get("species"),{})
         t_sp  = PET_SPECIES.get(t_pet.get("species"),{})
         c_name = _pet_display_name(c_pet); t_name = _pet_display_name(t_pet)
-        c_hp = max(10, c_pet.get("level",1) * 20 + c_sp.get("base_atk",10) * 3)
-        t_hp = max(10, t_pet.get("level",1) * 20 + t_sp.get("base_atk",10) * 3)
+        c_hp = max(10, _pet_eff_level(c_pet) * 20 + c_sp.get("base_atk",10) * 3)
+        t_hp = max(10, _pet_eff_level(t_pet) * 20 + t_sp.get("base_atk",10) * 3)
         c_hp_max = c_hp; t_hp_max = t_hp
         log = [f"⚔️ *Pet Duel!*\n{c_sp.get('emoji','🐾')} {c_name} vs {t_sp.get('emoji','🐾')} {t_name}\n"]
         elem_mult_c = _get_pet_element_mult(c_pet, t_pet)
