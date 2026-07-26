@@ -40166,9 +40166,9 @@ async def wartable_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _active_throne = {}   # uid -> run state
 
 TD_KING_HP0     = 1000
-TD_ENEMY_HP0    = 130
-TD_ENEMY_ATK0   = 24
-TD_ENEMY_GROWTH = 1.16
+TD_ENEMY_HP0    = 210   # higher base HP so squads can't one-shot the whole wave
+TD_ENEMY_ATK0   = 44    # survivors that break through actually threaten the Castle
+TD_ENEMY_GROWTH = 1.185
 TD_START_GOLD   = 10
 TD_REROLL_COST  = 2
 TD_SHOP_SIZE    = 5
@@ -40528,20 +40528,24 @@ def _td_gen_wave(state):
     diff = safe_int(state.get("diff", 0))
     # chapters ramp within their own length; the endless siege ramps forever
     span = maxw if maxw else 12
-    scale = (TD_ENEMY_GROWTH ** (wave - 1)) * (1.0 + 0.12 * diff) * (1.0 + 0.05 * state.get("chapter", 0))
-    if state.get("elite_next"):   # an Elite crossroads made this wave tougher
-        scale *= 1.30
+    growth = TD_ENEMY_GROWTH ** (wave - 1)
+    chap = 1.0 + 0.05 * state.get("chapter", 0)
+    elite = 1.30 if state.get("elite_next") else 1.0
+    # difficulty leans harder on ATK than HP, so cranking the slider genuinely
+    # threatens the Castle rather than just slowing the clear.
+    hp_scale  = growth * (1.0 + 0.18 * diff) * chap * elite
+    atk_scale = growth * (1.0 + 0.30 * diff) * chap * elite
     is_boss = _td_is_boss_wave(state)
-    count = min(30, 3 + wave + (2 if state.get("elite_next") else 0))
+    count = min(34, 4 + wave + wave // 4 + (2 if state.get("elite_next") else 0))
     if is_boss:
         count = max(2, count - 3)
     enemies = []
     for _ in range(count):
         r = random.random()
         a = archs[2] if (wave >= max(4, span // 2) and r < 0.28) else (archs[1] if r < 0.45 else archs[0])
-        hp = max(1, round(TD_ENEMY_HP0 * a[2] * scale))
+        hp = max(1, round(TD_ENEMY_HP0 * a[2] * hp_scale))
         enemies.append({"name": a[0], "emoji": a[1], "hp": hp, "max_hp": hp,
-                        "atk": max(1, round(TD_ENEMY_ATK0 * a[3] * scale)), "boss": False})
+                        "atk": max(1, round(TD_ENEMY_ATK0 * a[3] * atk_scale)), "boss": False})
     if is_boss:
         if ch.get("boss"):
             bn, be = ch["boss"]; bmult = 12.0
@@ -40550,9 +40554,9 @@ def _td_gen_wave(state):
             bn, be = {1:("Goblin Warlord","👹"),2:("Ogre King","👺"),3:("Undead Lich","🧟"),
                       4:("Demon Lord","😈"),5:("Ancient Dragon","🐉")}.get(tier, (f"Horde Sovereign ×{tier}","👑"))
             bmult = 9.0
-        bhp = max(1, round(TD_ENEMY_HP0 * bmult * scale))
+        bhp = max(1, round(TD_ENEMY_HP0 * bmult * hp_scale))
         enemies.insert(0, {"name": bn, "emoji": be, "hp": bhp, "max_hp": bhp,
-                           "atk": max(1, round(TD_ENEMY_ATK0 * 1.7 * scale)), "boss": True})
+                           "atk": max(1, round(TD_ENEMY_ATK0 * 2.0 * atk_scale)), "boss": True})
     return enemies
 
 def _td_ensure_wave(state):
