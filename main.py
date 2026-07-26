@@ -12927,6 +12927,24 @@ def new_player(s):
     s["ascended"] = 1; save_shadow(s)
     return p
 
+def ensure_player(uid, username=None):
+    """Return the RPG player for uid, silently promoting a shadow into a
+    class-LESS player if they haven't ascended yet. This is the 'auto-ascend on
+    engagement' path: nobody is excluded from the game (combat, oracle, quests,
+    bots, PvP…) just because they never typed /ascend — they simply don't have
+    a class yet and fight with the basic Attack until they pick one at /class.
+    Returns None only if uid is falsy."""
+    uid = safe_int(uid)
+    if not uid:
+        return None
+    p = get_player(uid)
+    if p:
+        return p
+    s = get_or_create_shadow(uid, username or str(uid))
+    if username:
+        s["username"] = username
+    return new_player(s)
+
 def sync_levels(p, s):
     changed = False
     if s["level"] > p["level"]:
@@ -15591,10 +15609,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message and update.message.entities:
             for ent in update.message.entities:
                 if ent.type == "text_mention" and ent.user:
-                    found = get_player(ent.user.id)
-                    if not found:
-                        await send_group(update,
-                            f"\u274c *{ent.user.first_name}* hasn't ascended yet!", delay=9); return
+                    found = ensure_player(ent.user.id, ent.user.first_name)
                     du_id = ent.user.id; du_name = ent.user.first_name
                     break
         if not found:
@@ -15628,9 +15643,7 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if du_id == au.id:
         await send_group(update, "You can't attack yourself.", delay=9); return
-    d = get_player(du_id)
-    if not d:
-        await send_group(update, f"{du_name} hasn't ascended yet!", delay=9); return
+    d = ensure_player(du_id, du_name)
     if is_defeated(d):
         await send_group(update, f"\U0001f480 {d['username']} is already defeated!", delay=9); return
     _auto_recover(d)  # timer expired at 0 HP \u2014 stand them up instead of a free one-hit kill
@@ -16229,9 +16242,7 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Reply to own message — still a self-heal; keep same object
             t = h
         else:
-            t = get_player(tu.id)
-    if not t:
-        await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
+            t = ensure_player(tu.id, tu.first_name)
 
     # Check if target can be healed/revived
     target_is_dead = t["hp"] <= 0
@@ -16785,30 +16796,33 @@ async def soloraidstatus_cmd(update, context):
 
 # ── ASCEND ────────────────────────────────────────────────────────────────────
 async def ascend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Everyone is already in the RPG the moment they use any command (see
+    # ensure_player in the command pre-filter) — you no longer have to "ascend"
+    # to be part of the world. "Ascending" now just means CHOOSING YOUR CLASS,
+    # so /ascend points you there. Until you pick one you fight with the basic
+    # Attack, exactly like a fresh player who hasn't hit the class milestone.
     user = update.effective_user
-    if get_player(user.id):
-        await send_group(update, f"⚔️ You're already in {WORLD_NAME}! Use /stats.", delay=9); return
-    s = get_or_create_shadow(user.id, user.first_name)
-    if s.get("ascended"):
-        await send_group(update, "You've already ascended!", delay=9); return
-    p = new_player(s)
-    slvl = p["shadow_level_at_ascension"]
-    await send_group(update,
-        f"⚔️ *{user.first_name} has ASCENDED into {WORLD_NAME}!*\n\n"
-        f"Level {slvl} legacy carries over:\n"
-        f"⭐ Starting Level: *{p['level']}*\n"
-        f"❤️ HP: {p['hp']} | 💰 Gold: {p['gold']}\n"
-        f"💡 Stat Points: *{p['stat_points']}*\n\n"
-        f"Next steps:\n"
-        f"⚔️ /class  -  choose your class at Level 5\n"
-        f"📊 /allocate  -  spend stat points\n"
-        f"🎁 /daily  -  claim your daily reward\n"
-        f"🗺️ /quest  -  go on a quest\n"
-        f"🗺️ /explore  -  send yourself on an expedition", delay=30)
-    asyncio.create_task(announce(context.bot, update.effective_chat.id,
-        f"⚔️ *{user.first_name}* has ASCENDED! "
-        f"Level {slvl} → RPG! 🎱", delay=120))
-    # Send the First Steps onboarding checklist as a DM
+    p = ensure_player(user.id, user.first_name)
+    if p.get("class_id"):
+        cls = get_player_class(p)
+        await send_group(update,
+            f"⚔️ You're already ascended as a *{cls['name'] if cls else 'classed hero'}*! "
+            f"Use /stats.", delay=9)
+        return
+    if safe_int(p.get("level")) < 5:
+        await send_group(update,
+            f"⚔️ *{user.first_name}, you're already in {WORLD_NAME}!*\n\n"
+            f"⭐ Level: *{p['level']}*  ❤️ HP: {p['hp']}  💰 Gold: {p['gold']}\n\n"
+            f"You just don't have a *class* yet — you fight with the basic ⚔️ Attack for now. "
+            f"Reach *Level 5*, then use /class to choose your path.\n\n"
+            f"Meanwhile everything is open to you: /attack, /quest, /explore, "
+            f"/oracle, /encounter, /daily and more.", delay=30)
+    else:
+        await send_group(update,
+            f"⚔️ *{user.first_name}, it's time to ASCEND — choose your class!*\n\n"
+            f"You're Level *{p['level']}* and ready. Use /class to pick your path and "
+            f"unlock your combat kit. Until then you fight with the basic ⚔️ Attack.", delay=20)
+    # Onboarding checklist DM (best-effort)
     try:
         _fs_text, _fs_markup = _build_first_steps(p, user.id)
         await context.bot.send_message(chat_id=user.id, text=_fs_text,
@@ -19485,9 +19499,7 @@ async def alliance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update, "Your order is full (30 members max).", delay=9); return
         if du.id in members:
             await send_group(update, f"{du.first_name} is already in your order!", delay=9); return
-        tp = get_player(du.id)
-        if not tp:
-            await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+        tp = ensure_player(du.id, du.first_name)
         if tp.get("alliance_id"):
             await send_group(update, f"{du.first_name} is already in an order!", delay=9); return
         pending_alliance_inv[user.id] = {
@@ -20315,9 +20327,7 @@ async def guild_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_group(update, "Your guild is full (50 members max).", delay=9); return
         if du.id in members:
             await send_group(update, f"{du.first_name} is already in your guild!", delay=9); return
-        tp = get_player(du.id)
-        if not tp:
-            await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+        tp = ensure_player(du.id, du.first_name)
         if tp.get("guild_id") and str(tp.get("guild_id")) not in ("None", "", "0"):
             await send_group(update, f"{du.first_name} is already in a guild!", delay=9); return
         pending_guild_inv[user.id] = {
@@ -21967,9 +21977,7 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
 
     # ── PVP context (target_uid provided) ────────────────────────────────────
     if target_uid:
-        tp = get_player(target_uid)
-        if not tp:
-            await send_result("That player hasn't ascended yet!"); return
+        tp = ensure_player(target_uid)
         stype = sk.get("type", "damage")
         _support_types = {"self_heal", "self_heal_buff", "group_heal", "dmg_reduction_buff",
                           "revive_heal", "regen", "full_revive", "heal_shield", "mass_cleanse"}
@@ -22754,9 +22762,7 @@ async def _execute_skill(update, context, p, sk):
         if not update.message.reply_to_message:
             await send_group(update, "Reply to your target with /skill!", delay=9); return
         tu = update.message.reply_to_message.from_user
-        tp = get_player(tu.id)
-        if not tp:
-            await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
+        tp = ensure_player(tu.id, tu.first_name)
         add_charges(tp, "blessed_turns", 5)
         save_player(tp); save_player(p)
         lines.append(f"✨ *Blessing* granted to *{tp['username']}*!\n"
@@ -22945,9 +22951,7 @@ async def _execute_skill(update, context, p, sk):
     du = update.message.reply_to_message.from_user
     if du.id == user.id:
         await send_group(update, "Can't target yourself!", delay=9); return
-    d = get_player(du.id)
-    if not d:
-        await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+    d = ensure_player(du.id, du.first_name)
     if is_defeated(d):
         await send_group(update, f"{d['username']} is already defeated!", delay=9); return
     if is_invincible(d):
@@ -25123,9 +25127,7 @@ async def bounty_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tu = update.message.reply_to_message.from_user
         if tu.id == user.id:
             await send_group(update, "❌ Can't place a bounty on yourself.", delay=9); return
-        target = get_player(tu.id)
-        if not target:
-            await send_group(update, "❌ That player hasn't ascended yet.", delay=9); return
+        target = ensure_player(tu.id, tu.first_name)
 
         fee_note = " *(FREE — no gold cost)*" if no_fee else f"\n💰 Your gold: *{p.get('gold',0):,}g*"
         rl_note  = "\n🎯 *Bounty Hunter:* premium amounts + no fee!" if is_railrunner else (
@@ -25411,9 +25413,7 @@ async def marry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if du.id == user.id:
         await send_group(update, "You can't marry yourself!", delay=9); return
 
-    tp = get_player(du.id)
-    if not tp:
-        await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+    tp = ensure_player(du.id, du.first_name)
 
     proposer_marriages = _get_marriages(p)
     target_marriages   = _get_marriages(tp)
@@ -25685,9 +25685,7 @@ async def party_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message and update.message.reply_to_message:
         du = update.message.reply_to_message.from_user
         if du and du.id != uid:
-            target = get_player(du.id)
-            if not target:
-                await send_group(update, f"❌ {du.first_name} hasn't ascended yet.", delay=8); return
+            target = ensure_player(du.id, du.first_name)
             if _get_party_of(du.id):
                 await send_group(update, f"❌ *{target['username']}* is already in a party.", delay=8); return
             party = _get_party_of(uid)
@@ -27181,9 +27179,7 @@ async def holdhands_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if du.id == user.id:
         await send_group(update, "You can't hold your own hand!", delay=9); return
 
-    tp = get_player(du.id)
-    if not tp:
-        await send_group(update, f"{du.first_name} hasn't ascended yet!", delay=9); return
+    tp = ensure_player(du.id, du.first_name)
 
     p_hands  = _get_holding_hands(p)
     tp_hands = _get_holding_hands(tp)
@@ -34530,7 +34526,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tier = get_tier(s["level"])
             hint = ""
             if not s.get("ascended") and s["level"] >= 5:
-                hint = "\n_💡 Type /ascend in a private chat to enter the RPG!_"
+                hint = "\n_💡 You're ready for a class! Use any command (/quest, /attack…) to jump in, then /class to choose your path._"
             # Announce every level-up, not just multiples of 10
             asyncio.create_task(announce(context.bot, chat_id,
                 f"{tier['emoji']} *{s['username']}* reached *Level {s['level']}*!{hint}",
@@ -36507,8 +36503,7 @@ async def quickdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tu = update.message.reply_to_message.from_user
     if tu.id == user.id or tu.is_bot:
         await send_group(update, "🤠 Pick a real opponent.", delay=9); return
-    if not get_player(tu.id):
-        await send_group(update, f"🤠 *{tu.first_name}* hasn't ascended yet!", delay=9); return
+    ensure_player(tu.id, tu.first_name)
     wager = _wager_from_args(context.args, default=50)
     st = {"a": user.id, "a_name": user.first_name, "b": tu.id, "b_name": tu.first_name,
           "wager": wager, "state": "challenge", "msg_id": None, "armed_at": None}
@@ -36645,8 +36640,7 @@ async def russian_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tu = update.message.reply_to_message.from_user
     if tu.id == user.id or tu.is_bot:
         await send_group(update, "🔫 You need a living opponent.", delay=9); return
-    if not get_player(tu.id):
-        await send_group(update, f"🔫 *{tu.first_name}* hasn't ascended yet!", delay=9); return
+    ensure_player(tu.id, tu.first_name)
     wager = _wager_from_args(context.args, default=100)
     st = {"a": user.id, "a_name": user.first_name, "b": tu.id, "b_name": tu.first_name,
           "wager": wager, "state": "challenge", "msg_id": None,
@@ -36786,8 +36780,7 @@ async def standoff_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tu = update.message.reply_to_message.from_user
     if tu.id == user.id or tu.is_bot:
         await send_group(update, "🤝 Find a real partner-in-crime.", delay=9); return
-    if not get_player(tu.id):
-        await send_group(update, f"🤝 *{tu.first_name}* hasn't ascended yet!", delay=9); return
+    ensure_player(tu.id, tu.first_name)
     wager = _wager_from_args(context.args, default=100)
     st = {"a": user.id, "a_name": user.first_name, "b": tu.id, "b_name": tu.first_name,
           "wager": wager, "state": "challenge", "msg_id": None, "picks": {}}
@@ -36996,11 +36989,7 @@ async def duel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tu = update.message.reply_to_message.from_user
     if tu.id == user.id or tu.is_bot:
         await send_group(update, "⚔️ Pick a real opponent to duel.", delay=9); return
-    a = get_player(user.id); d = get_player(tu.id)
-    if not a:
-        await send_group(update, "Use /ascend first!", delay=9); return
-    if not d:
-        await send_group(update, f"⚔️ *{tu.first_name}* hasn't ascended yet!", delay=9); return
+    a = ensure_player(user.id, user.first_name); d = ensure_player(tu.id, tu.first_name)
     if not a.get("class_id") or not d.get("class_id"):
         await send_group(update, "⚔️ Both duelists need a class first (/class).", delay=9); return
     wager = _wager_from_args(context.args, default=200)
@@ -37687,9 +37676,7 @@ async def rob_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tu = update.message.reply_to_message.from_user
     if tu.id == user.id:
         await send_group(update, "Robbing yourself is just... budgeting.", delay=9); return
-    t = get_player(tu.id)
-    if not t:
-        await send_group(update, f"{tu.first_name} hasn't ascended — nothing to steal!", delay=9); return
+    t = ensure_player(tu.id, tu.first_name)
     if is_defeated(p):
         await send_group(update, "☠️ You're defeated — can't rob anyone.", delay=9); return
     if p.get("guild_id") and str(p.get("guild_id")) == str(t.get("guild_id")):
@@ -37950,9 +37937,7 @@ async def coinflip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tu = update.message.reply_to_message.from_user
     if tu.id == user.id:
         await send_group(update, "You'd win. And lose.", delay=9); return
-    t = get_player(tu.id)
-    if not t:
-        await send_group(update, f"{tu.first_name} hasn't ascended yet!", delay=9); return
+    t = ensure_player(tu.id, tu.first_name)
     try:
         amt = int(context.args[0]) if context.args else 100
     except (ValueError, IndexError):
@@ -42651,7 +42636,30 @@ def main():
                     _ptr.execute("UPDATE players SET tg_username=? WHERE user_id=?", (_rtu.username, _rtu.id))
                     _ptr.commit(); _ptr.close()
                 except Exception: pass
+        # Auto-ascend on engagement: typing any command pulls a not-yet-ascended
+        # user into the RPG as a class-less player, so every command works for
+        # them exactly like everyone else (they just have no class yet).
+        try:
+            ensure_player(u.id, u.first_name)
+        except Exception:
+            pass
     app.add_handler(MessageHandler(filters.COMMAND, _cmd_pre_filter), group=-1)
+
+    async def _cb_pre_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Runs before all callback (button) handlers (group=-1). Tapping any
+        button also counts as engagement, so provision the tapper as a class-less
+        player if they haven't ascended. Never stops propagation."""
+        q = update.callback_query
+        if not q or not update.effective_user or update.effective_user.is_bot:
+            return
+        u = update.effective_user
+        if u.id != ADMIN_ID and is_banned(u.id):
+            return
+        try:
+            ensure_player(u.id, u.first_name)
+        except Exception:
+            pass
+    app.add_handler(CallbackQueryHandler(_cb_pre_filter), group=-1)
 
     global _bot_ref
     _bot_ref = app.bot
