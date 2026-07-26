@@ -284,9 +284,10 @@ def _pvp_summary_text(pair, winner_id):
         mvp   = "  🏅" if (s is top and s["dmg"] > 0) else ""
         return [
             f"{badge} *{s['name']}*{mvp}",
-            f"    ⚔ {fmt_num(s['dmg'])}   👊 {s['hits']}   💥 {fmt_num(s['biggest'])}",
+            f"⚔ {fmt_num(s['dmg'])}   👊 {s['hits']}   💥 {fmt_num(s['biggest'])}",
+            "",   # breathing room between fighters
         ]
-    lines = ["🤝 *DRAW*" if draw else "🏆 *FIGHT RECAP*"]
+    lines = ["🤝 *DRAW*" if draw else "🏆 *FIGHT RECAP*", ""]
     lines += _block(u1, s1)
     lines += _block(u2, s2)
     lines.append(f"⏱ {dur_str}  ·  {st.get('turns', 0)} actions")
