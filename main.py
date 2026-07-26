@@ -5577,7 +5577,7 @@ def _enc_hp_bar(current, maximum, length=10):
 # ≤50% HP and the odds bottomed out near-zero for rarer species, so farming
 # Monster Cores felt hopeless. New model: the button shows earlier, the worn-down
 # a monster is the far easier it is to bag, and even rare species stay catchable.
-_HUNT_CATCH_HP_GATE = 0.65   # Catch button appears at/under this HP fraction
+_HUNT_CATCH_HP_GATE = 0.65   # HP fraction below which catch odds get their steepest boost (button is always shown)
 _HUNT_HP_FACTOR     = 0.45   # wild monsters carry <½ a same-level fighter's HP
 
 def _hunt_catch_chance(enc):
@@ -5727,15 +5727,12 @@ def _encounter_battle_card(enc):
     if enc.get("e_weakened"):       e_status.append("⬇️")
     e_s = "  " + " ".join(e_status) if e_status else ""
     lines.append(f"`{e_bar}`  {e_hp}/{e_mhp} HP{e_s}")
-    # Hunt: live catch-readiness readout so the player can time the throw.
+    # Hunt: live catch-readiness readout. You can throw a ball at any time —
+    # odds just improve as you wear the monster down.
     if mode == "hunt":
-        hp_frac = e_hp / max(1, e_mhp)
-        if hp_frac <= _HUNT_CATCH_HP_GATE:
-            _odds = int(round(_hunt_catch_chance(enc) * 100))
-            _tier = "🟢 great" if _odds >= 70 else ("🟡 fair" if _odds >= 45 else "🟠 slim")
-            lines.append(f"🎯 _Catch odds: *{_odds}%* ({_tier}) — weaken it more for better odds._")
-        else:
-            lines.append("🎯 _Wear it down to ~65% HP to open a catch window._")
+        _odds = int(round(_hunt_catch_chance(enc) * 100))
+        _tier = "🟢 great" if _odds >= 70 else ("🟡 fair" if _odds >= 45 else "🟠 slim")
+        lines.append(f"🎯 _Catch odds: *{_odds}%* ({_tier}) — weaken it for better odds, but you can throw anytime._")
     lines.append("")
     # Player block
     p_status = []
@@ -5787,12 +5784,15 @@ def _encounter_battle_markup(enc, p=None):
                 f"{_icon} {_sk.get('name','Skill')} ({_cost}MP)",
                 callback_data=f"enc_skl_{uid}_{_i}")])
     if mode == "hunt":
-        bottom = []
-        if enc["e_hp"] / max(1, enc["e_max_hp"]) <= _HUNT_CATCH_HP_GATE:
-            _odds = int(round(_hunt_catch_chance(enc) * 100))
-            bottom.append(InlineKeyboardButton(f"🎯 Catch ({_odds}%)", callback_data=f"enc_catch_{uid}"))
-        bottom.append(InlineKeyboardButton("🏃 Flee", callback_data=f"enc_flee_{uid}"))
-        rows.append(bottom)
+        # The Catch button is ALWAYS available — you can lob a ball at any HP.
+        # (Odds just scale with how worn-down the monster is.) Previously it only
+        # appeared at low HP, so heavy hitters kept one-shotting monsters before
+        # a catch window ever opened.
+        _odds = int(round(_hunt_catch_chance(enc) * 100))
+        rows.append([
+            InlineKeyboardButton(f"🎯 Catch ({_odds}%)", callback_data=f"enc_catch_{uid}"),
+            InlineKeyboardButton("🏃 Flee", callback_data=f"enc_flee_{uid}"),
+        ])
     else:
         rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"enc_flee_{uid}")])
     return InlineKeyboardMarkup(rows)
