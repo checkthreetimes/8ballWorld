@@ -578,14 +578,15 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     lines.append("")
     lines += _side(opp_p, False)
 
-    # Turn banner — strict alternating order (Pokémon/chess style)
+    # Stamina meters — spend ⚡ to attack; blitz while you have it, then regen.
     if pair is not None:
-        _holder = _pvp_turn.get(pair)
-        if _holder is not None:
-            if safe_int(_vu) == _holder:
-                lines += ["", "🟢 *Your move!* — make one action, then it's their turn."]
-            else:
-                lines += ["", f"⏳ *Waiting for {str(opp_p.get('username','?'))[:16]}…* (their turn)"]
+        _my_st = int(_pvp_stam_peek(pair, _vu))
+        _op_st = int(_pvp_stam_peek(pair, _ou))
+        _my = "⚡" * _my_st + "·" * (PVP_STAMINA_MAX - _my_st)
+        _op = "⚡" * _op_st + "·" * (PVP_STAMINA_MAX - _op_st)
+        lines += ["", f"⚡ Stamina — you `{_my}`   foe `{_op}`"]
+        if _my_st < 1:
+            lines.append("_😮‍💨 Out of stamina — catch your breath (regenerating)._")
 
     # Status notes — explain why the Attack button might not fire right now.
     _notes = []
@@ -633,40 +634,53 @@ _pvp_render_seq = {}  # uid -> latest render sequence (stale renders are dropped
 _pvp_card_locks = {}  # uid -> asyncio.Lock serializing card delivery per viewer
 _pvp_last_action = {} # pair -> time.time() of last combat action (idle-draw watchdog)
 
-# ── STRICT TURN ORDER (Pokémon/chess-style) ───────────────────────────────────
-# Every fight has exactly one player "on the clock"; only they may act, and any
-# action (attack/skill/finisher/heal/defend) passes the turn to the opponent.
-# A player who leaves their turn hanging forfeits after PVP_TURN_FORFEIT.
-_pvp_turn = {}          # pair -> uid whose turn it is
-_pvp_turn_started = {}  # pair -> time.time() the current turn began
-PVP_TURN_FORFEIT = 3600  # 1h of not moving on your turn = you forfeit (foe wins)
+# ── STAMINA BLITZ (real-time, bursty) ─────────────────────────────────────────
+# No strict turns: both fighters act live. Each offensive move (attack / strike
+# skill / finisher) spends 1 STAMINA. Stamina regenerates ~1 every few seconds up
+# to a small cap, so you can unload a quick multi-hit BLITZ to go for a KO, then
+# must catch your breath while your opponent can blitz back — but you can never
+# infinite-spam. Defensive moves (heal/defend/mp) don't cost stamina (they have
+# their own per-battle caps). A fighter who goes silent for PVP_IDLE_FORFEIT
+# loses to whoever last landed a blow.
+_pvp_stamina = {}       # (pair, uid) -> {"val": float, "ts": last_update time}
+_pvp_last_actor = {}    # pair -> uid who last took any action (for AFK forfeit)
+PVP_STAMINA_MAX   = 3
+PVP_STAMINA_REGEN = 4.0    # seconds to regenerate +1 stamina
+PVP_IDLE_FORFEIT  = 3600   # 1h of silence = you forfeit (foe who last hit wins)
 
 def _pvp_other(pair, uid):
     uid = safe_int(uid)
     return pair[0] if uid == safe_int(pair[1]) else pair[1]
 
-def _pvp_set_turn(pair, uid):
-    _pvp_turn[pair] = safe_int(uid)
-    _pvp_turn_started[pair] = time.time()
+def _pvp_stam_peek(pair, uid):
+    """Read-only current stamina (safe to call while rendering a card)."""
+    st = _pvp_stamina.get((pair, safe_int(uid)))
+    if not st:
+        return float(PVP_STAMINA_MAX)
+    return min(PVP_STAMINA_MAX, st["val"] + (time.time() - st["ts"]) / PVP_STAMINA_REGEN)
+
+def _pvp_stam_spend(pair, uid, cost=1):
+    """Spend stamina for an offensive move. Returns (True, remaining) if it was
+    available, else (False, seconds_until_ready)."""
+    k = (pair, safe_int(uid))
+    cur = _pvp_stam_peek(pair, uid)
+    if cur >= cost:
+        _pvp_stamina[k] = {"val": cur - cost, "ts": time.time()}
+        return True, cur - cost
+    return False, max(1, int((cost - cur) * PVP_STAMINA_REGEN + 0.999))
+
+def _pvp_mark_actor(pair, uid):
+    _pvp_last_actor[pair] = safe_int(uid)
     _pvp_last_action[pair] = time.time()
 
-def _pvp_end_turn(pair, actor):
-    """Pass control to the opponent; returns the new turn-holder uid."""
-    nxt = _pvp_other(pair, actor)
-    _pvp_set_turn(pair, nxt)
-    return nxt
+def _pvp_stam_reset(pair):
+    for k in list(_pvp_stamina.keys()):
+        if k[0] == pair:
+            _pvp_stamina.pop(k, None)
 
-def _pvp_turn_holder(pair):
-    return _pvp_turn.get(pair)
-
-def _pvp_not_your_turn(pair, uid, opp_p):
-    """Return an alert string if it's NOT uid's turn, else None. Unset turn
-    (legacy/edge) allows the action so a fight can never soft-lock."""
-    t = _pvp_turn.get(pair)
-    if t is not None and safe_int(uid) != t:
-        nm = str((opp_p or {}).get("username", "your opponent"))[:16]
-        return f"⏳ It's *{nm}*'s turn — wait for their move."
-    return None
+def _pvp_stam_pips(pair, uid):
+    cur = int(_pvp_stam_peek(pair, uid))
+    return "⚡" * cur + "·" * (PVP_STAMINA_MAX - cur)
 
 async def _pvp_notify_both(pair, a, d, au_id, du_id, action_text, bot):
     """Deliver a PvP turn as a FRESH card to each player (send new → delete
@@ -826,8 +840,8 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
     _pvp_origin_chat.pop(pair, None)
     _pvp_last_action.pop(pair, None)
     _pvp_grace.pop(pair, None)
-    _pvp_turn.pop(pair, None)
-    _pvp_turn_started.pop(pair, None)
+    _pvp_stam_reset(pair)
+    _pvp_last_actor.pop(pair, None)
     _cancel_card_timer(pair)  # cancel, don't just drop — or the pending
                               # auto-delete later removes the final result card
     if len(pair) == 2:
@@ -917,37 +931,36 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
 
 
 async def _pvp_idle_watch_loop(bot):
-    """Turn-based forfeit watchdog. Whoever is on the clock has PVP_TURN_FORFEIT
-    (1h) to move; if they don't, they FORFEIT and the opponent wins. Fights with
-    no turn owner set (edge) still fall back to a stale-draw after the same
-    window so nothing lingers forever."""
+    """AFK forfeit watchdog. If a fight sees no action for PVP_IDLE_FORFEIT (1h),
+    whoever landed the LAST blow wins (the other ghosted); if nobody ever acted,
+    it's a draw. Nothing lingers with live buttons forever."""
     while True:
         await asyncio.sleep(60)
         try:
             now = time.time()
             for pair in list(_pvp_origin_chat.keys()):
-                started = _pvp_turn_started.get(pair) or _pvp_last_action.get(pair)
-                if not started or now - started <= PVP_TURN_FORFEIT:
+                last = _pvp_last_action.get(pair)
+                if not last or now - last <= PVP_IDLE_FORFEIT:
                     continue
-                holder = _pvp_turn.get(pair)
+                actor = _pvp_last_actor.get(pair)
                 try:
-                    if holder is not None and len(pair) == 2:
-                        winner = _pvp_other(pair, holder)
-                        loser_p = get_player(holder); win_p = get_player(winner)
+                    if actor is not None and len(pair) == 2:
+                        loser = _pvp_other(pair, actor)
+                        loser_p = get_player(loser); win_p = get_player(actor)
                         ln = str((loser_p or {}).get("username", "A fighter"))[:16]
                         wn = str((win_p or {}).get("username", "their foe"))[:16]
                         await _finalize_pvp(pair,
-                            f"⏳ *{ln} forfeited* — no move for an hour.\n"
+                            f"⏳ *{ln} went silent* for an hour.\n"
                             f"🏆 *{wn} wins by forfeit!*",
-                            bot, winner_id=winner)
+                            bot, winner_id=actor)
                     else:
                         await _finalize_pvp(pair,
-                            "🏳️ *DRAW* — the fight fizzled out (no moves for an hour).\n"
+                            "🏳️ *DRAW* — the fight fizzled out (no action for an hour).\n"
                             "_Status effects cleared; spectator bets refunded._",
                             bot, winner_id=None)
                 except Exception:
-                    logger.error("turn-forfeit finalize failed for %s", pair, exc_info=True)
-                    _pvp_last_action.pop(pair, None); _pvp_turn_started.pop(pair, None)
+                    logger.error("afk-forfeit finalize failed for %s", pair, exc_info=True)
+                    _pvp_last_action.pop(pair, None); _pvp_last_actor.pop(pair, None)
         except Exception:
             logger.error("pvp idle watch error", exc_info=True)
 
@@ -15464,9 +15477,10 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Fresh battle → reset each fighter's per-battle potion budget.
         for _bu in (au.id, du_id):
             _pvp_battle_state.setdefault(_bu, {})["potions_used"] = 0
-        # Strict turn order: the aggressor gets the opening move; after they act
-        # it passes to the defender, and so on (Pokémon/chess style).
-        _pvp_set_turn(pair, au.id)
+        # Stamina Blitz: both fighters start with a full stamina pool; the
+        # aggressor is marked as the last actor (opening the fight counts).
+        _pvp_stam_reset(pair)
+        _pvp_mark_actor(pair, au.id)
         # Opening grace: shield the just-attacked player so the aggressor can't
         # burst them down before they've even opened their card.
         _pvp_start_grace(pair, du_id)
@@ -15537,19 +15551,15 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer()
             return
 
-        # ── TURN GATE — only the player on the clock may take a move action ────
+        # ── CROWD CONTROL — stun/freeze/entangle fails the action & consumes a
+        # stack (offensive stamina is charged later, only if the move lands). ──
         if action_type in ("heal", "mp", "def", "finish", "atk"):
-            _tblock = _pvp_not_your_turn(pair, uid, d)
-            if _tblock:
-                await query.answer(_tblock, show_alert=True); return
-            # Crowd control (stun/freeze/entangle) BURNS your turn — you're
-            # incapacitated, so the action fails and control passes to the foe.
             _cc = _consume_cc(a)
             if _cc:
                 await query.answer(_cc, show_alert=True)
                 _cc_entry = f"⚡ *{a.get('username','?')}* — {_cc}"
                 _pvp_log_append(pair, _cc_entry)
-                _pvp_end_turn(pair, uid)
+                _pvp_mark_actor(pair, uid)
                 fresh_a = get_player(uid) or a; fresh_d = get_player(target_id) or d
                 _cb_unlock(uid, _tok)
                 await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, _cc_entry, context.bot)
@@ -15612,7 +15622,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _pvp_log_append(pair, heal_entry)
             fresh_a = get_player(uid) or a
             fresh_d = get_player(target_id) or d
-            _pvp_end_turn(pair, uid)
+            _pvp_mark_actor(pair, uid)
             _cb_unlock(uid, _tok)
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, heal_entry, context.bot)
             return
@@ -15651,7 +15661,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _pvp_log_append(pair, mp_entry)
             fresh_a = get_player(uid) or a
             fresh_d = get_player(target_id) or d
-            _pvp_end_turn(pair, uid)
+            _pvp_mark_actor(pair, uid)
             _cb_unlock(uid, _tok)
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, mp_entry, context.bot)
             return
@@ -15676,7 +15686,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _pvp_log_append(pair, shield_entry)
             fresh_a = get_player(uid) or a
             fresh_d = get_player(target_id) or d
-            _pvp_end_turn(pair, uid)
+            _pvp_mark_actor(pair, uid)
             _cb_unlock(uid, _tok)
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, shield_entry, context.bot)
             return
@@ -15755,7 +15765,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 save_player(a); save_player(d)
                 fresh_a = get_player(uid) or a
                 fresh_d = get_player(target_id) or d
-                _pvp_end_turn(pair, uid)
+                _pvp_mark_actor(pair, uid)
                 _cb_unlock(uid, _tok)
                 await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, kill_msg, context.bot)
             return
@@ -15769,17 +15779,17 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("You're invincible — can't attack!", show_alert=True); return
         if is_vanished(a):
             await query.answer("You're vanished — can't attack while hidden!", show_alert=True); return
-        # (crowd control already handled at the turn gate — it burns the turn)
+        # (crowd control already handled above — it fails the action)
         if is_defeated(d):
             await query.answer(f"{d['username']} is already defeated!", show_alert=True); return
         if is_invincible(d):
             await query.answer(f"{d['username']} is invincible right now!", show_alert=True); return
         if a.get("guild_id") and str(a.get("guild_id")) == str(d.get("guild_id")):
             await query.answer("Can't attack your own guild member!", show_alert=True); return
-        _g_rem = _pvp_grace_remaining(pair, uid)
-        if _g_rem > 0:
-            await query.answer(f"⏳ Hold — your first strike lands in {int(_g_rem) + 1}s. "
-                               f"Opening grace lets {d['username']} respond first (no more instant spam-kills).",
+        # Stamina Blitz: each strike costs ⚡. Blitz while you have it, then regen.
+        _st_ok, _st_info = _pvp_stam_spend(pair, uid)
+        if not _st_ok:
+            await query.answer(f"😮‍💨 Out of stamina — your next strike is ready in ~{_st_info}s.",
                                show_alert=True); return
         try: await query.answer("⚔️ Attacking...")
         except Exception: pass
@@ -15807,7 +15817,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         fresh_a = get_player(uid) or a
         fresh_d = get_player(target_id) or d
-        _pvp_end_turn(pair, uid)
+        _pvp_mark_actor(pair, uid)
         _cb_unlock(uid, _tok)
         await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, result_text, context.bot)
 
@@ -15857,9 +15867,6 @@ async def kit_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         a = get_player(uid); d = get_player(target_id)
         if not a or not d:
             await query.answer(); return
-        _tblock = _pvp_not_your_turn(pair, uid, d)   # turn gate — skills are moves too
-        if _tblock:
-            await query.answer(_tblock, show_alert=True); return
         kit = _kit_for(a)
         sk = kit.get(slot) if kit else None
         if not sk:
@@ -15884,11 +15891,17 @@ async def kit_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(_cc, show_alert=True)
             _cc_entry = f"⚡ *{a.get('username','?')}* — {_cc}"
             _pvp_log_append(pair, _cc_entry)
-            _pvp_end_turn(pair, uid)
+            _pvp_mark_actor(pair, uid)
             fresh_a = get_player(uid) or a; fresh_d = get_player(target_id) or d
             _cb_unlock(uid, _tok)
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, _cc_entry, context.bot)
             return
+        # Strike skills are offensive — they cost ⚡ stamina too (support skills don't).
+        if sk.get("kind") == "strike":
+            _st_ok, _st_info = _pvp_stam_spend(pair, uid)
+            if not _st_ok:
+                await query.answer(f"😮‍💨 Out of stamina — your next strike is ready in ~{_st_info}s.",
+                                   show_alert=True); return
         # Pay MP, advance cooldowns, set this skill's cooldown
         a["mp"] = safe_int(a.get("mp")) - cost
         _kit_tick_cds(uid)
@@ -15914,7 +15927,7 @@ async def kit_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await _finalize_pvp(pair, result_text, context.bot, winner_id=uid)
                 return
             fresh_a = get_player(uid) or a; fresh_d = get_player(target_id) or d
-            _pvp_end_turn(pair, uid)
+            _pvp_mark_actor(pair, uid)
             _cb_unlock(uid, _tok)
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, result_text, context.bot)
         else:
@@ -15926,7 +15939,7 @@ async def kit_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             entry = f"{sk['emoji']} *{a['username']}* uses *{sk['name']}!*" + (f"\n{notes}" if notes else "")
             _pvp_log_append(pair, entry)
             fresh_a = get_player(uid) or a; fresh_d = get_player(target_id) or d
-            _pvp_end_turn(pair, uid)
+            _pvp_mark_actor(pair, uid)
             _cb_unlock(uid, _tok)
             await _pvp_notify_both(pair, fresh_a, fresh_d, uid, target_id, entry, context.bot)
     finally:
