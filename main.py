@@ -5572,6 +5572,28 @@ def _enc_hp_bar(current, maximum, length=10):
     filled = max(0, round((current / max(1, maximum)) * length))
     return "█" * filled + "░" * (length - filled)
 
+# ── HUNT CATCH TUNING ──────────────────────────────────────────────────────────
+# Catching wild monsters used to be brutal: the Catch button only appeared at
+# ≤50% HP and the odds bottomed out near-zero for rarer species, so farming
+# Monster Cores felt hopeless. New model: the button shows earlier, the worn-down
+# a monster is the far easier it is to bag, and even rare species stay catchable.
+_HUNT_CATCH_HP_GATE = 0.65   # Catch button appears at/under this HP fraction
+_HUNT_HP_FACTOR     = 0.45   # wild monsters carry <½ a same-level fighter's HP
+
+def _hunt_catch_chance(enc):
+    """Live catch probability for a hunt encounter — shared by the odds readout
+    on the card and the actual catch roll so what the player sees is what they
+    get. The lower the monster's HP, the better; rarity (its base catch_rate)
+    nudges it, but never to zero."""
+    base   = float(enc.get("e_catch_rate", 0.30))
+    hp_pct = enc.get("e_hp", 1) / max(1, enc.get("e_max_hp", 1))
+    weaken = 1.0 - hp_pct                     # 0 at full HP → 1 at KO range
+    chance = 0.25 + weaken * 0.55 + base * 0.40
+    # a stunned / weakened monster is even easier to grab
+    if safe_int(enc.get("e_stunned_turns")) > 0: chance += 0.10
+    if enc.get("e_weakened"):                     chance += 0.05
+    return max(0.05, min(0.95, chance))
+
 
 
 # ── PARTY SYSTEM ──────────────────────────────────────────────────────────────
@@ -5705,6 +5727,15 @@ def _encounter_battle_card(enc):
     if enc.get("e_weakened"):       e_status.append("⬇️")
     e_s = "  " + " ".join(e_status) if e_status else ""
     lines.append(f"`{e_bar}`  {e_hp}/{e_mhp} HP{e_s}")
+    # Hunt: live catch-readiness readout so the player can time the throw.
+    if mode == "hunt":
+        hp_frac = e_hp / max(1, e_mhp)
+        if hp_frac <= _HUNT_CATCH_HP_GATE:
+            _odds = int(round(_hunt_catch_chance(enc) * 100))
+            _tier = "🟢 great" if _odds >= 70 else ("🟡 fair" if _odds >= 45 else "🟠 slim")
+            lines.append(f"🎯 _Catch odds: *{_odds}%* ({_tier}) — weaken it more for better odds._")
+        else:
+            lines.append("🎯 _Wear it down to ~65% HP to open a catch window._")
     lines.append("")
     # Player block
     p_status = []
@@ -5742,22 +5773,24 @@ def _encounter_battle_markup(enc, p=None):
         InlineKeyboardButton("🛡️ Guard",  callback_data=f"enc_guard_{uid}"),
         InlineKeyboardButton("🧪 Potion", callback_data=f"enc_heal_{uid}"),
     ])
-    # Skill buttons with MP cost indicator
+    # Skill buttons — the player's REAL 3-skill battle kit (Main + Skill I/II),
+    # not the whole legacy class-tree list.
     if p:
-        _p_skills = get_combat_skills(p)
+        _p_skills = _enc_kit_skills(p)
         for _i, _sk in enumerate(_p_skills):
-            _cost = _dng_skill_mp_cost(_sk)
+            _cost = _enc_skill_mp_cost(_sk)
             _can  = p_mp >= _cost
             # Always show the skill so it never "disappears" — an unaffordable
             # skill shows ❌ and its cost; tapping it explains the MP shortfall.
-            _icon = "✨" if _can else "❌"
+            _icon = _sk.get("emoji", "✨") if _can else "❌"
             rows.append([InlineKeyboardButton(
                 f"{_icon} {_sk.get('name','Skill')} ({_cost}MP)",
                 callback_data=f"enc_skl_{uid}_{_i}")])
     if mode == "hunt":
         bottom = []
-        if enc["e_hp"] / max(1, enc["e_max_hp"]) <= 0.5:
-            bottom.append(InlineKeyboardButton("🎯 Catch", callback_data=f"enc_catch_{uid}"))
+        if enc["e_hp"] / max(1, enc["e_max_hp"]) <= _HUNT_CATCH_HP_GATE:
+            _odds = int(round(_hunt_catch_chance(enc) * 100))
+            bottom.append(InlineKeyboardButton(f"🎯 Catch ({_odds}%)", callback_data=f"enc_catch_{uid}"))
         bottom.append(InlineKeyboardButton("🏃 Flee", callback_data=f"enc_flee_{uid}"))
         rows.append(bottom)
     else:
@@ -5874,6 +5907,175 @@ def _pick_random_monster(p_level):
     if not eligible:
         eligible = sorted(ENCOUNTER_MONSTERS, key=lambda m: abs(m[3][0] - p_level))[:5]
     return random.choice(eligible)
+
+# ── Encounter combat now uses the player's REAL 3-skill kit ────────────────────
+# The fight card in /encounter used to list every class-tree skill a player had
+# ever unlocked (get_combat_skills), which no longer matches the actual battle
+# kit. These helpers surface exactly the 3 skills the player fights with (Main +
+# Skill I + Skill II) and translate the PvP kit schema (strike/support riders &
+# effect ops) onto the encounter's own status flags.
+
+def _enc_skill_mp_cost(sk):
+    """MP cost for a kit skill in an encounter (kit skills carry their own mp)."""
+    return safe_int(sk.get("mp")) or _dng_skill_mp_cost(sk)
+
+def _enc_kit_skills(p):
+    """The player's real battle kit as an ordered list [Main, Skill I, Skill II]."""
+    kit = _kit_for(p)
+    if not kit:
+        return []
+    return [kit[slot] for slot in ("main", "s1", "s2") if kit.get(slot)]
+
+def _enc_kit_is_heal(sk):
+    """A support skill counts against the heal limit if it restores/cleanses."""
+    return sk.get("kind") == "support" and (sk.get("heal_pct") or sk.get("cleanse"))
+
+def _enc_player_dmg_mods(enc, dmg):
+    """Apply the player's built-up offensive buffs to an outgoing hit:
+    War Cry stacks (persistent +15%/stack) and a one-shot Empower charge."""
+    stacks = safe_int(enc.get("enc_warcry"))
+    if stacks:
+        dmg = max(1, round(dmg * (1 + 0.15 * stacks)))
+    emp = float(enc.get("enc_empower_next") or 0)
+    if emp:
+        dmg = max(1, round(dmg * (1 + emp)))
+        enc.pop("enc_empower_next", None)
+    return dmg
+
+def _enc_kit_apply_effect(enc, tgt, field, op, val):
+    """Map one kit support effect op onto the encounter's status flags.
+    Returns a short readout string (or None)."""
+    if tgt == "self":
+        if field == "shield_charges":
+            enc["enc_shield_charges"] = enc.get("enc_shield_charges", 0) + val
+            return f"🛡️ shield ×{enc['enc_shield_charges']}"
+        if field == "vanish_turns":
+            enc["enc_dodge_turns"] = enc.get("enc_dodge_turns", 0) + val
+            return f"💨 evade ×{enc['enc_dodge_turns']}"
+        if field == "regen_charges":
+            enc["enc_regen_turns"] = enc.get("enc_regen_turns", 0) + val
+            return f"🌿 regen {enc['enc_regen_turns']}t"
+        if field == "regen_amt":
+            enc["enc_regen_pct"] = max(float(enc.get("enc_regen_pct", 0.0)), float(val))
+            return None
+        if field == "warcry_stacks":
+            enc["enc_warcry"] = enc.get("enc_warcry", 0) + val
+            return f"📣 +{15 * enc['enc_warcry']}% dmg"
+        if field == "empower_next":
+            enc["enc_empower_next"] = float(val)
+            return f"⚡ next hit +{int(float(val) * 100)}%"
+        if field == "def_reflect_hits":
+            _dv = get_stat(get_player(enc.get("uid")) or {}, "DEF") if enc.get("uid") else 0
+            enc["enc_reflect_dmg"] = enc.get("enc_reflect_dmg", 0) + max(20, round(_dv * 1.5))
+            enc["p_guarding"] = True
+            return "🪞 reflect"
+        return None
+    # foe
+    if field == "stun_turns":
+        enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + val
+        return f"⚡ stun {val}t"
+    if field == "entangle_turns":
+        enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + val
+        enc["e_weakened"] = True
+        return f"🌱 root {val}t"
+    if field == "poison_stacks":
+        enc["e_poisoned"] = True
+        enc["e_poison_turns"] = max(enc.get("e_poison_turns", 0), 4)
+        return "☠️ poison"
+    if field == "poison_pct":
+        enc["e_poison_pct"] = max(enc.get("e_poison_pct", 0), val)
+        return None
+    if field == "weakened_hits":
+        enc["e_weakened"] = True
+        return "⬇️ weakened"
+    if field == "silence_turns":
+        enc["e_weakened"] = True
+        return "🤐 silenced"
+    return None
+
+def _enc_process_kit_skill(enc, p, sk):
+    """Resolve one of the player's 3 kit skills inside an encounter.
+    Returns (action_txt, dmg, is_support) — same contract as _enc_process_skill.
+    Caller has already checked MP affordability & heal limit."""
+    sk_name = sk.get("name", "Skill")
+    emoji   = sk.get("emoji", "✨")
+    w       = get_weather()
+    cost    = _enc_skill_mp_cost(sk)
+    enc["p_mp"] = max(0, enc.get("p_mp", 0) - cost)
+    p["mp"]     = enc["p_mp"]
+
+    # ── Support: heal / cleanse / self-buffs / foe-debuffs ───────────────────
+    if sk.get("kind") == "support":
+        notes = []
+        if sk.get("heal_pct"):
+            heal = max(1, round(enc["p_max_hp"] * sk["heal_pct"]))
+            if enc.pop("p_hexed", False):
+                heal = max(1, heal // 2); notes.append("(hexed — ½ heal)")
+            enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
+            notes.append(f"💚 +{heal} HP")
+        if sk.get("cleanse"):
+            for _f in ("p_stunned", "p_skip", "p_weakened", "p_bleed", "p_burn",
+                       "p_poison", "p_blind", "p_slow", "p_hexed"):
+                enc.pop(_f, None)
+            notes.append("🧼 debuffs cleared")
+        for (tgt, field, op, val) in sk.get("effect", []):
+            note = _enc_kit_apply_effect(enc, tgt, field, op, val)
+            if note:
+                notes.append(note)
+        txt = f"{emoji} *{sk_name}*!" + (("  " + "  ".join(notes)) if notes else "")
+        return txt, 0, True
+
+    # ── Strike: damage skill with an optional on-hit rider ───────────────────
+    base = calc_attack_damage(p, w)
+    if enc.pop("p_weakened", False): base = int(base * 0.65)
+    if enc.pop("p_slow", False):     base = int(base * 0.80)
+    if enc.pop("p_blind", False) and random.random() < 0.40:
+        return f"{emoji} *{sk_name}*! You're blinded and miss!", 0, False
+
+    dmg    = max(1, round(base * sk.get("mult", 1.5)))
+    rider  = sk.get("rider", {}) or {}
+    extras = []
+    crit_done = False
+
+    if "execute" in rider and enc["e_hp"] / max(1, enc["e_max_hp"]) <= rider["execute"]:
+        dmg *= 2; extras.append("💀 EXECUTE ×2")
+    if "pierce" in rider:
+        dmg = max(1, round(dmg * (1 + rider["pierce"] * 0.5))); extras.append("🔮 pierce")
+    if "crit" in rider and random.random() < (rider["crit"] + 0.15):
+        dmg = apply_crit(p, dmg); extras.append("💥 CRIT"); crit_done = True
+    if "bleed" in rider:
+        enc["e_poisoned"] = True
+        enc["e_poison_pct"] = max(enc.get("e_poison_pct", 0), 12)
+        enc["e_poison_turns"] = max(enc.get("e_poison_turns", 0), 4)
+        extras.append("🩸 bleed")
+    if "expose" in rider:
+        enc["e_weakened"] = True; extras.append("🎯 exposed")
+    if rider.get("focus"):
+        enc["enc_focus"] = min(5, enc.get("enc_focus", 0) + 1)
+        dmg = max(1, round(dmg * (1 + 0.25 * enc["enc_focus"])))
+        extras.append(f"🎯 focus ×{enc['enc_focus']}")
+
+    dmg = _enc_player_dmg_mods(enc, dmg)
+    if not crit_done and check_crit(p):
+        dmg = apply_crit(p, dmg); extras.append("💥 CRIT")
+
+    ls = rider.get("lifesteal", 0)
+    if ls:
+        healed = max(1, round(dmg * ls))
+        enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + healed)
+        extras.append(f"💚 +{healed}")
+
+    # Pet piles on
+    pet_extra = ""
+    pet_info = enc.get("pet_info")
+    if pet_info and pet_info.get("atk", 0) > 0:
+        pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
+        enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
+        pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
+
+    enc["e_hp"] = max(0, enc["e_hp"] - dmg)
+    tag = ("  " + " ".join(extras)) if extras else ""
+    return f"{emoji} *{sk_name}*! *{dmg}* damage!{tag}{pet_extra}", dmg, False
 
 def _enc_process_skill(enc, p, sk):
     """Process a skill use in encounter/hunt.
@@ -6266,6 +6468,15 @@ def _apply_move_effect(enc, move_key, target="player"):
 def _apply_dot_tick(enc):
     """Apply bleed/burn/poison ticks each turn; return combined damage text."""
     msgs = []
+    # ── Player regen (from kit support skills: Renew / Regrowth / Mana Ward) ──
+    if enc.get("enc_regen_turns", 0) > 0:
+        pct = float(enc.get("enc_regen_pct", 0.08))
+        heal = max(1, round(enc["p_max_hp"] * pct))
+        enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + heal)
+        enc["enc_regen_turns"] -= 1
+        if enc["enc_regen_turns"] <= 0:
+            enc.pop("enc_regen_turns", None); enc.pop("enc_regen_pct", None)
+        msgs.append(f"🌿 Regen +{heal}")
     # ── Player DOTs (decrement so they expire) ────────────────────────────
     if enc.get("p_bleed", 0) > 0:
         d = max(3, enc["p_max_hp"] // 20)
@@ -25773,6 +25984,9 @@ async def _start_encounter_hunt(query, uid, p):
     monster = _pick_random_monster(p_level)
     m_level = _enc_monster_level(monster, p_level)
     m_hp, m_atk, reward_mult, num_gear, num_pots, gear_rarities = _enc_level_stats(m_level, p_level)
+    # Wild monsters are meant to be caught, not out-slugged — trim their HP so
+    # they hit the catch window quickly (farming Monster Cores felt impossible).
+    m_hp = max(30, round(m_hp * _HUNT_HP_FACTOR))
     p_mhp = calc_max_hp(p)
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     p_max_mp = calc_max_mp(p)
@@ -26256,6 +26470,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             dmg    = calc_attack_damage(p, _enc_w)
             if enc.pop("p_weakened", False): dmg = max(1, int(dmg * 0.65))
             if enc.pop("p_slow", False):     dmg = max(1, int(dmg * 0.80))
+            dmg = _enc_player_dmg_mods(enc, dmg)
             if enc.pop("p_blind", False) and random.random() < 0.40:
                 action_txt = "👁️ You swing blindly and miss!"
             else:
@@ -26305,22 +26520,20 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 action_txt = f"You attacked for *{dmg}* damage!{pet_extra}{_enc_extras}"
 
         elif data.startswith(f"enc_skl_{uid}_"):
-            p_skills = get_combat_skills(p)
+            p_skills = _enc_kit_skills(p)
             try:
                 idx = int(data[len(f"enc_skl_{uid}_"):])
                 sk  = p_skills[idx]
             except (ValueError, IndexError):
                 await query.answer("Skill not available!", show_alert=True); return
-            _HEAL_LIMIT_TYPES = {"self_heal","self_heal_buff","group_heal","revive_heal",
-                                 "regen","heal_shield","mass_cleanse","full_revive","aoe_heal_dmg"}
-            if sk.get("type") in _HEAL_LIMIT_TYPES or str(sk.get("type","")).endswith("heal"):
+            if _enc_kit_is_heal(sk):
                 if enc.get("skill_heal_uses", 0) >= 3:
                     await query.answer("🚫 Heal limit reached (3/3)! Healing skills exhausted.", show_alert=True)
                     return
-            _sk_mp_cost = _dng_skill_mp_cost(sk)
+            _sk_mp_cost = _enc_skill_mp_cost(sk)
             if enc.get("p_mp", 0) < _sk_mp_cost:
                 await query.answer(f"❌ Not enough MP! Need {_sk_mp_cost}, have {enc.get('p_mp',0)}.", show_alert=True); return
-            action_txt, _sk_dmg, _is_support = _enc_process_skill(enc, p, sk)
+            action_txt, _sk_dmg, _is_support = _enc_process_kit_skill(enc, p, sk)
             if _is_support:
                 enc["skill_heal_uses"] = enc.get("skill_heal_uses", 0) + 1
                 npc_act = _enc_npc_attack(enc, p)
@@ -26591,6 +26804,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             dmg     = calc_attack_damage(p, _hunt_w)
             if enc.pop("p_weakened", False): dmg = max(1, int(dmg * 0.65))
             if enc.pop("p_slow", False):     dmg = max(1, int(dmg * 0.80))
+            dmg = _enc_player_dmg_mods(enc, dmg)
             elem_e = ELEMENT_EMOJI.get(enc.get("element",""), "")
             if enc.pop("p_blind", False) and random.random() < 0.40:
                 action_txt = f"👁️ You swing blindly at *{enc['e_name']}* {elem_e} and miss!"
@@ -26641,19 +26855,20 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 action_txt = f"You attacked *{enc['e_name']}* {elem_e} for *{dmg}* damage!{pet_extra}{_enc_extras}"
 
         elif data.startswith(f"enc_skl_{uid}_"):
-            p_skills = get_combat_skills(p)
+            p_skills = _enc_kit_skills(p)
             try:
                 idx = int(data[len(f"enc_skl_{uid}_"):])
                 sk  = p_skills[idx]
             except (ValueError, IndexError):
                 await query.answer("Skill not available!", show_alert=True); return
-            _HEAL_LIMIT_TYPES = {"self_heal","self_heal_buff","group_heal","revive_heal",
-                                 "regen","heal_shield","mass_cleanse","full_revive","aoe_heal_dmg"}
-            if sk.get("type") in _HEAL_LIMIT_TYPES or str(sk.get("type","")).endswith("heal"):
+            if _enc_kit_is_heal(sk):
                 if enc.get("skill_heal_uses", 0) >= 3:
                     await query.answer("🚫 Heal limit reached (3/3)! Healing skills exhausted.", show_alert=True)
                     return
-            action_txt, _hsk_dmg, _is_support = _enc_process_skill(enc, p, sk)
+            _sk_mp_cost = _enc_skill_mp_cost(sk)
+            if enc.get("p_mp", 0) < _sk_mp_cost:
+                await query.answer(f"❌ Not enough MP! Need {_sk_mp_cost}, have {enc.get('p_mp',0)}.", show_alert=True); return
+            action_txt, _hsk_dmg, _is_support = _enc_process_kit_skill(enc, p, sk)
             if _is_support:
                 enc["skill_heal_uses"] = enc.get("skill_heal_uses", 0) + 1
                 mon_act = _enc_monster_attack(enc)
@@ -26739,10 +26954,7 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         elif data == f"enc_catch_{uid}":
             mon_key  = enc["e_key"]
             mdata    = MONSTER_BY_KEY.get(mon_key)
-            base_rate = enc.get("e_catch_rate", 0.20)
-            hp_pct    = enc["e_hp"] / max(1, enc["e_max_hp"])
-            hp_mod    = 1.3 - hp_pct  # lower HP = better catch rate
-            catch_chance = min(0.55, base_rate * hp_mod)
+            catch_chance = _hunt_catch_chance(enc)
             if random.random() < catch_chance:
                 elem    = enc.get("element", "")
                 elem_e  = ELEMENT_EMOJI.get(elem, "")
