@@ -6091,10 +6091,20 @@ def _enc_process_kit_skill(enc, p, sk, charge_mp=True):
         enc["enc_focus"] = min(5, enc.get("enc_focus", 0) + 1)
         dmg = max(1, round(dmg * (1 + 0.25 * enc["enc_focus"])))
         extras.append(f"🎯 focus ×{enc['enc_focus']}")
+    if rider.get("laststand"):
+        _hpr = enc.get("p_hp", 1) / max(1, enc.get("p_max_hp", 1))
+        dmg = max(1, round(dmg * (1 + (1 - _hpr) * 0.5)))
+        if _hpr < 0.9: extras.append("🔥 last stand")
+    if rider.get("momentum"):
+        dmg = max(1, round(dmg * 1.15)); extras.append("🌀 momentum")
 
     dmg = _enc_player_dmg_mods(enc, dmg)
     if not crit_done and check_crit(p):
         dmg = apply_crit(p, dmg); extras.append("💥 CRIT")
+    # GUARANTEE: an offensive skill must always land well above a plain attack —
+    # even when weakened/slowed. Floor it against a clean reference swing.
+    _ref = calc_attack_damage(p, w)
+    dmg = max(dmg, round(_ref * _KIT_STRIKE_FLOOR))
 
     ls = rider.get("lifesteal", 0)
     if ls:
@@ -6102,17 +6112,32 @@ def _enc_process_kit_skill(enc, p, sk, charge_mp=True):
         enc["p_hp"] = min(enc["p_max_hp"], enc["p_hp"] + healed)
         extras.append(f"💚 +{healed}")
 
-    # Pet piles on
+    enc["e_hp"] = max(0, enc["e_hp"] - dmg)
+
+    # Pet + class companion pile on too — same bonus damage a regular attack
+    # gets, so a skill is never out-damaged by an auto-attack proc chain.
     pet_extra = ""
     pet_info = enc.get("pet_info")
     if pet_info and pet_info.get("atk", 0) > 0:
         pet_dmg = max(1, int(pet_info["atk"] * random.uniform(0.8, 1.2)))
         enc["e_hp"] = max(0, enc["e_hp"] - pet_dmg)
-        pet_extra = f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
+        pet_extra += f"\n🐾 *{pet_info['name']}* strikes for *{pet_dmg}*!"
+    def _cc_deal(raw):
+        enc["e_hp"] = max(0, enc["e_hp"] - raw); return raw
+    def _cc_apply(effect, val):
+        if effect in ("poison_stacks", "burn"): enc["e_poisoned"] = True
+        elif effect in ("distract_turns", "stun_turns"): enc["e_stunned_turns"] = enc.get("e_stunned_turns", 0) + val
+        elif effect == "bleed_stacks": enc["e_poisoned"] = True
+    try:
+        for _cc_ln in _class_companion_strike(p, _cc_deal, _cc_apply):
+            pet_extra += f"\n{_cc_ln}"
+    except Exception:
+        pass
 
-    enc["e_hp"] = max(0, enc["e_hp"] - dmg)
     tag = ("  " + " ".join(extras)) if extras else ""
     return f"{emoji} *{sk_name}*! *{dmg}* damage!{tag}{pet_extra}", dmg, False
+
+_KIT_STRIKE_FLOOR = 1.6   # an offensive skill always deals ≥ this × a plain attack
 
 def _enc_process_skill(enc, p, sk):
     """Process a skill use in encounter/hunt.
@@ -6664,6 +6689,29 @@ def _enc_npc_attack(enc, p):
     enc["p_hp"] = max(0, enc["p_hp"] - dmg)
     return f"*{enc['e_name']}* used *{label}{atk_name}* — *{dmg}* damage!{extra}"
 
+def _enc_absorb_incoming(enc, dmg):
+    """Apply the player's kit DEFENSIVE support buffs to an incoming hit:
+    Vanish/Evasive dodge, Bulwark/Divine-Shield charges, Brace guard, and
+    Mirror-Veil reflect. Returns (final_dmg, note). Shared so these skills work
+    against wild monsters, NPCs, and raid bosses alike."""
+    note = ""
+    if enc.get("enc_dodge_turns", 0) > 0:
+        enc["enc_dodge_turns"] -= 1
+        return 0, " 💨 *Dodged!*"
+    if enc.get("enc_shield_charges", 0) > 0:
+        enc["enc_shield_charges"] -= 1
+        rem = enc["enc_shield_charges"]
+        note = " 🛡️ *Shield negated the hit!*" + (f" ({rem} left)" if rem else " *(shield broke!)*")
+        dmg = 0
+    if dmg > 0 and enc.get("p_guard_hits", 0) > 0:
+        enc["p_guard_hits"] -= 1
+        dmg = max(1, int(dmg * 0.60)); note += " 🛡️ *(Guarding)*"
+    if enc.get("enc_reflect_dmg") and dmg > 0:
+        enc["e_hp"] = max(0, enc["e_hp"] - enc["enc_reflect_dmg"])
+        note += f" 🔄 *Reflected {enc['enc_reflect_dmg']}!*"
+        enc.pop("enc_reflect_dmg", None); enc.pop("p_guarding", None)
+    return dmg, note
+
 def _enc_monster_attack(enc):
     """Wild monster takes its turn; returns action description."""
     # ── Enemy stun: skip attack and decrement counter ─────────────────────────
@@ -6729,6 +6777,9 @@ def _enc_monster_attack(enc):
         dmg = _mit
         # Cap single hit at 40% of player max HP
         dmg = min(dmg, max(1, int(enc["p_max_hp"] * 0.40))) if dmg > 0 else 0
+        # Kit defensive buffs (Shield/Dodge/Guard/Reflect) absorb the hit
+        dmg, _abs_txt = _enc_absorb_incoming(enc, dmg)
+        _armor_txt += _abs_txt
         enc["p_hp"] = max(0, enc["p_hp"] - dmg)
         # Thorned (reflect_flat) enchant bounces damage back to the attacker
         _refl = pve_reflect_dmg(p, dmg) if p else 0
@@ -13856,8 +13907,8 @@ CLASS_KITS = {
                  "desc":"Coat your blade: Poison ×3 (12% max HP/turn)."},
     },
     "archer": {
-        "main": {"name":"Aimed Shot","emoji":"🏹","mp":18,"cd":2,"kind":"strike","mult":1.7,
-                 "rider":{"focus":True},"desc":"DEX×1.7, +25% per Focus stack from Attacks."},
+        "main": {"name":"Aimed Shot","emoji":"🏹","mp":18,"cd":2,"kind":"strike","mult":2.0,
+                 "rider":{"focus":True},"desc":"DEX×2.0, +25% per Focus stack from Attacks."},
         "s1":   {"name":"Evasive Roll","emoji":"🤸","mp":15,"cd":3,"kind":"support",
                  "effect":[("self","vanish_turns","add",2)],
                  "desc":"Dodge the next 2 hits against you."},
@@ -13866,8 +13917,8 @@ CLASS_KITS = {
                  "desc":"Cripple the foe: −25% damage for their next 3 hits."},
     },
     "priest": {
-        "main": {"name":"Smite","emoji":"🌟","mp":20,"cd":2,"kind":"strike","mult":1.6,
-                 "rider":{"lifesteal":0.25},"desc":"WIS×1.6 holy. Heal 25% of damage dealt."},
+        "main": {"name":"Smite","emoji":"🌟","mp":20,"cd":2,"kind":"strike","mult":2.0,
+                 "rider":{"lifesteal":0.25},"desc":"WIS×2.0 holy. Heal 25% of damage dealt."},
         "s1":   {"name":"Divine Shield","emoji":"🛡️","mp":18,"cd":3,"kind":"support",
                  "effect":[("self","shield_charges","add",3)],
                  "desc":"Halve the next 3 hits against you."},
@@ -13877,8 +13928,8 @@ CLASS_KITS = {
                  "desc":"Heal 20% + regen 10%/turn (3t) + cleanse debuffs."},
     },
     "botanist": {
-        "main": {"name":"Thorn Lash","emoji":"🌿","mp":18,"cd":2,"kind":"strike","mult":1.6,
-                 "rider":{"bleed":3},"desc":"WIS×1.6 + Bleed ×3."},
+        "main": {"name":"Thorn Lash","emoji":"🌿","mp":18,"cd":2,"kind":"strike","mult":2.0,
+                 "rider":{"bleed":3},"desc":"WIS×2.0 + Bleed ×3."},
         "s1":   {"name":"Regrowth","emoji":"🍃","mp":15,"cd":3,"kind":"support",
                  "heal_pct":0.12,"effect":[("self","regen_charges","add",3),("self","regen_amt","setmax",0.10)],
                  "desc":"Heal 12% + regen 10%/turn for 3 turns."},
@@ -13887,8 +13938,8 @@ CLASS_KITS = {
                  "desc":"Root the foe: −damage and can't escape for 2 turns."},
     },
     "enchantress": {
-        "main": {"name":"Hex Bolt","emoji":"🔯","mp":18,"cd":2,"kind":"strike","mult":1.6,
-                 "rider":{"expose":2},"desc":"INT×1.6. Exposes the foe: +damage taken for 2 hits."},
+        "main": {"name":"Hex Bolt","emoji":"🔯","mp":18,"cd":2,"kind":"strike","mult":2.0,
+                 "rider":{"expose":2},"desc":"INT×2.0. Exposes the foe: +damage taken for 2 hits."},
         "s1":   {"name":"Mirror Veil","emoji":"🪞","mp":18,"cd":3,"kind":"support",
                  "effect":[("self","def_reflect_hits","add",1),("self","shield_charges","add",1)],
                  "desc":"Reflect the next hit back and soften it."},
@@ -13897,8 +13948,8 @@ CLASS_KITS = {
                  "desc":"−damage (3 hits) and Silence 1 turn (no skills)."},
     },
     "valkyrie": {
-        "main": {"name":"Valkyrie Strike","emoji":"⚡","mp":20,"cd":2,"kind":"strike","mult":1.9,
-                 "rider":{"laststand":True},"desc":"STR×1.9. Hits harder the lower YOUR HP."},
+        "main": {"name":"Valkyrie Strike","emoji":"⚡","mp":20,"cd":2,"kind":"strike","mult":2.1,
+                 "rider":{"laststand":True},"desc":"STR×2.1. Hits harder the lower YOUR HP."},
         "s1":   {"name":"Aegis","emoji":"🛡️","mp":18,"cd":3,"kind":"support",
                  "effect":[("self","shield_charges","add",3)],
                  "desc":"Halve the next 3 hits against you."},
@@ -13907,8 +13958,8 @@ CLASS_KITS = {
                  "desc":"Heal 10% + +15% damage per stack (all fight)."},
     },
     "phantom_dancer": {
-        "main": {"name":"Blade Waltz","emoji":"🌀","mp":18,"cd":2,"kind":"strike","mult":1.5,
-                 "rider":{"momentum":True},"desc":"AGI×1.5, +8% per Momentum (from dodges)."},
+        "main": {"name":"Blade Waltz","emoji":"🌀","mp":18,"cd":2,"kind":"strike","mult":2.0,
+                 "rider":{"momentum":True},"desc":"AGI×2.0, +8% per Momentum (from dodges)."},
         "s1":   {"name":"Phantom Step","emoji":"👻","mp":15,"cd":3,"kind":"support",
                  "effect":[("self","vanish_turns","add",2),("self","dodge_momentum","add",2)],
                  "desc":"Dodge the next 2 hits and gain Momentum."},
@@ -13917,8 +13968,8 @@ CLASS_KITS = {
                  "desc":"Your next attack deals +60% damage."},
     },
     "serpent": {
-        "main": {"name":"Venom Fang","emoji":"🐍","mp":18,"cd":2,"kind":"strike","mult":1.6,
-                 "rider":{"poison":4},"desc":"STR×1.6 + heavy Poison ×4."},
+        "main": {"name":"Venom Fang","emoji":"🐍","mp":18,"cd":2,"kind":"strike","mult":2.0,
+                 "rider":{"poison":4},"desc":"STR×2.0 + heavy Poison ×4."},
         "s1":   {"name":"Coil","emoji":"🌀","mp":15,"cd":3,"kind":"support",
                  "effect":[("self","shield_charges","add",2)],
                  "desc":"Coil tight: halve the next 2 hits against you."},
@@ -19552,6 +19603,72 @@ async def _coop_dm_all(raid, bot, text):
         except Exception:
             pass
 
+# ── Co-op support-effect plumbing: kit buffs/debuffs persist on member/boss ────
+def _coop_seed_enc(raid, uid, mm):
+    """Build an enc dict for the kit resolver, seeded with this member's carried
+    buffs and the boss's carried debuffs so support skills stack and strikes
+    benefit from War Cry/Empower/etc."""
+    return {"uid": uid, "e_name": raid["name"], "e_hp": raid["hp"], "e_max_hp": raid["max_hp"],
+            "p_hp": mm["hp"], "p_max_hp": mm["max_hp"], "p_mp": mm["mp"], "p_max_mp": mm["max_mp"],
+            "enc_shield_charges": mm.get("shield", 0), "enc_dodge_turns": mm.get("dodge", 0),
+            "enc_regen_turns": mm.get("regen_turns", 0), "enc_regen_pct": mm.get("regen_pct", 0.0),
+            "enc_warcry": mm.get("warcry", 0), "enc_empower_next": mm.get("empower", 0.0),
+            "enc_reflect_dmg": mm.get("reflect", 0), "p_guard_hits": mm.get("guard", 0),
+            "e_stunned_turns": raid.get("boss_stun", 0), "e_weakened": raid.get("boss_weak", False),
+            "e_poisoned": raid.get("boss_poison", False), "e_poison_pct": raid.get("boss_poison_pct", 0),
+            "e_poison_turns": raid.get("boss_poison_turns", 0)}
+
+def _coop_write_enc(raid, mm, enc):
+    """Persist an enc's buff/debuff state back onto the member + boss."""
+    mm["hp"] = min(mm["max_hp"], enc.get("p_hp", mm["hp"])); mm["mp"] = enc.get("p_mp", mm["mp"])
+    raid["hp"] = max(0, enc.get("e_hp", raid["hp"]))
+    mm["shield"] = enc.get("enc_shield_charges", 0); mm["dodge"] = enc.get("enc_dodge_turns", 0)
+    mm["regen_turns"] = enc.get("enc_regen_turns", 0); mm["regen_pct"] = float(enc.get("enc_regen_pct", 0.0) or 0)
+    mm["warcry"] = enc.get("enc_warcry", 0); mm["empower"] = float(enc.get("enc_empower_next", 0) or 0)
+    mm["reflect"] = enc.get("enc_reflect_dmg", 0); mm["guard"] = enc.get("p_guard_hits", 0)
+    raid["boss_stun"] = enc.get("e_stunned_turns", 0); raid["boss_weak"] = bool(enc.get("e_weakened"))
+    raid["boss_poison"] = bool(enc.get("e_poisoned")); raid["boss_poison_pct"] = enc.get("e_poison_pct", 0)
+    raid["boss_poison_turns"] = enc.get("e_poison_turns", 0)
+
+def _coop_member_dmg_mods(mm, dmg):
+    """War Cry (persistent) + Empower (one-shot) on a member's basic attack."""
+    st = safe_int(mm.get("warcry"))
+    if st: dmg = max(1, round(dmg * (1 + 0.15 * st)))
+    emp = float(mm.get("empower") or 0)
+    if emp: dmg = max(1, round(dmg * (1 + emp))); mm["empower"] = 0.0
+    return dmg
+
+def _coop_boss_hit(raid, tuid, raw):
+    """Boss strikes member tuid for `raw` (pre-mitigation): apply DEF + this
+    member's kit defensive buffs (Dodge/Shield/Guard/Reflect). Returns a log line."""
+    tgt = raid["members"][tuid]; tp = get_player(tuid)
+    bdmg = calc_defense(tp, raw) if tp else raw
+    _menc = {"enc_dodge_turns": tgt.get("dodge", 0), "enc_shield_charges": tgt.get("shield", 0),
+             "p_guard_hits": tgt.get("guard", 0), "enc_reflect_dmg": tgt.get("reflect", 0), "e_hp": raid["hp"]}
+    bdmg, _absn = _enc_absorb_incoming(_menc, bdmg)
+    tgt["dodge"] = _menc["enc_dodge_turns"]; tgt["shield"] = _menc["enc_shield_charges"]
+    tgt["guard"] = _menc["p_guard_hits"]; tgt["reflect"] = _menc.get("enc_reflect_dmg", 0)
+    raid["hp"] = max(0, _menc.get("e_hp", raid["hp"]))
+    tgt["hp"] = max(0, tgt["hp"] - bdmg)
+    if bdmg <= 0:
+        return f"🛡️ {raid['name']} → *{tgt['name']}*{_absn or ' miss!'}"
+    line = f"💥 {raid['name']} → *{tgt['name']}* {fmt_num(bdmg)}{_absn}"
+    if tgt["hp"] <= 0 and not tgt["downed"]:
+        tgt["downed"] = True; line += f"\n💀 *{tgt['name']}* is downed!"
+    return line
+
+def _coop_tick_dots(raid):
+    """Between actions: boss poison ticks, downed-safe member regen ticks."""
+    if raid.get("boss_poison") and safe_int(raid.get("boss_poison_turns")) > 0:
+        pd = max(1, raid["max_hp"] * safe_int(raid.get("boss_poison_pct", 8)) // 100)
+        raid["hp"] = max(0, raid["hp"] - pd); raid["boss_poison_turns"] -= 1
+        if raid["boss_poison_turns"] <= 0: raid["boss_poison"] = False
+        raid.setdefault("log", []).append(f"☠️ {raid['name']} suffers *{fmt_num(pd)}* poison")
+    for _m in raid["members"].values():
+        if not _m["downed"] and _m.get("regen_turns", 0) > 0:
+            h = max(1, int(_m["max_hp"] * float(_m.get("regen_pct", 0.08) or 0.08)))
+            _m["hp"] = min(_m["max_hp"], _m["hp"] + h); _m["regen_turns"] -= 1
+
 def _coop_raid_resolve(raid, uid, p, action, skill_idx=None):
     """Apply one member action + the boss's (enrage-scaled) retaliation. Mutates
     raid in place. Returns status in
@@ -19574,6 +19691,7 @@ def _coop_raid_resolve(raid, uid, p, action, skill_idx=None):
         dmg = calc_attack_damage(p, w); crit = ""
         if check_crit(p):
             dmg = apply_crit(p, dmg); crit = " 💥"
+        dmg = _coop_member_dmg_mods(mm, dmg)   # War Cry / Empower
         raid["hp"] = max(0, raid["hp"] - dmg); mm["dmg"] += dmg
         raid.setdefault("log", []).append(f"⚔️ *{mm['name']}* → *{fmt_num(dmg)}*{crit}")
     elif action == "skl":
@@ -19583,11 +19701,10 @@ def _coop_raid_resolve(raid, uid, p, action, skill_idx=None):
         sk = kit[skill_idx]; cost = _enc_skill_mp_cost(sk)
         if mm["mp"] < cost:
             return "nomp"
-        enc = {"uid": uid, "e_name": raid["name"], "e_hp": raid["hp"], "e_max_hp": raid["max_hp"],
-               "p_hp": mm["hp"], "p_max_hp": mm["max_hp"], "p_mp": mm["mp"], "p_max_mp": mm["max_mp"]}
+        enc = _coop_seed_enc(raid, uid, mm)     # carries member buffs + boss debuffs
         _txt, dmg, _is_sup = _enc_process_kit_skill(enc, p, sk)
-        mm["mp"] = enc["p_mp"]; mm["hp"] = min(mm["max_hp"], enc["p_hp"])
-        raid["hp"] = max(0, enc["e_hp"]); mm["dmg"] += max(0, safe_int(dmg))
+        _coop_write_enc(raid, mm, enc)          # persist shields/dodge/regen/stun/poison/etc.
+        mm["dmg"] += max(0, safe_int(dmg))
         _head = _txt.split("!")[0].replace("*", "")
         raid.setdefault("log", []).append(f"{sk.get('emoji','✨')} *{mm['name']}* — {_head}!"
                                           + (f" *{fmt_num(dmg)}*" if dmg else ""))
@@ -19609,6 +19726,7 @@ def _coop_raid_resolve(raid, uid, p, action, skill_idx=None):
     else:
         return "invalid"
     raid["ts"] = time.time()
+    _coop_tick_dots(raid)   # boss poison + member regen from kit skills
     # Multi-phase (guild bosses): crossing an HP threshold triggers a new form
     # that hits ~25% harder — a mid-fight difficulty spike.
     thresholds = raid.get("phase_thresholds") or []
@@ -19643,22 +19761,19 @@ def _coop_raid_resolve(raid, uid, p, action, skill_idx=None):
         return "victory"
     if live:
         return "hit"   # the ambush ticker delivers the monster's attacks
-    # Boss retaliation, scaled by the enrage stage
-    emult = 1 + 0.4 * _coop_enrage_stage(raid)
-    standing = [u for u, m2 in raid["members"].items() if not m2["downed"]]
-    if standing:
-        tuid = random.choice(standing); tgt = raid["members"][tuid]
-        raw = int(random.randint(raid["dmg_min"], raid["dmg_max"]) * emult)
-        tp = get_player(tuid) or p
-        bdmg = calc_defense(tp, raw)
-        tgt["hp"] = max(0, tgt["hp"] - bdmg)
-        if bdmg <= 0:
-            raid["log"].append(f"🌀 {raid['name']} misses *{tgt['name']}*!")
-        else:
-            raid["log"].append(f"💥 {raid['name']} → *{tgt['name']}* {fmt_num(bdmg)}")
-        if tgt["hp"] <= 0 and not tgt["downed"]:
-            tgt["downed"] = True
-            raid["log"].append(f"💀 *{tgt['name']}* is downed!")
+    # Boss retaliation — unless it's frozen/stunned by a kit skill
+    if safe_int(raid.get("boss_stun")) > 0:
+        raid["boss_stun"] -= 1
+        raid["log"].append(f"❄️ *{raid['name']}* is frozen — it can't attack!")
+    else:
+        emult = 1 + 0.4 * _coop_enrage_stage(raid)
+        if raid.get("boss_weak"):
+            emult *= 0.75; raid["boss_weak"] = False   # Cripple/Curse softened its blow
+        standing = [u for u, m2 in raid["members"].items() if not m2["downed"]]
+        if standing:
+            tuid = random.choice(standing)
+            raw = int(random.randint(raid["dmg_min"], raid["dmg_max"]) * emult)
+            raid["log"].append(_coop_boss_hit(raid, tuid, raw))
     if all(m2["downed"] for m2 in raid["members"].values()):
         raid["over"] = True
         return "wipe"
@@ -20220,20 +20335,12 @@ def _ambush_monster_turn(raid):
     if not standing:
         raid["over"] = True
         return "wipe"
+    _coop_tick_dots(raid)   # kit poison on the ambushers + member regen tick
     raid["ticks"] = raid.get("ticks", 0) + 1
     emult = 1 + 0.15 * min(6, raid["ticks"] // 3)   # they hit harder the longer you dawdle
-    tuid = random.choice(standing); tgt = raid["members"][tuid]
-    tp = get_player(tuid)
+    tuid = random.choice(standing)
     raw = int(random.randint(raid["dmg_min"], raid["dmg_max"]) * emult)
-    bdmg = calc_defense(tp, raw) if tp else raw
-    tgt["hp"] = max(0, tgt["hp"] - bdmg)
-    if bdmg <= 0:
-        raid["log"].append(f"🌀 {raid['name']} lunge at *{tgt['name']}* — dodged!")
-    else:
-        raid["log"].append(f"💥 {raid['name']} strike *{tgt['name']}* for {fmt_num(bdmg)}")
-    if tgt["hp"] <= 0 and not tgt["downed"]:
-        tgt["downed"] = True
-        raid["log"].append(f"💀 *{tgt['name']}* is downed!")
+    raid["log"].append(_coop_boss_hit(raid, tuid, raw))   # honors Dodge/Shield/Guard/Reflect
     if all(m2["downed"] for m2 in raid["members"].values()):
         raid["over"] = True
         return "wipe"
