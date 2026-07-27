@@ -11727,6 +11727,14 @@ def init_db():
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""")
 
+    c.execute("""CREATE TABLE IF NOT EXISTS guild_raid_board (
+        guild_id INTEGER, week TEXT,
+        clears INTEGER DEFAULT 0,
+        best_secs INTEGER DEFAULT 0,
+        top_damage INTEGER DEFAULT 0,
+        PRIMARY KEY (guild_id, week)
+    )""")
+
     c.execute("""CREATE TABLE IF NOT EXISTS bounties (
         bounty_id INTEGER PRIMARY KEY AUTOINCREMENT,
         placer_id INTEGER, target_id INTEGER,
@@ -19449,9 +19457,12 @@ async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _coop_raids = {}            # "party:{id}" / "guild:{id}" -> raid state
 _COOP_RAID_IDLE   = 1800    # 30 min with no action → the raid is abandoned
 _COOP_ENRAGE_SECS = 90      # every 90s the boss enrages (+40% dmg/stage, cap 6)
+_COOP_ENRAGE_MAX  = 6       # enrage stage cap
+_COOP_BERSERK_SECS = 90 * 9 # ~13.5 min hard limit — the boss goes BERSERK and wipes the group
 _COOP_HEAL_PCT    = 0.40    # Heal/Revive restore 40% of a member's max HP
 _COOP_HEALS       = 2       # self-heals per member per raid
 _COOP_REVIVES     = 1       # teammate revives per member per raid
+_COOP_GUILD_PHASES = [0.66, 0.33]   # guild bosses gain a form at 66% & 33% HP (+25% dmg each)
 
 def _coop_raid_boss(member_players, scope):
     """Roll a boss scaled to the group's size and hitting power. Guild bosses are
@@ -19473,16 +19484,24 @@ def _coop_raid_boss(member_players, scope):
     }
 
 def _coop_enrage_stage(raid):
-    return min(6, int((time.time() - raid.get("start", time.time())) // _COOP_ENRAGE_SECS))
+    return min(_COOP_ENRAGE_MAX, int((time.time() - raid.get("start", time.time())) // _COOP_ENRAGE_SECS))
+
+def _coop_secs_left(raid):
+    """Seconds until the boss goes berserk (hard time limit)."""
+    return max(0, int(_COOP_BERSERK_SECS - (time.time() - raid.get("start", time.time()))))
 
 def _coop_raid_card(raid):
     bar   = _enc_hp_bar(raid["hp"], raid["max_hp"], 14)
     ico   = "🏰" if raid["scope"] == "guild" else "🐉"
     title = "GUILD RAID" if raid["scope"] == "guild" else "PARTY RAID"
-    lines = [f"{ico} *{title} — {raid['name']}*", ""]
+    phase = safe_int(raid.get("phase", 1))
+    phase_tag = f"  ·  Phase {phase}" if raid["scope"] == "guild" and phase > 1 else ""
+    lines = [f"{ico} *{title} — {raid['name']}*{phase_tag}", ""]
     stage = _coop_enrage_stage(raid)
     if stage > 0:
-        lines.append(f"😡 *ENRAGED ×{stage}* — _the boss hits harder, finish fast!_")
+        _left = _coop_secs_left(raid)
+        _warn = f"  ⏳ berserk in {_left//60}m {_left%60}s" if _left <= 180 else ""
+        lines.append(f"😡 *ENRAGED ×{stage}* — _the boss hits harder, finish fast!_{_warn}")
     lines += [f"`{bar}`  {fmt_num(raid['hp'])}/{fmt_num(raid['max_hp'])} HP", ""]
     for _uid, mm in raid["members"].items():
         mbar = _enc_hp_bar(mm["hp"], mm["max_hp"], 6)
@@ -19513,6 +19532,14 @@ def _coop_raid_resolve(raid, uid, p, action, skill_idx=None):
     mm = raid["members"].get(uid)
     if not mm or mm["downed"] or raid.get("over"):
         return "invalid"
+    # HARD LIMIT: past the berserk timer the boss unleashes an unavoidable AOE
+    # that flattens the whole group — a real fail state so raids have stakes.
+    if _coop_secs_left(raid) <= 0:
+        for m2 in raid["members"].values():
+            m2["hp"] = 0; m2["downed"] = True
+        raid["log"].append(f"☠️ *{raid['name']}* goes BERSERK — the whole group is wiped out!")
+        raid["over"] = True
+        return "wipe"
     w = get_weather()
     if action == "atk":
         dmg = calc_attack_damage(p, w); crit = ""
@@ -19553,6 +19580,17 @@ def _coop_raid_resolve(raid, uid, p, action, skill_idx=None):
     else:
         return "invalid"
     raid["ts"] = time.time()
+    # Multi-phase (guild bosses): crossing an HP threshold triggers a new form
+    # that hits ~25% harder — a mid-fight difficulty spike.
+    thresholds = raid.get("phase_thresholds") or []
+    if thresholds:
+        frac = raid["hp"] / max(1, raid["max_hp"])
+        reached = 1 + sum(1 for t in thresholds if frac <= t)
+        if reached > safe_int(raid.get("phase", 1)):
+            raid["phase"] = reached
+            raid["dmg_min"] = int(raid["dmg_min"] * 1.25)
+            raid["dmg_max"] = int(raid["dmg_max"] * 1.25)
+            raid["log"].append(f"⚔️ *{raid['name']}* shifts into *Phase {reached}* — it hits harder now!")
     if raid["hp"] <= 0:
         raid["over"] = True
         return "victory"
@@ -19612,7 +19650,7 @@ def _coop_raid_rewards_text(raid):
         mvp = " *MVP*" if i == 0 else ""
         lines.append(f"{medal} *{mm['name']}*{mvp} — {fmt_num(mm['dmg'])} dmg\n"
                      f"    +{fmt_num(exp)} EXP  +{fmt_num(gold)}g{loot_txt}")
-    # Guild raids also feed the guild's own progression
+    # Guild raids also feed the guild's own progression + the weekly board
     if raid["scope"] == "guild":
         g = get_guild(raid["id"])
         if g:
@@ -19621,7 +19659,69 @@ def _coop_raid_rewards_text(raid):
             lines.append(f"\n🏰 *+{fmt_num(int(raid['exp']*1.5))} Guild EXP!*")
             for gm in gmsgs:
                 lines.append(gm)
+        _secs = max(1, int(time.time() - raid.get("start", time.time())))
+        _top = max((mm["dmg"] for mm in raid["members"].values()), default=0)
+        _guild_raid_record(raid["id"], _secs, _top)
+        _rank = _guild_raid_week_rank(raid["id"])
+        if _rank:
+            lines.append(f"📊 _This week: rank *#{_rank}* on the Guild Raid board — see /raidboard._")
     return "\n".join(lines)
+
+def _iso_week():
+    y, wk, _ = datetime.now().isocalendar()
+    return f"{y}-W{wk:02d}"
+
+def _guild_raid_record(guild_id, secs, top_damage):
+    """Upsert this week's guild-raid stats: +1 clear, fastest time, biggest hit."""
+    try:
+        conn = _db(); c = conn.cursor(); wk = _iso_week()
+        c.execute("SELECT clears, best_secs, top_damage FROM guild_raid_board WHERE guild_id=? AND week=?",
+                  (guild_id, wk))
+        row = c.fetchone()
+        if row:
+            clears = safe_int(row[0]) + 1
+            best = min(safe_int(row[1]) or secs, secs)
+            top  = max(safe_int(row[2]), safe_int(top_damage))
+            c.execute("UPDATE guild_raid_board SET clears=?, best_secs=?, top_damage=? WHERE guild_id=? AND week=?",
+                      (clears, best, top, guild_id, wk))
+        else:
+            c.execute("INSERT INTO guild_raid_board (guild_id, week, clears, best_secs, top_damage) VALUES (?,?,?,?,?)",
+                      (guild_id, wk, 1, secs, safe_int(top_damage)))
+        conn.commit()
+    except Exception:
+        logger.error("guild raid record failed", exc_info=True)
+
+def _guild_raid_week_rank(guild_id):
+    """This guild's 1-indexed rank on the current week's board, or None."""
+    try:
+        c = _db().cursor()
+        c.execute("SELECT guild_id FROM guild_raid_board WHERE week=? ORDER BY clears DESC, best_secs ASC",
+                  (_iso_week(),))
+        ids = [r[0] for r in c.fetchall()]
+        return ids.index(guild_id) + 1 if guild_id in ids else None
+    except Exception:
+        return None
+
+def _guild_raid_board_text(limit=10):
+    wk = _iso_week()
+    c = _db().cursor()
+    c.execute("SELECT guild_id, clears, best_secs, top_damage FROM guild_raid_board "
+              "WHERE week=? ORDER BY clears DESC, best_secs ASC LIMIT ?", (wk, limit))
+    rows = c.fetchall()
+    if not rows:
+        return f"🏰 *Guild Raid Board — {wk}*\n\n_No guild raids cleared yet this week. Be the first — /guildraid!_"
+    lines = [f"🏰 *Guild Raid Board — {wk}*", "_Ranked by clears, then fastest time._\n"]
+    for i, (gid, clears, best, top) in enumerate(rows, 1):
+        g = get_guild(gid)
+        gname = g["name"] if g else f"Guild {gid}"
+        medal = ("🥇", "🥈", "🥉")[i-1] if i <= 3 else f"{i}."
+        bt = f"{safe_int(best)//60}m {safe_int(best)%60}s" if safe_int(best) else "—"
+        lines.append(f"{medal} *{gname}* — {clears} clear{'s' if clears != 1 else ''}  ⚡{bt}  💥{fmt_num(top)}")
+    return "\n".join(lines)
+
+async def raidboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """This week's guild-raid leaderboard."""
+    await send_group(update, _guild_raid_board_text(), permanent=True)
 
 def _coop_raid_members_players(scope, rid):
     """(member player dicts, leader_id) for a scope+id, or (None, None)."""
@@ -19700,6 +19800,7 @@ async def _begin_coop_raid(bot, scope, opener_uid, chat_id, chat_type):
         "dmg_min": boss["dmg_min"], "dmg_max": boss["dmg_max"],
         "gold": boss["gold"], "exp": boss["exp"], "loot_table": boss["loot_table"],
         "title": boss["title"], "members": members,
+        "phase": 1, "phase_thresholds": (_COOP_GUILD_PHASES if scope == "guild" else []),
         "log": [f"A wild *{boss['name']}* blocks the group's path!"],
         "start": time.time(), "ts": time.time(), "over": False,
     }
@@ -28571,6 +28672,7 @@ GUIDE_PAGES = [
         "/guilddisband confirm  -  Disband your guild\n"
         "/guildwar  -  Declare war (leader, 24hr)\n"
         "/guildraid  -  (Leader) raid a big shared-HP boss with your guild\n"
+        "/raidboard  -  This week's guild-raid leaderboard\n"
         "/gbank deposit/withdraw  -  Guild bank\n"
         "/alliance  -  Secret Orders menu (same as /guild)\n"
         "\n"
@@ -42942,6 +43044,7 @@ def main():
     app.add_handler(CommandHandler("changeclass", changeclass_cmd))
     app.add_handler(CommandHandler("adventure",  adventure_cmd))
     app.add_handler(CommandHandler("guildraid",  guildraid_cmd))
+    app.add_handler(CommandHandler("raidboard",  raidboard_cmd))
     app.add_handler(CallbackQueryHandler(coop_raid_callback, pattern="^raid_"))
     app.add_handler(CommandHandler("resetstats", resetstats_cmd))
     app.add_handler(CommandHandler("allocate",   allocate_cmd))
