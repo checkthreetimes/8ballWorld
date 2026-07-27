@@ -19532,9 +19532,11 @@ def _coop_raid_resolve(raid, uid, p, action, skill_idx=None):
     mm = raid["members"].get(uid)
     if not mm or mm["downed"] or raid.get("over"):
         return "invalid"
+    live = raid.get("live")   # ambush: monster turns come from the background ticker
     # HARD LIMIT: past the berserk timer the boss unleashes an unavoidable AOE
     # that flattens the whole group — a real fail state so raids have stakes.
-    if _coop_secs_left(raid) <= 0:
+    # (Ambushes are bounded by their own ticker, so they skip this.)
+    if not live and _coop_secs_left(raid) <= 0:
         for m2 in raid["members"].values():
             m2["hp"] = 0; m2["downed"] = True
         raid["log"].append(f"☠️ *{raid['name']}* goes BERSERK — the whole group is wiped out!")
@@ -19594,6 +19596,8 @@ def _coop_raid_resolve(raid, uid, p, action, skill_idx=None):
     if raid["hp"] <= 0:
         raid["over"] = True
         return "victory"
+    if live:
+        return "hit"   # the ambush ticker delivers the monster's attacks
     # Boss retaliation, scaled by the enrage stage
     emult = 1 + 0.4 * _coop_enrage_stage(raid)
     standing = [u for u, m2 in raid["members"].items() if not m2["downed"]]
@@ -19665,7 +19669,18 @@ def _coop_raid_rewards_text(raid):
         _rank = _guild_raid_week_rank(raid["id"])
         if _rank:
             lines.append(f"📊 _This week: rank *#{_rank}* on the Guild Raid board — see /raidboard._")
+        # Cosmetic reward for holding #1: participants earn the weekly Vanguard title
+        if _rank == 1:
+            _newly = []
+            for uid in raid["members"]:
+                pp = get_player(uid)
+                if pp and award_title(pp, _RAID_VANGUARD_TITLE):
+                    save_player(pp); _newly.append(raid["members"][uid]["name"])
+            if _newly:
+                lines.append(f"🏆 *{_RAID_VANGUARD_TITLE}* title earned by: {', '.join(_newly)}!")
     return "\n".join(lines)
+
+_RAID_VANGUARD_TITLE = "🏆 Raid Vanguard"
 
 def _iso_week():
     y, wk, _ = datetime.now().isocalendar()
@@ -19746,7 +19761,7 @@ def _coop_raid_members_players(scope, rid):
 
 def _coop_is_member(scope, rid, uid):
     uid = safe_int(uid)
-    if scope == "party":
+    if scope in ("party", "ambush"):   # ambushes are keyed by the party id
         return uid in _get_party_members(rid)
     g = get_guild(rid)
     if not g:
@@ -19909,6 +19924,254 @@ async def coop_raid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception: pass
     finally:
         _cb_unlock(uid, _tok)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PARTY AMBUSHES — a LIVE-action co-op encounter. The bot randomly jumps a party
+# with monsters; the card ticks in place and the monsters keep attacking on a
+# timer whether or not anyone responds. Tap Attack/Skill/Heal/Revive to fight
+# back; kill it for loot, or get scattered if the whole party is downed. Reuses
+# the co-op raid engine in "live" mode (the ticker delivers the monster turns).
+# ══════════════════════════════════════════════════════════════════════════════
+_AMBUSH_TICK      = 11      # seconds between monster attacks
+_AMBUSH_MAX_TICKS = 26      # ~5 min, then the monsters give up and slink off
+_AMBUSH_CHANCE    = 0.16    # per eligible party, per spawner sweep (~30 min)
+_AMBUSH_COOLDOWN  = 5400    # 90 min between ambushes for the same party
+_AMBUSH_ACTIVE_SECS = 1800  # a member must have been seen within 30 min
+_ambush_last = {}           # party_id -> last ambush time
+
+_AMBUSH_FOES = [
+    "Bandit Ambushers", "Goblin War-Pack", "Starving Direwolves",
+    "Highway Marauders", "Shadow Stalkers", "Feral Ogre", "Rabid Wyvern",
+]
+
+def _recently_active(uid):
+    s = get_shadow(uid)
+    if not s or not s.get("last_seen"):
+        return False
+    try:
+        return (datetime.now() - datetime.fromisoformat(s["last_seen"])).total_seconds() <= _AMBUSH_ACTIVE_SECS
+    except Exception:
+        return False
+
+def _party_home_group(member_players):
+    """Most common (or any) group chat the party has been chatting in."""
+    from collections import Counter
+    votes = Counter()
+    for mp in member_players:
+        s = get_shadow(mp["user_id"])
+        hg = s.get("home_group") if s else None
+        if hg:
+            votes[hg] += 1
+    if votes:
+        return votes.most_common(1)[0][0]
+    return None
+
+def _ambush_monster_turn(raid):
+    """One monster attack on a random standing member (escalates slowly).
+    Returns 'wipe' if the whole party goes down, else 'hit'."""
+    if raid.get("over"):
+        return "over"
+    standing = [u for u, m2 in raid["members"].items() if not m2["downed"]]
+    if not standing:
+        raid["over"] = True
+        return "wipe"
+    raid["ticks"] = raid.get("ticks", 0) + 1
+    emult = 1 + 0.15 * min(6, raid["ticks"] // 3)   # they hit harder the longer you dawdle
+    tuid = random.choice(standing); tgt = raid["members"][tuid]
+    tp = get_player(tuid)
+    raw = int(random.randint(raid["dmg_min"], raid["dmg_max"]) * emult)
+    bdmg = calc_defense(tp, raw) if tp else raw
+    tgt["hp"] = max(0, tgt["hp"] - bdmg)
+    if bdmg <= 0:
+        raid["log"].append(f"🌀 {raid['name']} lunge at *{tgt['name']}* — dodged!")
+    else:
+        raid["log"].append(f"💥 {raid['name']} strike *{tgt['name']}* for {fmt_num(bdmg)}")
+    if tgt["hp"] <= 0 and not tgt["downed"]:
+        tgt["downed"] = True
+        raid["log"].append(f"💀 *{tgt['name']}* is downed!")
+    if all(m2["downed"] for m2 in raid["members"].values()):
+        raid["over"] = True
+        return "wipe"
+    return "hit"
+
+async def _ambush_loop(key, bot):
+    """Live ticker: every _AMBUSH_TICK seconds the monsters attack and the card
+    re-renders in place — the party keeps getting hit until they fight it off,
+    kill it (handled in the tap callback), or the monsters give up."""
+    while True:
+        await asyncio.sleep(_AMBUSH_TICK)
+        raid = _coop_raids.get(key)
+        if not raid or raid.get("over"):
+            return   # killed (callback handled rewards) or already ended
+        # Monsters flee after a while so a silent party isn't punished forever
+        if raid.get("ticks", 0) >= _AMBUSH_MAX_TICKS:
+            raid["over"] = True
+            _coop_raids.pop(key, None)
+            try:
+                await bot.edit_message_text(
+                    chat_id=raid["chat_id"], message_id=raid.get("msg_id"),
+                    text=_coop_raid_card(raid) + f"\n\n🌫️ *{raid['name']} slink back into the wild — the party survives.*",
+                    parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+        st = _ambush_monster_turn(raid)
+        if st == "wipe":
+            _coop_raids.pop(key, None)
+            _loss = 0
+            for uid, mm in raid["members"].items():
+                pp = get_player(uid)
+                if pp:
+                    pen = min(safe_int(pp.get("gold")) // 20, 500)   # a scare, small gold drop
+                    pp["gold"] = max(0, safe_int(pp.get("gold")) - pen); save_player(pp); _loss += pen
+            try:
+                await bot.edit_message_text(
+                    chat_id=raid["chat_id"], message_id=raid.get("msg_id"),
+                    text=_coop_raid_card(raid) + f"\n\n💀 *The party was overwhelmed and scattered!*"
+                    + (f"\n_Lost {fmt_num(_loss)}g in the chaos._" if _loss else ""),
+                    parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+        try:
+            await bot.edit_message_text(
+                chat_id=raid["chat_id"], message_id=raid.get("msg_id"),
+                text=_coop_raid_card(raid), parse_mode="Markdown",
+                reply_markup=_coop_raid_markup(raid))
+        except Exception:
+            pass
+
+async def _spawn_party_ambush(bot, party_id, chat_id, member_players):
+    """Create + post a live ambush for a party and start its ticker."""
+    key = f"ambush:{party_id}"
+    if key in _coop_raids:
+        return False
+    boss = _coop_raid_boss(member_players, "party")
+    # Ambushes are quicker & lighter than a summoned raid: ~55% HP, softer hits.
+    boss["max_hp"] = max(1500, int(boss["max_hp"] * 0.55))
+    boss["dmg_min"] = max(8, int(boss["dmg_min"] * 0.8)); boss["dmg_max"] = int(boss["dmg_min"] * 1.8)
+    foe = random.choice(_AMBUSH_FOES)
+    members = {}
+    for mp in member_players:
+        mhp = calc_max_hp(mp)
+        members[safe_int(mp["user_id"])] = {
+            "name": mp.get("username", "?"), "hp": mhp, "max_hp": mhp,
+            "mp": calc_max_mp(mp), "max_mp": calc_max_mp(mp), "dmg": 0, "downed": False,
+            "heals": _COOP_HEALS, "revives": _COOP_REVIVES,
+        }
+    raid = {
+        "scope": "ambush", "id": party_id, "key": key, "chat_id": chat_id, "live": True,
+        "name": foe, "max_hp": boss["max_hp"], "hp": boss["max_hp"],
+        "dmg_min": boss["dmg_min"], "dmg_max": boss["dmg_max"],
+        "gold": int(boss["gold"] * 0.6), "exp": int(boss["exp"] * 0.6),
+        "loot_table": boss["loot_table"], "title": None, "members": members,
+        "phase": 1, "phase_thresholds": [], "ticks": 0,
+        "log": [f"⚠️ *AMBUSH!* {foe} fall upon the party — fight back or flee!"],
+        "start": time.time(), "ts": time.time(), "over": False,
+    }
+    _coop_raids[key] = raid
+    _ambush_last[party_id] = time.time()
+    try:
+        msg = await bot.send_message(chat_id=chat_id, text=_coop_raid_card(raid),
+                                     parse_mode="Markdown", reply_markup=_coop_raid_markup(raid))
+        raid["msg_id"] = msg.message_id
+    except Exception:
+        _coop_raids.pop(key, None)
+        return False
+    _bg = asyncio.create_task(_ambush_loop(key, bot))
+    _bg_tasks.add(_bg); _bg.add_done_callback(_bg_tasks.discard)
+    return True
+
+async def _ambush_spawner(bot):
+    """Sweep parties and randomly ambush an eligible one. Run from the engagement
+    heartbeat (~every 30 min)."""
+    try:
+        c = _db().cursor()
+        c.execute("SELECT id FROM parties")
+        pids = [r[0] for r in c.fetchall()]
+    except Exception:
+        return
+    random.shuffle(pids)
+    _spawned = 0
+    for pid in pids:
+        if _spawned >= 3:          # cap ambushes per sweep so it never floods
+            break
+        if f"ambush:{pid}" in _coop_raids or f"party:{pid}" in _coop_raids:
+            continue
+        if time.time() - _ambush_last.get(pid, 0) < _AMBUSH_COOLDOWN:
+            continue
+        member_ids = _get_party_members(pid)
+        mps = [mp for mp in (get_player(mid) for mid in member_ids) if mp]
+        if not mps or not any(_recently_active(mp["user_id"]) for mp in mps):
+            continue
+        if random.random() > _AMBUSH_CHANCE:
+            continue
+        chat_id = _party_home_group(mps)
+        if not chat_id:
+            continue
+        if await _spawn_party_ambush(bot, pid, chat_id, mps):
+            _spawned += 1
+
+_weekly_boss_done = {}   # guild_id -> ISO week it was auto-spawned (dedup per week)
+
+async def _weekly_guild_boss_sweep(bot):
+    """Once per ISO week, auto-post a beefed-up WEEKLY boss to each active guild's
+    home group so the whole guild has a standing target to rally against and climb
+    the /raidboard with. Tap-driven like a normal guild raid; expires if ignored."""
+    wk = _iso_week()
+    try:
+        c = _db().cursor()
+        c.execute("SELECT guild_id FROM guilds")
+        gids = [r[0] for r in c.fetchall()]
+    except Exception:
+        return
+    random.shuffle(gids)
+    _spawned = 0
+    for gid in gids:
+        if _spawned >= 3:
+            break
+        if _weekly_boss_done.get(gid) == wk:
+            continue
+        if f"guild:{gid}" in _coop_raids:
+            continue
+        mps, _leader = _coop_raid_members_players("guild", gid)
+        if not mps or not any(_recently_active(mp["user_id"]) for mp in mps):
+            continue
+        chat_id = _party_home_group(mps)
+        if not chat_id:
+            continue
+        boss = _coop_raid_boss(mps, "guild")
+        boss["max_hp"] = int(boss["max_hp"] * 1.4)          # weekly boss is extra beefy
+        boss["gold"] = int(boss["gold"] * 1.5); boss["exp"] = int(boss["exp"] * 1.5)
+        members = {}
+        for mp in mps:
+            mhp = calc_max_hp(mp)
+            members[safe_int(mp["user_id"])] = {
+                "name": mp.get("username", "?"), "hp": mhp, "max_hp": mhp,
+                "mp": calc_max_mp(mp), "max_mp": calc_max_mp(mp), "dmg": 0, "downed": False,
+                "heals": _COOP_HEALS, "revives": _COOP_REVIVES,
+            }
+        key = f"guild:{gid}"
+        raid = {
+            "scope": "guild", "id": gid, "key": key, "leader_id": _leader, "chat_id": chat_id,
+            "name": f"Weekly Terror: {boss['name']}", "max_hp": boss["max_hp"], "hp": boss["max_hp"],
+            "dmg_min": boss["dmg_min"], "dmg_max": boss["dmg_max"],
+            "gold": boss["gold"], "exp": boss["exp"], "loot_table": boss["loot_table"],
+            "title": boss["title"], "members": members,
+            "phase": 1, "phase_thresholds": _COOP_GUILD_PHASES,
+            "log": [f"🗓️ *WEEKLY GUILD BOSS!* {boss['name']} threatens the guild — rally and take it down!"],
+            "start": time.time(), "ts": time.time(), "over": False,
+        }
+        _coop_raids[key] = raid
+        _weekly_boss_done[gid] = wk
+        try:
+            msg = await bot.send_message(chat_id=chat_id, text=_coop_raid_card(raid),
+                                         parse_mode="Markdown", reply_markup=_coop_raid_markup(raid))
+            raid["msg_id"] = msg.message_id
+            _spawned += 1
+        except Exception:
+            _coop_raids.pop(key, None)
 
 
 async def boss_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -39117,6 +39380,14 @@ async def _engagement_loop(bot):
             if cycle % 2 == 0:
                 try:
                     await _fire_random_world_events(bot)
+                except Exception:
+                    pass
+                try:
+                    await _ambush_spawner(bot)
+                except Exception:
+                    pass
+                try:
+                    await _weekly_guild_boss_sweep(bot)
                 except Exception:
                     pass
             if cycle % 4 == 0:
