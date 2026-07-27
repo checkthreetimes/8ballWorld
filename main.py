@@ -19438,6 +19438,283 @@ async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Choose your boss:",
         parse_mode="Markdown", reply_markup=markup)
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PARTY ADVENTURE — a leader-triggered, party-gated CO-OP RAID on one shared-HP
+# boss. Everyone in the party pounds the SAME monster from a single group card;
+# the boss retaliates on a random standing member. HP/MP here are EPHEMERAL (per
+# raid) so nobody loses real HP or can be "killed" for PvP — the only persistent
+# effect is the loot/gold/EXP handed out in the victory recap. Guild raids will
+# build on this same engine later.
+# ══════════════════════════════════════════════════════════════════════════════
+_party_raids = {}          # party_id -> raid state
+_PARTY_RAID_IDLE = 1800    # 30 min with no action → the raid is abandoned
+
+def _party_raid_boss(member_players):
+    """Roll a boss scaled to the party's size and hitting power so a clear takes
+    a good ~20 shared hits. Flavour (name/desc/loot/title) borrows a BOSSES entry."""
+    n   = max(1, len(member_players))
+    avg = max(1, sum(safe_int(mp.get("level", 1)) for mp in member_players) // n)
+    sample = max(1, sum(max(1, calc_attack_damage(mp)) for mp in member_players) // n)
+    base = random.choice([b for b in BOSSES.values() if not b.get("secret")] or [next(iter(BOSSES.values()))])
+    hp   = max(3000, int(sample * n * random.randint(20, 26)))
+    dmin = max(10, sample // 4)
+    return {
+        "name": base["name"], "desc": base.get("desc", ""),
+        "max_hp": hp, "dmg_min": dmin, "dmg_max": int(dmin * 1.8),
+        "gold": int(base.get("gold", 500) * (1 + 0.15 * n)),
+        "exp":  int(base.get("exp", 1000) * (1 + 0.15 * n)),
+        "loot_table": base.get("loot_table", []), "title": base.get("title"),
+        "avg": avg,
+    }
+
+def _party_raid_card(raid):
+    bar = _enc_hp_bar(raid["hp"], raid["max_hp"], 14)
+    lines = [f"🐉 *PARTY RAID — {raid['name']}*", "",
+             f"`{bar}`  {fmt_num(raid['hp'])}/{fmt_num(raid['max_hp'])} HP", ""]
+    for uid, mm in raid["members"].items():
+        mbar = _enc_hp_bar(mm["hp"], mm["max_hp"], 6)
+        tag  = "💀" if mm["downed"] else "🗡️"
+        lines.append(f"{tag} *{mm['name']}* `{mbar}` ⚔️{fmt_num(mm['dmg'])}")
+    log = raid.get("log", [])
+    if log:
+        lines.append(""); lines.append("─────────────")
+        lines += log[-3:]
+    return "\n".join(lines)
+
+def _party_raid_markup(raid):
+    pid = raid["party_id"]
+    # Skill buttons are generic (Skill I/II/III) and resolve to whichever member
+    # taps them, using THAT member's own 3-skill kit by index.
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚔️ Attack", callback_data=f"padv_atk_{pid}")],
+        [InlineKeyboardButton("✨ Skill I",  callback_data=f"padv_skl0_{pid}"),
+         InlineKeyboardButton("✨ II",       callback_data=f"padv_skl1_{pid}"),
+         InlineKeyboardButton("✨ III",      callback_data=f"padv_skl2_{pid}")],
+        [InlineKeyboardButton("🔄 Refresh",  callback_data=f"padv_ref_{pid}")],
+    ])
+
+def _party_raid_resolve(raid, uid, p, action, skill_idx=None):
+    """Apply one member's action to the shared boss + the boss's retaliation.
+    Mutates raid in place. Returns (status) in {hit, victory, wipe, invalid, nomp}."""
+    mm = raid["members"].get(uid)
+    if not mm or mm["downed"] or raid.get("over"):
+        return "invalid"
+    w = get_weather()
+    if action == "atk":
+        dmg = calc_attack_damage(p, w)
+        crit = ""
+        if check_crit(p):
+            dmg = apply_crit(p, dmg); crit = " 💥"
+        raid["hp"] = max(0, raid["hp"] - dmg); mm["dmg"] += dmg
+        raid.setdefault("log", []).append(f"⚔️ *{mm['name']}* → *{fmt_num(dmg)}*{crit}")
+    elif action == "skl":
+        kit = _enc_kit_skills(p)
+        if skill_idx is None or skill_idx >= len(kit):
+            return "invalid"
+        sk = kit[skill_idx]; cost = _enc_skill_mp_cost(sk)
+        if mm["mp"] < cost:
+            return "nomp"
+        enc = {"uid": uid, "e_name": raid["name"], "e_hp": raid["hp"], "e_max_hp": raid["max_hp"],
+               "p_hp": mm["hp"], "p_max_hp": mm["max_hp"], "p_mp": mm["mp"], "p_max_mp": mm["max_mp"]}
+        _txt, dmg, _is_sup = _enc_process_kit_skill(enc, p, sk)
+        mm["mp"] = enc["p_mp"]; mm["hp"] = min(mm["max_hp"], enc["p_hp"])
+        raid["hp"] = max(0, enc["e_hp"]); mm["dmg"] += max(0, safe_int(dmg))
+        _head = _txt.split("!")[0].replace("*", "")
+        raid.setdefault("log", []).append(f"{sk.get('emoji','✨')} *{mm['name']}* — {_head}!"
+                                          + (f" *{fmt_num(dmg)}*" if dmg else ""))
+    else:
+        return "invalid"
+    raid["ts"] = time.time()
+    if raid["hp"] <= 0:
+        raid["over"] = True
+        return "victory"
+    # Boss retaliates on a random standing member
+    standing = [u for u, m2 in raid["members"].items() if not m2["downed"]]
+    if standing:
+        tuid = random.choice(standing); tgt = raid["members"][tuid]
+        raw = random.randint(raid["dmg_min"], raid["dmg_max"])
+        tp = get_player(tuid) or p
+        bdmg = calc_defense(tp, raw)
+        tgt["hp"] = max(0, tgt["hp"] - bdmg)
+        if bdmg <= 0:
+            raid["log"].append(f"🌀 {raid['name']} misses *{tgt['name']}*!")
+        else:
+            raid["log"].append(f"💥 {raid['name']} → *{tgt['name']}* {fmt_num(bdmg)}")
+        if tgt["hp"] <= 0 and not tgt["downed"]:
+            tgt["downed"] = True
+            raid["log"].append(f"💀 *{tgt['name']}* is downed!")
+    if all(m2["downed"] for m2 in raid["members"].values()):
+        raid["over"] = True
+        return "wipe"
+    return "hit"
+
+def _party_raid_rewards_text(raid):
+    """Grant per-member loot/gold/EXP on a clear and return the recap text."""
+    ranked = sorted(raid["members"].items(), key=lambda kv: -kv[1]["dmg"])
+    dur = int(time.time() - raid.get("start", time.time()))
+    dur_str = f"{dur//60}m {dur%60}s" if dur >= 60 else f"{dur}s"
+    lines = [f"🏆 *RAID CLEARED — {raid['name']}!*",
+             f"⏱ {dur_str}  ·  {len(raid['members'])} adventurers", ""]
+    w = get_weather()
+    for i, (uid, mm) in enumerate(ranked):
+        medal = ("🥇", "🥈", "🥉")[i] if i < 3 else "•"
+        pp = get_player(uid)
+        if not pp:
+            lines.append(f"{medal} {mm['name']} — {fmt_num(mm['dmg'])} dmg"); continue
+        gold = raid["gold"] + (raid["gold"] // 2 if i == 0 else 0)   # MVP bonus
+        exp  = _scaled_boss_exp(safe_int(pp.get("level", 1)), raid["exp"])
+        pp["gold"] = safe_int(pp.get("gold")) + gold
+        add_exp(pp, exp, w)
+        loot_txt = ""
+        loot = roll_loot_table(raid.get("loot_table", []), boss=True)
+        if loot:
+            disp = grant_loot_item(pp, loot)
+            _r = ""
+            for pool in (WEAPONS, ARMORS, ACCESSORIES):
+                if loot in pool:
+                    _r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), ""); break
+            loot_txt = f"  🎒{_r}{disp}"
+        if raid.get("title") and award_title(pp, raid["title"]):
+            loot_txt += f"  🏅{raid['title']}"
+        save_player(pp)
+        mvp = " *MVP*" if i == 0 else ""
+        lines.append(f"{medal} *{mm['name']}*{mvp} — {fmt_num(mm['dmg'])} dmg\n"
+                     f"    +{fmt_num(exp)} EXP  +{fmt_num(gold)}g{loot_txt}")
+    return "\n".join(lines)
+
+async def _begin_party_adventure(bot, uid, chat_id, chat_type):
+    """Shared starter for /adventure and the party-menu button. Returns
+    (ok, err_or_None); on ok it has posted the shared raid card to chat_id."""
+    p = get_player(uid)
+    if not p:
+        return False, "Use /ascend first!"
+    if chat_type not in ("group", "supergroup"):
+        return False, "🐉 Party raids happen in the group chat — start one there!"
+    party = _get_party_of(uid)
+    if not party:
+        return False, "🧭 You're not in a party. Use /party to form one, then /adventure!"
+    if safe_int(party.get("leader_id")) != uid:
+        return False, "🧭 Only the party leader can start an adventure."
+    pid = party["id"]
+    existing = _party_raids.get(pid)
+    if existing and not existing.get("over") and (time.time() - existing.get("ts", 0)) < _PARTY_RAID_IDLE:
+        return False, "🐉 Your party is already in a raid — finish it first!"
+    member_ids = _get_party_members(pid)
+    mps = [mp for mp in (get_player(mid) for mid in member_ids) if mp]
+    if not mps:
+        return False, "🧭 No ascended party members to raid with yet."
+    boss = _party_raid_boss(mps)
+    members = {}
+    for mp in mps:
+        mhp = calc_max_hp(mp)
+        members[safe_int(mp["user_id"])] = {
+            "name": mp.get("username", "?"), "hp": mhp, "max_hp": mhp,
+            "mp": calc_max_mp(mp), "max_mp": calc_max_mp(mp), "dmg": 0, "downed": False,
+        }
+    raid = {
+        "party_id": pid, "leader_id": uid, "chat_id": chat_id,
+        "name": boss["name"], "max_hp": boss["max_hp"], "hp": boss["max_hp"],
+        "dmg_min": boss["dmg_min"], "dmg_max": boss["dmg_max"],
+        "gold": boss["gold"], "exp": boss["exp"], "loot_table": boss["loot_table"],
+        "title": boss["title"], "members": members,
+        "log": [f"A wild *{boss['name']}* blocks the party's path!"],
+        "start": time.time(), "ts": time.time(), "over": False,
+    }
+    _party_raids[pid] = raid
+    try:
+        msg = await bot.send_message(
+            chat_id=chat_id, text=_party_raid_card(raid),
+            parse_mode="Markdown", reply_markup=_party_raid_markup(raid))
+        raid["msg_id"] = msg.message_id
+    except Exception:
+        pass
+    return True, None
+
+async def adventure_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Party leader summons a shared-HP co-op boss for the whole party."""
+    ok, err = await _begin_party_adventure(
+        context.bot, update.effective_user.id,
+        update.effective_chat.id, update.effective_chat.type)
+    if not ok:
+        await send_group(update, err, delay=12)
+
+async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """padv_atk_{pid} / padv_skl{i}_{pid} / padv_ref_{pid}."""
+    query = update.callback_query
+    data = query.data
+    try:
+        _, action, pid_s = data.split("_", 2)
+        pid = int(pid_s)
+    except (ValueError, IndexError):
+        await query.answer(); return
+    uid = query.from_user.id
+    raid = _party_raids.get(pid)
+    if not raid or raid.get("over"):
+        await query.answer("This raid has ended.", show_alert=True); return
+    if uid not in raid["members"]:
+        # let any current party member who wasn't in at start join in
+        if uid in _get_party_members(pid):
+            mp = get_player(uid)
+            if mp:
+                mhp = calc_max_hp(mp)
+                raid["members"][uid] = {"name": mp.get("username", "?"), "hp": mhp, "max_hp": mhp,
+                                        "mp": calc_max_mp(mp), "max_mp": calc_max_mp(mp), "dmg": 0, "downed": False}
+        else:
+            await query.answer("This is another party's raid!", show_alert=True); return
+    if action == "ref":
+        await query.answer()
+        try:
+            await query.edit_message_text(_party_raid_card(raid), parse_mode="Markdown",
+                                          reply_markup=_party_raid_markup(raid))
+        except Exception: pass
+        return
+    if raid["members"][uid]["downed"]:
+        await query.answer("💀 You're downed — a teammate must finish the raid!", show_alert=True); return
+    _tok = _cb_lock(uid)
+    if not _tok:
+        await query.answer("⏳ One tap at a time!"); return
+    try:
+        p = get_player(uid)
+        if not p:
+            await query.answer(); return
+        if action.startswith("skl"):
+            try: sidx = int(action[3:])
+            except ValueError: sidx = 0
+            status = _party_raid_resolve(raid, uid, p, "skl", sidx)
+        elif action == "atk":
+            status = _party_raid_resolve(raid, uid, p, "atk")
+        else:
+            await query.answer(); return
+        if status == "nomp":
+            await query.answer("❌ Not enough MP for that skill.", show_alert=True); return
+        if status == "invalid":
+            await query.answer(); return
+        try: await query.answer("⚔️" if action == "atk" else "✨")
+        except Exception: pass
+        if status == "victory":
+            recap = _party_raid_rewards_text(raid)
+            _party_raids.pop(pid, None)
+            try:
+                await query.edit_message_text(_party_raid_card(raid), parse_mode="Markdown")
+            except Exception: pass
+            asyncio.create_task(announce(context.bot, raid["chat_id"], recap, permanent=True))
+            return
+        if status == "wipe":
+            _party_raids.pop(pid, None)
+            try:
+                await query.edit_message_text(
+                    _party_raid_card(raid) + f"\n\n💀 *The party was wiped out by {raid['name']}!*\n"
+                    f"_Regroup and try again with /adventure._", parse_mode="Markdown")
+            except Exception: pass
+            return
+        try:
+            await query.edit_message_text(_party_raid_card(raid), parse_mode="Markdown",
+                                          reply_markup=_party_raid_markup(raid))
+        except Exception: pass
+    finally:
+        _cb_unlock(uid, _tok)
+
+
 async def boss_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle boss selection button from /boss menu."""
     query = update.callback_query
@@ -20265,6 +20542,18 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data == "social_party_close":
         try: await query.message.delete()
         except Exception: pass
+        return
+
+    if data == "social_party_adventure":
+        _chat = query.message.chat if query.message else None
+        _ctype = _chat.type if _chat else "private"
+        if _ctype not in ("group", "supergroup"):
+            await query.answer("🐉 Open /party in your GROUP chat, then tap Adventure there.", show_alert=True); return
+        ok, err = await _begin_party_adventure(query.get_bot(), p["user_id"], _chat.id, _ctype)
+        if not ok:
+            await query.answer(err, show_alert=True)
+        else:
+            await query.answer("🐉 The raid begins!")
         return
 
     if data == "social_party_view":
@@ -25900,10 +26189,12 @@ async def _party_menu(update_or_none, p, query=None):
             you_tag = " _(you)_" if mid == uid else ""
             crown = " 👑" if mid == party["leader_id"] else ""
             lines.append(f"• *{mp['username']}* Lv.{mp['level']}{crown}{you_tag}")
+        lines.append("\n🐉 _Leader: use /adventure in the group to raid a shared boss together!_")
         text = "\n".join(lines)
 
         kb = []
         if is_leader:
+            kb.append([InlineKeyboardButton("🐉 Adventure!", callback_data="social_party_adventure")])
             kb.append([InlineKeyboardButton("📨 Invite",      callback_data="social_party_invite_info"),
                        InlineKeyboardButton("🚫 Kick Member", callback_data="social_party_kick_menu")])
             kb.append([InlineKeyboardButton("✏️ Rename",      callback_data="social_party_rename_info"),
@@ -28205,6 +28496,7 @@ GUIDE_PAGES = [
         "\n"
         "*Party*\n"
         "/party  -  View your party, or reply to a player to invite them\n"
+        "/adventure  -  (Leader) raid a shared-HP co-op boss with your party\n"
         "/partyinvite @user  -  Send a party invite via DM\n"
         "/partyname [name]  -  Name your party\n"
         "/partyleave  -  Leave your party\n"
@@ -42552,6 +42844,8 @@ def main():
     app.add_handler(CommandHandler("prestige",   prestige_cmd))
     app.add_handler(CommandHandler("resetclass", resetclass_cmd))
     app.add_handler(CommandHandler("changeclass", changeclass_cmd))
+    app.add_handler(CommandHandler("adventure",  adventure_cmd))
+    app.add_handler(CallbackQueryHandler(adventure_callback, pattern="^padv_"))
     app.add_handler(CommandHandler("resetstats", resetstats_cmd))
     app.add_handler(CommandHandler("allocate",   allocate_cmd))
     app.add_handler(CommandHandler("skill",      skill_cmd))
