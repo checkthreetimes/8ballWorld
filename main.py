@@ -5661,6 +5661,8 @@ def _are_allies(a, b):
         return True
     return False
 
+_PARTY_MAX = 6   # max members in a party
+
 def _get_party_of(uid):
     c = _db().cursor()
     c.execute("SELECT p.id, p.leader_id, p.name FROM parties p "
@@ -19525,6 +19527,29 @@ def _coop_raid_markup(raid):
         [InlineKeyboardButton("🔄 Refresh", callback_data=f"raid_ref_{k}")],
     ])
 
+async def _coop_broadcast(raid, bot, final=False):
+    """Edit EVERY member's DM copy of the shared card in place. Used by DM-
+    delivered raids (ambushes) so all party members watch the same live fight —
+    everyone's HP on one card — from their own inbox. Buttons drop on the final
+    frame. Prunes any DM we can no longer edit."""
+    card = _coop_raid_card(raid)
+    markup = None if final else _coop_raid_markup(raid)
+    for uid in list(raid.get("dm_msgs", {}).keys()):
+        mid = raid["dm_msgs"].get(uid)
+        try:
+            await bot.edit_message_text(chat_id=uid, message_id=mid, text=card,
+                                        parse_mode="Markdown", reply_markup=markup)
+        except Exception:
+            pass
+
+async def _coop_dm_all(raid, bot, text):
+    """Send a one-off message (e.g. the victory recap) to every member's DM."""
+    for uid in list(raid.get("dm_msgs", {}).keys()) or list(raid.get("members", {}).keys()):
+        try:
+            await bot.send_message(chat_id=uid, text=text, parse_mode="Markdown")
+        except Exception:
+            pass
+
 def _coop_raid_resolve(raid, uid, p, action, skill_idx=None):
     """Apply one member action + the boss's (enrage-scaled) retaliation. Mutates
     raid in place. Returns status in
@@ -19902,26 +19927,38 @@ async def coop_raid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.answer(); return
         try: await query.answer({"atk": "⚔️", "heal": "🧪", "rev": "✚"}.get(action, "✨"))
         except Exception: pass
+        _dm = bool(raid.get("dm_msgs"))   # DM-delivered raid (ambush) → sync all members' cards
         if status == "victory":
             recap = _coop_raid_rewards_text(raid)
             _coop_raids.pop(key, None)
-            try: await query.edit_message_text(_coop_raid_card(raid), parse_mode="Markdown")
-            except Exception: pass
-            asyncio.create_task(announce(context.bot, raid["chat_id"], recap, permanent=True))
+            if _dm:
+                await _coop_broadcast(raid, context.bot, final=True)
+                await _coop_dm_all(raid, context.bot, recap)
+            else:
+                try: await query.edit_message_text(_coop_raid_card(raid), parse_mode="Markdown")
+                except Exception: pass
+                asyncio.create_task(announce(context.bot, raid["chat_id"], recap, permanent=True))
             return
         if status == "wipe":
             _coop_raids.pop(key, None)
             _cmd = "/guildraid" if scope == "guild" else "/adventure"
-            try:
-                await query.edit_message_text(
-                    _coop_raid_card(raid) + f"\n\n💀 *The group was wiped out by {raid['name']}!*\n"
-                    f"_Regroup and try again with {_cmd}._", parse_mode="Markdown")
-            except Exception: pass
+            raid.setdefault("log", []).append(f"💀 *The group was wiped out by {raid['name']}!*")
+            if _dm:
+                await _coop_broadcast(raid, context.bot, final=True)
+            else:
+                try:
+                    await query.edit_message_text(
+                        _coop_raid_card(raid) + f"\n_Regroup and try again with {_cmd}._",
+                        parse_mode="Markdown")
+                except Exception: pass
             return
-        try:
-            await query.edit_message_text(_coop_raid_card(raid), parse_mode="Markdown",
-                                          reply_markup=_coop_raid_markup(raid))
-        except Exception: pass
+        if _dm:
+            await _coop_broadcast(raid, context.bot)
+        else:
+            try:
+                await query.edit_message_text(_coop_raid_card(raid), parse_mode="Markdown",
+                                              reply_markup=_coop_raid_markup(raid))
+            except Exception: pass
     finally:
         _cb_unlock(uid, _tok)
 
@@ -20008,13 +20045,8 @@ async def _ambush_loop(key, bot):
         if raid.get("ticks", 0) >= _AMBUSH_MAX_TICKS:
             raid["over"] = True
             _coop_raids.pop(key, None)
-            try:
-                await bot.edit_message_text(
-                    chat_id=raid["chat_id"], message_id=raid.get("msg_id"),
-                    text=_coop_raid_card(raid) + f"\n\n🌫️ *{raid['name']} slink back into the wild — the party survives.*",
-                    parse_mode="Markdown")
-            except Exception:
-                pass
+            raid.setdefault("log", []).append(f"🌫️ *{raid['name']} slink back into the wild — the party survives.*")
+            await _coop_broadcast(raid, bot, final=True)
             return
         st = _ambush_monster_turn(raid)
         if st == "wipe":
@@ -20025,22 +20057,12 @@ async def _ambush_loop(key, bot):
                 if pp:
                     pen = min(safe_int(pp.get("gold")) // 20, 500)   # a scare, small gold drop
                     pp["gold"] = max(0, safe_int(pp.get("gold")) - pen); save_player(pp); _loss += pen
-            try:
-                await bot.edit_message_text(
-                    chat_id=raid["chat_id"], message_id=raid.get("msg_id"),
-                    text=_coop_raid_card(raid) + f"\n\n💀 *The party was overwhelmed and scattered!*"
-                    + (f"\n_Lost {fmt_num(_loss)}g in the chaos._" if _loss else ""),
-                    parse_mode="Markdown")
-            except Exception:
-                pass
+            raid.setdefault("log", []).append(
+                "💀 *The party was overwhelmed and scattered!*"
+                + (f"  _(−{fmt_num(_loss)}g)_" if _loss else ""))
+            await _coop_broadcast(raid, bot, final=True)
             return
-        try:
-            await bot.edit_message_text(
-                chat_id=raid["chat_id"], message_id=raid.get("msg_id"),
-                text=_coop_raid_card(raid), parse_mode="Markdown",
-                reply_markup=_coop_raid_markup(raid))
-        except Exception:
-            pass
+        await _coop_broadcast(raid, bot)
 
 async def _spawn_party_ambush(bot, party_id, chat_id, member_players):
     """Create + post a live ambush for a party and start its ticker."""
@@ -20072,13 +20094,20 @@ async def _spawn_party_ambush(bot, party_id, chat_id, member_players):
     }
     _coop_raids[key] = raid
     _ambush_last[party_id] = time.time()
-    try:
-        msg = await bot.send_message(chat_id=chat_id, text=_coop_raid_card(raid),
-                                     parse_mode="Markdown", reply_markup=_coop_raid_markup(raid))
-        raid["msg_id"] = msg.message_id
-    except Exception:
+    # Deliver a copy of the shared card to EACH member's DM — everyone sees the
+    # whole party's HP and fights from their own inbox, wherever they are.
+    dm_msgs = {}
+    for muid in list(members.keys()):
+        try:
+            msg = await bot.send_message(chat_id=muid, text=_coop_raid_card(raid),
+                                         parse_mode="Markdown", reply_markup=_coop_raid_markup(raid))
+            dm_msgs[muid] = msg.message_id
+        except Exception:
+            pass   # member never DM'd the bot / blocked it — they just can't act
+    if not dm_msgs:
         _coop_raids.pop(key, None)
         return False
+    raid["dm_msgs"] = dm_msgs
     _bg = asyncio.create_task(_ambush_loop(key, bot))
     _bg_tasks.add(_bg); _bg.add_done_callback(_bg_tasks.discard)
     return True
@@ -20107,10 +20136,8 @@ async def _ambush_spawner(bot):
             continue
         if random.random() > _AMBUSH_CHANCE:
             continue
-        chat_id = _party_home_group(mps)
-        if not chat_id:
-            continue
-        if await _spawn_party_ambush(bot, pid, chat_id, mps):
+        # Ambushes are DM-delivered, so no shared group chat is required.
+        if await _spawn_party_ambush(bot, pid, None, mps):
             _spawned += 1
 
 _weekly_boss_done = {}   # guild_id -> ISO week it was auto-spawned (dedup per week)
@@ -26685,6 +26712,8 @@ async def party_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if _get_party_of(du.id):
                 await send_group(update, f"❌ *{target['username']}* is already in a party.", delay=8); return
             party = _get_party_of(uid)
+            if party and len(_get_party_members(party["id"])) >= _PARTY_MAX:
+                await send_group(update, f"❌ Your party is full ({_PARTY_MAX} members max).", delay=9); return
             party_id = party["id"] if party else _create_party(uid)
             markup = InlineKeyboardMarkup([[
                 InlineKeyboardButton("✅ Accept", callback_data=f"party_accept_{uid}_{du.id}_{party_id}"),
@@ -26722,6 +26751,8 @@ async def partyinvite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _get_party_of(target["user_id"]):
         await send_group(update, f"❌ *{target['username']}* is already in a party.", delay=8); return
     party = _get_party_of(uid)
+    if party and len(_get_party_members(party["id"])) >= _PARTY_MAX:
+        await send_group(update, f"❌ Your party is full ({_PARTY_MAX} members max).", delay=9); return
     party_id = party["id"] if party else _create_party(uid)
     markup = InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Accept", callback_data=f"party_accept_{uid}_{target['user_id']}_{party_id}"),
@@ -26831,6 +26862,8 @@ async def party_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not c.fetchone():
             await query.answer()
             await _q_edit(query, "❌ That party no longer exists."); return
+        if len(_get_party_members(party_id)) >= _PARTY_MAX:
+            await query.answer(f"That party is full ({_PARTY_MAX} members max).", show_alert=True); return
         _join_party(party_id, uid)
         inviter_p = get_player(inviter_uid)
         inviter_name = inviter_p.get("username", "the party leader") if inviter_p else "the party leader"
