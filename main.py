@@ -19494,10 +19494,12 @@ def _coop_secs_left(raid):
 
 def _coop_raid_card(raid):
     bar   = _enc_hp_bar(raid["hp"], raid["max_hp"], 14)
-    ico   = "🏰" if raid["scope"] == "guild" else "🐉"
-    title = "GUILD RAID" if raid["scope"] == "guild" else "PARTY RAID"
+    ico   = {"guild": "🏰", "lobby": "⚔️", "ambush": "⚠️"}.get(raid["scope"], "🐉")
+    title = {"guild": "GUILD RAID", "lobby": "PARTY ADVENTURE", "ambush": "AMBUSH"}.get(raid["scope"], "PARTY RAID")
     phase = safe_int(raid.get("phase", 1))
     phase_tag = f"  ·  Phase {phase}" if raid["scope"] == "guild" and phase > 1 else ""
+    if raid.get("waves"):
+        phase_tag = f"  ·  Wave {safe_int(raid.get('wave',1))}/{len(raid['waves'])}"
     lines = [f"{ico} *{title} — {raid['name']}*{phase_tag}", ""]
     stage = _coop_enrage_stage(raid)
     if stage > 0:
@@ -19619,6 +19621,24 @@ def _coop_raid_resolve(raid, uid, p, action, skill_idx=None):
             raid["dmg_max"] = int(raid["dmg_max"] * 1.25)
             raid["log"].append(f"⚔️ *{raid['name']}* shifts into *Phase {reached}* — it hits harder now!")
     if raid["hp"] <= 0:
+        # Multi-wave (lobby raids): a cleared wave summons the next, tougher one
+        # and the party catches its breath, until the final wave falls.
+        waves = raid.get("waves")
+        if waves and safe_int(raid.get("wave", 1)) < len(waves):
+            raid["wave"] = safe_int(raid.get("wave", 1)) + 1
+            nb = waves[raid["wave"] - 1]
+            raid["name"] = nb["name"]; raid["max_hp"] = nb["max_hp"]; raid["hp"] = nb["max_hp"]
+            raid["dmg_min"] = nb["dmg_min"]; raid["dmg_max"] = nb["dmg_max"]
+            raid["phase"] = 1; raid["phase_thresholds"] = nb.get("phase_thresholds", [])
+            for m2 in raid["members"].values():   # breather between waves
+                if m2["downed"]:
+                    m2["downed"] = False; m2["hp"] = max(1, int(m2["max_hp"] * 0.30))
+                else:
+                    m2["hp"] = min(m2["max_hp"], m2["hp"] + int(m2["max_hp"] * 0.25))
+                m2["heals"] = min(_COOP_HEALS, m2.get("heals", 0) + 1)
+            raid["log"].append(f"🌊 *WAVE {raid['wave']}/{len(waves)} — {nb['name']} charges in!*")
+            raid["ts"] = time.time()
+            return "wave"
         raid["over"] = True
         return "victory"
     if live:
@@ -19665,14 +19685,28 @@ def _coop_raid_rewards_text(raid):
         pp["gold"] = safe_int(pp.get("gold")) + gold
         add_exp(pp, exp, w)
         loot_txt = ""
-        loot = roll_loot_table(raid.get("loot_table", []), boss=True)
-        if loot:
-            disp = grant_loot_item(pp, loot)
-            _r = ""
-            for pool in (WEAPONS, ARMORS, ACCESSORIES):
-                if loot in pool:
-                    _r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), ""); break
-            loot_txt = f"  🎒{_r}{disp}"
+        if raid.get("class_rewards"):
+            # GUARANTEED class-appropriate unique weapon — everyone leaves with
+            # something they can actually equip. Rarity floor rises with the raid.
+            if pp.get("class_id"):
+                _rar = raid.get("reward_rarity", "epic")
+                disp, _inst = award_unique_weapon(pp, rarity=_rar)   # rolls for pp's class, saves pp
+                if disp:
+                    loot_txt = f"  🗡️{disp}"
+            else:
+                # no class yet → fall back to a generic boss loot roll so they still get something
+                _fl = roll_loot_table(raid.get("loot_table", []), boss=True)
+                if _fl:
+                    loot_txt = f"  🎒{grant_loot_item(pp, _fl)}"
+        else:
+            loot = roll_loot_table(raid.get("loot_table", []), boss=True)
+            if loot:
+                disp = grant_loot_item(pp, loot)
+                _r = ""
+                for pool in (WEAPONS, ARMORS, ACCESSORIES):
+                    if loot in pool:
+                        _r = RARITY_EMOJI.get(pool[loot].get("rarity", ""), ""); break
+                loot_txt = f"  🎒{_r}{disp}"
         if raid.get("title") and award_title(pp, raid["title"]):
             loot_txt += f"  🏅{raid['title']}"
         save_player(pp)
@@ -19786,6 +19820,8 @@ def _coop_raid_members_players(scope, rid):
 
 def _coop_is_member(scope, rid, uid):
     uid = safe_int(uid)
+    if scope == "lobby":
+        return False   # lobby raids are a fixed pickup group — no late joins mid-fight
     if scope in ("party", "ambush"):   # ambushes are keyed by the party id
         return uid in _get_party_members(rid)
     g = get_guild(rid)
@@ -19867,6 +19903,177 @@ async def guildraid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not ok:
         await send_group(update, err, delay=12)
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PARTY LOBBY → 3-WAVE ADVENTURE. Anyone opens an LFG lobby in the group; players
+# tap Join; the leader Starts at 2+. Then a scaled 3-wave gauntlet plays out on
+# the shared card (waves 1-2 packs, wave 3 a multi-phase boss). Every survivor is
+# guaranteed a class-appropriate UNIQUE weapon + big gold. Built on the co-op
+# raid engine (scope "lobby", waves list).
+# ══════════════════════════════════════════════════════════════════════════════
+_party_lobbies = {}        # leader_uid -> lobby state
+_LOBBY_MIN     = 2         # min members to start
+_LOBBY_IDLE    = 900       # 15 min to fill the lobby before it lapses
+
+def _build_lobby_waves(mps):
+    """Three escalating waves scaled to the party. Returns (waves, base)."""
+    base = _coop_raid_boss(mps, "party")
+    boss_name = base["name"]
+    tiers = [
+        (0.9,  1.00, [],                 random.choice(_AMBUSH_FOES)),
+        (1.35, 1.15, [],                 "Elite " + random.choice(_AMBUSH_FOES)),
+        (2.0,  1.35, _COOP_GUILD_PHASES, boss_name),
+    ]
+    waves = []
+    for hpm, dm, ph, name in tiers:
+        waves.append({
+            "name": name,
+            "max_hp": max(2500, int(base["max_hp"] * hpm)),
+            "dmg_min": max(10, int(base["dmg_min"] * dm)),
+            "dmg_max": max(18, int(base["dmg_max"] * dm)),
+            "phase_thresholds": ph,
+        })
+    return waves, base
+
+def _lobby_card(lobby):
+    lines = [f"⚔️ *PARTY ADVENTURE — Forming!*",
+             f"👑 Leader: *{lobby['names'].get(lobby['leader_id'],'?')}*", ""]
+    lines.append(f"*Adventurers ({len(lobby['members'])}/{_PARTY_MAX}):*")
+    for uid in lobby["members"]:
+        crown = " 👑" if uid == lobby["leader_id"] else ""
+        lines.append(f"• {lobby['names'].get(uid, '?')}{crown}")
+    lines.append("")
+    if len(lobby["members"]) < _LOBBY_MIN:
+        lines.append(f"_Need at least {_LOBBY_MIN} to start. Tap Join!_")
+    else:
+        lines.append("_Leader can Start now. 3 waves of monsters await — victory grants a *class weapon* + gold!_")
+    return "\n".join(lines)
+
+def _lobby_markup(lobby):
+    lid = lobby["leader_id"]
+    rows = [[InlineKeyboardButton("➕ Join", callback_data=f"lobby_join_{lid}"),
+             InlineKeyboardButton("🚪 Leave", callback_data=f"lobby_leave_{lid}")]]
+    rows.append([InlineKeyboardButton("⚔️ Start Adventure", callback_data=f"lobby_start_{lid}"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"lobby_close_{lid}")])
+    return InlineKeyboardMarkup(rows)
+
+async def lobby_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Open a pickup-group LFG lobby for a 3-wave party adventure."""
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if update.effective_chat.type not in ("group", "supergroup"):
+        await send_group(update, "⚔️ Open the party lobby in your group chat so others can join!", delay=10); return
+    if user.id in _party_lobbies or f"lobby:{user.id}" in _coop_raids:
+        await send_group(update, "⚔️ You already have a lobby/adventure running.", delay=9); return
+    lobby = {
+        "leader_id": user.id, "chat_id": update.effective_chat.id,
+        "members": [user.id], "names": {user.id: p.get("username", user.first_name)},
+        "ts": time.time(),
+    }
+    _party_lobbies[user.id] = lobby
+    try:
+        msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=_lobby_card(lobby),
+                                             parse_mode="Markdown", reply_markup=_lobby_markup(lobby))
+        lobby["msg_id"] = msg.message_id
+    except Exception:
+        _party_lobbies.pop(user.id, None)
+
+async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """lobby_join / lobby_leave / lobby_start / lobby_close _{leader_uid}."""
+    query = update.callback_query
+    parts = query.data.split("_")
+    if len(parts) < 3:
+        await query.answer(); return
+    action = parts[1]
+    try: lid = int(parts[2])
+    except ValueError:
+        await query.answer(); return
+    lobby = _party_lobbies.get(lid)
+    if not lobby:
+        await query.answer("This lobby has closed.", show_alert=True); return
+    uid = query.from_user.id
+    p = get_player(uid)
+
+    async def _render():
+        try:
+            await query.edit_message_text(_lobby_card(lobby), parse_mode="Markdown",
+                                          reply_markup=_lobby_markup(lobby))
+        except Exception: pass
+
+    if action == "join":
+        if not p:
+            await query.answer("Use /ascend first!", show_alert=True); return
+        if uid in lobby["members"]:
+            await query.answer("You're already in!"); return
+        if len(lobby["members"]) >= _PARTY_MAX:
+            await query.answer(f"Lobby is full ({_PARTY_MAX}).", show_alert=True); return
+        lobby["members"].append(uid); lobby["names"][uid] = p.get("username", query.from_user.first_name)
+        await query.answer("Joined! ⚔️"); await _render(); return
+    if action == "leave":
+        if uid == lid:
+            _party_lobbies.pop(lid, None)
+            await query.answer("Lobby closed.");
+            try: await query.edit_message_text("⚔️ _The party lobby was disbanded by the leader._", parse_mode="Markdown")
+            except Exception: pass
+            return
+        if uid in lobby["members"]:
+            lobby["members"].remove(uid); lobby["names"].pop(uid, None)
+            await query.answer("You left."); await _render()
+        else:
+            await query.answer()
+        return
+    if action == "close":
+        if uid != lid:
+            await query.answer("Only the leader can close the lobby.", show_alert=True); return
+        _party_lobbies.pop(lid, None)
+        try: await query.edit_message_text("⚔️ _Party lobby closed._", parse_mode="Markdown")
+        except Exception: pass
+        await query.answer(); return
+    if action == "start":
+        if uid != lid:
+            await query.answer("Only the leader can start.", show_alert=True); return
+        if len(lobby["members"]) < _LOBBY_MIN:
+            await query.answer(f"Need at least {_LOBBY_MIN} adventurers.", show_alert=True); return
+        mps = [mp for mp in (get_player(mid) for mid in lobby["members"]) if mp]
+        if len(mps) < _LOBBY_MIN:
+            await query.answer("Not enough ascended members.", show_alert=True); return
+        _party_lobbies.pop(lid, None)
+        await query.answer("⚔️ Adventure begins!")
+        waves, base = _build_lobby_waves(mps)
+        _avg = max(1, sum(safe_int(mp.get("level", 1)) for mp in mps) // len(mps))
+        reward_rarity = "mythic" if _avg >= 120 else "legendary" if _avg >= 60 else "epic"
+        members = {}
+        for mp in mps:
+            mhp = calc_max_hp(mp)
+            members[safe_int(mp["user_id"])] = {
+                "name": mp.get("username", "?"), "hp": mhp, "max_hp": mhp,
+                "mp": calc_max_mp(mp), "max_mp": calc_max_mp(mp), "dmg": 0, "downed": False,
+                "heals": _COOP_HEALS, "revives": _COOP_REVIVES,
+            }
+        w0 = waves[0]
+        key = f"lobby:{lid}"
+        raid = {
+            "scope": "lobby", "id": lid, "key": key, "leader_id": lid, "chat_id": lobby["chat_id"],
+            "name": w0["name"], "max_hp": w0["max_hp"], "hp": w0["max_hp"],
+            "dmg_min": w0["dmg_min"], "dmg_max": w0["dmg_max"],
+            "gold": int(base["gold"] * 1.5), "exp": int(base["exp"] * 1.5),
+            "loot_table": base["loot_table"], "title": None, "members": members,
+            "waves": waves, "wave": 1, "class_rewards": True, "reward_rarity": reward_rarity,
+            "phase": 1, "phase_thresholds": w0.get("phase_thresholds", []),
+            "log": [f"🌊 *WAVE 1/3 — {w0['name']} attack!* Survive 3 waves for a class weapon + gold!"],
+            "start": time.time(), "ts": time.time(), "over": False,
+        }
+        _coop_raids[key] = raid
+        try:
+            msg = await context.bot.send_message(chat_id=lobby["chat_id"], text=_coop_raid_card(raid),
+                                                 parse_mode="Markdown", reply_markup=_coop_raid_markup(raid))
+            raid["msg_id"] = msg.message_id
+        except Exception:
+            _coop_raids.pop(key, None)
+        return
+    await query.answer()
+
 async def coop_raid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """raid_{action}_{scope}_{id} — Attack / Skill I-III / Heal / Revive / Refresh."""
     query = update.callback_query
@@ -19941,7 +20148,7 @@ async def coop_raid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
         if status == "wipe":
             _coop_raids.pop(key, None)
-            _cmd = "/guildraid" if scope == "guild" else "/adventure"
+            _cmd = {"guild": "/guildraid", "lobby": "/lobby"}.get(scope, "/adventure")
             raid.setdefault("log", []).append(f"💀 *The group was wiped out by {raid['name']}!*")
             if _dm:
                 await _coop_broadcast(raid, context.bot, final=True)
@@ -28990,6 +29197,7 @@ GUIDE_PAGES = [
         "\n"
         "*Party*\n"
         "/party  -  View your party, or reply to a player to invite them\n"
+        "/lobby  -  Open a pickup group for a 3-wave adventure (class-weapon reward!)\n"
         "/adventure  -  (Leader) raid a shared-HP co-op boss with your party\n"
         "/partyinvite @user  -  Send a party invite via DM\n"
         "/partyname [name]  -  Name your party\n"
@@ -43347,9 +43555,11 @@ def main():
     app.add_handler(CommandHandler("resetclass", resetclass_cmd))
     app.add_handler(CommandHandler("changeclass", changeclass_cmd))
     app.add_handler(CommandHandler("adventure",  adventure_cmd))
+    app.add_handler(CommandHandler("lobby",      lobby_cmd))
     app.add_handler(CommandHandler("guildraid",  guildraid_cmd))
     app.add_handler(CommandHandler("raidboard",  raidboard_cmd))
     app.add_handler(CallbackQueryHandler(coop_raid_callback, pattern="^raid_"))
+    app.add_handler(CallbackQueryHandler(lobby_callback,     pattern="^lobby_"))
     app.add_handler(CommandHandler("resetstats", resetstats_cmd))
     app.add_handler(CommandHandler("allocate",   allocate_cmd))
     app.add_handler(CommandHandler("skill",      skill_cmd))
