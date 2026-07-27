@@ -31657,6 +31657,7 @@ _COMBAT_HUB_PAGES = [
         [("🏚️ Dungeon",        "combathub_dungeon"),   ("🛡️ Hold the Line","combathub_siege")],
         [("🗼 The Ascension",  "combathub_ascension"), ("⚔️ War Table",    "combathub_wartable")],
         [("👑 Throne Defense", "combathub_throne")],
+        [("🎉 Party Adventure","combathub_lobby"),     ("🐉 Guild Raid",   "combathub_guildraid")],
     ],
     # Page 2 — Skills, War & Exploration
     [
@@ -31698,7 +31699,7 @@ async def combat_hub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚔️ *{p['username']}'s Combat Hub*\n\n"
         f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
         f"⚡ CP: {cp:,}  |  {status}\n\n"
-        f"Page 1: Fight & Solo Modes  |  Page 2: Skills, War & Explore  |  Page 3: Info & Tools"
+        f"Page 1: Fights, Solo & Co-op Modes  |  Page 2: Skills, War & Explore  |  Page 3: Info & Tools"
     )
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
@@ -31730,7 +31731,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         header = (f"⚔️ *{p['username']}'s Combat Hub*\n\n"
                   f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
                   f"⚡ CP: {cp:,}  |  {status}\n\n"
-                  f"Page 1: Fight & Solo Modes  |  Page 2: Skills, War & Explore  |  Page 3: Info & Tools")
+                  f"Page 1: Fights, Solo & Co-op Modes  |  Page 2: Skills, War & Explore  |  Page 3: Info & Tools")
         try: await _q_edit(query, header, parse_mode="Markdown",
                                            reply_markup=_combat_hub_markup(uid, page=page))
         except Exception: pass
@@ -31749,7 +31750,7 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     _PAGE = {"attack":1,"skill":2,"defend":2,"heal":2,
              "war":2,"cp":3,"explore":2,"encounter":1,"dungeon":1,"soloraid":2,
-             "siege":1,"ascension":1,"wartable":1,"throne":1,
+             "siege":1,"ascension":1,"wartable":1,"throne":1,"lobby":1,"guildraid":1,
              "killcondition":3,"curepriority":3,"cooldowns":3,"petbattle":3}
     page = _PAGE.get(action, 1)
     back = InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=f"combathub_back_{page}_{uid}")]])
@@ -31818,58 +31819,13 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 except Exception: pass
 
     elif action == "defend":
-        max_sh = _shield_max(p)
-        cur_sh = safe_int(p.get("shield_hp"))
-        used   = safe_int(p.get("shield_used"))
-        hp_pct = p.get("hp", 1) / max(1, p.get("max_hp", 1))
-        hp_bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
-        if is_defeated(p):
-            txt = f"🛡️ *Defend*\n\n💀 You're defeated — shield resets on revival."
-        elif used and cur_sh > 0:
-            sh_pct = cur_sh / max(1, max_sh)
-            sh_bar = "█" * round(sh_pct * 10) + "░" * (10 - round(sh_pct * 10))
-            txt = (f"🛡️ *Defend — Shield Active*\n\n"
-                   f"🛡️ Shield: {cur_sh}/{max_sh} [{sh_bar}]\n"
-                   f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n\n"
-                   f"Shield absorbs damage before your HP.\n"
-                   f"Use `/defend core` to spend a Monster Core and raise shield max.")
-        elif used and cur_sh <= 0:
-            txt = (f"🛡️ *Defend — Shield Depleted*\n\n"
-                   f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n\n"
-                   f"Shield is empty. Resets on revival.\n"
-                   f"Max capacity was *{max_sh} HP*.")
-        else:
-            txt = (f"🛡️ *Defend*\n\n"
-                   f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]\n"
-                   f"🛡️ Shield max: *{max_sh} HP* _(25% of max HP)_\n\n"
-                   f"Type `/defend` in chat to raise your shield.\n"
-                   f"Use `/defend core` to expand it with a Monster Core.")
-        try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
+        # Perform the real action — raise your shield (tapping the button IS the
+        # command). /defend core is still available in chat for the Core upgrade.
+        await defend_cmd(update, context)
 
     elif action == "heal":
-        inv = Counter(sjl(p.get("inventory"), []))
-        potions = {pn: (inv.get(pn, 0), _potion_heal_amount(p, pn))
-                   for pn in ("Health Potion", "Greater Health Potion", "Grand Restorative Flask",
-                              "Supreme Restorative Flask", "Ultimate Vitality Draught")}
-        total_pots = sum(c for c, _ in potions.values())
-        hp_pct = p.get("hp", 1) / max(1, p.get("max_hp", 1))
-        hp_bar = "█" * round(hp_pct * 10) + "░" * (10 - round(hp_pct * 10))
-        cls = get_player_class(p)
-        is_healer = cls and cls.get("line") in ("priest", "botanist") if cls else False
-        lines = [f"💊 *Heal*\n\n"
-                 f"❤️ HP: {p.get('hp',0)}/{p.get('max_hp',1)} [{hp_bar}]  ({round(hp_pct*100)}%)\n"]
-        if is_healer:
-            lines.append("✨ As a healer you can `/heal` for free (no potion needed).")
-        else:
-            lines.append("*Potions available:*")
-            for name, (count, amt) in potions.items():
-                lines.append(f"{'✅' if count else '❌'} {name}: *{count}* _(+{amt} HP)_")
-            if total_pots == 0:
-                lines.append("\n_No potions — buy some at /shop!_")
-        lines.append("\nType `/heal` in chat to heal yourself, or reply to a teammate.")
-        try: await _q_edit(query, "\n".join(lines), parse_mode="Markdown", reply_markup=back)
-        except Exception: pass
+        # Perform the real action — heal yourself (or a teammate if replying).
+        await heal_cmd(update, context)
 
     elif action == "encounter":
         if uid in active_encounters:
@@ -31994,6 +31950,14 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     elif action == "throne":
         await thronedefense_cmd(update, context)
+
+    elif action == "lobby":
+        # Co-op: open the LFG party-adventure lobby (3-wave gauntlet).
+        await lobby_cmd(update, context)
+
+    elif action == "guildraid":
+        # Co-op: summon the shared-HP guild raid boss.
+        await guildraid_cmd(update, context)
 
     elif action == "petbattle":
         pet_rec = get_active_pet_record(uid)
