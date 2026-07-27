@@ -8296,6 +8296,15 @@ def _dng_tick_player_dots(state):
         state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + heal)
         state["p_regen_turns"] -= 1
         lines.append(f"🌿 Regen *+{heal}*")
+    # Kit regen support (priest Renew / botanist Regrowth) sets enc_regen_turns
+    if state.get("enc_regen_turns", 0) > 0:
+        pct = float(state.get("enc_regen_pct", 0.08) or 0.08)
+        heal = max(1, int(state["p_max_hp"] * pct))
+        state["p_hp"] = min(state["p_max_hp"], state["p_hp"] + heal)
+        state["enc_regen_turns"] -= 1
+        if state["enc_regen_turns"] <= 0:
+            state.pop("enc_regen_turns", None); state.pop("enc_regen_pct", None)
+        lines.append(f"🌿 Regen *+{heal}*")
     # Floor modifier: scorched floor drains 3% HP per combat turn
     if (state.get("floor_modifier") or {}).get("key") == "scorched":
         dmg = max(1, int(state["p_max_hp"] * 0.03))
@@ -8401,6 +8410,16 @@ def _dng_execute_enemy_move(e, state, p):
         if _mit == 0 and actual_dmg > 0:
             lines.append("🛡️ *Blocked!* Your armour turned the blow aside.")
         actual_dmg = _mit if _mit > 0 else 0
+
+    # Kit DEFENSIVE support (Bulwark/Divine-Shield/Aegis charges, Evasive dodge,
+    # Mirror-Veil reflect) — the dungeon runs its own enemy-move path, so apply
+    # the shared absorber here too or these support skills would do nothing in
+    # dungeons. Sync e_hp in/out so Mirror-Veil's reflect can hurt the enemy.
+    state["e_hp"] = e["hp"]
+    actual_dmg, _kit_absorb = _enc_absorb_incoming(state, actual_dmg)
+    e["hp"] = state["e_hp"]
+    if _kit_absorb.strip():
+        lines.append(_kit_absorb.strip())
 
     # Counter stance: reflect 50% back to enemy
     if e.get("countering") and actual_dmg > 0:
@@ -9563,7 +9582,7 @@ def get_active_statuses(p):
     elif is_blessed(p):  statuses.append("✨ Blessed (+10% all stats)")
     # Regen
     _rg = safe_int(p.get("regen_charges"))
-    if _rg > 0:    statuses.append(f"💚 Regen ×{_rg} (+{p.get('regen_amt',0)} HP/trigger)")
+    if _rg > 0:    statuses.append(f"💚 Regen ×{_rg} (+{round((float(p.get('regen_amt') or 0) or 0.08)*100)}% HP/trigger)")
     _dr = safe_int(p.get("def_reflect_hits"))
     if _dr > 0:    statuses.append(f"🌿 Thorn Reflect ×{_dr} (40% dmg reduction + reflect next {_dr} hit{'s' if _dr>1 else ''})")
     # Attacker output buffs
@@ -12023,6 +12042,13 @@ def init_db():
         ("players", "regen_amt",          "INTEGER DEFAULT 0"),
         ("players", "heal_blocked_turns", "INTEGER DEFAULT 0"),
         ("players", "revive_blocked_turns","INTEGER DEFAULT 0"),
+        # Self-buff charges set by kit support skills — MUST persist or the
+        # buff evaporates between PvP turns (each tap reloads a fresh DB row):
+        # warcry (War Cry / Warhorn), empower (Ambush / Arcane Charge),
+        # def_reflect (Mirror Veil).
+        ("players", "warcry_stacks",      "INTEGER DEFAULT 0"),
+        ("players", "empower_next",       "REAL DEFAULT 0"),
+        ("players", "def_reflect_hits",   "INTEGER DEFAULT 0"),
         # Percentage-based DOT damage (% of target max HP per trigger, 0 = use flat)
         ("players", "poison_pct",         "INTEGER DEFAULT 0"),
         ("players", "bleed_pct",          "INTEGER DEFAULT 0"),
@@ -12852,6 +12878,7 @@ def save_player(p):
         "poison_stacks","burn_stacks","bleed_stacks",
         "ward_charges","shield_charges","exposed_hits","marked_hits","branded_hits",
         "regen_charges","regen_amt","heal_blocked_turns","revive_blocked_turns",
+        "warcry_stacks","empower_next","def_reflect_hits",
         "poison_pct","bleed_pct","burn_pct",
         "empire_buildings","empire_resources","empire_last_collect",
         "mp","max_mp","dng_companions","dodge_momentum","collection_log",
@@ -13914,7 +13941,7 @@ CLASS_KITS = {
                  "desc":"Dodge the next 2 hits against you."},
         "s2":   {"name":"Cripple","emoji":"🎯","mp":15,"cd":2,"kind":"support",
                  "effect":[("foe","weakened_hits","add",3)],
-                 "desc":"Cripple the foe: −25% damage for their next 3 hits."},
+                 "desc":"Cripple the foe: they take +25% damage for their next 3 hits."},
     },
     "priest": {
         "main": {"name":"Smite","emoji":"🌟","mp":20,"cd":2,"kind":"strike","mult":2.0,
@@ -13935,7 +13962,7 @@ CLASS_KITS = {
                  "desc":"Heal 12% + regen 10%/turn for 3 turns."},
         "s2":   {"name":"Entangle","emoji":"🌱","mp":18,"cd":3,"kind":"support",
                  "effect":[("foe","entangle_turns","add",2),("foe","weakened_hits","add",2)],
-                 "desc":"Root the foe: −damage and can't escape for 2 turns."},
+                 "desc":"Root the foe: +25% damage taken and can't escape for 2 turns."},
     },
     "enchantress": {
         "main": {"name":"Hex Bolt","emoji":"🔯","mp":18,"cd":2,"kind":"strike","mult":2.0,
@@ -13945,7 +13972,7 @@ CLASS_KITS = {
                  "desc":"Reflect the next hit back and soften it."},
         "s2":   {"name":"Curse","emoji":"💀","mp":18,"cd":3,"kind":"support",
                  "effect":[("foe","weakened_hits","add",3),("foe","silence_turns","add",1)],
-                 "desc":"−damage (3 hits) and Silence 1 turn (no skills)."},
+                 "desc":"Foe takes +25% damage (3 hits) and is Silenced 1 turn (no skills)."},
     },
     "valkyrie": {
         "main": {"name":"Valkyrie Strike","emoji":"⚡","mp":20,"cd":2,"kind":"strike","mult":2.1,
@@ -14554,12 +14581,15 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, kit_skill=None):
         return (f"🛡️ *{d['username']}*'s *Shield* negated the attack!" +
                 (f" ({_sc_rem} charges left)" if _sc_rem else " *(shield broken!)*"),
                 [], "miss")
-    # Consume regen charges (trigger on being hit)
+    # Consume regen charges (trigger on being hit). regen_amt is a FRACTION of
+    # max HP (0.08–0.10), so heal a percentage — reading it as a flat int gave
+    # every Renew/Regrowth tick just 1 HP in PvP.
     if safe_int(d.get("regen_charges")) > 0:
-        _rg_heal = max(1, safe_int(d.get("regen_amt", 0)))
-        d["hp"] = min(d.get("max_hp", d["hp"]), d["hp"] + _rg_heal)
+        _rg_pct = float(d.get("regen_amt") or 0) or 0.08
+        _rg_heal = max(1, round(calc_max_hp(d) * _rg_pct))
+        d["hp"] = min(calc_max_hp(d), safe_int(d.get("hp")) + _rg_heal)
         d["regen_charges"] -= 1
-        extra_notes.append(f"💚 *Regen trigger!* +{_rg_heal} HP ({d['regen_charges']} left)")
+        extra_notes.append(f"💚 *Regen trigger!* +{fmt_num(_rg_heal)} HP ({d['regen_charges']} left)")
 
     _d_hp_before_attack = d["hp"]
     # Void Sovereign companion: +10% all stats — simulate with 10% extra DR here
