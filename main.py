@@ -32434,14 +32434,16 @@ async def socialhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if sub == "who":
         c = _db().cursor()
-        c.execute("SELECT username, level, last_active FROM players "
-                  "ORDER BY last_active DESC LIMIT 15")
+        # Activity is tracked in shadow_profiles.last_seen (the players table has
+        # no activity timestamp), so read recency from there.
+        c.execute("SELECT username, level, last_seen FROM shadow_profiles "
+                  "WHERE last_seen IS NOT NULL ORDER BY last_seen DESC LIMIT 15")
         rows  = [dict(r) for r in c.fetchall()]
         lines = ["👁️ *Who's Online — Recently Active*\n"]
         now   = datetime.now()
         for r in rows:
             try:
-                mins = int((now - datetime.fromisoformat(r["last_active"])).total_seconds() / 60)
+                mins = int((now - datetime.fromisoformat(r["last_seen"])).total_seconds() / 60)
                 when = f"{mins}m ago" if mins < 60 else f"{mins//60}h ago"
             except Exception:
                 when = "recently"
