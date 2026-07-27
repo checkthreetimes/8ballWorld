@@ -6025,16 +6025,19 @@ def _enc_kit_apply_effect(enc, tgt, field, op, val):
         return "🤐 silenced"
     return None
 
-def _enc_process_kit_skill(enc, p, sk):
-    """Resolve one of the player's 3 kit skills inside an encounter.
+def _enc_process_kit_skill(enc, p, sk, charge_mp=True):
+    """Resolve one of the player's 3 kit skills inside an encounter/dungeon.
     Returns (action_txt, dmg, is_support) — same contract as _enc_process_skill.
-    Caller has already checked MP affordability & heal limit."""
+    Caller has already checked MP affordability & heal limit. Pass charge_mp=False
+    when the caller has already deducted MP itself (e.g. the dungeon, which may
+    inflate the cost under a silence modifier)."""
     sk_name = sk.get("name", "Skill")
     emoji   = sk.get("emoji", "✨")
     w       = get_weather()
-    cost    = _enc_skill_mp_cost(sk)
-    enc["p_mp"] = max(0, enc.get("p_mp", 0) - cost)
-    p["mp"]     = enc["p_mp"]
+    if charge_mp:
+        cost = _enc_skill_mp_cost(sk)
+        enc["p_mp"] = max(0, enc.get("p_mp", 0) - cost)
+        p["mp"]     = enc["p_mp"]
 
     # ── Support: heal / cleanse / self-buffs / foe-debuffs ───────────────────
     if sk.get("kind") == "support":
@@ -8016,7 +8019,7 @@ def _dng_combat_card(state):
 
 def _dng_combat_markup(uid, state):
     p = get_player(uid)
-    p_skills = get_combat_skills(p) if p else []
+    p_skills = _enc_kit_skills(p) if p else []   # the real 3-skill battle kit
     mp = state.get("p_mp", 0)
     inv = sjl(p.get("inventory"), []) if p else []
     _hp_pots = sum(1 for i in inv if i in ("Health Potion", "Greater Health Potion",
@@ -8035,8 +8038,8 @@ def _dng_combat_markup(uid, state):
     if p_skills:
         sk_row = []
         for i, sk in enumerate(p_skills[:3]):
-            cost = _dng_skill_mp_cost(sk)
-            label = f"✨{sk.get('name','Sk')[:10]}({cost}MP)"
+            cost = _enc_skill_mp_cost(sk)
+            label = f"{sk.get('emoji','✨')}{sk.get('name','Sk')[:10]}({cost}MP)"
             sk_row.append(InlineKeyboardButton(label, callback_data=f"dng_skl_{uid}_{i}"))
         rows.append(sk_row)
     rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"dng_flee_{uid}"),
@@ -9208,20 +9211,22 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
     if data.startswith("dng_skl_"):
         try:
             idx = int(data.split("_")[3])
-            sk  = get_combat_skills(p)[idx]
+            sk  = _enc_kit_skills(p)[idx]   # the real 3-skill battle kit
         except (IndexError, ValueError):
             await query.answer("That skill isn't available anymore.", show_alert=True)
             return
-        cost = _dng_skill_mp_cost(sk)
+        cost = _enc_skill_mp_cost(sk)
         if (state.get("floor_modifier") or {}).get("key") == "silence":
             cost = int(cost * 1.5)
         if state.get("p_mp", 0) < cost:
             state.setdefault("combat_log",[]).append(f"💙 Not enough MP! Need {cost}.")
             await _dng_edit(uid, context.bot, _dng_combat_card(state), _dng_combat_markup(uid, state)); return
+        # We deduct the (possibly silence-inflated) cost ourselves, so tell the
+        # kit resolver not to charge MP again.
         state["p_mp"] = max(0, state.get("p_mp",0) - cost)
         state["e_hp"]     = e["hp"]
         state["e_max_hp"] = e["max_hp"]
-        action_txt, sk_dmg, is_support = _enc_process_skill(state, p, sk)
+        action_txt, sk_dmg, is_support = _enc_process_kit_skill(state, p, sk, charge_mp=False)
         if state.get("floor_buff") == "arcane_surge" and sk_dmg and sk_dmg > 0:
             bonus = int(sk_dmg * 0.60)
             state["e_hp"] = max(0, state["e_hp"] - bonus)
@@ -31892,19 +31897,15 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
                 await _show(f"🎓 *Choose Your Class*\n\nUse `/class` to pick!\n\n"
                             f"Available: {', '.join(BASE_CLASSES)}\n\nExample: `/class warrior`")
         else:
-            all_skills = get_combat_skills(p)
             lines = [f"🎓 *{p['username']}* — *{cls['name']}*\n", f"_{cls.get('desc','')}_\n"]
-            if all_skills:
-                lines.append(f"*Skills ({len(all_skills)}):*")
-                for s in all_skills[:6]:
-                    stype = s.get("type", "damage")
-                    icon = ("⚔️" if stype in ("damage","combo_dmg","freeze_nuke","execute_nuke",
-                                              "holy_nuke","fear_kill","nature_nuke","drain")
-                            else "💚" if stype in ("self_heal","group_heal","revive_heal","full_revive","regen")
-                            else "✨" if stype in ("dmg_reduction_buff","self_heal_buff","heal_shield",
-                                                   "self_atk_buff","party_atk_buff","party_full_buff")
-                            else "⚡")
-                    lines.append(f"{icon} *{s['name']}*  -  _{s['desc']}_")
+            kit = _kit_for(p)
+            if kit:
+                lines.append("*⚔️ Combat Kit:*")
+                for slot in ("main", "s1", "s2"):
+                    s = kit.get(slot)
+                    if s:
+                        lines.append(f"{s.get('emoji','✨')} *{s['name']}*  -  _{s.get('desc','')}_")
+                lines.append("_See /skills for full details + your Finisher._")
             path = p.get("class_path")
             if path:
                 line_k = cls.get("line")
@@ -31952,27 +31953,17 @@ async def activitieshub_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     # ── Skills: real skills list ─────────────────────────────────────
     elif action == "skills":
-        cls = get_player_class(p)
-        if not cls:
-            await _show("✨ *Skills*\n\nChoose a class at Level 5 with `/class`.")
-        else:
-            all_skills = get_combat_skills(p)
-            if not all_skills:
-                await _show("✨ *Skills*\n\nNo skills yet. Level up or pick a class!")
+        # Show the real 3-skill combat kit (the skills actually used in battle),
+        # with each skill's own emoji + description — consistent with PvP, the
+        # dungeon, and /encounter. (The old view listed the whole class-tree.)
+        _kit_txt = _build_kit_text(p)
+        if not _kit_txt:
+            if not get_player_class(p):
+                await _show("✨ *Skills*\n\nChoose a class at Level 5 with `/class`.")
             else:
-                lines = [f"✨ *{p['username']}'s Skills* — {cls['name']}\n"]
-                for i, s in enumerate(all_skills, 1):
-                    stype = s.get("type", "damage")
-                    icon = ("⚔️" if stype in ("damage","combo_dmg","freeze_nuke","execute_nuke",
-                                              "holy_nuke","fear_kill","nature_nuke","drain")
-                            else "💚" if stype in ("self_heal","group_heal","revive_heal","full_revive","regen")
-                            else "✨" if stype in ("dmg_reduction_buff","self_heal_buff","heal_shield",
-                                                   "self_atk_buff","party_atk_buff","party_full_buff")
-                            else "⚡")
-                    unlock_note = f" _(Lv.{s.get('unlock',5)})_" if p["level"] < s.get("unlock", 5) else ""
-                    lines.append(f"*{i}.* {icon} *{s['name']}*{unlock_note}\n   _{s['desc']}_\n")
-                lines.append("_/skill [name or #] in a reply to fire a skill_")
-                await _show("\n".join(lines))
+                await _show("✨ *Skills*\n\nNo skills yet. Level up or pick a class!")
+        else:
+            await _show(_kit_txt)
 
     elif action == "quest":
         # Launch the real action.
