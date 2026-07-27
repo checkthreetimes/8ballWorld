@@ -849,7 +849,7 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
                     _extra.append(f"🎯 *Series* {_score_str}  _(to {_PVP_SERIES_TARGET})_")
             _full_recap = _recap + (("\n\n" + "\n".join(_extra)) if _extra else "")
             if _full_recap.strip():
-                asyncio.create_task(announce(bot, _grp_recap, _full_recap, delay=45))
+                asyncio.create_task(announce(bot, _grp_recap, _full_recap, permanent=True))
         except Exception:
             logger.error("fight recap failed", exc_info=True)
     _pvp_stats.pop(pair, None)
