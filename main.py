@@ -19439,39 +19439,52 @@ async def boss_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown", reply_markup=markup)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PARTY ADVENTURE — a leader-triggered, party-gated CO-OP RAID on one shared-HP
-# boss. Everyone in the party pounds the SAME monster from a single group card;
-# the boss retaliates on a random standing member. HP/MP here are EPHEMERAL (per
-# raid) so nobody loses real HP or can be "killed" for PvP — the only persistent
-# effect is the loot/gold/EXP handed out in the victory recap. Guild raids will
-# build on this same engine later.
+# CO-OP RAIDS (party + guild) — a leader-triggered raid on ONE shared-HP boss.
+# Everyone in the group pounds the SAME monster from a single card; the boss
+# retaliates on a random standing member and ENRAGES over time so a fight can't
+# stall forever. HP/MP are EPHEMERAL per-raid, so nobody loses real HP or can be
+# "killed" for PvP — only the victory loot/gold/EXP persists. Party and guild
+# raids share this whole engine; guild bosses are just bigger with fatter rewards.
 # ══════════════════════════════════════════════════════════════════════════════
-_party_raids = {}          # party_id -> raid state
-_PARTY_RAID_IDLE = 1800    # 30 min with no action → the raid is abandoned
+_coop_raids = {}            # "party:{id}" / "guild:{id}" -> raid state
+_COOP_RAID_IDLE   = 1800    # 30 min with no action → the raid is abandoned
+_COOP_ENRAGE_SECS = 90      # every 90s the boss enrages (+40% dmg/stage, cap 6)
+_COOP_HEAL_PCT    = 0.40    # Heal/Revive restore 40% of a member's max HP
+_COOP_HEALS       = 2       # self-heals per member per raid
+_COOP_REVIVES     = 1       # teammate revives per member per raid
 
-def _party_raid_boss(member_players):
-    """Roll a boss scaled to the party's size and hitting power so a clear takes
-    a good ~20 shared hits. Flavour (name/desc/loot/title) borrows a BOSSES entry."""
+def _coop_raid_boss(member_players, scope):
+    """Roll a boss scaled to the group's size and hitting power. Guild bosses are
+    chunkier and pay out more."""
     n   = max(1, len(member_players))
     avg = max(1, sum(safe_int(mp.get("level", 1)) for mp in member_players) // n)
     sample = max(1, sum(max(1, calc_attack_damage(mp)) for mp in member_players) // n)
     base = random.choice([b for b in BOSSES.values() if not b.get("secret")] or [next(iter(BOSSES.values()))])
-    hp   = max(3000, int(sample * n * random.randint(20, 26)))
+    span = random.randint(30, 38) if scope == "guild" else random.randint(20, 26)
+    hp   = max(3000, int(sample * n * span))
     dmin = max(10, sample // 4)
+    rscale = 1 + (0.20 if scope == "guild" else 0.15) * n
     return {
         "name": base["name"], "desc": base.get("desc", ""),
         "max_hp": hp, "dmg_min": dmin, "dmg_max": int(dmin * 1.8),
-        "gold": int(base.get("gold", 500) * (1 + 0.15 * n)),
-        "exp":  int(base.get("exp", 1000) * (1 + 0.15 * n)),
-        "loot_table": base.get("loot_table", []), "title": base.get("title"),
-        "avg": avg,
+        "gold": int(base.get("gold", 500) * rscale),
+        "exp":  int(base.get("exp", 1000) * rscale),
+        "loot_table": base.get("loot_table", []), "title": base.get("title"), "avg": avg,
     }
 
-def _party_raid_card(raid):
-    bar = _enc_hp_bar(raid["hp"], raid["max_hp"], 14)
-    lines = [f"🐉 *PARTY RAID — {raid['name']}*", "",
-             f"`{bar}`  {fmt_num(raid['hp'])}/{fmt_num(raid['max_hp'])} HP", ""]
-    for uid, mm in raid["members"].items():
+def _coop_enrage_stage(raid):
+    return min(6, int((time.time() - raid.get("start", time.time())) // _COOP_ENRAGE_SECS))
+
+def _coop_raid_card(raid):
+    bar   = _enc_hp_bar(raid["hp"], raid["max_hp"], 14)
+    ico   = "🏰" if raid["scope"] == "guild" else "🐉"
+    title = "GUILD RAID" if raid["scope"] == "guild" else "PARTY RAID"
+    lines = [f"{ico} *{title} — {raid['name']}*", ""]
+    stage = _coop_enrage_stage(raid)
+    if stage > 0:
+        lines.append(f"😡 *ENRAGED ×{stage}* — _the boss hits harder, finish fast!_")
+    lines += [f"`{bar}`  {fmt_num(raid['hp'])}/{fmt_num(raid['max_hp'])} HP", ""]
+    for _uid, mm in raid["members"].items():
         mbar = _enc_hp_bar(mm["hp"], mm["max_hp"], 6)
         tag  = "💀" if mm["downed"] else "🗡️"
         lines.append(f"{tag} *{mm['name']}* `{mbar}` ⚔️{fmt_num(mm['dmg'])}")
@@ -19481,28 +19494,28 @@ def _party_raid_card(raid):
         lines += log[-3:]
     return "\n".join(lines)
 
-def _party_raid_markup(raid):
-    pid = raid["party_id"]
-    # Skill buttons are generic (Skill I/II/III) and resolve to whichever member
-    # taps them, using THAT member's own 3-skill kit by index.
+def _coop_raid_markup(raid):
+    k = f"{raid['scope']}_{raid['id']}"
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚔️ Attack", callback_data=f"padv_atk_{pid}")],
-        [InlineKeyboardButton("✨ Skill I",  callback_data=f"padv_skl0_{pid}"),
-         InlineKeyboardButton("✨ II",       callback_data=f"padv_skl1_{pid}"),
-         InlineKeyboardButton("✨ III",      callback_data=f"padv_skl2_{pid}")],
-        [InlineKeyboardButton("🔄 Refresh",  callback_data=f"padv_ref_{pid}")],
+        [InlineKeyboardButton("⚔️ Attack", callback_data=f"raid_atk_{k}"),
+         InlineKeyboardButton("🧪 Heal",   callback_data=f"raid_heal_{k}"),
+         InlineKeyboardButton("✚ Revive",  callback_data=f"raid_rev_{k}")],
+        [InlineKeyboardButton("✨ I",  callback_data=f"raid_skl0_{k}"),
+         InlineKeyboardButton("✨ II", callback_data=f"raid_skl1_{k}"),
+         InlineKeyboardButton("✨ III",callback_data=f"raid_skl2_{k}")],
+        [InlineKeyboardButton("🔄 Refresh", callback_data=f"raid_ref_{k}")],
     ])
 
-def _party_raid_resolve(raid, uid, p, action, skill_idx=None):
-    """Apply one member's action to the shared boss + the boss's retaliation.
-    Mutates raid in place. Returns (status) in {hit, victory, wipe, invalid, nomp}."""
+def _coop_raid_resolve(raid, uid, p, action, skill_idx=None):
+    """Apply one member action + the boss's (enrage-scaled) retaliation. Mutates
+    raid in place. Returns status in
+    {hit, victory, wipe, invalid, nomp, noheal, norev, norevtarget}."""
     mm = raid["members"].get(uid)
     if not mm or mm["downed"] or raid.get("over"):
         return "invalid"
     w = get_weather()
     if action == "atk":
-        dmg = calc_attack_damage(p, w)
-        crit = ""
+        dmg = calc_attack_damage(p, w); crit = ""
         if check_crit(p):
             dmg = apply_crit(p, dmg); crit = " 💥"
         raid["hp"] = max(0, raid["hp"] - dmg); mm["dmg"] += dmg
@@ -19522,17 +19535,33 @@ def _party_raid_resolve(raid, uid, p, action, skill_idx=None):
         _head = _txt.split("!")[0].replace("*", "")
         raid.setdefault("log", []).append(f"{sk.get('emoji','✨')} *{mm['name']}* — {_head}!"
                                           + (f" *{fmt_num(dmg)}*" if dmg else ""))
+    elif action == "heal":
+        if mm.get("heals", 0) <= 0:
+            return "noheal"
+        heal = max(1, int(mm["max_hp"] * _COOP_HEAL_PCT))
+        mm["hp"] = min(mm["max_hp"], mm["hp"] + heal); mm["heals"] -= 1
+        raid.setdefault("log", []).append(f"🧪 *{mm['name']}* heals *+{fmt_num(heal)}* _({mm['heals']} left)_")
+    elif action == "rev":
+        if mm.get("revives", 0) <= 0:
+            return "norev"
+        downed = [x for _u, x in raid["members"].items() if x["downed"]]
+        if not downed:
+            return "norevtarget"
+        tx = min(downed, key=lambda x: x["dmg"])
+        tx["downed"] = False; tx["hp"] = max(1, int(tx["max_hp"] * _COOP_HEAL_PCT)); mm["revives"] -= 1
+        raid.setdefault("log", []).append(f"✚ *{mm['name']}* revives *{tx['name']}*!")
     else:
         return "invalid"
     raid["ts"] = time.time()
     if raid["hp"] <= 0:
         raid["over"] = True
         return "victory"
-    # Boss retaliates on a random standing member
+    # Boss retaliation, scaled by the enrage stage
+    emult = 1 + 0.4 * _coop_enrage_stage(raid)
     standing = [u for u, m2 in raid["members"].items() if not m2["downed"]]
     if standing:
         tuid = random.choice(standing); tgt = raid["members"][tuid]
-        raw = random.randint(raid["dmg_min"], raid["dmg_max"])
+        raw = int(random.randint(raid["dmg_min"], raid["dmg_max"]) * emult)
         tp = get_player(tuid) or p
         bdmg = calc_defense(tp, raw)
         tgt["hp"] = max(0, tgt["hp"] - bdmg)
@@ -19548,12 +19577,15 @@ def _party_raid_resolve(raid, uid, p, action, skill_idx=None):
         return "wipe"
     return "hit"
 
-def _party_raid_rewards_text(raid):
-    """Grant per-member loot/gold/EXP on a clear and return the recap text."""
+def _coop_raid_rewards_text(raid):
+    """Grant per-member loot/gold/EXP on a clear (+guild EXP for guild raids) and
+    return the recap text."""
     ranked = sorted(raid["members"].items(), key=lambda kv: -kv[1]["dmg"])
     dur = int(time.time() - raid.get("start", time.time()))
     dur_str = f"{dur//60}m {dur%60}s" if dur >= 60 else f"{dur}s"
-    lines = [f"🏆 *RAID CLEARED — {raid['name']}!*",
+    ico   = "🏰" if raid["scope"] == "guild" else "🏆"
+    label = "GUILD RAID" if raid["scope"] == "guild" else "RAID"
+    lines = [f"{ico} *{label} CLEARED — {raid['name']}!*",
              f"⏱ {dur_str}  ·  {len(raid['members'])} adventurers", ""]
     w = get_weather()
     for i, (uid, mm) in enumerate(ranked):
@@ -19580,51 +19612,101 @@ def _party_raid_rewards_text(raid):
         mvp = " *MVP*" if i == 0 else ""
         lines.append(f"{medal} *{mm['name']}*{mvp} — {fmt_num(mm['dmg'])} dmg\n"
                      f"    +{fmt_num(exp)} EXP  +{fmt_num(gold)}g{loot_txt}")
+    # Guild raids also feed the guild's own progression
+    if raid["scope"] == "guild":
+        g = get_guild(raid["id"])
+        if g:
+            gmsgs = add_guild_exp(g, int(raid["exp"] * 1.5))
+            save_guild(g)
+            lines.append(f"\n🏰 *+{fmt_num(int(raid['exp']*1.5))} Guild EXP!*")
+            for gm in gmsgs:
+                lines.append(gm)
     return "\n".join(lines)
 
-async def _begin_party_adventure(bot, uid, chat_id, chat_type):
-    """Shared starter for /adventure and the party-menu button. Returns
-    (ok, err_or_None); on ok it has posted the shared raid card to chat_id."""
-    p = get_player(uid)
+def _coop_raid_members_players(scope, rid):
+    """(member player dicts, leader_id) for a scope+id, or (None, None)."""
+    if scope == "party":
+        party = None
+        # find party by id
+        c = _db().cursor()
+        c.execute("SELECT id, leader_id FROM parties WHERE id=?", (rid,))
+        row = c.fetchone()
+        if not row:
+            return None, None
+        leader = row[1]
+        ids = _get_party_members(rid)
+    else:  # guild
+        g = get_guild(rid)
+        if not g:
+            return None, None
+        leader = safe_int(g.get("leader_id"))
+        ids = [safe_int(x) for x in sjl(g.get("members"), [])] or []
+    mps = [mp for mp in (get_player(mid) for mid in ids) if mp]
+    return mps, safe_int(leader)
+
+def _coop_is_member(scope, rid, uid):
+    uid = safe_int(uid)
+    if scope == "party":
+        return uid in _get_party_members(rid)
+    g = get_guild(rid)
+    if not g:
+        return False
+    return str((get_player(uid) or {}).get("guild_id")) == str(rid)
+
+async def _begin_coop_raid(bot, scope, opener_uid, chat_id, chat_type):
+    """Shared starter for party & guild raids. Returns (ok, err_or_None); on ok it
+    has posted the shared raid card to chat_id."""
+    p = get_player(opener_uid)
     if not p:
         return False, "Use /ascend first!"
     if chat_type not in ("group", "supergroup"):
-        return False, "🐉 Party raids happen in the group chat — start one there!"
-    party = _get_party_of(uid)
-    if not party:
-        return False, "🧭 You're not in a party. Use /party to form one, then /adventure!"
-    if safe_int(party.get("leader_id")) != uid:
-        return False, "🧭 Only the party leader can start an adventure."
-    pid = party["id"]
-    existing = _party_raids.get(pid)
-    if existing and not existing.get("over") and (time.time() - existing.get("ts", 0)) < _PARTY_RAID_IDLE:
-        return False, "🐉 Your party is already in a raid — finish it first!"
-    member_ids = _get_party_members(pid)
-    mps = [mp for mp in (get_player(mid) for mid in member_ids) if mp]
+        return False, "🐉 Co-op raids happen in the group chat — start one there!"
+    if scope == "party":
+        party = _get_party_of(opener_uid)
+        if not party:
+            return False, "🧭 You're not in a party. Use /party to form one, then /adventure!"
+        rid = party["id"]; leader = safe_int(party.get("leader_id"))
+        gate_msg = "🧭 Only the party leader can start an adventure."
+    else:
+        gid = p.get("guild_id")
+        if not gid or str(gid) in ("None", "", "0"):
+            return False, "🏰 You're not in a guild. Join or found one with /guild, then /guildraid!"
+        g = get_guild(gid)
+        if not g:
+            return False, "🏰 Guild not found."
+        rid = safe_int(gid); leader = safe_int(g.get("leader_id"))
+        gate_msg = "🏰 Only the guild leader can start a guild raid."
+    if leader != safe_int(opener_uid):
+        return False, gate_msg
+    key = f"{scope}:{rid}"
+    existing = _coop_raids.get(key)
+    if existing and not existing.get("over") and (time.time() - existing.get("ts", 0)) < _COOP_RAID_IDLE:
+        return False, "🐉 Your group is already in a raid — finish it first!"
+    mps, _leader = _coop_raid_members_players(scope, rid)
     if not mps:
-        return False, "🧭 No ascended party members to raid with yet."
-    boss = _party_raid_boss(mps)
+        return False, "🧭 No ascended members to raid with yet."
+    boss = _coop_raid_boss(mps, scope)
     members = {}
     for mp in mps:
         mhp = calc_max_hp(mp)
         members[safe_int(mp["user_id"])] = {
             "name": mp.get("username", "?"), "hp": mhp, "max_hp": mhp,
             "mp": calc_max_mp(mp), "max_mp": calc_max_mp(mp), "dmg": 0, "downed": False,
+            "heals": _COOP_HEALS, "revives": _COOP_REVIVES,
         }
     raid = {
-        "party_id": pid, "leader_id": uid, "chat_id": chat_id,
+        "scope": scope, "id": rid, "key": key, "leader_id": safe_int(opener_uid), "chat_id": chat_id,
         "name": boss["name"], "max_hp": boss["max_hp"], "hp": boss["max_hp"],
         "dmg_min": boss["dmg_min"], "dmg_max": boss["dmg_max"],
         "gold": boss["gold"], "exp": boss["exp"], "loot_table": boss["loot_table"],
         "title": boss["title"], "members": members,
-        "log": [f"A wild *{boss['name']}* blocks the party's path!"],
+        "log": [f"A wild *{boss['name']}* blocks the group's path!"],
         "start": time.time(), "ts": time.time(), "over": False,
     }
-    _party_raids[pid] = raid
+    _coop_raids[key] = raid
     try:
-        msg = await bot.send_message(
-            chat_id=chat_id, text=_party_raid_card(raid),
-            parse_mode="Markdown", reply_markup=_party_raid_markup(raid))
+        msg = await bot.send_message(chat_id=chat_id, text=_coop_raid_card(raid),
+                                     parse_mode="Markdown", reply_markup=_coop_raid_markup(raid))
         raid["msg_id"] = msg.message_id
     except Exception:
         pass
@@ -19632,44 +19714,53 @@ async def _begin_party_adventure(bot, uid, chat_id, chat_type):
 
 async def adventure_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Party leader summons a shared-HP co-op boss for the whole party."""
-    ok, err = await _begin_party_adventure(
-        context.bot, update.effective_user.id,
-        update.effective_chat.id, update.effective_chat.type)
+    ok, err = await _begin_coop_raid(context.bot, "party", update.effective_user.id,
+                                     update.effective_chat.id, update.effective_chat.type)
     if not ok:
         await send_group(update, err, delay=12)
 
-async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """padv_atk_{pid} / padv_skl{i}_{pid} / padv_ref_{pid}."""
+async def guildraid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Guild leader summons a big shared-HP boss for the whole guild."""
+    ok, err = await _begin_coop_raid(context.bot, "guild", update.effective_user.id,
+                                     update.effective_chat.id, update.effective_chat.type)
+    if not ok:
+        await send_group(update, err, delay=12)
+
+async def coop_raid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """raid_{action}_{scope}_{id} — Attack / Skill I-III / Heal / Revive / Refresh."""
     query = update.callback_query
-    data = query.data
-    try:
-        _, action, pid_s = data.split("_", 2)
-        pid = int(pid_s)
-    except (ValueError, IndexError):
+    parts = query.data.split("_")
+    if len(parts) < 4:
         await query.answer(); return
-    uid = query.from_user.id
-    raid = _party_raids.get(pid)
+    action, scope, rid_s = parts[1], parts[2], parts[3]
+    try:
+        rid = int(rid_s)
+    except ValueError:
+        await query.answer(); return
+    key = f"{scope}:{rid}"
+    raid = _coop_raids.get(key)
     if not raid or raid.get("over"):
         await query.answer("This raid has ended.", show_alert=True); return
+    uid = query.from_user.id
     if uid not in raid["members"]:
-        # let any current party member who wasn't in at start join in
-        if uid in _get_party_members(pid):
+        if _coop_is_member(scope, rid, uid):
             mp = get_player(uid)
             if mp:
                 mhp = calc_max_hp(mp)
                 raid["members"][uid] = {"name": mp.get("username", "?"), "hp": mhp, "max_hp": mhp,
-                                        "mp": calc_max_mp(mp), "max_mp": calc_max_mp(mp), "dmg": 0, "downed": False}
+                                        "mp": calc_max_mp(mp), "max_mp": calc_max_mp(mp), "dmg": 0,
+                                        "downed": False, "heals": _COOP_HEALS, "revives": _COOP_REVIVES}
         else:
-            await query.answer("This is another party's raid!", show_alert=True); return
+            await query.answer("This is another group's raid!", show_alert=True); return
     if action == "ref":
         await query.answer()
         try:
-            await query.edit_message_text(_party_raid_card(raid), parse_mode="Markdown",
-                                          reply_markup=_party_raid_markup(raid))
+            await query.edit_message_text(_coop_raid_card(raid), parse_mode="Markdown",
+                                          reply_markup=_coop_raid_markup(raid))
         except Exception: pass
         return
     if raid["members"][uid]["downed"]:
-        await query.answer("💀 You're downed — a teammate must finish the raid!", show_alert=True); return
+        await query.answer("💀 You're downed — a teammate can ✚ Revive you!", show_alert=True); return
     _tok = _cb_lock(uid)
     if not _tok:
         await query.answer("⏳ One tap at a time!"); return
@@ -19680,36 +19771,40 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if action.startswith("skl"):
             try: sidx = int(action[3:])
             except ValueError: sidx = 0
-            status = _party_raid_resolve(raid, uid, p, "skl", sidx)
-        elif action == "atk":
-            status = _party_raid_resolve(raid, uid, p, "atk")
+            status = _coop_raid_resolve(raid, uid, p, "skl", sidx)
+        elif action in ("atk", "heal", "rev"):
+            status = _coop_raid_resolve(raid, uid, p, action)
         else:
             await query.answer(); return
-        if status == "nomp":
-            await query.answer("❌ Not enough MP for that skill.", show_alert=True); return
+        _toast = {"nomp": "❌ Not enough MP for that skill.",
+                  "noheal": "🧪 No heals left this raid.",
+                  "norev": "✚ You've used your revive this raid.",
+                  "norevtarget": "✚ No downed teammate to revive."}.get(status)
+        if _toast:
+            await query.answer(_toast, show_alert=True); return
         if status == "invalid":
             await query.answer(); return
-        try: await query.answer("⚔️" if action == "atk" else "✨")
+        try: await query.answer({"atk": "⚔️", "heal": "🧪", "rev": "✚"}.get(action, "✨"))
         except Exception: pass
         if status == "victory":
-            recap = _party_raid_rewards_text(raid)
-            _party_raids.pop(pid, None)
-            try:
-                await query.edit_message_text(_party_raid_card(raid), parse_mode="Markdown")
+            recap = _coop_raid_rewards_text(raid)
+            _coop_raids.pop(key, None)
+            try: await query.edit_message_text(_coop_raid_card(raid), parse_mode="Markdown")
             except Exception: pass
             asyncio.create_task(announce(context.bot, raid["chat_id"], recap, permanent=True))
             return
         if status == "wipe":
-            _party_raids.pop(pid, None)
+            _coop_raids.pop(key, None)
+            _cmd = "/guildraid" if scope == "guild" else "/adventure"
             try:
                 await query.edit_message_text(
-                    _party_raid_card(raid) + f"\n\n💀 *The party was wiped out by {raid['name']}!*\n"
-                    f"_Regroup and try again with /adventure._", parse_mode="Markdown")
+                    _coop_raid_card(raid) + f"\n\n💀 *The group was wiped out by {raid['name']}!*\n"
+                    f"_Regroup and try again with {_cmd}._", parse_mode="Markdown")
             except Exception: pass
             return
         try:
-            await query.edit_message_text(_party_raid_card(raid), parse_mode="Markdown",
-                                          reply_markup=_party_raid_markup(raid))
+            await query.edit_message_text(_coop_raid_card(raid), parse_mode="Markdown",
+                                          reply_markup=_coop_raid_markup(raid))
         except Exception: pass
     finally:
         _cb_unlock(uid, _tok)
@@ -20549,7 +20644,7 @@ async def social_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         _ctype = _chat.type if _chat else "private"
         if _ctype not in ("group", "supergroup"):
             await query.answer("🐉 Open /party in your GROUP chat, then tap Adventure there.", show_alert=True); return
-        ok, err = await _begin_party_adventure(query.get_bot(), p["user_id"], _chat.id, _ctype)
+        ok, err = await _begin_coop_raid(query.get_bot(), "party", p["user_id"], _chat.id, _ctype)
         if not ok:
             await query.answer(err, show_alert=True)
         else:
@@ -28475,6 +28570,7 @@ GUIDE_PAGES = [
         "/guildleave  -  Leave your guild\n"
         "/guilddisband confirm  -  Disband your guild\n"
         "/guildwar  -  Declare war (leader, 24hr)\n"
+        "/guildraid  -  (Leader) raid a big shared-HP boss with your guild\n"
         "/gbank deposit/withdraw  -  Guild bank\n"
         "/alliance  -  Secret Orders menu (same as /guild)\n"
         "\n"
@@ -42845,7 +42941,8 @@ def main():
     app.add_handler(CommandHandler("resetclass", resetclass_cmd))
     app.add_handler(CommandHandler("changeclass", changeclass_cmd))
     app.add_handler(CommandHandler("adventure",  adventure_cmd))
-    app.add_handler(CallbackQueryHandler(adventure_callback, pattern="^padv_"))
+    app.add_handler(CommandHandler("guildraid",  guildraid_cmd))
+    app.add_handler(CallbackQueryHandler(coop_raid_callback, pattern="^raid_"))
     app.add_handler(CommandHandler("resetstats", resetstats_cmd))
     app.add_handler(CommandHandler("allocate",   allocate_cmd))
     app.add_handler(CommandHandler("skill",      skill_cmd))
