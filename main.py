@@ -3522,6 +3522,19 @@ SHIELDS = {
     "Venomous Fang Claw":        {"class":"thief","path":"B","type":"claw","atk":25,"rarity":"epic"},
     "The Death Grasp":           {"class":"thief","path":"B","type":"claw","atk":40,"rarity":"legendary"},
     "Soul Ripper Claw":          {"class":"thief","path":"B","type":"claw","atk":60,"rarity":"mythic"},
+    # ── ASSASSIN SHIELDS (assassin path B, DEFENSIVE off-hand — def, not atk) ──
+    # A tanky alternative to claws so assassins aren't locked into pure offense.
+    # Gated to the Assassin path in _can_equip_shield, same as claws.
+    "Shadowweave Guard":         {"class":"thief","path":"B","def":3, "rarity":"common"},
+    "Silent Vambrace":           {"class":"thief","path":"B","def":3, "rarity":"common"},
+    "Nightcloak Bracer":         {"class":"thief","path":"B","def":8, "rarity":"uncommon"},
+    "Umbral Ward":               {"class":"thief","path":"B","def":9, "rarity":"uncommon"},
+    "Shade Bulwark":             {"class":"thief","path":"B","def":17,"rarity":"rare"},
+    "Phantom Guard":             {"class":"thief","path":"B","def":17,"rarity":"rare"},
+    "Dusksteel Aegis":           {"class":"thief","path":"B","def":28,"rarity":"epic"},
+    "Veiled Rampart":            {"class":"thief","path":"B","def":28,"rarity":"epic"},
+    "Eclipse Bulwark":           {"class":"thief","path":"B","def":44,"rarity":"legendary"},
+    "The Silent Aegis":          {"class":"thief","path":"B","def":65,"rarity":"mythic"},
 }
 
 ACCESSORIES = {
@@ -9927,15 +9940,21 @@ def can_equip_armor(p, armor_name):
     return True, ""
 
 def _can_equip_shield(p, name):
-    """Claws are assassin-only (offensive, thief-themed and balanced for them);
-    defensive shields are open to EVERY class, so no class is stuck with a
-    permanently dead off-hand slot."""
+    """Off-hand rules:
+    - Claws (offensive) are Assassin-only.
+    - Assassin shields (thief-class DEFENSIVE off-hands) are Assassin-only too.
+    - Every OTHER defensive shield (e.g. the warrior/knight set) is open to any
+      class, so no class is stuck with a permanently dead off-hand slot."""
     s = SHIELDS.get(name)
     if not s:
         return False, "Unknown shield."
+    _is_assassin = get_class_line(p) == "thief" and p.get("class_path") == "B"
     if s.get("type") == "claw":
-        if get_class_line(p) != "thief" or p.get("class_path") != "B":
+        if not _is_assassin:
             return False, "❌ Only the Assassin path (Cutthroat/Assassin/Blade Master/Specialist) can use claws."
+    elif s.get("class") == "thief":   # assassin defensive shield
+        if not _is_assassin:
+            return False, "❌ Only the Assassin path can use assassin shields."
     return True, ""
 
 def get_player_class_id(p):
@@ -17249,6 +17268,44 @@ def _unequip_class_gear(p):
     p["inventory"] = json.dumps(inv)
     return unequipped
 
+_CLASS_CHANGE_COST = 1_000_000   # /changeclass and /resetclass both charge this
+
+def _perform_class_reset(p):
+    """Strip the player's class cleanly and reversibly: reverse EVERY applied
+    class stat bonus (base + path + tiers, so nothing can be stacked by
+    switching), clear class/path/skills, unequip class-locked gear into the bag
+    (never deleted), and clamp HP to the new max. Does NOT charge gold or save —
+    the caller handles both. Returns (old_class_name, unequipped_names)."""
+    cls = get_player_class(p)
+    old_name = cls["name"] if cls else "Unknown"
+    bonuses = _calc_applied_class_bonuses(p)
+    sd = safe_stats(p)
+    for stat, val in bonuses.items():
+        sd[stat] = max(0, sd.get(stat, 0) - val)
+    p["stats"]      = json.dumps(sd)
+    p["class_id"]   = None
+    p["class_path"] = None
+    p["all_skills"] = json.dumps([])
+    unequipped = _unequip_class_gear(p)
+    new_max_hp = calc_max_hp(p)
+    p["hp"] = min(safe_int(p.get("hp", new_max_hp)), new_max_hp)
+    return old_name, unequipped
+
+def _class_change_blocked(uid):
+    """Reason string if the player is in an active state where a class change
+    would desync combat/run state, else None. This is the anti-exploit guard:
+    you can't swap class mid-fight to counter an opponent or dodge a loss, nor
+    while a dungeon/encounter is holding combat state keyed to your old class."""
+    uid = safe_int(uid)
+    for pk in list(_pvp_origin_chat.keys()):
+        if isinstance(pk, tuple) and len(pk) == 2 and uid in (safe_int(pk[0]), safe_int(pk[1])):
+            return "You're in an active PvP fight — finish it first."
+    if uid in active_dungeons:
+        return "You're in a dungeon run — extract first."
+    if uid in active_encounters:
+        return "You're in an encounter — finish or flee it first."
+    return None
+
 
 async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -17283,19 +17340,8 @@ async def resetclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update,
             f"Not enough gold! Need {cost}g, you have {p.get('gold',0)}g.", delay=9); return
 
-    # Subtract all applied class stat bonuses
-    bonuses = _calc_applied_class_bonuses(p)
-    sd = safe_stats(p)
-    for stat, val in bonuses.items():
-        sd[stat] = max(0, sd.get(stat, 0) - val)
-    p["stats"]      = json.dumps(sd)
-    p["class_id"]   = None
-    p["class_path"] = None
-    p["all_skills"] = json.dumps([])
-    p["gold"]       = safe_int(p.get("gold")) - cost
-    unequipped = _unequip_class_gear(p)
-    new_max_hp = calc_max_hp(p)
-    p["hp"] = min(safe_int(p.get("hp", new_max_hp)), new_max_hp)
+    _, unequipped = _perform_class_reset(p)
+    p["gold"] = safe_int(p.get("gold")) - cost
     save_player(p)
 
     gear_note = f"\n⚠️ Class gear unequipped: {', '.join(unequipped)}" if unequipped else ""
@@ -17337,20 +17383,8 @@ async def resetclass_callback(update, context):
         cost = 1_000_000
         if safe_int(p.get("gold")) < cost:
             await query.answer(f"Not enough gold! Need {cost:,}g.", show_alert=True); return
-        cls = get_player_class(p)
-        cls_name = cls["name"] if cls else "Unknown"
-        bonuses = _calc_applied_class_bonuses(p)
-        sd = safe_stats(p)
-        for stat, val in bonuses.items():
-            sd[stat] = max(0, sd.get(stat, 0) - val)
-        p["stats"]      = json.dumps(sd)
-        p["class_id"]   = None
-        p["class_path"] = None
-        p["all_skills"] = json.dumps([])
-        p["gold"]       = safe_int(p.get("gold")) - cost
-        unequipped = _unequip_class_gear(p)
-        new_max_hp = calc_max_hp(p)
-        p["hp"] = min(safe_int(p.get("hp", new_max_hp)), new_max_hp)
+        cls_name, unequipped = _perform_class_reset(p)
+        p["gold"] = safe_int(p.get("gold")) - cost
         save_player(p)
         gear_note = f"\n⚠️ Class gear unequipped: {', '.join(unequipped)}" if unequipped else ""
         result = (f"🔄 *Class reset complete!*\n\n"
@@ -17358,6 +17392,96 @@ async def resetclass_callback(update, context):
                   f"Use /class to choose a new class.")
         try:
             await _q_edit(query, result, parse_mode="Markdown")
+        except Exception:
+            pass
+    finally:
+        _cb_unlock(caller_id, _tok)
+
+
+# ── CHANGE CLASS (one-step: reset + immediately re-pick) ─────────────────────
+async def changeclass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Streamlined class change: confirm → charge → cleanly strip the old class
+    → open the picker, all in one flow. Reuses the same exploit-safe reset that
+    /resetclass uses (bonus reversal, gear kept in bag), plus a guard against
+    swapping mid-fight."""
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if not p.get("class_id"):
+        await send_group(update, "You don't have a class yet — use /class to pick one.", delay=9); return
+    _blk = _class_change_blocked(user.id)
+    if _blk:
+        await send_group(update, f"⚠️ {_blk}", delay=9); return
+    cost = _CLASS_CHANGE_COST
+    cls  = get_player_class(p); cls_name = cls["name"] if cls else "Unknown"
+    path_str = f" (Path {p['class_path']})" if p.get("class_path") else ""
+    if safe_int(p.get("gold")) < cost:
+        await send_group(update,
+            f"💰 Changing class costs *{cost:,}g* — you have {safe_int(p.get('gold')):,}g.", delay=12); return
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Confirm Change", callback_data=f"chgcls_confirm_{user.id}"),
+        InlineKeyboardButton("❌ Cancel",         callback_data=f"chgcls_cancel_{user.id}"),
+    ]])
+    await send_group(update,
+        f"🔁 *Change Class*\n\n"
+        f"Current: *{cls_name}*{path_str}\n\n"
+        f"In one step this will:\n"
+        f"  • Reverse your class stat bonuses\n"
+        f"  • Clear your class skills\n"
+        f"  • Unequip class-locked gear _(kept in your bag)_\n"
+        f"  • Open the class picker to choose a new one\n\n"
+        f"_Kept: level, allocated stat points, all items, and your gold (minus the fee)._\n"
+        f"_You'll re-pick your path with /prestige, which re-advances to your level._\n\n"
+        f"Cost: *{cost:,}g*",
+        delay=25, reply_markup=markup)
+
+async def changeclass_callback(update, context):
+    """Handle chgcls_confirm_{uid} / chgcls_cancel_{uid}."""
+    query = update.callback_query
+    caller_id = query.from_user.id
+    _tok = _cb_lock(caller_id)
+    if not _tok:
+        await query.answer("Processing — please wait."); return
+    try:
+        await query.answer()
+        parts = query.data.split("_")  # chgcls_confirm_{uid} / chgcls_cancel_{uid}
+        if len(parts) < 3:
+            return
+        action = parts[1]
+        try:
+            uid = int(parts[2])
+        except (ValueError, IndexError):
+            return
+        if caller_id != uid:
+            await query.answer("This isn't your class-change button!", show_alert=True); return
+        if action == "cancel":
+            try: await _q_edit(query, "❌ Class change cancelled.", parse_mode="Markdown")
+            except Exception: pass
+            return
+        p = get_player(uid)
+        if not p or not p.get("class_id"):
+            await query.answer("No class to change!", show_alert=True); return
+        # Re-check the combat guard at confirm time (state can change between taps).
+        _blk = _class_change_blocked(uid)
+        if _blk:
+            await query.answer(_blk, show_alert=True); return
+        cost = _CLASS_CHANGE_COST
+        if safe_int(p.get("gold")) < cost:
+            await query.answer(f"Not enough gold! Need {cost:,}g.", show_alert=True); return
+        old_name, unequipped = _perform_class_reset(p)
+        p["gold"] = safe_int(p.get("gold")) - cost
+        save_player(p)
+        gear_note = f"\n⚠️ Unequipped _(in your bag)_: {', '.join(unequipped)}" if unequipped else ""
+        try:
+            await _q_edit(query,
+                f"🔁 *Class change ready!*\n\n"
+                f"Left *{old_name}* behind.  −{cost:,}g{gear_note}\n\n"
+                f"👇 *Pick your new class below.*", parse_mode="Markdown")
+        except Exception:
+            pass
+        # Open the class picker as a fresh message so it's truly one-step.
+        try:
+            await _send_class_browser(query.message, uid, 0, edit=False)
         except Exception:
             pass
     finally:
@@ -27986,7 +28110,8 @@ GUIDE_PAGES = [
         "/prestige  -  Choose Path A or B (Lv 10+)\n"
         "/allocate [stat] [amt]  -  Spend stat points\n"
         "/resetstats  -  Refund all stat points\n"
-        "/resetclass  -  Reset class (300g)\n"
+        "/changeclass  -  Switch class in one step (1,000,000g)\n"
+        "/resetclass  -  Drop your class, re-pick later (1,000,000g)\n"
         "/inventory  -  View your bag\n"
         "/gear  -  View equipped gear\n"
         "\n"
@@ -42435,6 +42560,7 @@ def main():
     app.add_handler(CommandHandler("class",      class_cmd))
     app.add_handler(CommandHandler("prestige",   prestige_cmd))
     app.add_handler(CommandHandler("resetclass", resetclass_cmd))
+    app.add_handler(CommandHandler("changeclass", changeclass_cmd))
     app.add_handler(CommandHandler("resetstats", resetstats_cmd))
     app.add_handler(CommandHandler("allocate",   allocate_cmd))
     app.add_handler(CommandHandler("skill",      skill_cmd))
@@ -42656,6 +42782,7 @@ def main():
     # New inline button callbacks
     app.add_handler(CallbackQueryHandler(raid_atk_callback,      pattern="^raid_atk_"))
     app.add_handler(CallbackQueryHandler(resetclass_callback,    pattern="^rscls_"))
+    app.add_handler(CallbackQueryHandler(changeclass_callback,   pattern="^chgcls_"))
     app.add_handler(CallbackQueryHandler(resetstats_callback,    pattern="^rsstat_"))
     app.add_handler(CallbackQueryHandler(guilddisband_callback,  pattern="^gdisband_"))
     app.add_handler(CallbackQueryHandler(class_pick_callback,    pattern="^class_pick_"))
