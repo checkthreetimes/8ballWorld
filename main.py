@@ -3,7 +3,7 @@
 The 8Ball Empire  -  RPG Bot v13
 """
 
-import os, json, random, logging, sqlite3, re, asyncio, time, threading
+import os, json, random, logging, sqlite3, re, asyncio, time, threading, math
 from datetime import datetime, timedelta
 from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -10282,7 +10282,12 @@ def calc_max_hp(p):
     retire_hp = safe_int(p.get("pet_retire_hp"))
     empire_hp = _empire_stat_bonuses(p).get("max_hp", 0)
     title_hp  = TITLE_BONUSES.get(p.get("active_title", ""), {}).get("max_hp", 0)
-    return base + acc_hp + enc_hp + temp + set_hp + def_hp + str_hp + wis_hp + retire_hp + empire_hp + title_hp
+    _hp_total = base + acc_hp + enc_hp + temp + set_hp + def_hp + str_hp + wis_hp + retire_hp + empire_hp + title_hp
+    # Paragon Vitality — permanent % max HP
+    _vit = _paragon_bonus(p, "hp")
+    if _vit:
+        _hp_total = round(_hp_total * (1 + _vit))
+    return _hp_total
 
 TIER_THRESHOLDS = {1: 5, 2: 10, 3: 30, 4: 60, 5: 100}
  
@@ -10611,6 +10616,9 @@ def calc_attack_damage(attacker, weather=None):
     if _is_king(attacker):
         buff_mod += 0.05
 
+    # Paragon Might — permanent % damage from the mastery board
+    buff_mod += _paragon_bonus(attacker, "dmg")
+
     # Combat Power multiplier: higher CP = higher damage
     # +30% base, +3% per 300 CP tier, no cap
     try:
@@ -10640,6 +10648,7 @@ def calc_defense(defender, dmg):
     # WIS damage reduction: 0.5% per WIS, cap raised 10%→25% (same fix as AGI —
     # it used to plateau at just 20 WIS, making heavy WIS builds pointless for DR).
     wis_dr = min(0.25, get_stat(defender, "WIS") * 0.005)
+    def_reduction += _paragon_bonus(defender, "dr")   # Paragon Fortitude (subject to the 80% cap below)
     # AGI dodge in PvE: 0.15% per AGI, cap raised 8%→25% so a heavy AGI build is a
     # real survival lever in the (now harder) dungeon instead of near-useless.
     agi_dodge = min(0.25, get_stat(defender, "AGI") * 0.0015)
@@ -11615,6 +11624,7 @@ def check_miss(attacker, defender):
     def_pet = get_active_pet_record(defender.get("user_id"))
     if def_pet:
         dodge += get_pet_passives(def_pet.get("level",1)).get("dodge_bonus", 0)
+    dodge += _paragon_bonus(defender, "dodge")   # Paragon Alacrity
 
     # Attacker miss penalty
     if is_distracted(attacker): dodge += 0.30
@@ -11731,6 +11741,7 @@ def check_crit(attacker):
     atk_pet = get_active_pet_record(attacker.get("user_id"))
     if atk_pet:
         base_crit += get_pet_passives(atk_pet.get("level", 1)).get("crit_bonus", 0)
+    base_crit += _paragon_bonus(attacker, "crit")   # Paragon Precision
     return random.random() < base_crit
 
 def apply_crit(attacker, dmg):
@@ -11743,6 +11754,7 @@ def apply_crit(attacker, dmg):
     # Storm Drake companion: +25% crit damage
     if "crit_dmg_25" in _dng_pvp_effects(attacker):
         mult += 0.25
+    mult += _paragon_bonus(attacker, "critdmg")   # Paragon Ferocity
     return round(dmg * mult)
 
 def apply_lifesteal(attacker, dmg):
@@ -12168,6 +12180,10 @@ def init_db():
         ("players", "warcry_stacks",      "INTEGER DEFAULT 0"),
         ("players", "empower_next",       "REAL DEFAULT 0"),
         ("players", "def_reflect_hits",   "INTEGER DEFAULT 0"),
+        # Paragon — infinite post-level mastery track. paragon_xp accrues from a
+        # share of ALL exp (even at the level cap); masteries holds spent points.
+        ("players", "paragon_xp",         "INTEGER DEFAULT 0"),
+        ("players", "paragon_masteries",  "TEXT DEFAULT NULL"),
         # Percentage-based DOT damage (% of target max HP per trigger, 0 = use flat)
         ("players", "poison_pct",         "INTEGER DEFAULT 0"),
         ("players", "bleed_pct",          "INTEGER DEFAULT 0"),
@@ -13003,6 +13019,7 @@ def save_player(p):
         "mp","max_mp","dng_companions","dodge_momentum","collection_log",
         "serpent_revive_used","pet_dex","pvp_rating","pvp_peak_rating",
         "bonus_stat_points","unique_items",
+        "paragon_xp","paragon_masteries",
     ]
     # dng_companions is held as a list in memory; store as JSON text
     if isinstance(p.get("dng_companions"), list):
@@ -13227,7 +13244,77 @@ def check_titles(p):
     p["titles"] = json.dumps(earned)
     return new
 
+# ── PARAGON — infinite post-level mastery track ───────────────────────────────
+# A share of ALL exp also feeds Paragon XP (even at the Lv 999 cap), so there's
+# ALWAYS progression. Paragon levels are uncapped with a rising cost; each level
+# = 1 point to spend into masteries that give small, permanent combat bonuses.
+_PARAGON_XP_SHARE = 0.25          # 25% of exp earned also becomes Paragon XP
+_PARAGON_STEP     = 50000         # cost curve: level L costs STEP*L, cumulative triangular
+PARAGON_MASTERIES = {
+    "might":     {"emoji": "⚔️", "name": "Might",     "per": 0.005, "role": "dmg",    "unit": "% damage"},
+    "vitality":  {"emoji": "❤️", "name": "Vitality",  "per": 0.005, "role": "hp",     "unit": "% max HP"},
+    "precision": {"emoji": "🎯", "name": "Precision", "per": 0.003, "role": "crit",   "unit": "% crit chance"},
+    "ferocity":  {"emoji": "💥", "name": "Ferocity",  "per": 0.005, "role": "critdmg","unit": "% crit damage"},
+    "fortitude": {"emoji": "🛡️", "name": "Fortitude", "per": 0.004, "role": "dr",     "unit": "% damage reduction"},
+    "alacrity":  {"emoji": "💨", "name": "Alacrity",  "per": 0.003, "role": "dodge",  "unit": "% dodge"},
+}
+_PARAGON_ROLE_INDEX = {}
+for _pk, _pm in PARAGON_MASTERIES.items():
+    _PARAGON_ROLE_INDEX.setdefault(_pm["role"], []).append(_pk)
+
+def _paragon_level(xp):
+    """Paragon level from cumulative XP. cost to reach L = STEP*L*(L+1)/2."""
+    xp = safe_int(xp)
+    if xp < _PARAGON_STEP:
+        return 0
+    return int((-1 + math.sqrt(1 + 8 * xp / _PARAGON_STEP)) / 2)
+
+def _paragon_xp_for_level(L):
+    return _PARAGON_STEP * L * (L + 1) // 2
+
+def _paragon_spent(p):
+    d = sjl(p.get("paragon_masteries"), {})
+    return d if isinstance(d, dict) else {}
+
+def _paragon_pts(p, key):
+    return safe_int(_paragon_spent(p).get(key))
+
+def _paragon_available(p):
+    lvl = _paragon_level(p.get("paragon_xp"))
+    spent = sum(safe_int(v) for v in _paragon_spent(p).values())
+    return max(0, lvl - spent)
+
+def _paragon_bonus(p, role):
+    """Summed fractional bonus from every mastery filling this combat role."""
+    tot = 0.0
+    for key in _PARAGON_ROLE_INDEX.get(role, []):
+        tot += PARAGON_MASTERIES[key]["per"] * _paragon_pts(p, key)
+    return tot
+
+def _paragon_add(p, gain):
+    """Atomically bank Paragon XP (mirrors the exp-banking pattern so racing
+    handlers never drop a grant)."""
+    gain = safe_int(gain)
+    if gain <= 0:
+        return
+    uid = p.get("user_id")
+    if uid is None:
+        p["paragon_xp"] = safe_int(p.get("paragon_xp")) + gain
+        return
+    try:
+        conn = _db()
+        conn.execute("UPDATE players SET paragon_xp = COALESCE(paragon_xp,0) + ? WHERE user_id=?", (gain, uid))
+        conn.commit()
+        row = conn.execute("SELECT paragon_xp FROM players WHERE user_id=?", (uid,)).fetchone()
+        if row:
+            p["paragon_xp"] = safe_int(row[0])
+    except Exception:
+        p["paragon_xp"] = safe_int(p.get("paragon_xp")) + gain
+
 def add_exp(p, amount, weather=None):
+    # Paragon XP accrues from a share of ALL exp at ANY level (incl. the cap),
+    # so 999s and everyone else always have something growing.
+    _paragon_add(p, round(safe_int(amount) * _PARAGON_XP_SHARE))
     if p["level"] >= LEVEL_CAP: return [], False
     if weather: amount = round(amount * weather.get("exp_mod", 1.0))
     gid = p.get("guild_id")
@@ -18047,6 +18134,68 @@ async def forge_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_item(p, item); save_player(p)
     await query.answer(f"⚒️ Forged {item}!")
     text, markup = _forgegear_card(get_player(uid), flash=f"⚒️ *Forged {item}!* — equip it in /equip.")
+    try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+    except Exception: pass
+
+# ── PARAGON board ─────────────────────────────────────────────────────────────
+def _paragon_card(p, flash=""):
+    xp = safe_int(p.get("paragon_xp"))
+    lvl = _paragon_level(xp)
+    avail = _paragon_available(p)
+    cur_floor = _paragon_xp_for_level(lvl)
+    nxt_floor = _paragon_xp_for_level(lvl + 1)
+    into = xp - cur_floor; span = max(1, nxt_floor - cur_floor)
+    fill = round(min(into, span) / span * 10)
+    bar = "█" * fill + "░" * (10 - fill)
+    lines = [f"🌟 *Paragon* — {p['username']}",
+             f"Paragon Level *{lvl}*   ·   ⭐ *{avail}* point{'s' if avail != 1 else ''} to spend"]
+    if flash: lines.append(flash)
+    lines.append(f"`{bar}`  {fmt_num(into)}/{fmt_num(span)} to Lv {lvl + 1}\n")
+    rows = []
+    for key, md in PARAGON_MASTERIES.items():
+        pts = _paragon_pts(p, key)
+        bonus = md["per"] * pts * 100
+        lines.append(f"{md['emoji']} *{md['name']}* — Lv {pts}   (+{bonus:.1f}{md['unit']})")
+        if avail > 0:
+            row = [InlineKeyboardButton(f"{md['emoji']} +1", callback_data=f"para_{p['user_id']}_{key}_1")]
+            if avail >= 5:
+                row.append(InlineKeyboardButton("+5", callback_data=f"para_{p['user_id']}_{key}_5"))
+            rows.append(row)
+    if avail <= 0:
+        lines.append("\n_25% of ALL exp you earn feeds Paragon XP — even at Lv 999. Keep playing to earn points._")
+    else:
+        lines.append("\n_Bonuses are permanent and always active, in PvP and PvE._")
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{p['user_id']}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+async def paragon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    text, markup = _paragon_card(p)
+    await send_group(update, text, delay=120, reply_markup=markup)
+
+async def paragon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; parts = query.data.split("_")
+    try:
+        owner = int(parts[1]); key = parts[2]; n = int(parts[3])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    uid = query.from_user.id
+    if uid != owner:
+        await query.answer("Not your board!", show_alert=True); return
+    p = get_player(uid)
+    if not p or key not in PARAGON_MASTERIES:
+        await query.answer(); return
+    avail = _paragon_available(p)
+    if avail <= 0:
+        await query.answer("No Paragon points to spend yet!", show_alert=True); return
+    spend = min(n, avail)
+    d = _paragon_spent(p); d[key] = safe_int(d.get(key)) + spend
+    p["paragon_masteries"] = json.dumps(d); save_player(p)
+    md = PARAGON_MASTERIES[key]
+    await query.answer(f"{md['emoji']} +{spend} {md['name']}!")
+    text, markup = _paragon_card(get_player(uid), flash=f"{md['emoji']} *+{spend} {md['name']}!*")
     try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
     except Exception: pass
 
@@ -44167,6 +44316,8 @@ def main():
     app.add_handler(CommandHandler("forgegear",    forgegear_cmd))
     app.add_handler(CommandHandler("endgame",      forgegear_cmd))
     app.add_handler(CallbackQueryHandler(forge_callback, pattern="^forge_"))
+    app.add_handler(CommandHandler("paragon",      paragon_cmd))
+    app.add_handler(CallbackQueryHandler(paragon_callback, pattern="^para_"))
     app.add_handler(CommandHandler("guide",        guide_cmd))
     app.add_handler(CommandHandler("guides",       guide_cmd))
     app.add_handler(CommandHandler("help",         guide_cmd))
