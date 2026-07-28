@@ -7264,36 +7264,36 @@ DNG_DIFF = {
     },
     "hard": {
         "label": "Hard", "emoji": "🟡",
-        "min_level": 30, "floors": 6,
+        "min_level": 100, "floors": 6,
         "rooms_per_floor": 10,
         "enemy_hp_mult": 1.25, "enemy_atk_mult": 1.25,
         "boss_phases": 3,
         "exp_mult": 1.25, "gold_mult": 1.25,
         "exclusive_chance": 0.20, "companion_chance": 0.08,
         "heal_cap": 5,
-        "desc": "6 floors · Lv30+ · Multi-enemy rooms · Real challenge",
+        "desc": "6 floors · Lv100+ · Multi-enemy rooms · Real challenge",
     },
     "extreme": {
         "label": "Extreme", "emoji": "🔴",
-        "min_level": 60, "floors": 8,
+        "min_level": 300, "floors": 8,
         "rooms_per_floor": 10,
         "enemy_hp_mult": 1.70, "enemy_atk_mult": 1.75,
         "boss_phases": 4,
         "exp_mult": 1.80, "gold_mult": 1.80,
         "exclusive_chance": 0.35, "companion_chance": 0.14,
         "heal_cap": 4,
-        "desc": "8 floors · Lv60+ · Heavy scaling · Exclusive rewards",
+        "desc": "8 floors · Lv300+ · Heavy scaling · Exclusive rewards",
     },
     "hell": {
         "label": "Hell", "emoji": "💀",
-        "min_level": 100, "floors": 10,
+        "min_level": 600, "floors": 10,
         "rooms_per_floor": 12,
         "enemy_hp_mult": 2.50, "enemy_atk_mult": 2.60,
         "boss_phases": 4,
         "exp_mult": 3.00, "gold_mult": 3.00,
         "exclusive_chance": 0.55, "companion_chance": 0.25,
         "heal_cap": 3,
-        "desc": "10 floors · Lv100+ · Max difficulty · Hell-exclusive companions",
+        "desc": "10 floors · Lv600+ · Max difficulty · Hell-exclusive companions",
     },
 }
 
@@ -8047,12 +8047,28 @@ def _dng_gen_floor(floor, diff="hard"):
     total_rooms = cfg["rooms_per_floor"]
     max_floor_key = max(k for k in _DNG_ROOM_WEIGHTS)
     weights_raw = _DNG_ROOM_WEIGHTS.get(min(floor, max_floor_key), _DNG_ROOM_WEIGHTS[max_floor_key])
-    types, ws = zip(*weights_raw)
+    # Rebalance the mix so a floor is mostly FIGHTING: drop scattered rest rooms
+    # (one guaranteed rest is placed at the halfway point below), make blessings
+    # (shrine) rare, and pile the freed weight onto monsters/elites.
+    adj = []
+    for t, w in weights_raw:
+        if t == "rest":
+            continue                       # rest handled separately (midpoint only)
+        if t == "shrine":
+            w = max(1, w // 4)             # blessings much rarer
+        elif t == "monster":
+            w = w + 45                     # mostly monsters
+        elif t == "elite":
+            w = w + 6
+        elif t in ("trap", "treasure"):
+            w = max(1, w // 2)             # fewer filler rooms
+        adj.append((t, w))
+    types, ws = zip(*adj)
     rooms = list(random.choices(types, weights=ws, k=total_rooms - 1))
-    # Guarantee at least one recovery room in the first half
-    half = max(2, total_rooms // 2)
-    if not any(r in ("rest","treasure","shrine","shop") for r in rooms[:half]):
-        rooms[random.randint(0, half - 1)] = random.choice(["rest","shrine","shop"])
+    # Exactly ONE rest room, at the halfway point of the floor.
+    mid = max(0, (total_rooms - 1) // 2)
+    if rooms:
+        rooms[min(mid, len(rooms) - 1)] = "rest"
     # Guarantee last room
     total_floors = cfg["floors"]
     if floor == total_floors:
