@@ -13279,10 +13279,16 @@ def _paragon_spent(p):
 def _paragon_pts(p, key):
     return safe_int(_paragon_spent(p).get(key))
 
+def _paragon_total_spent(p):
+    return sum(safe_int(v) for v in _paragon_spent(p).values())
+
 def _paragon_available(p):
     lvl = _paragon_level(p.get("paragon_xp"))
-    spent = sum(safe_int(v) for v in _paragon_spent(p).values())
-    return max(0, lvl - spent)
+    return max(0, lvl - _paragon_total_spent(p))
+
+def _paragon_respec_cost(spent):
+    """Gold to refund all Paragon points — scales with how much is invested."""
+    return 100000 + 20000 * spent
 
 def _paragon_bonus(p, role):
     """Summed fractional bonus from every mastery filling this combat role."""
@@ -18165,6 +18171,10 @@ def _paragon_card(p, flash=""):
         lines.append("\n_25% of ALL exp you earn feeds Paragon XP — even at Lv 999. Keep playing to earn points._")
     else:
         lines.append("\n_Bonuses are permanent and always active, in PvP and PvE._")
+    _spent = _paragon_total_spent(p)
+    if _spent > 0:
+        rows.append([InlineKeyboardButton(f"♻️ Respec ({fmt_num(_paragon_respec_cost(_spent))}g)",
+                     callback_data=f"para_respec_{p['user_id']}")])
     rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{p['user_id']}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
@@ -18177,6 +18187,29 @@ async def paragon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def paragon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; parts = query.data.split("_")
+    # Respec: para_respec_{uid}
+    if len(parts) >= 3 and parts[1] == "respec":
+        try: owner = int(parts[2])
+        except (IndexError, ValueError): await query.answer(); return
+        if query.from_user.id != owner:
+            await query.answer("Not your board!", show_alert=True); return
+        p = get_player(owner)
+        if not p: await query.answer(); return
+        spent = _paragon_total_spent(p)
+        if spent <= 0:
+            await query.answer("Nothing to respec."); return
+        cost = _paragon_respec_cost(spent)
+        if safe_int(p.get("gold")) < cost:
+            await query.answer(f"Respec costs {fmt_num(cost)}g — you're short.", show_alert=True); return
+        p["gold"] = safe_int(p.get("gold")) - cost
+        p["paragon_masteries"] = json.dumps({})
+        save_player(p)
+        await query.answer(f"♻️ Respec! {spent} points refunded.")
+        text, markup = _paragon_card(get_player(owner),
+                                     flash=f"♻️ *Respec!* {spent} points refunded for {fmt_num(cost)}g.")
+        try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+        except Exception: pass
+        return
     try:
         owner = int(parts[1]); key = parts[2]; n = int(parts[3])
     except (IndexError, ValueError):
@@ -30405,32 +30438,113 @@ GUIDE_PAGES = [
         "\n"
         "❤️ _Stock up before the dungeon, not during the funeral._"
     ),
+    # ── Progression & Endgame (the power curve, front-and-center) ──
+    (
+        "📈 *PROGRESSION & ENDGAME*\n"
+        "_How you actually get stronger — and never run out of things to chase._\n\n"
+        "*⚡ Combat Power (CP) = damage.* Every 300 CP adds +3% to every hit, no cap. "
+        "Use */cp* to see your exact CP breakdown and personalized tips on what to upgrade next.\n\n"
+        "*💪 Stats* — spend points with */allocate*. Your primary stat matters most, but every "
+        "stat helps (off-stats add damage, WIS→defense, AGI→dodge, DEX→accuracy+crit). Each point = +1 CP.\n\n"
+        "*💠 Stat Cores* — catch tough monsters in */hunt* to earn Lesser/Greater/Prime Stat Cores "
+        "(+1/+2/+3). Spend them with */statcore* — YOU pick the stat. The harder the catch, the higher the tier.\n\n"
+        "*🔨 Mythic Forge* — enhance gear past +10 with Monster Cores (no cap, always succeeds). "
+        "Your favorite weapon can be forged forever. In */craft* → Enhance.\n\n"
+        "*⚔️ Endgame Gear* — level-locked tiers at Lv 180/300/450/600/800/999 that scale far above "
+        "normal gear. Craft with */forgegear* (cores + gold) or find them dropped by *Ascended* foes.\n\n"
+        "*🌟 Paragon* — the infinite mastery board. 25% of ALL exp feeds Paragon XP — even at Lv 999 — "
+        "so there's always progression. Spend points with */paragon* into Might, Vitality, Precision, "
+        "Ferocity, Fortitude, Alacrity. Permanent, always active. Respec anytime for gold.\n\n"
+        "🏆 _The loop: hunt Ascended foes → cores → forge & upgrade gear → allocate stats → grow Paragon → repeat._"
+    ),
 ]
 
-GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands: Core", "Commands: Social", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders", "The Dungeon", "Empire & Idle", "PvP Modes & Rules", "Group Games & Casino", "Healing & Potions"]
+GUIDE_PAGE_LABELS = ["Getting Started", "Character", "Activities", "Combat", "Gear & Economy", "Commands: Core", "Commands: Social", "Guilds & Advanced", "Pets", "Marriage & Social", "Encounters & Monsters", "Influence & Fame", "Secret Orders", "The Dungeon", "Empire & Idle", "PvP Modes & Rules", "Group Games & Casino", "Healing & Potions", "Progression & Endgame"]
 
-async def _send_guide_page(chat_id: int, bot, page: int, edit_msg=None):
-    total = len(GUIDE_PAGES)
-    page  = max(1, min(page, total))
-    text  = GUIDE_PAGES[page - 1]
-    row   = []
-    if page > 1:
-        row.append(InlineKeyboardButton(f"◀ {GUIDE_PAGE_LABELS[page-2]}", callback_data=f"guide_p_{page-1}"))
-    if page < total:
-        row.append(InlineKeyboardButton(f"{GUIDE_PAGE_LABELS[page]} ▶", callback_data=f"guide_p_{page+1}"))
-    close_row = [InlineKeyboardButton("❌ Close", callback_data="close_msg")]
-    markup = InlineKeyboardMarkup([row, close_row] if row else [close_row])
+# Category hub — front-loads the most important topics as tappable buttons instead
+# of endless prev/next pagination. Each entry: (emoji, label, page_index into
+# GUIDE_PAGES). Order here IS the on-screen priority order.
+_GUIDE_MENU = [
+    ("🚀", "Getting Started",       0),
+    ("📈", "Progression & Endgame", 18),
+    ("⚔️", "Combat & Damage",       3),
+    ("🛡️", "Gear & Upgrades",       4),
+    ("🎯", "PvP Modes & Rules",     15),
+    ("🏚️", "The Dungeon",           13),
+    ("🗡️", "Encounters & Monsters", 10),
+    ("💊", "Healing & Potions",     17),
+    ("🧬", "Character & Stats",      1),
+    ("🌍", "Daily Activities",       2),
+    ("🐾", "Pets",                   8),
+    ("💬", "Social & Marriage",      9),
+    ("🛡️", "Guilds & Advanced",     7),
+    ("🏰", "Empire & Idle",         14),
+    ("🎰", "Games & Casino",        16),
+    ("🌟", "Influence & Fame",      11),
+    ("🕵️", "Secret Orders",         12),
+    ("📜", "Core Commands",          5),
+    ("💬", "Social Commands",        6),
+]
+
+def _guide_home_card():
+    text = ("📖 *THE 8BALL EMPIRE — GUIDE*\n"
+            "_Tap a topic to learn about it. The essentials are up top._\n")
+    rows, row = [], []
+    for emoji, label, _idx in _GUIDE_MENU:
+        row.append(InlineKeyboardButton(f"{emoji} {label}", callback_data=f"guide_c_{_idx}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row: rows.append(row)
+    rows.append([InlineKeyboardButton("❌ Close", callback_data="close_msg")])
+    return text, InlineKeyboardMarkup(rows)
+
+async def _send_guide_home(chat_id: int, bot, edit_msg=None):
+    text, markup = _guide_home_card()
     if edit_msg:
         await edit_msg.edit_text(text, parse_mode="Markdown", reply_markup=markup)
     else:
-        await bot.send_message(chat_id=chat_id, text=text,
-                               parse_mode="Markdown", reply_markup=markup)
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown", reply_markup=markup)
+
+async def _send_guide_category(idx: int, bot, edit_msg=None, chat_id=None):
+    idx = max(0, min(idx, len(GUIDE_PAGES) - 1))
+    text = GUIDE_PAGES[idx]
+    # Related-topic quick jumps: previous/next in the menu order, plus Home.
+    menu_pos = next((i for i, (_e, _l, _p) in enumerate(_GUIDE_MENU) if _p == idx), None)
+    nav = []
+    if menu_pos is not None:
+        if menu_pos > 0:
+            _pe, _pl, _pp = _GUIDE_MENU[menu_pos - 1]
+            nav.append(InlineKeyboardButton(f"◀ {_pe}", callback_data=f"guide_c_{_pp}"))
+        nav.append(InlineKeyboardButton("🏠 Menu", callback_data="guide_home"))
+        if menu_pos < len(_GUIDE_MENU) - 1:
+            _ne, _nl, _np = _GUIDE_MENU[menu_pos + 1]
+            nav.append(InlineKeyboardButton(f"{_ne} ▶", callback_data=f"guide_c_{_np}"))
+    else:
+        nav.append(InlineKeyboardButton("🏠 Menu", callback_data="guide_home"))
+    markup = InlineKeyboardMarkup([nav, [InlineKeyboardButton("❌ Close", callback_data="close_msg")]])
+    if edit_msg:
+        await edit_msg.edit_text(text, parse_mode="Markdown", reply_markup=markup)
+    else:
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown", reply_markup=markup)
+
+# Back-compat: a couple of call sites still open the guide "page 1".
+async def _send_guide_page(chat_id: int, bot, page: int = 1, edit_msg=None):
+    await _send_guide_home(chat_id, bot, edit_msg=edit_msg)
 
 async def guide_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    page = int(query.data.split("_")[-1])
-    await _send_guide_page(query.message.chat.id, context.bot, page, edit_msg=query.message)
+    data = query.data
+    if data == "guide_home":
+        await _send_guide_home(query.message.chat.id, context.bot, edit_msg=query.message); return
+    if data.startswith("guide_c_"):
+        try: idx = int(data.split("_")[-1])
+        except ValueError: return
+        await _send_guide_category(idx, context.bot, edit_msg=query.message); return
+    if data.startswith("guide_p_"):   # legacy pagination links → open that category
+        try: idx = int(data.split("_")[-1]) - 1
+        except ValueError: idx = 0
+        await _send_guide_category(idx, context.bot, edit_msg=query.message)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PET COMMANDS
@@ -44527,7 +44641,7 @@ def main():
     # Callbacks
     app.add_handler(CallbackQueryHandler(rank_callback,         pattern="^rank_p_"))
     app.add_handler(CallbackQueryHandler(inventory_callback,    pattern="^inv_s_"))
-    app.add_handler(CallbackQueryHandler(guide_callback,        pattern="^guide_p_"))
+    app.add_handler(CallbackQueryHandler(guide_callback,        pattern="^guide_(c_|p_|home)"))
     app.add_handler(CallbackQueryHandler(stats_callback,        pattern="^stats_p_"))
     app.add_handler(CallbackQueryHandler(guild_hub_callback,       pattern="^gh_"))
     app.add_handler(CallbackQueryHandler(guildjoin_callback,       pattern="^guildjoin_"))
