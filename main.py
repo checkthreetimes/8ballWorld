@@ -8376,6 +8376,14 @@ async def _dng_award_and_extract(uid, bot, p, state, narr_key="extract"):
         if comp_key not in _comps:
             _comps.append(comp_key)
         p["dng_companions"] = _comps
+    # Carry the run's final HP/MP back to the player. Previously extract kept only
+    # the PRE-ENTRY HP, so any healing done inside the dungeon (rest rooms,
+    # potions, skills) was silently discarded — players healed, fought, extracted,
+    # and found their HP "reset" to what it was on entry. Now the dungeon's HP is
+    # authoritative on the way out (both healing and damage persist).
+    _mhp = calc_max_hp(p); _mmp = calc_max_mp(p)
+    p["hp"] = max(0, min(safe_int(state.get("p_hp", p.get("hp"))), _mhp))
+    p["mp"] = max(0, min(safe_int(state.get("p_mp", p.get("mp"))), _mmp))
     save_player(p)
     active_dungeons.pop(uid, None)
     items_txt = ""
