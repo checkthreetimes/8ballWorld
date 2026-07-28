@@ -41117,6 +41117,22 @@ SIEGE_SUPPLY0    = 7        # starting Supply
 SIEGE_SUPPLY_INC = 2        # Supply gained per rack cleared
 SIEGE_ABILITY_CD = 3        # racks between hero-ability uses
 SIEGE_CLOCK_SECS = 28       # timed-mode shot clock
+SIEGE_PW_DIV     = 800.0    # player-power divisor — normalizes the whole run into
+                            # the hero's damage-space so a strong hero no longer
+                            # one-shots every wave (which made runs never end and
+                            # never banked meaningful Valor). Weak heroes fall back
+                            # to the flat base (pscale floors at 1.0).
+
+def _siege_power_scale(p):
+    """A per-run multiplier that lifts every combat number (enemies, barricade,
+    units) into the player's real damage-space, so the hero clears a fixed *slice*
+    of each wave regardless of gear — the run stays challenging from rack 1 and
+    reaches its designed natural end instead of dragging on for 100+ trivial taps."""
+    try:
+        pw = max(1, sum(calc_attack_damage(p) for _ in range(5)) // 5)
+    except Exception:
+        pw = 1
+    return max(1.0, pw / SIEGE_PW_DIV)
 
 SIEGE_UNITS = {
     "bruiser":  {"name":"Knight","emoji":"🛡️","cost":3,"hp":420,"atk":55,"lane":"front",
@@ -41203,6 +41219,7 @@ def _siege_gen_rack(state):
         count = max(3, count - 4)
     hp_mod  = 1.25 if mut == "armored" else 1.0
     atk_mod = 1.25 if mut == "blitz"   else 1.0
+    ps = state.get("pscale", 1.0)
     enemies = []
     for _ in range(count):
         r = random.random()
@@ -41213,14 +41230,14 @@ def _siege_gen_rack(state):
         else:
             kind = "rush"
         a = SIEGE_ENEMIES[kind]
-        hp = max(1, round(SIEGE_HP0 * a["hp"] * scale * hp_mod))
+        hp = max(1, round(SIEGE_HP0 * a["hp"] * scale * hp_mod * ps))
         enemies.append({"name":a["name"],"emoji":a["emoji"],"kind":kind,
-                        "hp":hp,"max_hp":hp,"atk":max(1, round(SIEGE_ATK0 * a["atk"] * scale * atk_mod))})
+                        "hp":hp,"max_hp":hp,"atk":max(1, round(SIEGE_ATK0 * a["atk"] * scale * atk_mod * ps))})
     if is_boss:
-        bhp = max(1, round(SIEGE_HP0 * 9 * scale * hp_mod))
+        bhp = max(1, round(SIEGE_HP0 * 9 * scale * hp_mod * ps))
         bname, bemoji = _siege_boss_name(rack)
         enemies.insert(0, {"name":bname,"emoji":bemoji,"kind":"boss",
-                           "hp":bhp,"max_hp":bhp,"atk":max(1, round(SIEGE_ATK0 * 1.7 * scale * atk_mod)),
+                           "hp":bhp,"max_hp":bhp,"atk":max(1, round(SIEGE_ATK0 * 1.7 * scale * atk_mod * ps)),
                            "boss":True})
     return enemies
 
@@ -41229,8 +41246,9 @@ def _siege_unit_eff(u, rack, state):
     standing garrison stays relevant, with relic modifiers folded in."""
     base  = SIEGE_UNITS[u["code"]]
     scale = _siege_scale(rack)
-    atk = base["atk"] * scale
-    hp  = base["hp"]  * scale
+    ps = state.get("pscale", 1.0)
+    atk = base["atk"] * scale * ps
+    hp  = base["hp"]  * scale * ps
     if u["code"] == "marksman" and _siege_has(state, "sharpshoot"): atk *= 1.60
     if u["code"] == "bombard"  and _siege_has(state, "artillery"):  atk *= 1.80
     if u["code"] == "bruiser"  and _siege_has(state, "phalanx"):    hp  *= 1.50
@@ -41244,7 +41262,7 @@ def _siege_deploy_cost(state, code):
     return cost
 
 def _siege_barricade_max(state):
-    base = SIEGE_BARRICADE0
+    base = round(SIEGE_BARRICADE0 * state.get("pscale", 1.0))
     if _siege_has(state, "aegis"):
         base = round(base * 1.40)
     return base
@@ -41253,7 +41271,8 @@ def _siege_new_run(p, uid, mode):
     mut = _siege_today_mutator()
     state = {
         "uid": uid, "mode": mode, "rack": 1,
-        "barricade": SIEGE_BARRICADE0, "barricade_max": SIEGE_BARRICADE0,
+        "pscale": _siege_power_scale(p), "start_level": safe_int(p.get("level"), 1),
+        "barricade": 0, "barricade_max": 0,
         "supply": SIEGE_SUPPLY0 + (1 if mut["id"] == "blitz" else 0) - (1 if mut["id"] == "frugal" else 0),
         "hero_cd": 0, "relics": [], "units": [], "pet": False,
         "pending_tokens": 0, "banked_tokens": 0,
@@ -41261,6 +41280,8 @@ def _siege_new_run(p, uid, mode):
         "log": [], "lastditch_used": False, "clock": 0,
         "chat_id": None, "msg_id": None, "fire_ready": True,
     }
+    state["barricade_max"] = _siege_barricade_max(state)
+    state["barricade"] = state["barricade_max"]
     state["supply"] = max(1, state["supply"])
     _active_sieges[uid] = state
     return state
@@ -41391,7 +41412,7 @@ def _siege_resolve(p, state, fire_ability=False):
     medic_heal = 0
     for u in units:
         if u["code"] == "medic":
-            base_heal = round(SIEGE_UNITS["medic"]["hp"] * scale * 0.9)
+            base_heal = round(SIEGE_UNITS["medic"]["hp"] * scale * 0.9 * state.get("pscale", 1.0))
             if _siege_has(state, "medkit"): base_heal *= 2
             medic_heal += base_heal
     if medic_heal:
@@ -41445,22 +41466,58 @@ def _siege_resolve(p, state, fire_ability=False):
 
 def _siege_grant_rewards(p, state, wiped):
     """Bank tokens (wipe forfeits half of the unbanked haul), convert to real
-    loot scaled by depth, persist best-rack + lifetime tokens. Returns summary."""
+    loot scaled by depth AND the player's level, persist best-rack + lifetime
+    tokens. Returns summary. Rewards (EXP/gold/gear) are level-scaled so a run is
+    worth playing at any level, not pennies for an endgame hero."""
     pending = state["pending_tokens"]
     if wiped:
         pending = pending // 2
     total = state["banked_tokens"] + pending
     racks_cleared = state["rack"] - 1
+    lvl = safe_int(p.get("level"), 1)
+    lines = []
 
-    gold  = total * 5
+    # ── Gold — level-scaled so it's never pocket lint at endgame ──
+    gold = gold_floor(lvl, total * 5 + racks_cleared * (100 + lvl * 25))
+    p["gold"] = safe_int(p.get("gold", 0)) + gold
+    lines.append(f"💰 *{fmt_num(gold)}* gold")
+
+    # ── EXP — a real % of a level, growing with how deep you held ──
+    exp_gain = 0
+    if racks_cleared > 0:
+        exp_gain = exp_share(lvl, min(3.0, 0.12 * racks_cleared))
+        add_exp(p, exp_gain)
+        lines.append(f"⭐ *{fmt_num(exp_gain)}* EXP")
+
+    # ── Monster Cores — feed the forge, scaled to depth ──
+    cores = min(25, racks_cleared // 2)
+    if cores:
+        _core_elems = ["Fire", "Water", "Earth", "Wind", "Lightning", "Ice"]
+        for _ in range(cores):
+            add_item(p, f"Monster Core ({random.choice(_core_elems)})")
+        lines.append(f"💠 *Monster Core ×{cores}*")
+
+    # ── Crafting mats (scale off Valor haul) ──
     shards = total // 35
     scrolls = total // 110
-    p["gold"] = safe_int(p.get("gold", 0)) + gold
-    lines = [f"💰 *{fmt_num(gold)}* gold"]
     for _ in range(shards):  add_item(p, "Iron Shard")
     if shards:  lines.append(f"⛏️ *Iron Shard ×{shards}*")
     for _ in range(scrolls): add_item(p, "Enchanting Scroll")
     if scrolls: lines.append(f"✨ *Enchanting Scroll ×{scrolls}*")
+
+    # ── Endgame / Ascended gear — one roll per boss wave (every 5th) survived,
+    #    at the tier your level unlocks. Deep holds are how you farm the best set. ──
+    bosses_cleared = racks_cleared // 5
+    if bosses_cleared > 0:
+        tier = _endgame_tier_for_level(lvl)
+        if tier:
+            wname, aname = _endgame_gear_names(_player_gear_line(p), tier)
+            gpool = [x for x in (wname, aname) if x]
+            for _ in range(bosses_cleared):
+                if gpool and random.random() < 0.55:
+                    g = random.choice(gpool)
+                    add_item(p, g)
+                    lines.append(f"⚔️ *{g}!* — endgame gear! Equip in /equip")
 
     # Persist siege stats in the passive_cooldowns bag (save_player only writes
     # known columns, so custom top-level keys would be dropped).
