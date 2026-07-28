@@ -9804,6 +9804,15 @@ def get_enchant_bonus(p, stat):
                 total += enchant.get("val", 0)
     return total
 
+def _slot_has_enchant(p, slot_key):
+    """True if the item equipped in slot_key carries any enchant. Mirrors
+    get_enchant_bonus's lookup exactly (slot-keyed first, item-name fallback) so
+    CP and the /cp breakdown count the SAME enchants that actually apply in
+    combat — otherwise slot-keyed enchants read as 'unenchanted' everywhere."""
+    if not p.get(slot_key):
+        return False
+    return bool(get_enchant(p, slot_key) or get_enchant(p, p.get(slot_key)))
+
 def get_enhancement(p, item_name):
     return sjl(p.get("enhancements"), {}).get(item_name, 0)
 
@@ -26825,7 +26834,7 @@ def calc_combat_power(p):
     _enc_slots  = ["equipped_weapon","equipped_armor","equipped_shield",
                    "equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4",
                    "equipped_hat","equipped_gloves","equipped_boots","equipped_mask"]
-    enchant_val = sum(30 for _sl in _enc_slots if get_enchant(p, p.get(_sl) or ""))
+    enchant_val = sum(30 for _sl in _enc_slots if _slot_has_enchant(p, _sl))
     # Active class passives
     passive_val = len(get_all_passive_keys(p)) * 25
     # Active pet contribution
@@ -26855,7 +26864,7 @@ def _cp_components(p):
     level_val   = p["level"] * 10
     skills      = sjl(p.get("all_skills"), [])
     skill_val   = len(skills) * 50
-    ench_used   = [sl for sl in _CP_ENC_SLOTS if get_enchant(p, p.get(sl) or "")]
+    ench_used   = [sl for sl in _CP_ENC_SLOTS if _slot_has_enchant(p, sl)]
     enchant_val = len(ench_used) * 30
     passives    = get_all_passive_keys(p)
     passive_val = len(passives) * 25
@@ -26885,7 +26894,7 @@ def _cp_suggestions(p, meta):
     if sp > 0:
         tips.append(f"💪 Spend your *{sp}* unspent stat point{'s' if sp != 1 else ''} — "
                     f"`/allocate` (+{sp} CP now, and more damage/defense).")
-    unench = [sl for sl in _CP_ENC_SLOTS if p.get(sl) and not get_enchant(p, p.get(sl) or "")]
+    unench = [sl for sl in _CP_ENC_SLOTS if p.get(sl) and not _slot_has_enchant(p, sl)]
     if unench:
         tips.append(f"🔮 Enchant your gear — *{len(unench)}* equipped slot{'s' if len(unench) != 1 else ''} "
                     f"still unenchanted (*+{len(unench) * 30} CP*). Use an Enchanting Scroll at `/enchant`.")
