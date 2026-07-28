@@ -36796,14 +36796,14 @@ async def fight_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Rival event: first player to /fight claims it ────────────────────────
     if event["key"] == "rival":
         active_events.pop(chat_id, None)
-        gold_prize = random.randint(400, 1000)
+        gold_prize = random.randint(50000, 300000)
         _prize_pct = random.uniform(0.08, 0.12)
         lines = [f"⚔️ *{user.first_name}* steps up first and claims the table!"]
         if p and not is_defeated(p):
             exp_prize = exp_share(p["level"], _prize_pct)
             p["gold"] = p.get("gold", 0) + gold_prize
             add_exp(p, exp_prize); save_player(p)
-            lines.append(f"💰 +{gold_prize} gold | ✨ +{fmt_num(exp_prize)} EXP")
+            lines.append(f"💰 +{fmt_num(gold_prize)} gold | ✨ +{fmt_num(exp_prize)} EXP")
         elif s:
             exp_prize = exp_share(s["level"], _prize_pct)
             add_shadow_exp(s, exp_prize); save_shadow(s)
@@ -36879,13 +36879,13 @@ async def claim_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_events.pop(chat_id, None)
     p = get_player(user.id)
     loot = roll_loot_table(event.get("loot_table",[]))
-    gold = random.randint(250,1000)
+    gold = random.randint(50000, 300000)
     if p:
         if loot: add_item(p, loot)
         p["gold"] = p.get("gold",0) + gold; save_player(p)
     await send_group(update,
         f"💰 *{user.first_name}* claims the abandoned cache!\n"
-        f"💰 +{gold} gold" + (f" | 🎒 *{loot}*!" if loot else ""), delay=15)
+        f"💰 +{fmt_num(gold)} gold" + (f" | 🎒 *{loot}*!" if loot else ""), delay=15)
 
 async def pray_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await greet_event(update, context)  # shrine handled in greet
@@ -38373,6 +38373,16 @@ async def bet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
+def _lottery_add_pot(amt):
+    """Feed gold into today's lottery pot. Lost PvP fight wagers flow here, so the
+    jackpot is real money (not a 250g novelty) — 'the house' redistributes it."""
+    amt = safe_int(amt)
+    if amt <= 0:
+        return
+    lot = _lottery_state()   # shared date/carryover normalization
+    lot["pot"] = safe_int(lot.get("pot", 0)) + amt
+    _ws_set("lottery", lot)
+
 async def _resolve_fight_bets(bot, pair, winner_id, result_text=""):
     st = _fight_bets.pop(pair, None)
     if not st:
@@ -38398,7 +38408,7 @@ async def _resolve_fight_bets(bot, pair, winner_id, result_text=""):
                 pass
             return
         lines = [f"🏁 *{names.get(winner_id, '?')} WINS!*"]
-        w_names, l_names = [], []
+        w_names, l_names, lost_total = [], [], 0
         for uid, (side, amt, nm) in st["bets"].items():
             if side == winner_id:
                 bp = get_player(uid)
@@ -38408,8 +38418,13 @@ async def _resolve_fight_bets(bot, pair, winner_id, result_text=""):
                 w_names.append(nm)
             else:
                 l_names.append(nm)
+                lost_total += safe_int(amt)
+        # Lost wagers seed the lottery jackpot — the house redistributes them.
+        if lost_total > 0:
+            _lottery_add_pot(lost_total)
         if w_names: lines.append(f"💰 *Paid 2x:* {', '.join(w_names)}")
-        if l_names: lines.append(f"💸 *Lost the house's favor:* {', '.join(l_names)}")
+        if l_names:
+            lines.append(f"💸 *Lost:* {', '.join(l_names)}  →  🎟️ *+{fmt_num(lost_total)}g* to the lottery pot!")
     try:
         await bot.edit_message_text(chat_id=st["chat_id"], message_id=st["msg_id"],
             text="\n".join(lines), parse_mode="Markdown", reply_markup=None)
@@ -39841,8 +39856,8 @@ _coinflips = {}  # (challenger, target) -> {"amt","expires","chat_id"}
 # Slots is fully playable in-place (pick a bet, spin repeatedly without retyping),
 # lottery tickets can be bought from the hub, and the PvP games (coinflip, russian
 # roulette, roulette table) are presented with their rules and commands.
-_CASINO_BETS = [50, 100, 250, 500, 1000, 2000]
-_SLOTS_DAILY_STOP = -5000
+_CASINO_BETS = [1000, 5000, 25000, 100000, 500000, 1000000]
+_SLOTS_DAILY_STOP = -2000000
 
 def _slots_net_today(p):
     cds = safe_cds(p)
@@ -39864,7 +39879,7 @@ def _slots_spin(p, amt):
     p["gold"] -= amt
     win = 0
     if reels[0] == reels[1] == reels[2]:
-        win = amt * 10 if reels[0] == "🎱" else amt * 5
+        win = amt * 20 if reels[0] == "🎱" else amt * 6   # 🎱🎱🎱 jackpot 20×, any triple 6×
     elif reels[0] == reels[1] or reels[1] == reels[2] or reels[0] == reels[2]:
         win = round(amt * 1.5)
     p["gold"] += win
@@ -39889,7 +39904,7 @@ def _build_casino_home(p, uid, flash=""):
     if flash:
         lines.append(flash)
     lines.append(f"💰 Gold: *{gold:,}*\n")
-    lines.append("*🎰 Slots* — solo. Match 3 to win; pair pays 1.5×, triple 5×, 🎱🎱🎱 *10×*.")
+    lines.append("*🎰 Slots* — solo. Match 3 to win; pair pays 1.5×, triple 6×, 🎱🎱🎱 *20×*.")
     lines.append(f"    _Today: {net:+,}g  (house stops you at {_SLOTS_DAILY_STOP:,})_")
     lotto_label = "✅ you're in tonight's draw" if in_draw else "250g/ticket"
     n_tickets = len(lot.get("tickets", []))
@@ -39914,7 +39929,7 @@ def _build_slots_view(p, uid, bet, flash=""):
         lines.append("_Match 3 to win. Any pair pays 1.5×._")
     lines.append("")
     lines.append(f"💰 Gold: *{gold:,}*    ·    Today: *{net:+,}g* / {_SLOTS_DAILY_STOP:,} stop")
-    lines.append(f"🎯 Bet: *{bet:,}g*   →   pair 1.5×  ·  triple 5×  ·  🎱🎱🎱 10×")
+    lines.append(f"🎯 Bet: *{bet:,}g*   →   pair 1.5×  ·  triple 6×  ·  🎱🎱🎱 20×")
     rows = []
     # bet selector — only bets the player can afford (always show the lowest)
     bet_row = []
