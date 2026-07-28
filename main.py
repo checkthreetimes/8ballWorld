@@ -41836,16 +41836,41 @@ def _asc_advance(p, state):
     state["choices"] = _asc_gen_choices(state)
     state["phase"] = "map"
 
+def _mode_bonus_rewards(p, depth, boss_waves, mult=1.0):
+    """Shared level-scaled EXP + endgame-gear top-up for the roguelite modes, so
+    every mode pays real progression (EXP + gear at your tier), not just gold and
+    mats. `depth` scales the EXP; `boss_waves` is how many boss milestones were
+    survived (each rolls a gear drop). Mutates p; caller persists. Returns lines."""
+    lines = []
+    lvl = safe_int(p.get("level"), 1)
+    if depth > 0:
+        exp_gain = round(exp_share(lvl, min(3.0, 0.12 * depth)) * mult)
+        if exp_gain > 0:
+            add_exp(p, exp_gain)
+            lines.append(f"⭐ *{fmt_num(exp_gain)}* EXP")
+    if boss_waves > 0:
+        tier = _endgame_tier_for_level(lvl)
+        if tier:
+            wname, aname = _endgame_gear_names(_player_gear_line(p), tier)
+            gpool = [x for x in (wname, aname) if x]
+            for _ in range(boss_waves):
+                if gpool and random.random() < 0.5:
+                    g = random.choice(gpool)
+                    add_item(p, g)
+                    lines.append(f"⚔️ *{g}!* — endgame gear! Equip in /equip")
+    return lines
+
 def _asc_grant_rewards(p, state, died):
     floor = state["floor"] - (1 if died else 0)
     floor = max(1, floor)
     scale = ASC_HP_GROWTH ** floor
     mult = 0.5 if died else 1.0
-    gold = round(1500 * floor * mult)
+    gold = gold_floor(safe_int(p.get("level"), 1), round(1500 * floor * mult))
     shards = int(floor * 0.8 * mult)
     scrolls = int(floor * 0.28 * mult)
     p["gold"] = safe_int(p.get("gold", 0)) + gold
     lines = [f"💰 *{fmt_num(gold)}* gold"]
+    lines += _mode_bonus_rewards(p, floor, floor // ASC_BOSS_EVERY, mult)
     for _ in range(shards):  add_item(p, "Iron Shard")
     if shards:  lines.append(f"⛏️ *Iron Shard ×{shards}*")
     for _ in range(scrolls): add_item(p, "Enchanting Scroll")
@@ -42819,11 +42844,12 @@ def _wt_income(state, won):
 
 def _wt_grant_rewards(p, state):
     rounds = state["round"] - 1
-    gold = round(1200 * max(1, rounds))
+    gold = gold_floor(safe_int(p.get("level"), 1), round(1200 * max(1, rounds)))
     shards = int(rounds * 0.7)
     scrolls = int(rounds * 0.25)
     p["gold"] = safe_int(p.get("gold", 0)) + gold
     lines = [f"💰 *{fmt_num(gold)}* gold"]
+    lines += _mode_bonus_rewards(p, rounds, rounds // 5)
     for _ in range(shards):  add_item(p, "Iron Shard")
     if shards:  lines.append(f"⛏️ *Iron Shard ×{shards}*")
     for _ in range(scrolls): add_item(p, "Enchanting Scroll")
@@ -43811,11 +43837,13 @@ def _td_grant_rewards(p, state, outcome="loss"):
     ch_idx = state.get("chapter", _TD_ENDLESS)
     victory = outcome == "victory"
     rmult = (1.0 + 0.25 * diff) * (1.5 if victory else 1.0)
-    gold = round(1300 * max(1, waves) * rmult)
+    gold = gold_floor(safe_int(p.get("level"), 1), round(1300 * max(1, waves) * rmult))
     shards = int(waves * 0.7 * rmult)
     scrolls = int(waves * 0.25 * rmult)
     p["gold"] = safe_int(p.get("gold", 0)) + gold
     lines = [f"💰 *{fmt_num(gold)}* gold"]
+    # Level-scaled EXP (TD already drops unique weapons below, so no extra gear roll).
+    lines += _mode_bonus_rewards(p, waves, 0, rmult)
     for _ in range(shards):  add_item(p, "Iron Shard")
     if shards:  lines.append(f"⛏️ *Iron Shard ×{shards}*")
     for _ in range(scrolls): add_item(p, "Enchanting Scroll")
