@@ -6479,19 +6479,31 @@ def _enc_process_skill(enc, p, sk):
     enc["e_hp"] = max(0, enc["e_hp"] - dmg)
     return txt, dmg, False
 
+def _enc_scaled_level(lo, hi, p_level):
+    """Roll a foe level near the player. The static bestiary tops out at Lv 100,
+    so once a player outlevels the whole pool we KEEP scaling to their level (an
+    'Ascended' variant) instead of clamping at 100 — otherwise PvE stops being a
+    threat at the 999 cap. HP/ATK derive linearly from this level, so the fight
+    stays proportional at any level."""
+    if p_level > hi + 5:
+        # Player has outgrown this species' natural band — scale it up to them.
+        band_lo, band_hi = max(1, p_level - 5), p_level + 5
+    else:
+        band_lo = max(lo, max(1, p_level - 5))
+        band_hi = min(hi, p_level + 5)
+        if band_lo > band_hi:
+            band_lo, band_hi = lo, hi
+    return random.randint(max(1, band_lo), max(1, band_hi))
+
 def _enc_monster_level(monster, base_level):
-    lo, hi = monster[3]
-    band_lo = max(lo, max(1, base_level - 5))
-    band_hi = min(hi, base_level + 5)
-    if band_lo > band_hi: band_lo, band_hi = lo, hi
-    return random.randint(band_lo, band_hi)
+    return _enc_scaled_level(monster[3][0], monster[3][1], base_level)
 
 def _enc_npc_level(npc, p_level):
-    lo, hi = npc[2], npc[3]
-    band_lo = max(lo, max(1, p_level - 5))
-    band_hi = min(hi, p_level + 5)
-    if band_lo > band_hi: band_lo, band_hi = lo, hi
-    return random.randint(band_lo, band_hi)
+    return _enc_scaled_level(npc[2], npc[3], p_level)
+
+def _enc_is_ascended(natural_hi, eff_level):
+    """True when a foe was scaled above its natural bestiary cap (endgame flavor)."""
+    return eff_level > natural_hi
 
 def _apply_move_effect(enc, move_key, target="player"):
     """Apply a move effect to the encounter state; return flavour string."""
@@ -27414,7 +27426,11 @@ async def _start_encounter_battle(query, uid, p):
     p_level = p.get("level", 1)
     npc = _pick_random_npc(p_level)
     n_level = _enc_npc_level(npc, p_level)
+    _n_ascended = _enc_is_ascended(npc[3], n_level)
+    _n_name = f"Ascended {npc[0]}" if _n_ascended else npc[0]
     n_hp, n_atk, reward_mult, num_gear, num_pots, gear_rarities = _enc_level_stats(n_level, p_level)
+    if _n_ascended:
+        reward_mult = round(reward_mult * 1.25, 2)
     p_mhp = calc_max_hp(p)
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     p_max_mp = calc_max_mp(p); p_mp = max(0, min(p_max_mp, safe_int(p.get("mp")) or p_max_mp))
@@ -27437,10 +27453,10 @@ async def _start_encounter_battle(query, uid, p):
     enc = {
         "uid": uid, "mode": "battle", "p_name": p.get("username", "You"),
         "p_hp": p_hp, "p_max_hp": p_mhp, "p_mp": p_mp, "p_max_mp": p_max_mp,
-        "e_name": npc[0], "e_class": npc[1],
+        "e_name": _n_name, "e_class": npc[1],
         "e_hp": n_hp, "e_max_hp": n_hp, "e_atk": n_atk, "e_level": n_level,
         "e_gold_range": npc[6], "e_exp_range": npc[7], "e_loot_key": npc[8],
-        "action_log": [f"*{npc[0]}* [{cls_name}] Lv.{n_level} steps forward!"],
+        "action_log": [f"*{_n_name}* [{cls_name}] Lv.{n_level} steps forward!"],
         "pet_info": _pet_info,
         "pet_ability_used": False,
         "reward_mult": reward_mult, "num_gear": num_gear,
@@ -27462,7 +27478,11 @@ async def _start_encounter_hunt(query, uid, p):
     p_level = p.get("level", 1)
     monster = _pick_random_monster(p_level)
     m_level = _enc_monster_level(monster, p_level)
+    _m_ascended = _enc_is_ascended(monster[3][1], m_level)
+    _m_name = f"Ascended {monster[1]}" if _m_ascended else monster[1]
     m_hp, m_atk, reward_mult, num_gear, num_pots, gear_rarities = _enc_level_stats(m_level, p_level)
+    if _m_ascended:
+        reward_mult = round(reward_mult * 1.25, 2)   # tougher scaled foe = better payout
     # Wild monsters are meant to be caught, not out-slugged — trim their HP so
     # they hit the catch window quickly (farming Monster Cores felt impossible).
     m_hp = max(30, round(m_hp * _HUNT_HP_FACTOR))
@@ -27489,10 +27509,10 @@ async def _start_encounter_hunt(query, uid, p):
     enc = {
         "uid": uid, "mode": "hunt", "p_name": p.get("username", "You"),
         "p_hp": p_hp, "p_max_hp": p_mhp, "p_mp": p_mp, "p_max_mp": p_max_mp,
-        "e_name": monster[1], "e_key": monster[0], "element": monster[2],
+        "e_name": _m_name, "e_key": monster[0], "element": monster[2],
         "e_hp": m_hp, "e_max_hp": m_hp, "e_atk": m_atk, "e_level": m_level,
         "e_catch_rate": monster[6],
-        "action_log": [f"A wild *{monster[1]}* {elem_e} (Lv.{m_level}) appears!"],
+        "action_log": [f"A wild *{_m_name}* {elem_e} (Lv.{m_level}) appears!"],
         "pet_info": _pet_info,
         "pet_ability_used": False,
         "reward_mult": reward_mult, "num_gear": num_gear,
