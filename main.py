@@ -4520,6 +4520,11 @@ CONSUMABLES = {
     "Monster Core (Holy)":      {"desc":"A radiant core from a holy monster. Used for crafting.","sell":120},
     "Monster Core (Void)":      {"desc":"A strange core from a void monster. Used for crafting.","sell":200},
     "Rare Monster Core":        {"desc":"A powerful core from a rare or higher monster. Used for crafting.","sell":400},
+    # Stat Cores — rare catch rewards, gated by how tough the monster was. Consume
+    # with /statcore to permanently raise a stat of YOUR choice. Bound (sell 0).
+    "Lesser Stat Core":         {"desc":"💠 Permanently +1 to a stat of your choice. Use /statcore. Bound.","sell":0},
+    "Greater Stat Core":        {"desc":"💠 Permanently +2 to a stat of your choice. Use /statcore. Bound.","sell":0},
+    "Prime Stat Core":          {"desc":"💠 Permanently +3 to a stat of your choice. Use /statcore. Bound.","sell":0},
 }
 
 # ── POTION ENGINE ─────────────────────────────────────────────────────────────
@@ -17775,6 +17780,103 @@ async def allocate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ +{amount} to *{stat}*! Now at {sd[stat]}.\n💡 {p['stat_points']} points remaining.",
         delay=9)
 
+# ── STAT CORES ────────────────────────────────────────────────────────────────
+_STAT_CORES = [("Prime Stat Core", 3, "💠"), ("Greater Stat Core", 2, "🔷"), ("Lesser Stat Core", 1, "🔹")]
+_STAT_CORE_BY_TIER = {3: "Prime Stat Core", 2: "Greater Stat Core", 1: "Lesser Stat Core"}
+_STATCORE_STATS = ["STR","AGI","INT","WIS","DEX","LUK"]
+
+def _statcore_counts(p):
+    inv = Counter(sjl(p.get("inventory"), []))
+    return {val: inv.get(name, 0) for name, val, _ in _STAT_CORES}
+
+def _statcore_card(p, tier=None):
+    counts = _statcore_counts(p)
+    sd = safe_stats(p)
+    lines = [f"💠 *Stat Cores* — {p['username']}", ""]
+    have_any = any(counts.values())
+    for name, val, emoji in _STAT_CORES:
+        lines.append(f"{emoji} *{name}* (+{val}): *{counts[val]}*")
+    lines.append("")
+    lines.append("Current: " + "  ".join(f"{s} {sd.get(s,5)}" for s in _STATCORE_STATS))
+    rows = []
+    if not have_any:
+        lines.append("\n_Catch tough monsters in /hunt to earn Stat Cores. The harder the catch, the higher the tier._")
+    elif tier is None:
+        lines.append("\n_Pick a core to spend:_")
+        for name, val, emoji in _STAT_CORES:
+            if counts[val] > 0:
+                rows.append([InlineKeyboardButton(f"{emoji} Spend {name} (+{val})",
+                             callback_data=f"statcore_pick_{p['user_id']}_{val}")])
+    else:
+        lines.append(f"\n_Apply *+{tier}* to which stat?_")
+        row = []
+        for s in _STATCORE_STATS:
+            row.append(InlineKeyboardButton(f"{s} +{tier}", callback_data=f"statcore_apply_{p['user_id']}_{tier}_{s}"))
+            if len(row) == 3:
+                rows.append(row); row = []
+        if row: rows.append(row)
+        rows.append([InlineKeyboardButton("↩️ Back", callback_data=f"statcore_back_{p['user_id']}")])
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{p['user_id']}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+async def statcore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    text, markup = _statcore_card(p)
+    await send_group(update, text, delay=90, reply_markup=markup)
+
+async def statcore_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    action = parts[1] if len(parts) > 1 else ""
+    try: owner = int(parts[2])
+    except (IndexError, ValueError): owner = 0
+    uid = query.from_user.id
+    if uid != owner:
+        await query.answer("Not your menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if action == "pick":
+        try: tier = int(parts[3])
+        except (IndexError, ValueError): tier = 1
+        await query.answer()
+        text, markup = _statcore_card(p, tier=tier)
+        try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+        except Exception: pass
+    elif action == "back":
+        await query.answer()
+        text, markup = _statcore_card(p)
+        try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+        except Exception: pass
+    elif action == "apply":
+        try:
+            tier = int(parts[3]); stat = parts[4]
+        except (IndexError, ValueError):
+            await query.answer(); return
+        if stat not in _STATCORE_STATS:
+            await query.answer("Unknown stat."); return
+        core_name = _STAT_CORE_BY_TIER.get(tier)
+        inv = sjl(p.get("inventory"), [])
+        if not core_name or core_name not in inv:
+            await query.answer("You don't have that core anymore.", show_alert=True)
+            text, markup = _statcore_card(p)
+            try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+            except Exception: pass
+            return
+        inv.remove(core_name)
+        p["inventory"] = json.dumps(inv)
+        sd = safe_stats(p); sd[stat] = sd.get(stat, 5) + tier
+        p["stats"] = json.dumps(sd)
+        save_player(p)
+        await query.answer(f"💠 +{tier} {stat}! Now {sd[stat]}.")
+        text, markup = _statcore_card(p)
+        try: await _q_edit(query,
+            f"💠 *+{tier} {stat}!* Now at *{sd[stat]}*.  (+{tier} CP too)\n\n" + text,
+            parse_mode="Markdown", reply_markup=markup)
+        except Exception: pass
+
 # ── DAILY ─────────────────────────────────────────────────────────────────────
 async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; p = get_player(user.id)
@@ -28474,6 +28576,20 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 _core_qty = 3 if _core_roll < 0.05 else (2 if _core_roll < 0.30 else 1)
                 for _ in range(_core_qty):
                     add_item(p, core_item)
+                # ── STAT CORE drop — gated by how TOUGH the catch was, so weak
+                # spam only ever drips +1s. At most one per catch. Ascended foes
+                # (scaled past the Lv-100 bestiary) and ultra-rares can yield Prime.
+                _e_lvl = safe_int(enc.get("e_level"))
+                _ascended = _e_lvl > 100 or str(enc.get("e_name","")).startswith("Ascended")
+                _stat_core = None
+                if (_ascended or catch_r < 0.06) and random.random() < 0.06:
+                    _stat_core = "Prime Stat Core"
+                elif (_e_lvl >= 50 or catch_r < 0.10) and random.random() < 0.10:
+                    _stat_core = "Greater Stat Core"
+                elif random.random() < 0.18:
+                    _stat_core = "Lesser Stat Core"
+                if _stat_core:
+                    add_item(p, _stat_core)
                 exp_gain  = exp_share(enc["e_level"], 0.08)
                 gold_gain = gold_floor(p["level"], enc["e_level"] * 8)
                 add_exp(p, exp_gain)
@@ -28481,9 +28597,10 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 asyncio.create_task(_party_exp_bonus(context.bot, uid, exp_gain, f"a wild *{enc['e_name']}*"))
                 _core_str = f"*{core_item}* ×{_core_qty}" if _core_qty > 1 else f"*{core_item}*"
                 _bonus_str = " 🍀 *Lucky drop!*" if _core_qty > 1 else ""
+                _sc_line = f"\n💠 *{_stat_core}!* — use `/statcore` to spend it" if _stat_core else ""
                 await _end_encounter(
                     f"🎯 *Caught!* *{enc['e_name']}* {elem_e}\n"
-                    f"📦 Received: {_core_str}{_bonus_str}\n"
+                    f"📦 Received: {_core_str}{_bonus_str}{_sc_line}\n"
                     f"💰 +{gold_gain} gold | ⭐ +{fmt_num(exp_gain)} EXP")
             else:
                 mon_act = _enc_monster_attack(enc)
@@ -43811,6 +43928,8 @@ def main():
     app.add_handler(CommandHandler("rankwins",     rankwins_cmd))
     app.add_handler(CommandHandler("stats",        stats_cmd))
     app.add_handler(CommandHandler("cp",           cp_cmd))
+    app.add_handler(CommandHandler("statcore",     statcore_cmd))
+    app.add_handler(CallbackQueryHandler(statcore_callback, pattern="^statcore_"))
     app.add_handler(CommandHandler("guide",        guide_cmd))
     app.add_handler(CommandHandler("guides",       guide_cmd))
     app.add_handler(CommandHandler("help",         guide_cmd))
