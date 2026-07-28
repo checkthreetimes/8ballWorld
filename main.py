@@ -13831,6 +13831,17 @@ def _pet_auto_skirmish(p, pet):
         return f"⚔️ Sparred with {oname} — 🏆 *Won!*  +{fmt_num(g)}g, *{item}*"
     return f"⚔️ Sparred with {oname} — 💔 lost, but learned from it. +EXP"
 
+def _pet_auto_egg(pet):
+    """Pick the egg tier a pet lays on its own — higher level & bond bias toward
+    rarer eggs, but a common egg is always the baseline."""
+    lvl  = safe_int(pet.get("level", 1))
+    bond = safe_int(pet.get("bond_score", 0))
+    roll = random.random() + lvl / 2500.0 + bond / 800.0
+    if roll > 1.05: return "Mythic Egg"
+    if roll > 0.92: return "Dragon Egg"
+    if roll > 0.62: return "Rare Egg"
+    return "Common Egg"
+
 def _pet_autonomous_step(p, pet, cycles):
     """Resolve `cycles` autonomous pet cycles. Mutates pet AND grants loot/gold to
     p (caller persists both). Returns the digest text, or '' if nothing to report."""
@@ -13924,6 +13935,13 @@ def _pet_autonomous_step(p, pet, cycles):
         while pet["exp"] >= pet_exp_for_level(pet["level"]) and pet["level"] < cap:
             pet["exp"] -= pet_exp_for_level(pet["level"]); pet["level"] += 1; lvl_ups.append(pet["level"])
 
+    # 6. Pets occasionally lay their OWN egg — a happy, well-grown pet more often.
+    egg_line = None
+    if random.random() < min(0.40, 0.06 * cycles + pet.get("bond_score", 0) / 1500.0):
+        egg = _pet_auto_egg(pet)
+        add_item(p, egg)
+        egg_line = f"🥚 *{name} laid a {egg}!* — hatch it with 🥚 Hatch Egg"
+
     # ── Digest ──
     lines = [f"🐾 *Pet Update* — {name} (Lv {pet['level']} {emoji})",
              f"_{name} looked after themselves while you were busy:_",
@@ -13943,6 +13961,8 @@ def _pet_autonomous_step(p, pet, cycles):
         else:
             lines.append("   • _good memories (no loot this trip)_")
     lines.append((f"💰 +{fmt_num(total_gold)} gold  ·  " if total_gold else "") + f"💞 +{bond_gain} bond")
+    if egg_line:
+        lines.append(egg_line)
     if flavor_lines:
         lines.append("")
         lines.extend(flavor_lines[:2])
@@ -31841,109 +31861,10 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet))
         await query.answer("🎉 Adventure rewards claimed!"); return
 
-    # ── Pet Battles ───────────────────────────────────────────────────────────
-    if data.startswith("petbattle_pick_"):
-        pid = int(data.split("_")[2])
-        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
-        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
-        row = c.fetchone(); conn.close()
-        if not row: await query.answer("Pet not found.", show_alert=True); return
-        pet = dict(row); _decay_pet(pet)
-        if _pet_is_on_adventure(pet):
-            await query.answer("Your pet is on an adventure — can't battle now!", show_alert=True); return
-        pname = _pet_display_name(pet)
-        # Cooldown: 2 hours
-        last_b = pet.get("last_battle")
-        if last_b:
-            try:
-                el = (datetime.now() - datetime.fromisoformat(last_b)).total_seconds()
-                if el < 7200:
-                    await query.answer(f"⏳ {pname} needs rest. Battle cooldown: {int((7200-el)//60)} min.", show_alert=True); return
-            except Exception: pass
-        # Find eligible opponents (players with active pets)
-        conn2 = _connect_db(); conn2.row_factory = sqlite3.Row; c2 = conn2.cursor()
-        c2.execute("""SELECT p.owner_id, p.pet_id, p.species, p.nickname, p.level
-                      FROM pets p WHERE p.is_active=1 AND p.owner_id!=? ORDER BY RANDOM() LIMIT 5""", (user.id,))
-        candidates = [dict(r) for r in c2.fetchall()]; conn2.close()
-        if not candidates:
-            await query.answer("No opponents found! Other players need active pets to battle.", show_alert=True); return
-        rows = []
-        for opp in candidates[:4]:
-            osp = PET_SPECIES.get(opp["species"],{})
-            oname = opp.get("nickname") or osp.get("name","Pet")
-            rows.append([InlineKeyboardButton(
-                f"{osp.get('emoji','🐾')} {oname} Lv{opp['level']}",
-                callback_data=f"petbattle_fight_{pid}_{opp['pet_id']}")])
-        rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"petview_{pid}")])
-        await _q_edit(query, 
-            f"⚔️ *{pname} wants to battle!*\n\nChoose an opponent:",
-            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
-        await query.answer(); return
-
-    if data.startswith("petbattle_fight_"):
-        parts = data.split("_")
-        my_pid = int(parts[2]); opp_pid = int(parts[3])
-        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
-        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (my_pid, user.id))
-        my_row = c.fetchone()
-        c.execute("SELECT * FROM pets WHERE pet_id=?", (opp_pid,))
-        opp_row = c.fetchone(); conn.close()
-        if not my_row or not opp_row:
-            await query.answer("Pet not found.", show_alert=True); return
-        my_pet = dict(my_row); _decay_pet(my_pet)
-        opp_pet = dict(opp_row); _decay_pet(opp_pet)
-        if _pet_is_on_adventure(my_pet):
-            await query.answer("Your pet is on an adventure!", show_alert=True); return
-        # Resolve battle
-        my_sp  = PET_SPECIES.get(my_pet["species"],{})
-        opp_sp = PET_SPECIES.get(opp_pet["species"],{})
-        my_score  = (my_sp.get("base_atk",5) + my_pet["level"] * 2 + my_pet.get("bond_score",0) // 10
-                     + my_sp.get("base_def",3) + random.randint(1,20))
-        opp_score = (opp_sp.get("base_atk",5) + opp_pet["level"] * 2 + opp_pet.get("bond_score",0) // 10
-                     + opp_sp.get("base_def",3) + random.randint(1,20))
-        # Elemental matchup bonus/penalty
-        my_elem  = my_sp.get("element","")
-        opp_elem = opp_sp.get("element","")
-        _my_mu  = ELEMENT_MATCHUPS.get(my_elem,{})
-        _opp_mu = ELEMENT_MATCHUPS.get(opp_elem,{})
-        if _my_mu.get("strong") == opp_elem:  my_score  = round(my_score  * 1.20)
-        if _my_mu.get("weak")   == opp_elem:  my_score  = round(my_score  * 0.85)
-        if _opp_mu.get("strong") == my_elem:  opp_score = round(opp_score * 1.20)
-        if _opp_mu.get("weak")   == my_elem:  opp_score = round(opp_score * 0.85)
-        # Shiny bonus: +15% score
-        if my_pet.get("is_shiny"):  my_score  = round(my_score  * 1.15)
-        if opp_pet.get("is_shiny"): opp_score = round(opp_score * 1.15)
-        i_won = my_score > opp_score
-        my_exp_gain  = 100 if i_won else 40
-        opp_exp_gain = 40  if i_won else 100
-        my_bond_gain  = 10 if i_won else 5
-        opp_bond_gain = 5  if i_won else 10
-        my_pet["exp"] = my_pet.get("exp",0) + my_exp_gain
-        my_pet["bond_score"] = min(200, my_pet.get("bond_score",0) + my_bond_gain)
-        my_pet["last_battle"] = datetime.now().isoformat()
-        opp_pet["exp"] = opp_pet.get("exp",0) + opp_exp_gain
-        opp_pet["bond_score"] = min(200, opp_pet.get("bond_score",0) + opp_bond_gain)
-        # Level up both
-        for bp in (my_pet, opp_pet):
-            while bp["exp"] >= pet_exp_for_level(bp["level"]):
-                bp["exp"] -= pet_exp_for_level(bp["level"])
-                bp["level"] += 1
-        save_pet(my_pet); save_pet(opp_pet)
-        my_pname  = _pet_display_name(my_pet)
-        opp_pname = _pet_display_name(opp_pet)
-        my_e  = my_sp.get("emoji","🐾"); opp_e = opp_sp.get("emoji","🐾")
-        result_txt = "🏆 *Victory!*" if i_won else "💔 *Defeat!*"
-        elem_note = ""
-        if _my_mu.get("strong") == opp_elem:   elem_note = f"\n🔥 *Type advantage!* {my_elem.capitalize()} → {opp_elem.capitalize()} (+20%)"
-        elif _my_mu.get("weak") == opp_elem:   elem_note = f"\n💧 *Type disadvantage!* {opp_elem.capitalize()} counters {my_elem.capitalize()} (-15%)"
-        await _q_edit(query, 
-            f"⚔️ *Pet Battle!*\n\n"
-            f"{my_e} *{my_pname}* (Score: {my_score})\nvs\n{opp_e} *{opp_pname}* (Score: {opp_score})\n{elem_note}\n"
-            f"{result_txt}\n"
-            f"⭐ +{fmt_num(my_exp_gain)} EXP  |  💞 +{my_bond_gain} Bond",
-            parse_mode="Markdown",
-            reply_markup=_pet_view_markup(my_pid, bool(my_pet.get("is_active")), uid=user.id, pet=my_pet))
-        await query.answer(result_txt.replace("*","")); return
+    # ── Pet Battles are AUTOMATIC now (see _pet_auto_skirmish) — the manual
+    #    petbattle_pick / petbattle_fight flows have been removed. ──
+    if data.startswith("petbattle_"):
+        await query.answer("⚔️ Pet battles are automatic now — your pet spars on its own and reports back in its Pet Updates!", show_alert=True); return
 
     # ── Pet Evolution ─────────────────────────────────────────────────────────
     if data.startswith("petevolve_"):
@@ -32654,136 +32575,12 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── PET DUEL ──────────────────────────────────────────────────────────────────
 async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Pet vs Pet duel — each player's active pet fights."""
+    """Retired: pet battles are AUTOMATIC now. The pet spars on its own vs recent
+    PvP opponents (see _pet_auto_skirmish) and reports results in its Pet Updates."""
     query = update.callback_query
-    await query.answer()
-    uid   = query.from_user.id
-    parts = query.data.split("_")
-    sub   = parts[1] if len(parts) > 1 else ""
-
-    if sub == "pick":
-        # Show online players who have active pets
-        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
-        c.execute("SELECT DISTINCT p.user_id, p.username FROM players p "
-                  "JOIN pets pet ON pet.owner_id=p.user_id AND pet.is_active=1 "
-                  "WHERE p.user_id != ? LIMIT 10", (uid,))
-        rows = [dict(r) for r in c.fetchall()]; conn.close()
-        if not rows:
-            await query.answer("No other players with active pets found.", show_alert=True); return
-        my_pet = get_active_pet_record(uid)
-        if not my_pet:
-            await query.answer("You need an active pet to duel.", show_alert=True); return
-        rows_btn = []
-        for r in rows:
-            rows_btn.append([InlineKeyboardButton(
-                f"⚔️ Challenge {r['username']}",
-                callback_data=f"petduel_challenge_{uid}_{r['user_id']}")])
-        rows_btn.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
-        await _q_edit(query, "⚔️ *Pet Duel*\nChoose an opponent:",
-                                      parse_mode="Markdown",
-                                      reply_markup=InlineKeyboardMarkup(rows_btn))
-        return
-
-    if sub == "challenge":
-        challenger_uid = int(parts[2])
-        target_uid     = int(parts[3])
-        if uid != challenger_uid:
-            await query.answer("Not your challenge.", show_alert=True); return
-        c_pet = get_active_pet_record(challenger_uid)
-        t_pet = get_active_pet_record(target_uid)
-        if not c_pet or not t_pet:
-            await query.answer("One player has no active pet.", show_alert=True); return
-        c_sp  = PET_SPECIES.get(c_pet.get("species"),{})
-        t_sp  = PET_SPECIES.get(t_pet.get("species"),{})
-        duel_key = (min(challenger_uid,target_uid), max(challenger_uid,target_uid))
-        if duel_key in _active_pet_duels:
-            await query.answer("A duel is already active between these players.", show_alert=True); return
-        _active_pet_duels[duel_key] = {
-            "c_uid": challenger_uid, "t_uid": target_uid,
-            "expires": time.time() + 60,
-        }
-        c_name = _pet_display_name(c_pet); t_name = _pet_display_name(t_pet)
-        markup = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⚔️ Accept Duel!", callback_data=f"petduel_accept_{challenger_uid}_{target_uid}"),
-            InlineKeyboardButton("❌ Decline",       callback_data=f"petduel_decline_{challenger_uid}"),
-        ]])
-        await _q_edit(query, 
-            f"⚔️ *Pet Duel Challenge!*\n\n"
-            f"{c_sp.get('emoji','🐾')} *{c_name}* vs {t_sp.get('emoji','🐾')} *{t_name}*\n\n"
-            f"<target player> — accept within 60 seconds!",
-            parse_mode="Markdown", reply_markup=markup)
-        return
-
-    if sub == "decline":
-        challenger_uid = int(parts[2])
-        duel_key = next((k for k in _active_pet_duels if challenger_uid in k), None)
-        if duel_key: _active_pet_duels.pop(duel_key, None)
-        await _q_edit(query, "⚔️ Duel declined.")
-        return
-
-    if sub == "accept":
-        challenger_uid = int(parts[2])
-        target_uid     = int(parts[3])
-        if uid != target_uid:
-            await query.answer("Only the challenged player can accept.", show_alert=True); return
-        duel_key = (min(challenger_uid,target_uid), max(challenger_uid,target_uid))
-        duel = _active_pet_duels.pop(duel_key, None)
-        if not duel or duel.get("expires",0) < time.time():
-            await query.answer("Challenge expired.", show_alert=True); return
-        c_pet = get_active_pet_record(challenger_uid)
-        t_pet = get_active_pet_record(target_uid)
-        if not c_pet or not t_pet:
-            await query.answer("One player's pet is gone.", show_alert=True); return
-        # Simulate duel: turn-by-turn until one reaches 0 HP
-        c_sp  = PET_SPECIES.get(c_pet.get("species"),{})
-        t_sp  = PET_SPECIES.get(t_pet.get("species"),{})
-        c_name = _pet_display_name(c_pet); t_name = _pet_display_name(t_pet)
-        c_hp = max(10, _pet_eff_level(c_pet) * 20 + c_sp.get("base_atk",10) * 3)
-        t_hp = max(10, _pet_eff_level(t_pet) * 20 + t_sp.get("base_atk",10) * 3)
-        c_hp_max = c_hp; t_hp_max = t_hp
-        log = [f"⚔️ *Pet Duel!*\n{c_sp.get('emoji','🐾')} {c_name} vs {t_sp.get('emoji','🐾')} {t_name}\n"]
-        elem_mult_c = _get_pet_element_mult(c_pet, t_pet)
-        elem_mult_t = _get_pet_element_mult(t_pet, c_pet)
-        rounds = 0
-        while c_hp > 0 and t_hp > 0 and rounds < 20:
-            rounds += 1
-            # Challenger attacks
-            c_atk = round(get_pet_atk_bonus(c_pet) * elem_mult_c * random.uniform(0.85,1.15))
-            skill_c, pskill_c = _pet_skill_check(c_pet)
-            if skill_c and pskill_c:
-                c_atk = round(c_atk * pskill_c["mult"])
-                log.append(f"Rnd {rounds}: {c_sp.get('emoji','🐾')} {c_name} {pskill_c['msg']} *{c_atk} dmg*!")
-            else:
-                log.append(f"Rnd {rounds}: {c_sp.get('emoji','🐾')} {c_name} strikes *{c_atk} dmg*!")
-            t_hp = max(0, t_hp - c_atk)
-            if t_hp <= 0: break
-            # Target attacks
-            t_atk = round(get_pet_atk_bonus(t_pet) * elem_mult_t * random.uniform(0.85,1.15))
-            skill_t, pskill_t = _pet_skill_check(t_pet)
-            if skill_t and pskill_t:
-                t_atk = round(t_atk * pskill_t["mult"])
-                log.append(f"       {t_sp.get('emoji','🐾')} {t_name} {pskill_t['msg']} *{t_atk} dmg*!")
-            else:
-                log.append(f"       {t_sp.get('emoji','🐾')} {t_name} strikes *{t_atk} dmg*!")
-            c_hp = max(0, c_hp - t_atk)
-        # Determine winner
-        if c_hp > t_hp:
-            winner_pet = c_pet; loser_pet = t_pet
-            winner_name = c_name; w_sp = c_sp
-        else:
-            winner_pet = t_pet; loser_pet = c_pet
-            winner_name = t_name; w_sp = t_sp
-        # Award EXP and bond
-        exp_gain  = 30 + winner_pet.get("level",1) * 2
-        bond_gain = 10
-        winner_pet["exp"]        = winner_pet.get("exp",0) + exp_gain
-        winner_pet["bond_score"] = winner_pet.get("bond_score",0) + bond_gain
-        loser_pet["bond_score"]  = loser_pet.get("bond_score",0) + 3
-        save_pet(winner_pet); save_pet(loser_pet)
-        log.append(f"\n🏆 *{w_sp.get('emoji','🐾')} {winner_name}* wins!\n+{fmt_num(exp_gain)} EXP | +{bond_gain} Bond")
-        # Keep log to last 12 lines to fit in Telegram message
-        display_log = log[:3] + ["..."] + log[-6:] if len(log) > 10 else log
-        await _q_edit(query, "\n".join(display_log), parse_mode="Markdown")
+    await query.answer(
+        "⚔️ Pet battles are automatic now — your pet spars on its own vs your recent "
+        "rivals and reports back in its Pet Updates!", show_alert=True)
 
 # ── /combat Hub ────────────────────────────────────────────────────────────────
 _COMBAT_HUB_PAGES = [
