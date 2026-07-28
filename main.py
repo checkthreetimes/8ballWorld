@@ -3942,12 +3942,14 @@ PERSONALITY_DEFEND = {
 # EXP needed per pet level
 def pet_exp_for_level(lvl): return lvl * 50 + (lvl * lvl * 5)
 
-PET_LEVEL_HARD_CAP = 250   # absolute ceiling — no pet may ever exceed this
+PET_LEVEL_HARD_CAP = LEVEL_CAP   # absolute ceiling — matches the player level cap (999)
 
 def _pet_level_cap(owner_level):
-    """A pet grows with its owner (×3) up to the player's own level ceiling (250),
-    instead of dead-ending at 100. Pet combat damage stays bounded to a fraction
-    of the owner's hit, so a higher cap is safe — it just lets pets keep leveling."""
+    """A pet grows with its owner (×3) up to the player level cap (999), so a pet
+    keeps pace with a maxed hero instead of dead-ending at 250. Pet combat damage
+    is bounded to a fraction of the owner's hit (and the def-proc percentages
+    plateau via their own min() caps), so a higher level cap is safe — it just
+    lets pets keep gaining flat power alongside their owner."""
     return min(PET_LEVEL_HARD_CAP, max(1, safe_int(owner_level)) * 3)
 
 def _pet_eff_level(pet):
@@ -3972,10 +3974,21 @@ PET_LEVEL_PASSIVES = {
 }
 
 def get_pet_passives(pet_level):
+    """Passive bonuses for a pet's level. The authored PET_LEVEL_PASSIVES table
+    drives everything through Lv100 (unchanged milestone feel); past 100 the FLAT
+    stats keep climbing by formula so a pet keeps growing alongside a 999-cap
+    owner, while the PERCENTAGE stats (crit/dodge) intentionally plateau at their
+    Lv100 values so they can never run away to absurd rates."""
+    lvl = max(1, safe_int(pet_level, 1))
     bonus = {}
     for threshold in sorted(PET_LEVEL_PASSIVES.keys()):
-        if pet_level >= threshold:
+        if lvl >= threshold:
             bonus = dict(PET_LEVEL_PASSIVES[threshold])
+    if lvl > 100:
+        over = lvl - 100
+        bonus["atk_flat"]       = bonus.get("atk_flat", 0)       + round(over * 1.05)
+        bonus["lifesteal_flat"] = bonus.get("lifesteal_flat", 0) + round(over * 0.40)
+        # crit_bonus / dodge_bonus deliberately stay at their Lv100 caps.
     return bonus
 
 def get_pet_def_proc_chance(pet):
