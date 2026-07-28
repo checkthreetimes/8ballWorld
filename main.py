@@ -26723,6 +26723,93 @@ def calc_combat_power(p):
             pet_val = safe_int(_pet.get("level", 1)) * 5 + safe_int(_pet.get("evolution_stage", 0)) * 50
     return level_val + stat_total + weapon_val + armor_val + skill_val + enchant_val + passive_val + pet_val
 
+# ── /cp — Combat Power breakdown + tailored upgrade suggestions ────────────────
+_CP_ENC_SLOTS = ["equipped_weapon","equipped_armor","equipped_shield",
+                 "equipped_accessory","equipped_accessory_2","equipped_accessory_3","equipped_accessory_4",
+                 "equipped_hat","equipped_gloves","equipped_boots","equipped_mask"]
+_CP_SLOT_NAME = {"equipped_weapon":"weapon","equipped_armor":"armor","equipped_shield":"shield",
+                 "equipped_accessory":"accessory","equipped_accessory_2":"accessory",
+                 "equipped_accessory_3":"accessory","equipped_accessory_4":"accessory",
+                 "equipped_hat":"hat","equipped_gloves":"gloves","equipped_boots":"boots","equipped_mask":"mask"}
+
+def _cp_components(p):
+    """Return (components, total, meta). Mirrors calc_combat_power exactly so the
+    breakdown always sums to the real CP."""
+    stat_total  = sum(get_stat(p, st) for st in ["STR","AGI","INT","WIS","DEX","LUK"])
+    weapon_val  = get_weapon_atk(p) * 3
+    armor_val   = get_armor_def(p) * 2
+    level_val   = p["level"] * 10
+    skills      = sjl(p.get("all_skills"), [])
+    skill_val   = len(skills) * 50
+    ench_used   = [sl for sl in _CP_ENC_SLOTS if get_enchant(p, p.get(sl) or "")]
+    enchant_val = len(ench_used) * 30
+    passives    = get_all_passive_keys(p)
+    passive_val = len(passives) * 25
+    pet_val = 0; pet = None
+    if p.get("user_id"):
+        pet = get_active_pet_record(p.get("user_id"))
+        if pet:
+            pet_val = safe_int(pet.get("level", 1)) * 5 + safe_int(pet.get("evolution_stage", 0)) * 50
+    comps = [
+        ("🗡️", "Weapon ATK ×3",     weapon_val),
+        ("✨", "Skills ×50",         skill_val),
+        ("⭐", "Level ×10",          level_val),
+        ("🔮", "Enchanted slots ×30", enchant_val),
+        ("🎓", "Class passives ×25", passive_val),
+        ("🛡️", "Armor DEF ×2",      armor_val),
+        ("💪", "Stats (all 6) ×1",   stat_total),
+        ("🐾", "Pet",                pet_val),
+    ]
+    total = weapon_val + skill_val + level_val + enchant_val + passive_val + armor_val + stat_total + pet_val
+    meta = {"pet": pet, "ench_used": len(ench_used)}
+    return comps, total, meta
+
+def _cp_suggestions(p, meta):
+    """Tailored, prioritised ways THIS player can raise their CP right now."""
+    tips = []
+    sp = safe_int(p.get("stat_points"))
+    if sp > 0:
+        tips.append(f"💪 Spend your *{sp}* unspent stat point{'s' if sp != 1 else ''} — "
+                    f"`/allocate` (+{sp} CP now, and more damage/defense).")
+    unench = [sl for sl in _CP_ENC_SLOTS if p.get(sl) and not get_enchant(p, p.get(sl) or "")]
+    if unench:
+        tips.append(f"🔮 Enchant your gear — *{len(unench)}* equipped slot{'s' if len(unench) != 1 else ''} "
+                    f"still unenchanted (*+{len(unench) * 30} CP*). Use an Enchanting Scroll at `/enchant`.")
+    empty = sorted({_CP_SLOT_NAME[sl] for sl in _CP_ENC_SLOTS if not p.get(sl)})
+    if empty:
+        tips.append(f"🧩 Fill empty gear slots (*{', '.join(empty)}*) — each piece adds ATK/DEF "
+                    f"and can be enchanted. `/equip`")
+    tips.append("🗡️ Upgrade + *enhance/reinforce* your weapon — weapon ATK is worth *×3 CP*, the biggest "
+                "lever. Forge stronger weapons from Monster Cores at `/craft`.")
+    tips.append("🛡️ Enhance your armor too — armor DEF counts *×2 CP*.")
+    if not meta["pet"]:
+        tips.append("🐾 Adopt & raise a pet — it adds CP (level ×5 + evolution ×50) and fights with you. `/pet`")
+    else:
+        tips.append("🐾 Level & *evolve* your pet — every evolution stage is *+50 CP*.")
+    tips.append("🎓 Advance your class path (`/prestige`) — each new passive is *+25 CP* plus new abilities.")
+    tips.append("⭐ Keep leveling — every level is a flat *+10 CP* (and more stat points to spend).")
+    return tips
+
+def _cp_card(p):
+    comps, total, meta = _cp_components(p)
+    mult = 1.30 + (total // 300) * 0.03
+    lines = [f"⚡ *{p['username']}'s Combat Power: {total:,}*",
+             f"_Damage multiplier ×{mult:.2f} — +{round((mult - 1) * 100)}% to every hit (no cap)._",
+             ""]
+    for emoji, label, val in sorted(comps, key=lambda c: -c[2]):
+        lines.append(f"{emoji} {label}: *{val:,}*")
+    lines.append("\n*🔺 Ways to raise your CP:*")
+    for t in _cp_suggestions(p, meta)[:6]:
+        lines.append(f"• {t}")
+    lines.append("\n_Every 300 CP = +3% damage on top — so gear, enchants and stats all pay off forever._")
+    return "\n".join(lines)
+
+async def cp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    await send_group(update, _cp_card(p), delay=90)
+
 
 # ── SOCIAL SYSTEM HELPERS ─────────────────────────────────────────────────────
 def _social_name(tg_user):
@@ -31994,6 +32081,11 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                    f"Level {plvl}  |  ⚔️ ATK {patk}  |  ❤️ HP {php}\n\n"
                    f"Your pet automatically battles alongside you in every attack and skill use — no action needed!")
         try: await _q_edit(query, txt, parse_mode="Markdown", reply_markup=back)
+        except Exception: pass
+
+    elif action == "cp":
+        # Full CP breakdown + tailored upgrade suggestions (was just a tip).
+        try: await _q_edit(query, _cp_card(p), parse_mode="Markdown", reply_markup=back)
         except Exception: pass
 
     else:
@@ -43698,6 +43790,7 @@ def main():
     app.add_handler(CommandHandler("rankme",       rankme_cmd))
     app.add_handler(CommandHandler("rankwins",     rankwins_cmd))
     app.add_handler(CommandHandler("stats",        stats_cmd))
+    app.add_handler(CommandHandler("cp",           cp_cmd))
     app.add_handler(CommandHandler("guide",        guide_cmd))
     app.add_handler(CommandHandler("guides",       guide_cmd))
     app.add_handler(CommandHandler("help",         guide_cmd))
