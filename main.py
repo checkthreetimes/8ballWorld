@@ -32595,6 +32595,306 @@ async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚔️ Pet battles are automatic now — your pet spars on its own vs your recent "
         "rivals and reports back in its Pet Updates!", show_alert=True)
 
+# ══════════════════════════════════════════════════════════════════════════════
+# THE WANDERING PATH — a live side-scrolling choose-your-path stroll
+# ══════════════════════════════════════════════════════════════════════════════
+# Not a twitch game — a chill, latency-proof scene. Your character walks forward
+# through scrolling forest scenery (the message edits in place, frame by frame),
+# and every few steps the walk pauses on something ahead — a chest, a fork, a
+# stranger — and you choose what to do. Low stakes, flavor-first, small level-
+# scaled rewards. Runs live in memory; only your furthest distance persists.
+_active_wanders = {}   # uid -> run state
+
+WANDER_W        = 11     # scene width in cells
+WANDER_WALK_COL = 2      # the walker's fixed column
+WANDER_FRAME_S  = 1.1    # seconds per walk frame (the "live" scroll speed)
+
+# Scenery pools per area (canopy / midground / ground). Areas escalate as you go.
+WANDER_THEMES = [
+    {"name": "Whispering Woods", "emoji": "🌲",
+     "canopy": ["🌲","🌳","🌲","🌿","🍃","🌳"], "mid": ["🌿","🍃","🌱","🌾","🌿"], "ground": ["🟩","🟫","🌱","🍂","🟩"]},
+    {"name": "Deep Thicket", "emoji": "🌑",
+     "canopy": ["🌲","🌲","🌳","🍄","🕸️","🌲"], "mid": ["🌿","🍄","🪨","🌾","🕸️"], "ground": ["🟫","🟫","🪨","🍄","🟫"]},
+    {"name": "Misty Grove", "emoji": "🌫️",
+     "canopy": ["🌫️","🌲","🌸","🍃","🌫️","🌳"], "mid": ["🌫️","🌸","🌿","💧","🌱"], "ground": ["🟦","🟩","💧","🌱","🟦"]},
+    {"name": "Emberwood", "emoji": "🔥",
+     "canopy": ["🔥","🌲","🌋","🌫️","🔥","🌲"], "mid": ["🔥","🪨","🌿","🌋","🍂"], "ground": ["🟥","🟫","🔥","🪨","🟥"]},
+    {"name": "Starlit Clearing", "emoji": "✨",
+     "canopy": ["✨","🌌","🌲","🌟","🪐","🌲"], "mid": ["✨","🌟","🌿","💫","🌱"], "ground": ["🟪","🟩","✨","🌱","🟪"]},
+]
+WANDER_EVENTS_PER_AREA = 4   # advance to the next area after this many events
+
+def _wander_area(state):
+    idx = min(len(WANDER_THEMES) - 1, state.get("events_done", 0) // WANDER_EVENTS_PER_AREA)
+    return WANDER_THEMES[idx], idx
+
+def _wtile(state, line_pool, line_id, wp):
+    """Deterministic scenery emoji at world-position `wp` on a scenery line, so
+    the strip is stable within a render but scrolls smoothly as offset grows."""
+    r = random.Random(f"{state['seed']}:{line_id}:{wp}")
+    return r.choice(line_pool)
+
+def _wander_scene(state, event_emoji=None):
+    theme, _ = _wander_area(state)
+    off = state["offset"]
+    canopy = "".join(_wtile(state, theme["canopy"], 0, off + i) for i in range(WANDER_W))
+    ground = "".join(_wtile(state, theme["ground"], 2, off + i) for i in range(WANDER_W))
+    mid = [_wtile(state, theme["mid"], 1, off + i) for i in range(WANDER_W)]
+    mid[WANDER_WALK_COL] = state.get("walker", "🚶")
+    if event_emoji is not None:
+        mid[WANDER_W - 2] = event_emoji
+    return f"{canopy}\n{''.join(mid)}\n{ground}"
+
+# ── Events: each has two choices; each choice rolls a weighted outcome. Effects
+#    are (gold_base, gold_per_level, exp_pct, item, gold_loss_base). Flavor-first,
+#    low-stakes — the worst case is losing a little gold or finding nothing. ──
+_WANDER_LOOT = ["Health Potion", "Greater Health Potion", "Iron Shard", "Enchanting Scroll",
+                "MP Tonic", "Pet Snack", "Fortune Coin"]
+_WANDER_RARE = ["Rare Egg", "Scroll of Revival", "Grand Restorative Flask", "Monster Core (Earth)"]
+
+def _weff(g=0, gL=0, xp=0.0, item=None, lose=0):
+    return {"g": g, "gL": gL, "xp": xp, "item": item, "lose": lose}
+
+WANDER_EVENTS = [
+    {"e":"📦","t":"An old chest sits half-buried in the leaves.",
+     "a":("🔓 Pry it open", [(55,"The lid creaks open — treasure!", _weff(g=400,gL=20,xp=0.04)),
+                             (30,"Coins and a useful trinket inside!", _weff(g=250,gL=12,item="__loot__")),
+                             (15,"*Snap!* A rigged dart stings you — but you grab the gold anyway.", _weff(g=150,gL=8,lose=0))]),
+     "b":("🚶 Leave it be", [(100,"You walk on, wondering what might have been.", _weff())])},
+    {"e":"🍄","t":"A cluster of glowing mushrooms dots a fallen log.",
+     "a":("🍽️ Taste one", [(50,"Earthy and invigorating — you feel refreshed.", _weff(xp=0.05)),
+                           (30,"Bitter! You spit it out, no harm done.", _weff()),
+                           (20,"Surprisingly potent — you pocket a few.", _weff(item="__loot__"))]),
+     "b":("🧺 Harvest carefully", [(100,"You gather them for later.", _weff(item="Pet Snack"))])},
+    {"e":"🪙","t":"Something glints in the undergrowth.",
+     "a":("🔎 Investigate", [(60,"A dropped coin-purse!", _weff(g=500,gL=25)),
+                            (25,"Just a shiny pebble. Oh well.", _weff()),
+                            (15,"A gemstone! Worth a fortune.", _weff(g=1200,gL=40))]),
+     "b":("🚶 Keep walking", [(100,"Probably nothing.", _weff())])},
+    {"e":"🧙","t":"A hooded stranger rests against a tree.",
+     "a":("💬 Greet them", [(55,"They share traveler's wisdom — and a gift.", _weff(xp=0.05,item="__loot__")),
+                           (30,"A pleasant chat, nothing more.", _weff(xp=0.02)),
+                           (15,"They reward your kindness handsomely.", _weff(g=800,gL=30))]),
+     "b":("🙊 Slip past quietly", [(100,"You give them a wide berth.", _weff())])},
+    {"e":"🌉","t":"A rickety rope bridge spans a ravine.",
+     "a":("🏃 Cross it", [(65,"You make it across — a shortcut!", _weff(xp=0.04)),
+                         (35,"A plank snaps; you drop a few coins into the mist.", _weff(lose=200))]),
+     "b":("🧗 Climb around", [(100,"The long way, but safe. You spot a trinket en route.", _weff(item="__loot__"))])},
+    {"e":"⛲","t":"A mossy shrine hums with quiet power.",
+     "a":("🙏 Make an offering", [(60,"The shrine blesses you.", _weff(xp=0.06)),
+                                 (25,"You leave a coin; a calm washes over you.", _weff(lose=100,xp=0.03)),
+                                 (15,"The shrine answers generously!", _weff(g=600,gL=20,item="__loot__"))]),
+     "b":("🚶 Bow and move on", [(100,"You pay your respects and continue.", _weff())])},
+    {"e":"🐺","t":"A lone wolf blocks the trail, hackles raised.",
+     "a":("⚔️ Stand your ground", [(70,"Your presence alone sends it fleeing — it drops something!", _weff(g=300,gL=15,item="__loot__")),
+                                  (30,"It nips you and bolts. Just a scratch.", _weff())]),
+     "b":("🌿 Back away slowly", [(100,"You retreat and find another way around.", _weff())])},
+    {"e":"🐿️","t":"A small creature is tangled in thorns, whimpering.",
+     "a":("🤲 Free it", [(70,"It scampers off happily — and leaves a gift!", _weff(item="__loot__",xp=0.03)),
+                        (30,"It darts away the moment it's loose.", _weff(xp=0.02))]),
+     "b":("🚶 Leave it", [(100,"Not your problem, you decide.", _weff())])},
+    {"e":"🔥","t":"A traveler's campfire crackles, unattended.",
+     "a":("🔥 Rest a while", [(100,"You warm yourself and press on, spirits high.", _weff(xp=0.04))]),
+     "b":("🔎 Search the camp", [(55,"Someone left supplies behind.", _weff(item="__loot__")),
+                                (30,"Only ashes and old bones.", _weff()),
+                                (15,"A hidden stash under a bedroll!", _weff(g=700,gL=25))])},
+    {"e":"💎","t":"A vein of crystal glimmers in an exposed rock face.",
+     "a":("⛏️ Mine it", [(55,"You chip loose a beautiful shard.", _weff(item="Iron Shard",xp=0.03)),
+                        (30,"The rock is stubborn; you gain little.", _weff()),
+                        (15,"A rare core comes free!", _weff(item="__rare__"))]),
+     "b":("🚶 Admire and leave", [(100,"Some things are best left as they are.", _weff())])},
+]
+
+def _wander_new(uid, p):
+    state = {
+        "uid": uid, "seed": random.randint(1, 10**9),
+        "offset": 0, "dist": 0, "events_done": 0,
+        "walker": "🚶", "phase": "walk", "event": None, "busy": False,
+        "chat_id": None, "msg_id": None,
+        "haul_gold": 0, "haul_xp": 0, "found": [],
+        "last_area": 0,
+    }
+    _active_wanders[uid] = state
+    return state
+
+def _wander_apply(p, state, eff):
+    """Apply an outcome to the player, accumulate the run haul, return a reward
+    tag string (e.g. '+250g · +1.2K EXP · Health Potion')."""
+    lvl = safe_int(p.get("level"), 1); parts = []
+    if eff.get("g"):
+        g = gold_floor(lvl, eff["g"] + lvl * eff.get("gL", 0))
+        p["gold"] = safe_int(p.get("gold", 0)) + g
+        state["haul_gold"] += g; parts.append(f"+{fmt_num(g)}g")
+    if eff.get("xp"):
+        x = exp_share(lvl, eff["xp"]); add_exp(p, x)
+        state["haul_xp"] += x; parts.append(f"+{fmt_num(x)} EXP")
+    if eff.get("lose"):
+        loss = min(safe_int(p.get("gold", 0)), gold_floor(lvl, eff["lose"]))
+        if loss > 0:
+            p["gold"] = safe_int(p.get("gold", 0)) - loss; parts.append(f"−{fmt_num(loss)}g")
+    item = eff.get("item")
+    if item == "__loot__": item = random.choice(_WANDER_LOOT)
+    elif item == "__rare__": item = random.choice(_WANDER_RARE)
+    if item:
+        add_item(p, item); state["found"].append(item); parts.append(f"*{item}*")
+    save_player(p)
+    return "  ·  ".join(parts) if parts else "_(nothing gained)_"
+
+def _wander_pick_event(state):
+    return dict(random.choice(WANDER_EVENTS))
+
+def _wander_walk_text(state, extra="", event_emoji=None):
+    theme, _ = _wander_area(state)
+    scene = _wander_scene(state, event_emoji=event_emoji)
+    head = f"🌲 *The Wandering Path* — _{theme['name']}_\n👣 {state['dist']} steps  ·  💰 {fmt_num(state['haul_gold'])}g"
+    return f"{head}\n\n{scene}\n\n{extra or '_...walking..._'}"
+
+def _wander_event_markup(uid, ev):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(ev["a"][0], callback_data=f"wd_choice_{uid}_a")],
+        [InlineKeyboardButton(ev["b"][0], callback_data=f"wd_choice_{uid}_b")],
+        [InlineKeyboardButton("🛶 Rest & head home", callback_data=f"wd_leave_{uid}")],
+    ])
+
+async def _wander_edit(bot, state, text, markup=None):
+    if not state.get("chat_id"):
+        return
+    try:
+        await bot.edit_message_text(chat_id=state["chat_id"], message_id=state["msg_id"],
+                                    text=text, parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
+
+async def _wander_step_to_event(bot, uid):
+    """Play a short walking animation (the live scroll), then stop on the next
+    event and present the choice."""
+    state = _active_wanders.get(uid)
+    if not state or state.get("busy") or state.get("phase") == "over":
+        return
+    state["busy"] = True
+    try:
+        # Area transition announce
+        _, area_idx = _wander_area(state)
+        if area_idx != state.get("last_area"):
+            state["last_area"] = area_idx
+            await _wander_edit(bot, state, _wander_walk_text(
+                state, f"🌫️ _You cross into the *{WANDER_THEMES[area_idx]['name']}*..._"))
+            await asyncio.sleep(WANDER_FRAME_S)
+        for _ in range(random.randint(3, 5)):
+            if uid not in _active_wanders:
+                return
+            state["offset"] += 1; state["dist"] += 1
+            await _wander_edit(bot, state, _wander_walk_text(state))
+            await asyncio.sleep(WANDER_FRAME_S)
+        ev = _wander_pick_event(state)
+        state["event"] = ev; state["phase"] = "event"
+        text = _wander_walk_text(state, f"❓ *{ev['t']}*\n_What do you do?_", event_emoji=ev["e"])
+        await _wander_edit(bot, state, text, _wander_event_markup(uid, ev))
+    finally:
+        state["busy"] = False
+
+def _wander_summary(p, state):
+    cds = safe_cds(p)
+    best = safe_int(cds.get("wander_best", 0))
+    milestone = ""
+    if state["dist"] > best:
+        cds["wander_best"] = state["dist"]; milestone = "  🏅 *New record!*"
+        p["passive_cooldowns"] = json.dumps(cds); save_player(p)
+    found = state.get("found", [])
+    fl = ""
+    if found:
+        from collections import Counter
+        fl = "\n".join(f"   • *{n}*" + (f" ×{c}" if c > 1 else "") for n, c in Counter(found).items())
+    return (f"🏡 *You reach a peaceful clearing and rest.*\n\n"
+            f"👣 Distance: *{state['dist']}* steps{milestone}\n"
+            f"💰 Gold gathered: *{fmt_num(state['haul_gold'])}*\n"
+            f"⭐ EXP gained: *{fmt_num(state['haul_xp'])}*\n"
+            + (f"🎒 Found:\n{fl}\n" if fl else "")
+            + f"\n_Best walk: {max(best, state['dist'])} steps._")
+
+async def wander_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    old = _active_wanders.get(user.id)
+    if old:
+        old["phase"] = "over"   # abandon any prior stroll
+    state = _wander_new(user.id, p)
+    theme, _ = _wander_area(state)
+    text = _wander_walk_text(state, "_You set off down the winding trail..._")
+    msg = await send_group(update, text, delay=9, permanent=True,
+                           reply_markup=InlineKeyboardMarkup([[
+                               InlineKeyboardButton("🚶 Begin the walk", callback_data=f"wd_walk_{user.id}")]]))
+    if msg:
+        state["chat_id"] = msg.chat_id; state["msg_id"] = msg.message_id
+
+async def wander_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    toks = query.data.split("_")
+    action = toks[1] if len(toks) > 1 else ""
+    try:
+        uid = int(toks[2])
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your walk!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    state = _active_wanders.get(uid)
+
+    if action == "again":
+        await query.answer()
+        state = _wander_new(uid, p)
+        state["chat_id"] = query.message.chat_id; state["msg_id"] = query.message.message_id
+        await _wander_edit(context.bot, state, _wander_walk_text(state, "_You set off again..._"),
+                           InlineKeyboardMarkup([[InlineKeyboardButton("🚶 Begin the walk", callback_data=f"wd_walk_{uid}")]]))
+        return
+
+    if not state or state.get("phase") == "over":
+        await query.answer("This walk has ended — /wander to set off again.", show_alert=True); return
+    state["chat_id"] = query.message.chat_id; state["msg_id"] = query.message.message_id
+
+    if action == "walk":
+        await query.answer()
+        if not state.get("busy"):
+            asyncio.create_task(_wander_step_to_event(context.bot, uid))
+        return
+
+    if action == "leave":
+        state["phase"] = "over"
+        _active_wanders.pop(uid, None)
+        await query.answer("You head home.")
+        await _wander_edit(context.bot, state, _wander_summary(p, state),
+                           InlineKeyboardMarkup([[InlineKeyboardButton("🌲 Walk again", callback_data=f"wd_again_{uid}"),
+                                                  InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]))
+        return
+
+    if action == "choice":
+        if state.get("phase") != "event" or not state.get("event"):
+            await query.answer(); return
+        pick = toks[3] if len(toks) > 3 else "a"
+        ev = state["event"]
+        outcomes = ev["a"][1] if pick == "a" else ev["b"][1]
+        total = sum(w for w, _, _ in outcomes)
+        r = random.uniform(0, total); acc = 0; chosen = outcomes[-1]
+        for w, txt, eff in outcomes:
+            acc += w
+            if r <= acc:
+                chosen = (w, txt, eff); break
+        _, flavor, eff = chosen
+        reward = _wander_apply(p, state, eff)
+        state["events_done"] += 1
+        state["event"] = None; state["phase"] = "walk"
+        await query.answer()
+        body = _wander_walk_text(state, f"{ev['e']} _{flavor}_\n\n🎁 {reward}", event_emoji=ev["e"])
+        await _wander_edit(context.bot, state, body,
+                           InlineKeyboardMarkup([[InlineKeyboardButton("🚶 Walk on", callback_data=f"wd_walk_{uid}"),
+                                                  InlineKeyboardButton("🛶 Rest & head home", callback_data=f"wd_leave_{uid}")]]))
+        return
+
+    await query.answer()
+
 # ── /combat Hub ────────────────────────────────────────────────────────────────
 _COMBAT_HUB_PAGES = [
     # Page 1 — Fight & Solo Modes (the marquee content, up front)
@@ -32609,7 +32909,7 @@ _COMBAT_HUB_PAGES = [
     [
         [("✨ Use Skill",      "combathub_skill"),     ("🛡️ Defend",       "combathub_defend")],
         [("💊 Heal",           "combathub_heal"),      ("⚔️ Guild War",    "combathub_war")],
-        [("🌍 Explore",        "combathub_explore")],
+        [("🌍 Explore",        "combathub_explore"),   ("🌲 Wandering Path","combathub_wander")],
     ],
     # Page 3 — Info & Tools
     [
@@ -32896,6 +33196,9 @@ async def combat_hub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     elif action == "throne":
         await thronedefense_cmd(update, context)
+
+    elif action == "wander":
+        await wander_cmd(update, context)
 
     elif action == "lobby":
         # Co-op: open the LFG party-adventure lobby (3-wave gauntlet).
@@ -44894,6 +45197,8 @@ def main():
     app.add_handler(CommandHandler("breakshop",   siegeshop_cmd))
     app.add_handler(CommandHandler("siegeboard",  siegeboard_cmd))
     app.add_handler(CallbackQueryHandler(siege_callback, pattern="^sg_"))
+    app.add_handler(CommandHandler("wander",      wander_cmd))
+    app.add_handler(CallbackQueryHandler(wander_callback, pattern="^wd_"))
     app.add_handler(CommandHandler("ascension",   ascension_cmd))
     app.add_handler(CommandHandler("climb",       ascension_cmd))
     app.add_handler(CommandHandler("ascboard",    ascboard_cmd))
