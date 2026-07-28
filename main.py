@@ -1361,26 +1361,26 @@ def exp_for_level(level):
         return min(req, _EXP_REQ_CEIL)
     # ── Levels 251–999: prestige bands. Rewards (exp_share) stay capped at the
     # Lv250 magnitude and one add_exp grant is capped at _EXP_REQ_CEIL (1e16), so
-    # cost is best read as "max-grant runs per level" (req / 1e16). The curve rises
-    # steadily — every high level costs more than the last — but is SOFT-CAPPED so
-    # the top bands never become a brick wall: ~1.5 runs/level at 300 climbing to
-    # ~20 runs/level near 999 (was ~300 — effectively unreachable). A long, hard,
-    # but genuinely finite climb; Paragon keeps accruing power alongside. ──
-    if   level <= 300: req = 15  * 10**15   # 1.5e16  (~1.5 runs/level)
-    elif level <= 350: req = 21  * 10**15
-    elif level <= 400: req = 28  * 10**15
-    elif level <= 450: req = 37  * 10**15
-    elif level <= 500: req = 47  * 10**15
-    elif level <= 550: req = 58  * 10**15
-    elif level <= 600: req = 70  * 10**15
-    elif level <= 650: req = 83  * 10**15
-    elif level <= 700: req = 97  * 10**15
-    elif level <= 750: req = 112 * 10**15
-    elif level <= 800: req = 128 * 10**15
-    elif level <= 850: req = 145 * 10**15
-    elif level <= 900: req = 163 * 10**15
-    elif level <= 950: req = 182 * 10**15
-    else:              req = 200 * 10**15   # 2e17  (~20 runs/level near Lv999)
+    # cost reads as "max-grant runs per level" (req / 1e16). A steady LINEAR ramp —
+    # ~5 runs/level at 251 climbing to ~75 near 999 — so every high level costs
+    # more than the last with no single-level brick wall, but the whole 251->999
+    # climb totals ~30,000 max-grant runs: a very hard, long-tail prestige goal.
+    # Paragon keeps accruing power alongside, so this is a vanity/flex chase. ──
+    if   level <= 300: req = 50  * 10**15   # 5e16    (~5 runs/level)
+    elif level <= 350: req = 100 * 10**15
+    elif level <= 400: req = 150 * 10**15
+    elif level <= 450: req = 200 * 10**15
+    elif level <= 500: req = 250 * 10**15
+    elif level <= 550: req = 300 * 10**15
+    elif level <= 600: req = 350 * 10**15
+    elif level <= 650: req = 400 * 10**15
+    elif level <= 700: req = 450 * 10**15
+    elif level <= 750: req = 500 * 10**15
+    elif level <= 800: req = 550 * 10**15
+    elif level <= 850: req = 600 * 10**15
+    elif level <= 900: req = 650 * 10**15
+    elif level <= 950: req = 700 * 10**15
+    else:              req = 750 * 10**15   # 7.5e17  (~75 runs/level near Lv999)
     return req
 
 def exp_share(level, pct):
