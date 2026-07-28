@@ -42196,6 +42196,15 @@ def _td_ch_unlocked(p, idx):
     if idx == _TD_ENDLESS:
         return True
     return 0 <= idx <= _td_ch_cleared(p) + 1
+def _td_diff_cleared(p, idx):
+    """Highest difficulty index cleared for chapter idx (-1 = never cleared)."""
+    dc = safe_cds(p).get("td_diff_cleared")
+    return safe_int(dc.get(str(idx), -1)) if isinstance(dc, dict) else -1
+def _td_max_diff(p, idx):
+    """Highest difficulty the player may select/start for this chapter: one past
+    the highest cleared, capped at 4. So you must clear a difficulty before you
+    can raise to the next. Endless has no difficulty tiers."""
+    return max(0, min(4, _td_diff_cleared(p, idx) + 1))
 def _td_rec_power(idx):
     return round(300 + idx * 480)
 def _td_kingdom_power(p):
@@ -42784,6 +42793,15 @@ def _td_grant_rewards(p, state, outcome="loss"):
                 milestone += f"\n🗺️ *Chapter {nxt + 1} unlocked: {TD_CHAPTERS[nxt]['name']}!*"
             elif nxt == _TD_ENDLESS:
                 milestone += "\n♾️ *All chapters cleared — the Endless Siege awaits!*"
+        # Per-chapter difficulty ladder: clearing a difficulty unlocks the next
+        # one for THIS chapter, so you must beat ★N before you can raise to ★N+1.
+        dcm = cds.get("td_diff_cleared")
+        if not isinstance(dcm, dict): dcm = {}
+        if diff > safe_int(dcm.get(str(ch_idx), -1)):
+            dcm[str(ch_idx)] = diff
+            cds["td_diff_cleared"] = dcm
+            if diff < 4:
+                milestone += f"\n⚙️ *Difficulty ★{diff + 1} unlocked for {TD_CHAPTERS[ch_idx]['name']}!*"
     best_prev = safe_int(cds.get("td_best_wave", 0))
     if waves > best_prev:
         cds["td_best_wave"] = waves
@@ -43113,7 +43131,9 @@ def _build_td_victory(p, state, summary, milestone):
 
 def _build_td_select(p, uid, idx=0, diff=0):
     idx = max(0, min(len(TD_CHAPTERS) - 1, idx))
-    diff = max(0, min(4, diff))
+    # Clamp the shown difficulty to what this chapter has unlocked so the picker
+    # can never sit on a locked tier.
+    diff = max(0, min(_td_max_diff(p, idx), diff))
     ch = TD_CHAPTERS[idx]
     unlocked = _td_ch_unlocked(p, idx)
     is_endless = idx == _TD_ENDLESS
@@ -43142,8 +43162,16 @@ def _build_td_select(p, uid, idx=0, diff=0):
         nav.append(InlineKeyboardButton("▶️", callback_data=f"td_ch_{uid}_{idx + 1}_{diff}"))
     rows.append(nav)
     if not is_endless:
-        rows.append([InlineKeyboardButton(f"⚙️ Difficulty: {('★' * diff) or '—'} (raise)",
-                                          callback_data=f"td_diff_{uid}_{idx}_{(diff + 1) % 5}")])
+        maxd = _td_max_diff(p, idx)
+        star_lbl = ('★' * diff) or '—'
+        # You can only raise up to the highest-unlocked tier; wrap back to ★0 past
+        # it. At the ceiling (and not yet maxed), the label says how to unlock more.
+        nextd = diff + 1 if diff < maxd else 0
+        if maxd < 4 and diff >= maxd:
+            d_lbl = f"⚙️ Difficulty: {star_lbl}  (clear to unlock ★{maxd + 1})"
+        else:
+            d_lbl = f"⚙️ Difficulty: {star_lbl}  (raise ▸)"
+        rows.append([InlineKeyboardButton(d_lbl, callback_data=f"td_diff_{uid}_{idx}_{nextd}")])
     if unlocked:
         rows.append([InlineKeyboardButton("⚔️ Start Expedition", callback_data=f"td_start_{uid}_{idx}_{diff}")])
     else:
@@ -43363,6 +43391,8 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c_idx, c_diff = 0, 0
         if not _td_ch_unlocked(p, c_idx):
             await query.answer("🔒 Locked — clear the previous chapter first!", show_alert=True); return
+        if c_idx != _TD_ENDLESS and c_diff > _td_max_diff(p, c_idx):
+            await query.answer("🔒 Clear the lower difficulty first to raise it!", show_alert=True); return
         _td_new_run(p, uid, c_idx, c_diff)
         await query.answer("⚔️ Expedition begins!")
         await render(); return
