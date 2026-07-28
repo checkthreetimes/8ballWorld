@@ -5091,6 +5091,31 @@ def _enhance_floor_after_fail(lv):
     floor = max((c for c in ENHANCE_CHECKPOINTS if c <= lv), default=0)
     return max(lv - 1, floor)
 
+# ── MYTHIC ENHANCEMENT (endgame, uncapped) ────────────────────────────────────
+# Iron-Shard enhancing tops out at +10. Beyond that, gear forges with MONSTER
+# CORES — an infinite endgame sink so core farming always makes you stronger.
+# Each level is still +6 ATK/DEF (get_enhance_bonus is level*6, uncapped) and a
+# mythic forge ALWAYS succeeds (no death-spiral at endgame), just costs more.
+_ENH_SHARD_CAP = 10
+def _mythic_enh_cost(target_lvl):
+    """(cores, gold) to forge from target_lvl-1 up to target_lvl (>10)."""
+    over  = target_lvl - _ENH_SHARD_CAP        # +11 → 1, +12 → 2, ...
+    cores = 2 + over                           # +11 = 3 cores, +12 = 4, ...
+    gold  = 5000 * over                        # +11 = 5k, +12 = 10k, ...
+    return cores, gold
+def _monster_core_names(inv):
+    """Every Monster-Core item in inventory (elemental + rare), flat list."""
+    return [i for i in inv if i.startswith("Monster Core (") or i == "Rare Monster Core"]
+def _consume_monster_cores(inv, n):
+    """Remove n cores from inv, spending common elemental cores before Rare ones.
+    Returns True on success (consumes nothing on failure)."""
+    cores = _monster_core_names(inv)
+    if len(cores) < n:
+        return False
+    for c in sorted(cores, key=lambda c: c == "Rare Monster Core")[:n]:
+        inv.remove(c)
+    return True
+
 # Every enchant type here is verified to be CONSUMED in combat/economy — no
 # dead effects. Rarity weights bias rolls toward common effects; the rarer the
 # effect, the bigger the payoff. Emoji + honest descriptions for the UI.
@@ -25954,8 +25979,21 @@ def _build_enh_slot(p, uid, sid, flash=""):
     lines.append(f"Level: *+{lv}*   (+{lv * 6} {stat} from enhancement)")
     lines.append(f"🪨 Iron Shards: *{shards}*")
     rows = []
-    if lv >= 10:
-        lines.append("\n⭐ *Maxed at +10.*")
+    if lv >= _ENH_SHARD_CAP:
+        # Beyond +10 — forge with Monster Cores (infinite endgame sink, always succeeds)
+        nxt = lv + 1
+        cores, gold = _mythic_enh_cost(nxt)
+        have_cores = len(_monster_core_names(sjl(p.get("inventory"), [])))
+        have_gold = safe_int(p.get("gold"))
+        lines.append(f"\n🔨 *Mythic Forge* — past +10, gear forges with *Monster Cores*.")
+        lines.append(f"Next → *+{nxt}*  (+{nxt * 6} {stat})   ·   *always succeeds*")
+        lines.append(f"Cost: *{cores}* 💠 cores + *{fmt_num(gold)}*g")
+        lines.append(f"💠 Cores: *{have_cores}*   💰 {fmt_num(have_gold)}g")
+        if have_cores >= cores and have_gold >= gold:
+            rows.append([InlineKeyboardButton(f"🔨 Forge → +{nxt}  ({cores}💠)",
+                         callback_data=f"crenhc_{uid}_{sid}")])
+        else:
+            lines.append("_Catch monsters in /hunt for more cores, or earn gold._")
     else:
         nxt = lv + 1
         cost = ENHANCE_COSTS[nxt]
@@ -26027,6 +26065,31 @@ def _enh_flash(r):
     tail = {"maxed": " · reached +10 MAX", "no_shards": " · out of shards"}.get(r["reason"], "")
     return (f"⚒️ *{r['attempts']} attempts* — {r['succ']}✅  {r['down']}💔↓\n"
             f"+{s} → *+{e}*  (+{e * 6} {stat})  ·  {r['shards']}🪨 used{tail}")
+
+def _do_mythic_enhance(p, sid):
+    """Forge one level past +10 using Monster Cores + gold. Always succeeds.
+    Mutates+saves p. Returns a result dict."""
+    label, key, stat = _CRAFT_ENH_LOOKUP[sid]
+    name = p.get(key)
+    if not name:
+        return {"ok": False, "reason": "empty"}
+    cur = get_enhancement(p, name)
+    if cur < _ENH_SHARD_CAP:
+        return {"ok": False, "reason": "below_cap"}
+    nxt = cur + 1
+    cores, gold = _mythic_enh_cost(nxt)
+    inv = sjl(p.get("inventory"), [])
+    if len(_monster_core_names(inv)) < cores:
+        return {"ok": False, "reason": "no_cores", "cores": cores, "gold": gold}
+    if safe_int(p.get("gold")) < gold:
+        return {"ok": False, "reason": "no_gold", "cores": cores, "gold": gold}
+    _consume_monster_cores(inv, cores)
+    p["inventory"] = json.dumps(inv)
+    p["gold"] = safe_int(p.get("gold")) - gold
+    set_enhancement(p, name, nxt)
+    save_player(p)
+    return {"ok": True, "name": name, "stat": stat, "start": cur, "end": nxt,
+            "cores": cores, "gold": gold}
 
 # ---- Reinforce station -------------------------------------------------------
 def _reinforce_lists(p):
@@ -26255,6 +26318,19 @@ async def crafting_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         r = _do_enhance_batch(p, sid, n)
         await query.answer(f"+{r['start']} → +{r['end']}" if r["attempts"] else "Not enough shards!")
         await render(_build_enh_slot(p, uid, sid, flash=_enh_flash(r))); return
+    if head == "crenhc":
+        sid = data.split("_", 2)[2] if len(toks) > 2 else ""
+        if sid not in _CRAFT_ENH_LOOKUP or not p.get(_CRAFT_ENH_LOOKUP[sid][1]):
+            await query.answer("Nothing in that slot!", show_alert=True); return
+        r = _do_mythic_enhance(p, sid)
+        if not r.get("ok"):
+            _msg = {"no_cores": "Not enough Monster Cores!", "no_gold": "Not enough gold!",
+                    "below_cap": "Reach +10 with Iron Shards first."}.get(r.get("reason"), "Can't forge that.")
+            await query.answer(_msg, show_alert=True); return
+        await query.answer(f"🔨 +{r['start']} → +{r['end']}!")
+        flash = (f"🔨 *Forged!*   +{r['start']} → *+{r['end']}*   "
+                 f"(+{r['end'] * 6} {r['stat']})  ·  {r['cores']}💠 + {fmt_num(r['gold'])}g")
+        await render(_build_enh_slot(p, uid, sid, flash=flash)); return
     if head == "crref":
         await query.answer(); await render(_build_ref_home(p, uid)); return
     if head == "crrefs":
@@ -44189,7 +44265,7 @@ def main():
     app.add_handler(CallbackQueryHandler(shopbulk_callback,     pattern="^shopbulk_"))
     app.add_handler(CallbackQueryHandler(shopreroll_callback,   pattern="^shopreroll_"))
     app.add_handler(CallbackQueryHandler(boss_start_callback,   pattern="^bossstart_"))
-    app.add_handler(CallbackQueryHandler(crafting_callback, pattern="^cr(home|enhx|enhs|enh|refx|refs|ref|asc|frg|prm)_"))
+    app.add_handler(CallbackQueryHandler(crafting_callback, pattern="^cr(home|enhx|enhs|enhc|enh|refx|refs|ref|asc|frg|prm)_"))
     app.add_handler(CallbackQueryHandler(enchant_slot_callback, pattern="^(enchant_|enchome_|encdo_|encrr_)"))
     app.add_handler(CallbackQueryHandler(allocate_callback,     pattern="^alloc_"))
     # New inline button callbacks
