@@ -43146,6 +43146,12 @@ def _build_td_select(p, uid, idx=0, diff=0):
                                           callback_data=f"td_diff_{uid}_{idx}_{(diff + 1) % 5}")])
     if unlocked:
         rows.append([InlineKeyboardButton("⚔️ Start Expedition", callback_data=f"td_start_{uid}_{idx}_{diff}")])
+    else:
+        # Keep the row present so the button never looks like it vanished when you
+        # page to a not-yet-unlocked chapter — it just explains itself instead.
+        prev_nm = TD_CHAPTERS[idx - 1]["name"] if idx > 0 else "the previous chapter"
+        rows.append([InlineKeyboardButton(f"🔒 Clear {prev_nm} first",
+                                          callback_data=f"td_locked_{uid}_{idx}")])
     rows.append([InlineKeyboardButton("🏰 Barracks", callback_data=f"td_barracks_{uid}"),
                  InlineKeyboardButton("🏆 Leaderboard", callback_data=f"td_board_{uid}")])
     rows.append([InlineKeyboardButton("ℹ️ How to Play", callback_data=f"td_info_{uid}_menu"),
@@ -43344,6 +43350,12 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, markup = _build_td_select(p, uid, c_idx, c_diff)
         await query.answer()
         await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup); return
+    if action == "locked":
+        try: c_idx = int(toks[3])
+        except (IndexError, ValueError): c_idx = 0
+        prev_nm = TD_CHAPTERS[c_idx - 1]["name"] if 0 < c_idx < len(TD_CHAPTERS) else "the previous chapter"
+        await query.answer(f"🔒 Locked — clear {prev_nm} first to unlock this expedition.",
+                           show_alert=True); return
     if action == "start":
         try:
             c_idx = int(toks[3]); c_diff = int(toks[4])
