@@ -3511,6 +3511,49 @@ ARMORS = {
     "Beastscale Ranger Cloak":   {"class":"archer", "def":28,"rarity":"epic",     "line":"archer", "stat_bonus":{"AGI":4,"DEX":2}},
 }
 
+# ── ENDGAME GEAR TIERS (Lv 180 → 999) ─────────────────────────────────────────
+# Old gear tops out at ~66 ATK / ~78 DEF and isn't level-gated, so past ~Lv 150
+# your weapon is <5% of your damage. These level-locked tiers scale far higher so
+# gear matters again at endgame — a real milestone chase toward 999. Generated
+# per gear-line so every class gets its own set; enforced by can_equip_*'s `req`.
+# Craftable from Monster Cores + gold and droppable from Ascended foes/dungeons.
+ENDGAME_TIERS = [
+    (180, "Vanguard",  "epic"),
+    (300, "Ascendant", "legendary"),
+    (450, "Sovereign", "legendary"),
+    (600, "Mythborne", "mythic"),
+    (800, "Celestial", "mythic"),
+    (999, "Godslayer", "mythic"),
+]
+# gear-line -> (weapon type, weapon noun, armor noun, primary stat)
+_ENDGAME_LINE = {
+    "warrior": ("sword_1h", "Warblade",    "Aegis Plate",   "STR"),
+    "mage":    ("staff",    "Archon Staff", "Arcane Robes",  "INT"),
+    "thief":   ("dagger",   "Fang",         "Nightshroud",   "AGI"),
+    "archer":  ("bow",      "Longbow",      "Ranger Cloak",  "DEX"),
+    "priest":  ("rosary",   "Reliquary",    "Holy Raiment",  "WIS"),
+}
+ENDGAME_WEAPONS = []   # names, for craft/drop
+ENDGAME_ARMORS  = []
+ENDGAME_GEAR_BY_TIER = {}  # level_req -> {"weapons":[...], "armors":[...]}
+for _gline, (_wtype, _wnoun, _anoun, _pstat) in _ENDGAME_LINE.items():
+    for _i, (_req, _tname, _rar) in enumerate(ENDGAME_TIERS):
+        _watk = round(_req * 1.05)              # 180→189 ... 999→1049
+        _adef = round(_req * 0.55)              # 180→99  ... 999→550
+        _sb_w = {_pstat: 6 + _i * 4}            # weapon grants primary stat
+        _sb_a = {"DEF": 4 + _i * 3, _pstat: 4 + _i * 3}
+        _wname = f"{_tname} {_wnoun}"
+        _aname = f"{_tname} {_anoun}"
+        WEAPONS[_wname] = {"class": _gline, "type": _wtype, "atk": _watk,
+                           "rarity": _rar, "line": _gline, "req": _req, "stat_bonus": _sb_w}
+        ARMORS[_aname]  = {"class": _gline, "def": _adef, "rarity": _rar,
+                           "line": _gline, "req": _req, "stat_bonus": _sb_a}
+        ENDGAME_WEAPONS.append(_wname); ENDGAME_ARMORS.append(_aname)
+        ENDGAME_GEAR_BY_TIER.setdefault(_req, {"weapons": [], "armors": []})
+        ENDGAME_GEAR_BY_TIER[_req]["weapons"].append(_wname)
+        ENDGAME_GEAR_BY_TIER[_req]["armors"].append(_aname)
+ENDGAME_GEAR_SET = set(ENDGAME_WEAPONS) | set(ENDGAME_ARMORS)
+
 # Shields: warrior knight path (A) + assassin claws (B, type="claw" uses "atk" not "def")
 SHIELDS = {
     # ── WARRIOR SHIELDS (knight path A) ───────────────────────────────────────
@@ -10066,6 +10109,9 @@ def can_equip_weapon(p, weapon_name):
         return False, (f"Your current class ({cls_data['name']}) cannot use "
                        f"{weapon_type.replace('_', ' ')} weapons. "
                        f"This class uses: {nice}.")
+    req = safe_int(w.get("req"))
+    if req and safe_int(p.get("level"), 1) < req:
+        return False, f"Requires Level {req} (you're {safe_int(p.get('level'),1)})."
     return True, ""
 
 def can_equip_armor(p, armor_name):
@@ -10078,6 +10124,9 @@ def can_equip_armor(p, armor_name):
     armor_class = a.get("class")
     if armor_class and armor_class != gear_line and armor_class != raw_line:
         return False, f"Only {armor_class.replace('_',' ').capitalize()} classes can wear this."
+    req = safe_int(a.get("req"))
+    if req and safe_int(p.get("level"), 1) < req:
+        return False, f"Requires Level {req} (you're {safe_int(p.get('level'),1)})."
     return True, ""
 
 def _can_equip_shield(p, name):
@@ -17910,6 +17959,96 @@ async def statcore_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💠 *+{tier} {stat}!* Now at *{sd[stat]}*.  (+{tier} CP too)\n\n" + text,
             parse_mode="Markdown", reply_markup=markup)
         except Exception: pass
+
+# ── ENDGAME FORGE (level-locked scaling gear) ─────────────────────────────────
+def _player_gear_line(p):
+    raw = CLASS_TREE.get(p.get("class_id") or "", {}).get("line", "")
+    return _GEAR_LINE_MAP.get(raw, raw)
+def _endgame_forge_cost(req):
+    return (req // 10, req * 1000)   # (cores, gold): Lv180=18c/180k … Lv999=99c/999k
+def _endgame_gear_names(gline, req):
+    tinfo = _ENDGAME_LINE.get(gline)
+    tname = next((n for r, n, _ in ENDGAME_TIERS if r == req), None)
+    if not tinfo or not tname:
+        return None, None
+    return f"{tname} {tinfo[1]}", f"{tname} {tinfo[2]}"
+def _endgame_tier_for_level(lvl):
+    best = None
+    for req, _, _ in ENDGAME_TIERS:
+        if lvl >= req: best = req
+    return best
+
+def _forgegear_card(p, flash=""):
+    gline = _player_gear_line(p); lvl = safe_int(p.get("level"), 1)
+    inv = sjl(p.get("inventory"), [])
+    owned = set(inv) | {p.get("equipped_weapon"), p.get("equipped_armor")}
+    cores = len(_monster_core_names(inv)); gold = safe_int(p.get("gold"))
+    lines = [f"⚒️ *Endgame Forge* — {p['username']} (Lv {lvl})",
+             f"Line: *{gline.title()}*   ·   💠 {cores} cores   ·   💰 {fmt_num(gold)}g"]
+    if flash: lines.append(flash)
+    lines.append("_Level-locked gear that scales far past normal gear — then Mythic-Forge it higher._\n")
+    rows = []
+    if gline not in _ENDGAME_LINE:
+        lines.append("_No endgame set for your class line yet._")
+    else:
+        for req, tname, rar in ENDGAME_TIERS:
+            wname, aname = _endgame_gear_names(gline, req)
+            c, g = _endgame_forge_cost(req)
+            locked = lvl < req
+            watk, adef = round(req * 1.05), round(req * 0.55)
+            status = f"🔒 *Lv {req}*" if locked else f"{c}💠 + {fmt_num(g)}g"
+            owns = "  ✅" if (wname in owned and aname in owned) else ""
+            lines.append(f"{'🔒' if locked else '⚔️'} *{tname}* (Lv{req}) — ⚔️{watk} / 🛡️{adef}  ·  {status}{owns}")
+            if not locked:
+                r = []
+                if wname not in owned:
+                    r.append(InlineKeyboardButton(f"⚔️ {tname} Weapon", callback_data=f"forge_{p['user_id']}_{req}_w"))
+                if aname not in owned:
+                    r.append(InlineKeyboardButton(f"🛡️ {tname} Armor", callback_data=f"forge_{p['user_id']}_{req}_a"))
+                if r: rows.append(r)
+    rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{p['user_id']}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+async def forgegear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    text, markup = _forgegear_card(p)
+    await send_group(update, text, delay=120, reply_markup=markup)
+
+async def forge_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; parts = query.data.split("_")
+    try:
+        owner = int(parts[1]); req = int(parts[2]); which = parts[3]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    uid = query.from_user.id
+    if uid != owner:
+        await query.answer("Not your forge!", show_alert=True); return
+    p = get_player(uid)
+    if not p:
+        await query.answer("Use /ascend first!", show_alert=True); return
+    if safe_int(p.get("level"), 1) < req:
+        await query.answer(f"🔒 Requires Level {req}.", show_alert=True); return
+    gline = _player_gear_line(p)
+    wname, aname = _endgame_gear_names(gline, req)
+    item = wname if which == "w" else aname
+    if not item:
+        await query.answer("No such gear for your line."); return
+    cores, gold = _endgame_forge_cost(req)
+    inv = sjl(p.get("inventory"), [])
+    if len(_monster_core_names(inv)) < cores:
+        await query.answer(f"Need {cores} Monster Cores.", show_alert=True); return
+    if safe_int(p.get("gold")) < gold:
+        await query.answer(f"Need {fmt_num(gold)} gold.", show_alert=True); return
+    _consume_monster_cores(inv, cores)
+    p["inventory"] = json.dumps(inv)
+    p["gold"] = safe_int(p.get("gold")) - gold
+    add_item(p, item); save_player(p)
+    await query.answer(f"⚒️ Forged {item}!")
+    text, markup = _forgegear_card(get_player(uid), flash=f"⚒️ *Forged {item}!* — equip it in /equip.")
+    try: await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
+    except Exception: pass
 
 # ── DAILY ─────────────────────────────────────────────────────────────────────
 async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -28675,6 +28814,15 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     _stat_core = "Lesser Stat Core"
                 if _stat_core:
                     add_item(p, _stat_core)
+                # Endgame gear drop — only from Ascended foes (scaled past Lv 100),
+                # a rare bonus on top of the reliable /forgegear craft path.
+                _gear_drop = None
+                if _ascended:
+                    _gd_tier = _endgame_tier_for_level(safe_int(p.get("level")))
+                    if _gd_tier and random.random() < 0.08:
+                        _gw, _ga = _endgame_gear_names(_player_gear_line(p), _gd_tier)
+                        _gear_drop = random.choice([x for x in (_gw, _ga) if x])
+                        if _gear_drop: add_item(p, _gear_drop)
                 exp_gain  = exp_share(enc["e_level"], 0.08)
                 gold_gain = gold_floor(p["level"], enc["e_level"] * 8)
                 add_exp(p, exp_gain)
@@ -28683,9 +28831,10 @@ async def encounter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 _core_str = f"*{core_item}* ×{_core_qty}" if _core_qty > 1 else f"*{core_item}*"
                 _bonus_str = " 🍀 *Lucky drop!*" if _core_qty > 1 else ""
                 _sc_line = f"\n💠 *{_stat_core}!* — use `/statcore` to spend it" if _stat_core else ""
+                _gd_line = f"\n⚔️ *{_gear_drop}!* — endgame gear! Equip in /equip" if _gear_drop else ""
                 await _end_encounter(
                     f"🎯 *Caught!* *{enc['e_name']}* {elem_e}\n"
-                    f"📦 Received: {_core_str}{_bonus_str}{_sc_line}\n"
+                    f"📦 Received: {_core_str}{_bonus_str}{_sc_line}{_gd_line}\n"
                     f"💰 +{gold_gain} gold | ⭐ +{fmt_num(exp_gain)} EXP")
             else:
                 mon_act = _enc_monster_attack(enc)
@@ -44015,6 +44164,9 @@ def main():
     app.add_handler(CommandHandler("cp",           cp_cmd))
     app.add_handler(CommandHandler("statcore",     statcore_cmd))
     app.add_handler(CallbackQueryHandler(statcore_callback, pattern="^statcore_"))
+    app.add_handler(CommandHandler("forgegear",    forgegear_cmd))
+    app.add_handler(CommandHandler("endgame",      forgegear_cmd))
+    app.add_handler(CallbackQueryHandler(forge_callback, pattern="^forge_"))
     app.add_handler(CommandHandler("guide",        guide_cmd))
     app.add_handler(CommandHandler("guides",       guide_cmd))
     app.add_handler(CommandHandler("help",         guide_cmd))
