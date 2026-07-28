@@ -264,11 +264,25 @@ def _pvp_stats_record(pair, attacker_uid, dmg):
     if dmg > ps["biggest"]:
         ps["biggest"] = dmg
 
+def _rc_num(n):
+    """Ultra-compact number for the fight recap so stat lines never wrap:
+    999→'999', 8440→'8.4K', 36290→'36K', 2.5M→'2.5M'."""
+    n = safe_int(n)
+    if n < 1000:     return str(n)
+    if n < 10000:    return f"{n/1000:.1f}K".replace(".0K", "K")
+    if n < 1000000:  return f"{n//1000}K"
+    return f"{n/1000000:.1f}M".replace(".0M", "M")
+
+def _rc_name(name, cap=10):
+    """Cap long usernames so a name never pushes a recap line into wrapping."""
+    name = str(name or "?")
+    return name if len(name) <= cap else name[:cap - 1] + "…"
+
 def _pvp_summary_text(pair, winner_id):
-    """Condensed end-of-fight stat block: one line per fighter (badge · name ·
-    ⚔ dmg · 👊 hits · 💥 biggest) plus a duration line. The top-damage dealer is
-    flagged inline with 🏅. Crown/defeat header and rating/series are added by
-    _finalize_pvp so the whole finish is a single compact permanent card."""
+    """Ultra-compact end-of-fight stat block — one SHORT line per fighter
+    (badge name ⚔dmg 👊hits 💥biggest, all abbreviated) plus a duration line, so
+    nothing wraps on mobile. Crown/defeat header and rating/series are added by
+    _finalize_pvp so the whole finish is a single tight permanent card."""
     st = _pvp_stats.get(pair)
     if not st or len(pair) != 2:
         return ""
@@ -277,16 +291,16 @@ def _pvp_summary_text(pair, winner_id):
     if not s1 or not s2:
         return ""
     dur = int(time.time() - st.get("start", time.time()))
-    dur_str = f"{dur // 60}m {dur % 60}s" if dur >= 60 else f"{dur}s"
+    dur_str = f"{dur // 60}m{dur % 60}s" if dur >= 60 else f"{dur}s"
     draw = winner_id not in (u1, u2)
     top = max((s1, s2), key=lambda s: s["dmg"])
     def _line(uid, s):
         badge = "•" if draw else ("👑" if uid == winner_id else "💀")
-        mvp   = " 🏅" if (s is top and s["dmg"] > 0) else ""
-        return (f"{badge} *{s['name']}*{mvp}  ⚔ {fmt_num(s['dmg'])} · "
-                f"👊 {s['hits']} · 💥 {fmt_num(s['biggest'])}")
+        mvp   = "🏅" if (s is top and s["dmg"] > 0) else ""
+        return (f"{badge}{mvp} *{_rc_name(s['name'])}*  "
+                f"⚔{_rc_num(s['dmg'])} 👊{s['hits']} 💥{_rc_num(s['biggest'])}")
     lines = [_line(u1, s1), _line(u2, s2),
-             f"⏱ {dur_str} · {st.get('turns', 0)} actions"]
+             f"⏱{dur_str} · {st.get('turns', 0)} moves"]
     return "\n".join(lines)
 
 def _pvp_series_key(au, du):
@@ -821,8 +835,9 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
             if _elo:
                 _dw, _dl, _nw, _nl = _elo
                 _wp = get_player(winner_id)
-                _rating_line = (f"📈 *{(_wp or {}).get('username','?')}* +{_dw} "
-                                f"→ {_nw}  {_pvp_rank_name(_nw)}")
+                _medal = _pvp_rank_name(_nw).split()[0]   # emoji only, drop the rank word
+                _rating_line = (f"📈 *{_rc_name((_wp or {}).get('username'))}* "
+                                f"+{_dw}→{_nw} {_medal}")
         except Exception:
             logger.error("elo update failed", exc_info=True)
     # ── ONE combined permanent card: crown + defeat + condensed recap + series ──
@@ -840,26 +855,27 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
                 _cf = _pvp_crown_flash.pop(winner_id, None)
                 if _cf and time.time() - _cf[1] < 30:
                     _card.append(_cf[0])
-            # 2) one-line defeat header
+            # 2) one-line defeat header (short: names capped, Lv a›b)
             if winner_id:
                 _lz = _u1 if _u2 == winner_id else _u2
                 _wp2 = get_player(winner_id); _lp2 = get_player(_lz)
                 if _wp2 and _lp2:
-                    _card.append(f"💀 *{_wp2.get('username','?')}* defeated "
-                                 f"*{_lp2.get('username','?')}*  "
-                                 f"_(Lv {_wp2.get('level',1)} › {_lp2.get('level',1)})_")
+                    _card.append(f"💀 *{_rc_name(_wp2.get('username'))}* beat "
+                                 f"*{_rc_name(_lp2.get('username'))}*")
             # 3) condensed per-fighter recap
             _recap = _pvp_summary_text(pair, winner_id)
             if _recap:
                 _card.append(_recap)
-            # 4) rating + series, compact
+            # 4) rating + series, compact (medal only, name-free score)
             if _rating_line:
                 _card.append(_rating_line)
             if _score_str:
+                _sm = re.search(r"(\d+)\s*[–-]\s*(\d+)", _score_str)
+                _sc = f"{_sm.group(1)}–{_sm.group(2)}" if _sm else _score_str
                 if _series_over:
-                    _card.append(f"🏆 *Series won — {_series_win}!*  {_score_str}")
+                    _card.append(f"🏆 *Series won — {_rc_name(_series_win)}!* {_sc}")
                 else:
-                    _card.append(f"🎯 {_score_str} _(to {_PVP_SERIES_TARGET})_")
+                    _card.append(f"🎯 Series {_sc} _(to {_PVP_SERIES_TARGET})_")
             _full_recap = "\n".join(_card)
             if _full_recap.strip():
                 asyncio.create_task(announce(bot, _grp_recap, _full_recap, permanent=True))
@@ -38115,11 +38131,9 @@ async def _update_king_on_kill(bot, winner, loser, chat_id=None):
             return
         _ws_set("king", {"uid": w_uid, "name": w_name, "since": datetime.now().isoformat()})
         if k:
-            txt = (f"👑 *{w_name}* dethroned *{k.get('name','?')}* — new "
-                   f"*King of the Table!* _(+5% dmg; beat them in PvP to take it)_")
+            txt = f"👑 *{_rc_name(w_name)}* is the new King! _(+5% dmg)_"
         else:
-            txt = (f"👑 *{w_name}* claimed the empty throne — *King of the Table!* "
-                   f"_(+5% dmg; beat them in PvP to take it)_")
+            txt = f"👑 *{_rc_name(w_name)}* claimed the throne! _(+5% dmg)_"
         ts = time.time()
         _pvp_crown_flash[w_uid] = (txt, ts)
         grp = chat_id or _megaphone_state.get("group")
