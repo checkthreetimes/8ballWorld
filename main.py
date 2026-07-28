@@ -16480,6 +16480,17 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Restore MP on revive for all classes
         t["mp"] = safe_int(t.get("max_mp")) or calc_max_mp(t)
 
+    # /heal also tops off MP — priests channel more (35% of max MP), potion
+    # heals restore 25%. Revive already refilled MP to full, so this is a no-op
+    # then. WIS amp on the target boosts the restore just like the HP heal.
+    _t_max_mp = calc_max_mp(t)
+    t["max_mp"] = _t_max_mp
+    mp_restore = 0
+    if not was_defeated and safe_int(t.get("mp")) < _t_max_mp:
+        _mp_pct = (0.35 if is_priest_healer else 0.25) * (1 + _t_wis_amp)
+        mp_restore = max(1, round(_t_max_mp * _mp_pct))
+        t["mp"] = min(_t_max_mp, safe_int(t.get("mp")) + mp_restore)
+
     h["heals_given"] = h.get("heals_given",0) + 1
     _heal_was_useful = t["hp"] > _pre_heal_hp  # only XP if HP actually increased
     if tu.id != hu.id and _heal_was_useful:
@@ -16541,6 +16552,8 @@ async def heal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if was_defeated:
             msg += f"\n✨ *{t['username']}* is revived! *5 min invincibility* granted  -  _(Still Recovering)_"
+    if mp_restore:
+        msg += f"\n💙 +{fmt_num(mp_restore)} MP  →  {t['mp']}/{_t_max_mp}"
     if new_t:
         msg += f"\n🏅 *{h['username']}* earned: *{new_t[0]}*!"
     if leveled and h["level"] % 10 == 0:
