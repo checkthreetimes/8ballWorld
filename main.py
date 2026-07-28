@@ -27963,6 +27963,19 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=markup, permanent=True)
 
 
+def _enc_scale_to_player(p, base_hp, base_atk, hits, atk_pct):
+    """Make an encounter actually challenging by scaling the foe to the PLAYER's
+    real power (player damage/HP have crept far past the flat monster tables):
+    HP = ~`hits` of the player's average swing, ATK = a % of the player's max HP.
+    Never lowers the table base, so low-power players still fight normal foes."""
+    try:
+        _ref = max(1, sum(calc_attack_damage(p) for _ in range(5)) // 5)
+    except Exception:
+        _ref = 1
+    hp  = max(base_hp,  round(_ref * random.uniform(hits[0], hits[1])))
+    atk = max(base_atk, round(calc_max_hp(p) * random.uniform(atk_pct[0], atk_pct[1])))
+    return hp, atk
+
 class _EncCmdQuery:
     """Query shim so encounter starters (written to EDIT a callback message) can
     be launched straight from a slash command by editing a freshly-sent message.
@@ -28028,6 +28041,8 @@ async def _start_encounter_battle(query, uid, p):
     n_hp, n_atk, reward_mult, num_gear, num_pots, gear_rarities = _enc_level_stats(n_level, p_level)
     if _n_ascended:
         reward_mult = round(reward_mult * 1.25, 2)
+    # NPC battles: a real fight (~5-8 swings) that can actually hurt you.
+    n_hp, n_atk = _enc_scale_to_player(p, n_hp, n_atk, (5, 8), (0.10, 0.15))
     p_mhp = calc_max_hp(p)
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     p_max_mp = calc_max_mp(p); p_mp = max(0, min(p_max_mp, safe_int(p.get("mp")) or p_max_mp))
@@ -28083,6 +28098,9 @@ async def _start_encounter_hunt(query, uid, p):
     # Wild monsters are meant to be caught, not out-slugged — trim their HP so
     # they hit the catch window quickly (farming Monster Cores felt impossible).
     m_hp = max(30, round(m_hp * _HUNT_HP_FACTOR))
+    # Still scale to the player so it isn't a 1-shot, but keep the catch window
+    # short (~3-4 swings) and the bite modest.
+    m_hp, m_atk = _enc_scale_to_player(p, m_hp, m_atk, (3, 4.5), (0.06, 0.10))
     p_mhp = calc_max_hp(p)
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     p_max_mp = calc_max_mp(p)
@@ -37804,8 +37822,8 @@ async def _send_ambush_event(bot, uid, p):
     # Ambush enemies are meaningfully tougher than a normal encounter
     n_level = min(p_level + random.randint(8, 15), p_level + max(8, p_level // 3))
     n_hp, n_atk, reward_mult, num_gear, num_pots, gear_rarities = _enc_level_stats(n_level, p_level)
-    n_hp  = round(n_hp * random.uniform(1.5, 1.9))
-    n_atk = round(n_atk * random.uniform(1.3, 1.6))
+    # Scale to the player and then some — ambushes are the toughest encounter.
+    n_hp, n_atk = _enc_scale_to_player(p, n_hp, n_atk, (9, 13), (0.14, 0.20))
     reward_mult = round(reward_mult * random.uniform(3.0, 4.5), 2)  # extreme EXP/gold on a win
     p_mhp = calc_max_hp(p)
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
