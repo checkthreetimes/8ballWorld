@@ -11529,13 +11529,19 @@ def check_miss(attacker, defender):
                     get_stat(attacker, "DEX") > get_stat(defender, "DEX")):
                 return False  # never miss
 
-    # Archer-line: DEX reduces enemy effective dodge (accuracy bonus)
+    # DEX = accuracy for EVERY class: your DEX reduces the target's effective
+    # dodge, so every stat has a real effect for every player. Archers are the
+    # accuracy specialists and get a much steeper reduction (plus Keen Sight);
+    # everyone else gets a universal off-DEX accuracy bonus.
+    atk_dex = get_stat(attacker, "DEX")
     if get_class_line(attacker) == "archer":
-        atk_dex = get_stat(attacker, "DEX")
         dodge -= min(0.20, atk_dex * 0.004)
         cls_a2 = get_player_class(attacker)
         if cls_a2 and cls_a2.get("passive_key") == "keen_sight":
             dodge -= min(0.15, atk_dex * 0.005)
+    else:
+        # Universal accuracy: 0.2% dodge reduction per DEX, cap 10%.
+        dodge -= min(0.10, atk_dex * 0.002)
     # Shadow Sprite companion: +20% dodge
     if "dodge_20" in _dng_pvp_effects(defender):
         dodge += 0.20
