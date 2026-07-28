@@ -3,7 +3,7 @@
 The 8Ball Empire  -  RPG Bot v13
 """
 
-import os, json, random, logging, sqlite3, re, asyncio, time, threading, math
+import os, json, random, logging, sqlite3, re, asyncio, time, threading, math, types as _pytypes
 from datetime import datetime, timedelta
 from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -12569,6 +12569,22 @@ def init_db():
             _mig_conn.commit()
             logger.info(f"Migration bonus_stat_points_backfill_v1: set bonus pool for {_bsp_fixed} player(s)")
 
+        # paragon_xp_cap_v1: an early Paragon accrual bug fed 25% of UNCLAMPED
+        # exp (giant admin grants → millions of points). Clamp everyone down to a
+        # sane ceiling (~level 100). Normal players (well under this) are untouched.
+        _mig_cur.execute("SELECT 1 FROM _migrations WHERE name='paragon_xp_cap_v1'")
+        if not _mig_cur.fetchone():
+            try:
+                _pcap = _paragon_xp_for_level(100)
+                _pfixed = _mig_conn.execute(
+                    "UPDATE players SET paragon_xp=? WHERE paragon_xp > ?", (_pcap, _pcap)).rowcount
+            except Exception:
+                _pfixed = 0
+            _mig_conn.execute("INSERT INTO _migrations (name, ran_at) VALUES ('paragon_xp_cap_v1', ?)",
+                              (datetime.now().isoformat(),))
+            _mig_conn.commit()
+            logger.info(f"Migration paragon_xp_cap_v1: capped {_pfixed} inflated Paragon pool(s)")
+
         _mig_conn.close()
     except Exception as _me:
         logger.error(f"Migration error: {_me}")
@@ -13261,11 +13277,15 @@ def check_titles(p):
     return new
 
 # ── PARAGON — infinite post-level mastery track ───────────────────────────────
-# A share of ALL exp also feeds Paragon XP (even at the Lv 999 cap), so there's
-# ALWAYS progression. Paragon levels are uncapped with a rising cost; each level
-# = 1 point to spend into masteries that give small, permanent combat bonuses.
-_PARAGON_XP_SHARE = 0.25          # 25% of exp earned also becomes Paragon XP
-_PARAGON_STEP     = 50000         # cost curve: level L costs STEP*L, cumulative triangular
+# Paragon XP accrues from exp at ANY level (incl. the Lv 999 cap), so there's
+# ALWAYS progression. Because the exp economy spans ~6 orders of magnitude by
+# level, we DON'T accrue a flat share of raw exp — we normalize by the CURRENT
+# level's requirement, so one full level's worth of exp = _PARAGON_UNIT xp
+# regardless of level, and cap the fraction per grant so a giant admin/exploit
+# grant can't inflate it. Levels are uncapped with a rising triangular cost.
+_PARAGON_UNIT      = 2000         # Paragon XP for earning one full level's worth of exp
+_PARAGON_FRAC_CAP  = 2.0          # at most this many "levels' worth" of Paragon per single grant
+_PARAGON_STEP      = 1000         # cost curve: level L costs STEP*L, cumulative triangular
 PARAGON_MASTERIES = {
     "might":     {"emoji": "⚔️", "name": "Might",     "per": 0.005, "role": "dmg",    "unit": "% damage"},
     "vitality":  {"emoji": "❤️", "name": "Vitality",  "per": 0.005, "role": "hp",     "unit": "% max HP"},
@@ -13334,9 +13354,13 @@ def _paragon_add(p, gain):
         p["paragon_xp"] = safe_int(p.get("paragon_xp")) + gain
 
 def add_exp(p, amount, weather=None):
-    # Paragon XP accrues from a share of ALL exp at ANY level (incl. the cap),
-    # so 999s and everyone else always have something growing.
-    _paragon_add(p, round(safe_int(amount) * _PARAGON_XP_SHARE))
+    # Paragon XP accrues at ANY level (incl. the cap). Normalize by the current
+    # level's exp requirement so accrual is sane across the huge exp economy
+    # (~6 orders of magnitude), and cap the per-grant fraction so a giant
+    # admin/exploit grant can't inflate Paragon into millions of points.
+    _pl_req = exp_for_level(min(LEVEL_CAP, max(1, safe_int(p.get("level"), 1))))
+    _pfrac = min(_PARAGON_FRAC_CAP, max(0, safe_int(amount)) / max(1, _pl_req))
+    _paragon_add(p, round(_pfrac * _PARAGON_UNIT))
     if p["level"] >= LEVEL_CAP: return [], False
     if weather: amount = round(amount * weather.get("exp_mod", 1.0))
     gid = p.get("guild_id")
@@ -27939,6 +27963,55 @@ async def encounter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=markup, permanent=True)
 
 
+class _EncCmdQuery:
+    """Query shim so encounter starters (written to EDIT a callback message) can
+    be launched straight from a slash command by editing a freshly-sent message.
+    Button taps on the resulting card route by uid, so this only needs to satisfy
+    _enc_edit/_q_edit's edit_message_text + answer."""
+    def __init__(self, bot, chat_id, message_id, user):
+        self._bot = bot
+        self.from_user = user
+        self.message = _pytypes.SimpleNamespace(
+            chat_id=chat_id, message_id=message_id,
+            chat=_pytypes.SimpleNamespace(id=chat_id))
+    async def edit_message_text(self, text, parse_mode=None, reply_markup=None):
+        return await self._bot.edit_message_text(
+            chat_id=self.message.chat_id, message_id=self.message.message_id,
+            text=text, parse_mode=parse_mode, reply_markup=reply_markup)
+    async def edit_message_caption(self, *a, **k):
+        return None
+    async def answer(self, *a, **k):
+        return None
+
+async def _launch_encounter_cmd(update, context, mode):
+    """Start a hunt/battle directly from a slash command (/hunt, /battle)."""
+    user = update.effective_user; p = get_player(user.id)
+    if not p:
+        await send_group(update, "Use /ascend first!", delay=9); return
+    if is_defeated(p):
+        await send_group(update, _defeated_msg(p), delay=15); return
+    uid = user.id
+    if uid in active_encounters:
+        if _enc_is_stale(uid):
+            active_encounters.pop(uid, None); _enc_sessions.pop(uid, None)
+        else:
+            await send_group(update, "⚠️ You're already in an encounter! Use the buttons to continue.", delay=10); return
+    try: await update.message.delete()
+    except Exception: pass
+    _label = "🌿 *A hunt begins...*" if mode == "hunt" else "⚔️ *Seeking a foe...*"
+    msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=_label, parse_mode="Markdown")
+    shim = _EncCmdQuery(context.bot, update.effective_chat.id, msg.message_id, user)
+    if mode == "hunt":
+        await _start_encounter_hunt(shim, uid, p)
+    else:
+        await _start_encounter_battle(shim, uid, p)
+
+async def hunt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _launch_encounter_cmd(update, context, "hunt")
+
+async def battle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _launch_encounter_cmd(update, context, "battle")
+
 async def _start_encounter_battle(query, uid, p):
     # 5% chance: treasure chest. 7% chance: random event.
     _roll = random.random()
@@ -35896,6 +35969,17 @@ async def fixgear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "\n\nItems returned to their inventory.", delay=15)
 
 
+def _admin_grant_exp(p, total):
+    """Give the FULL exp amount (admin tool), bypassing add_exp's per-grant
+    one-max-level clamp by applying it in ceiling-sized chunks and saving between
+    them, so a big grant advances multiple levels instead of just one."""
+    total = max(0, safe_int(total)); given = 0; guard = 0
+    while given < total and p["level"] < LEVEL_CAP and guard < 5000:
+        chunk = min(_EXP_REQ_CEIL, total - given)
+        add_exp(p, chunk)
+        save_player(p)   # persist decremented exp + new level before the next chunk
+        given += chunk; guard += 1
+
 async def admingivexp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -35972,7 +36056,7 @@ async def admingivexp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not p:
             await update.message.reply_text("Player found but data missing."); return
         old_level = p["level"]
-        add_exp(p, exp_amount)
+        _admin_grant_exp(p, exp_amount)
         save_player(p)
         new_level = p["level"]
         level_note = f" _(levelled up: {old_level} → {new_level})_" if new_level != old_level else ""
@@ -36024,7 +36108,7 @@ async def admingivexp_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await _q_edit(query, "Player not found."); return
 
     old_level = p["level"]
-    add_exp(p, exp_amount)
+    _admin_grant_exp(p, exp_amount)
     save_player(p)
     new_level = p["level"]
     level_note = f" _(levelled up: {old_level} → {new_level})_" if new_level != old_level else ""
@@ -44579,6 +44663,8 @@ def main():
     app.add_handler(CommandHandler("partydisband",  partydisband_cmd))
     app.add_handler(CallbackQueryHandler(party_callback, pattern="^party_"))
     app.add_handler(CommandHandler("encounter",    encounter_cmd))
+    app.add_handler(CommandHandler("hunt",         hunt_cmd))
+    app.add_handler(CommandHandler("battle",       battle_cmd))
     app.add_handler(CallbackQueryHandler(enc_next_callback, pattern=r"^enc_next_"))
     app.add_handler(CallbackQueryHandler(encounter_callback, pattern="^enc_"))
     app.add_handler(CommandHandler("dungeon",      dungeon_cmd))
