@@ -237,6 +237,7 @@ _pvp_log_msg       = {}   # uid -> (chat_id, message_id) — separate live battl
 _bot_ref           = None  # set after app is built; used for async tasks from sync code
 _pvp_stats         = {}   # pair -> {"turns":int,"start":ts, uid:{"dmg","biggest","hits","name"}}
 _pvp_series        = {}   # frozenset({u1,u2}) -> {"score":{uid:int},"name":{uid:str}}
+_pvp_crown_flash   = {}   # winner_uid -> (crown_notice_text, ts) — folded into the recap card
 _PVP_SERIES_TARGET = 2    # best-of-3: first to 2 wins the series
 
 def _pvp_stats_init(pair, a, d):
@@ -264,10 +265,10 @@ def _pvp_stats_record(pair, attacker_uid, dmg):
         ps["biggest"] = dmg
 
 def _pvp_summary_text(pair, winner_id):
-    """Build the end-of-fight group recap. Kept narrow on purpose — the card is
-    slim, so each fighter gets a name line + one short stat line (⚔ dmg · 👊 hits
-    · 💥 biggest) instead of a single long line that wraps. The top-damage dealer
-    is flagged inline with 🏅, so there's no separate 'Most damage' line."""
+    """Condensed end-of-fight stat block: one line per fighter (badge · name ·
+    ⚔ dmg · 👊 hits · 💥 biggest) plus a duration line. The top-damage dealer is
+    flagged inline with 🏅. Crown/defeat header and rating/series are added by
+    _finalize_pvp so the whole finish is a single compact permanent card."""
     st = _pvp_stats.get(pair)
     if not st or len(pair) != 2:
         return ""
@@ -279,18 +280,13 @@ def _pvp_summary_text(pair, winner_id):
     dur_str = f"{dur // 60}m {dur % 60}s" if dur >= 60 else f"{dur}s"
     draw = winner_id not in (u1, u2)
     top = max((s1, s2), key=lambda s: s["dmg"])
-    def _block(uid, s):
+    def _line(uid, s):
         badge = "•" if draw else ("👑" if uid == winner_id else "💀")
-        mvp   = "  🏅" if (s is top and s["dmg"] > 0) else ""
-        return [
-            f"{badge} *{s['name']}*{mvp}",
-            f"⚔ {fmt_num(s['dmg'])}   👊 {s['hits']}   💥 {fmt_num(s['biggest'])}",
-            "",   # breathing room between fighters
-        ]
-    lines = ["🤝 *DRAW*" if draw else "🏆 *FIGHT RECAP*", ""]
-    lines += _block(u1, s1)
-    lines += _block(u2, s2)
-    lines.append(f"⏱ {dur_str}  ·  {st.get('turns', 0)} actions")
+        mvp   = " 🏅" if (s is top and s["dmg"] > 0) else ""
+        return (f"{badge} *{s['name']}*{mvp}  ⚔ {fmt_num(s['dmg'])} · "
+                f"👊 {s['hits']} · 💥 {fmt_num(s['biggest'])}")
+    lines = [_line(u1, s1), _line(u2, s2),
+             f"⏱ {dur_str} · {st.get('turns', 0)} actions"]
     return "\n".join(lines)
 
 def _pvp_series_key(au, du):
@@ -829,25 +825,42 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
                                 f"→ {_nw}  {_pvp_rank_name(_nw)}")
         except Exception:
             logger.error("elo update failed", exc_info=True)
-    # ── FIGHT CARD 2.0: group recap + best-of-3 series ──────────────────────
+    # ── ONE combined permanent card: crown + defeat + condensed recap + series ──
     _grp_recap = _pvp_origin_chat.get(pair)
     if _grp_recap and len(pair) == 2:
         try:
-            _recap = _pvp_summary_text(pair, winner_id)
             _u1, _u2 = pair
             _n1 = _pvp_stats.get(pair, {}).get(_u1, {}).get("name", "?")
             _n2 = _pvp_stats.get(pair, {}).get(_u2, {}).get("name", "?")
             _score_str, _series_over, _series_win = _pvp_series_bump(
                 _u1, _u2, winner_id, _n1, _n2)
-            _extra = []
+            _card = []
+            # 1) crown change (consume the stash so its fallback doesn't double-post)
+            if winner_id:
+                _cf = _pvp_crown_flash.pop(winner_id, None)
+                if _cf and time.time() - _cf[1] < 30:
+                    _card.append(_cf[0])
+            # 2) one-line defeat header
+            if winner_id:
+                _lz = _u1 if _u2 == winner_id else _u2
+                _wp2 = get_player(winner_id); _lp2 = get_player(_lz)
+                if _wp2 and _lp2:
+                    _card.append(f"💀 *{_wp2.get('username','?')}* defeated "
+                                 f"*{_lp2.get('username','?')}*  "
+                                 f"_(Lv {_wp2.get('level',1)} › {_lp2.get('level',1)})_")
+            # 3) condensed per-fighter recap
+            _recap = _pvp_summary_text(pair, winner_id)
+            if _recap:
+                _card.append(_recap)
+            # 4) rating + series, compact
             if _rating_line:
-                _extra.append(_rating_line)
+                _card.append(_rating_line)
             if _score_str:
                 if _series_over:
-                    _extra.append(f"🏆 *SERIES WON — {_series_win}!*\n   {_score_str}")
+                    _card.append(f"🏆 *Series won — {_series_win}!*  {_score_str}")
                 else:
-                    _extra.append(f"🎯 *Series* {_score_str}  _(to {_PVP_SERIES_TARGET})_")
-            _full_recap = _recap + (("\n\n" + "\n".join(_extra)) if _extra else "")
+                    _card.append(f"🎯 {_score_str} _(to {_PVP_SERIES_TARGET})_")
+            _full_recap = "\n".join(_card)
             if _full_recap.strip():
                 asyncio.create_task(announce(bot, _grp_recap, _full_recap, permanent=True))
         except Exception:
@@ -16142,11 +16155,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 check_titles(a); check_titles(d)
                 save_player(a); save_player(d)
                 _fire(check_and_claim_bounty(context.bot, a, d, _pvp_origin_chat.get(pair, uid)))
-                _fin_grp = _pvp_origin_chat.get(pair) or _megaphone_state.get("group") or uid
-                _fin_a = get_player(uid) or a; _fin_d = get_player(target_id) or d
-                _win_announce_text = (f"💀 *{_fin_a.get('username','?')}* defeated *{_fin_d.get('username','?')}*! "
-                                      f"(Lv {_fin_a.get('level',1)} vs Lv {_fin_d.get('level',1)})")
-                asyncio.create_task(announce(context.bot, _fin_grp, _win_announce_text, permanent=True))
+                # Defeat header is folded into the single combined recap card.
                 _cb_unlock(uid, _tok)
                 await _finalize_pvp(pair, kill_msg, context.bot, winner_id=uid)
             else:
@@ -16194,11 +16203,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _pvp_log_append(pair, result_text)
 
         if result_type == "defeat":
-            _atk_grp = _pvp_origin_chat.get(pair) or _megaphone_state.get("group") or uid
-            _win_a = get_player(uid) or a; _win_d = get_player(target_id) or d
-            _atk_win_txt = (f"💀 *{_win_a.get('username','?')}* defeated *{_win_d.get('username','?')}*! "
-                            f"(Lv {_win_a.get('level',1)} vs Lv {_win_d.get('level',1)})")
-            asyncio.create_task(announce(context.bot, _atk_grp, _atk_win_txt, permanent=True))
+            # Defeat header is folded into the single combined recap card.
             _cb_unlock(uid, _tok)
             await _finalize_pvp(pair, result_text, context.bot, winner_id=uid)
             return
@@ -16308,10 +16313,7 @@ async def kit_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 a, d, uid, target_id, w, chat_id, context.bot, kit_skill=sk)
             _pvp_log_append(pair, result_text)
             if result_type == "defeat":
-                _grp = _pvp_origin_chat.get(pair) or _megaphone_state.get("group") or uid
-                _wa = get_player(uid) or a; _wd = get_player(target_id) or d
-                asyncio.create_task(announce(context.bot, _grp,
-                    f"💀 *{_wa.get('username','?')}* defeated *{_wd.get('username','?')}*!", permanent=True))
+                # Defeat header is folded into the single combined recap card.
                 _cb_unlock(uid, _tok)
                 await _finalize_pvp(pair, result_text, context.bot, winner_id=uid)
                 return
@@ -37365,7 +37367,10 @@ def _is_king(p):
 
 async def _update_king_on_kill(bot, winner, loser, chat_id=None):
     """Crown logic: beating the King takes the crown; if the throne is empty,
-    the first PvP kill claims it. One announcement per crown change."""
+    the first PvP kill claims it. On a crown change we stash a one-line notice
+    keyed by the winner so the fight-recap card can fold it into a single
+    combined message. If no recap consumes it within a few seconds (e.g. a DoT
+    or command kill with no card), a fallback posts it standalone."""
     try:
         k = _get_king()
         w_uid = winner.get("user_id"); w_name = winner.get("username", "?")
@@ -37375,21 +37380,25 @@ async def _update_king_on_kill(bot, winner, loser, chat_id=None):
         if not took_crown:
             return
         _ws_set("king", {"uid": w_uid, "name": w_name, "since": datetime.now().isoformat()})
+        if k:
+            txt = (f"👑 *{w_name}* dethroned *{k.get('name','?')}* — new "
+                   f"*King of the Table!* _(+5% dmg; beat them in PvP to take it)_")
+        else:
+            txt = (f"👑 *{w_name}* claimed the empty throne — *King of the Table!* "
+                   f"_(+5% dmg; beat them in PvP to take it)_")
+        ts = time.time()
+        _pvp_crown_flash[w_uid] = (txt, ts)
         grp = chat_id or _megaphone_state.get("group")
-        if grp:
-            if k:
-                txt = (f"👑 *THE CROWN CHANGES HANDS!*\n\n"
-                       f"*{w_name}* dethroned *{k.get('name','?')}* and is the new "
-                       f"*King of the Table!*\n_+5% damage while holding the crown. "
-                       f"Defeat them in PvP to take it._")
-            else:
-                txt = (f"👑 *A KING RISES!*\n\n*{w_name}* has claimed the empty throne — "
-                       f"*King of the Table!*\n_+5% damage while holding the crown. "
-                       f"Defeat them in PvP to take it._")
-            try:
-                await bot.send_message(grp, txt, parse_mode="Markdown")
-            except Exception:
-                pass
+
+        async def _crown_fallback():
+            await asyncio.sleep(4)
+            entry = _pvp_crown_flash.get(w_uid)
+            if entry and entry[1] == ts:   # still unconsumed by a recap card
+                _pvp_crown_flash.pop(w_uid, None)
+                if grp:
+                    try: await bot.send_message(grp, txt, parse_mode="Markdown")
+                    except Exception: pass
+        _fire(_crown_fallback())
     except Exception:
         pass
 
