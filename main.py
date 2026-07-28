@@ -34007,6 +34007,12 @@ def _build_master_hub(p, uid):
         # System hubs — everything else the game has, grouped
         [InlineKeyboardButton("🌍 Activities",   callback_data=f"empire_activities_{uid}"),
          InlineKeyboardButton("⚙️ Gear & Craft", callback_data=f"empire_gear_{uid}")],
+        # Crafting + endgame progression, one tap away
+        [InlineKeyboardButton("⚒️ Craft",        callback_data=f"empire_craft_{uid}"),
+         InlineKeyboardButton("🔨 Forge Gear",   callback_data=f"empire_forgegear_{uid}")],
+        [InlineKeyboardButton("📈 Combat Power",  callback_data=f"empire_cp_{uid}"),
+         InlineKeyboardButton("🌟 Paragon",      callback_data=f"empire_paragon_{uid}")],
+        [InlineKeyboardButton("💠 Stat Cores",   callback_data=f"empire_statcore_{uid}")],
         [InlineKeyboardButton("🐾 Pets",         callback_data=f"empire_pethub_{uid}"),
          InlineKeyboardButton("💬 Social",       callback_data=f"empire_social_{uid}")],
         [InlineKeyboardButton("🏰 Empire",       callback_data=f"empire_tab_{uid}_overview"),
@@ -34230,6 +34236,18 @@ async def empire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text, markup = _build_master_hub(p, uid)
             await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         except Exception: pass
+
+    # New-system launchers — post their own card (like the combat hub launches).
+    elif hub == "craft":
+        await craft_cmd(update, context)
+    elif hub == "forgegear":
+        await forgegear_cmd(update, context)
+    elif hub == "cp":
+        await cp_cmd(update, context)
+    elif hub == "paragon":
+        await paragon_cmd(update, context)
+    elif hub == "statcore":
+        await statcore_cmd(update, context)
 
 
 async def guide_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
