@@ -33939,7 +33939,9 @@ async def empire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if sjl(p.get("empire_buildings"), {}) and not p.get("empire_last_collect"):
         p["empire_last_collect"] = (datetime.now() - timedelta(hours=8)).isoformat()
         save_player(p)
-    text, markup = _build_empire_overview(p, user.id)
+    # /empire now opens the master MENU (the buildings/resources view lives behind
+    # the menu's 🏰 Empire button). Menu-first so every system is one tap away.
+    text, markup = _build_master_hub(p, user.id)
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text[:4096], parse_mode="Markdown",
         reply_markup=markup)
