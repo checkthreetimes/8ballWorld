@@ -4503,21 +4503,10 @@ def _pet_view_markup(pet_id, is_active, uid=0, pet=None):
     rows = []
     if not is_active:
         rows.append([InlineKeyboardButton("✅ Make Active", callback_data=f"petactivate_{pet_id}")])
-    rows.append([
-        InlineKeyboardButton("🍖 Feed",  callback_data=f"petfeed_{pet_id}"),
-        InlineKeyboardButton("🏋️ Train", callback_data=f"pettrain_{pet_id}"),
-        InlineKeyboardButton("🎮 Play",  callback_data=f"petplay_{pet_id}"),
-    ])
-    # Adventure button — show remaining time if on adventure
-    if pet and _pet_is_on_adventure(pet):
-        try:
-            rem = (datetime.fromisoformat(pet["adventure_ends_at"]) - datetime.now()).total_seconds()
-            rm = f"{int(rem//3600)}h {int((rem%3600)//60)}m" if rem >= 3600 else f"{int(rem//60)}m"
-            rows.append([InlineKeyboardButton(f"🗺️ On Adventure ({rm})", callback_data=f"petadv_status_{pet_id}")])
-        except Exception:
-            rows.append([InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pet_id}")])
-    else:
-        rows.append([InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pet_id}")])
+    # Feed / Train / Play / Adventure are automatic now (Auto-Care). Only the
+    # active pet self-manages, so remind the player how to switch companions.
+    elif is_active:
+        rows.append([InlineKeyboardButton("🤖 Auto-Care: ON", callback_data="noop")])
     # Evolve button if eligible
     if pet:
         lvl = pet.get("level", 1)
@@ -4576,7 +4565,7 @@ CONSUMABLES = {
     "Iron Shard":             {"desc":"Crafting material. Rare drop.","sell":100},
     "Enchanting Scroll":      {"desc":"Used to enchant gear.","sell":150},
     # Pets
-    "Pet Snack":              {"desc":"Feeds your active pet. Restores 30 hunger and 10 mood.","sell":20},
+    "Pet Snack":              {"desc":"Trail food for your pet — each one auto-packs a BONUS adventure on its next outing.","sell":20},
     "Common Egg":             {"desc":"A warm egg. Common or uncommon pet inside.","sell":5000},
     "Rare Egg":               {"desc":"A glowing egg. Uncommon to rare pet inside.","sell":15000},
     "Dragon Egg":             {"desc":"A heavy scaled egg. Rare to epic pet inside.","sell":37000},
@@ -13783,6 +13772,65 @@ def _pet_gear_drop(p):
     add_item(p, item)
     return item
 
+def _pet_battle_score(pet):
+    """Raw sparring score for a pet (pre element/shiny/RNG mods)."""
+    sp = PET_SPECIES.get(pet.get("species"), {})
+    return (sp.get("base_atk", 5) + safe_int(pet.get("level", 1)) * 2
+            + safe_int(pet.get("bond_score", 0)) // 10 + sp.get("base_def", 3))
+
+def _pet_pick_skirmish_opponent(p):
+    """Choose a sparring opponent for an auto pet battle: prefer a RECENT PvP
+    opponent who has an active pet, else a random other player's active pet.
+    Returns an opponent pet dict (a read-only snapshot — we never mutate it)."""
+    uid = p["user_id"]
+    cand = list(get_recent_attackers(p))
+    random.shuffle(cand)
+    for oid in cand:
+        if oid == uid:
+            continue
+        opp = get_active_pet_record(oid)
+        if opp:
+            return opp
+    try:
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE is_active=1 AND owner_id!=? ORDER BY RANDOM() LIMIT 1", (uid,))
+        row = c.fetchone(); conn.close()
+        if row:
+            return dict(row)
+    except Exception:
+        pass
+    return None
+
+def _pet_auto_skirmish(p, pet):
+    """Resolve one automatic pet skirmish vs a recent PvP opponent (or a random
+    pet). Applies EXP/bond to OUR pet only (opponent is a snapshot). On a win the
+    owner pockets a little gold + a supply drop. Returns a one-line digest string,
+    or None if no opponent was available."""
+    opp = _pet_pick_skirmish_opponent(p)
+    if not opp:
+        return None
+    my_sp  = PET_SPECIES.get(pet.get("species"), {})
+    opp_sp = PET_SPECIES.get(opp.get("species"), {})
+    my_score  = _pet_battle_score(pet) + random.randint(1, 20)
+    opp_score = _pet_battle_score(opp) + random.randint(1, 20)
+    my_mu  = ELEMENT_MATCHUPS.get(my_sp.get("element", ""), {})
+    opp_el = opp_sp.get("element", "")
+    if my_mu.get("strong") == opp_el: my_score  = round(my_score * 1.20)
+    if my_mu.get("weak")   == opp_el: my_score  = round(my_score * 0.85)
+    if pet.get("is_shiny"):  my_score  = round(my_score * 1.15)
+    if opp.get("is_shiny"):  opp_score = round(opp_score * 1.15)
+    won = my_score >= opp_score
+    pet["exp"] = pet.get("exp", 0) + (90 if won else 40)
+    pet["bond_score"] = min(200, pet.get("bond_score", 0) + (8 if won else 4))
+    oname = f"{opp_sp.get('emoji','🐾')} {opp.get('nickname') or opp_sp.get('name','a rival pet')}"
+    if won:
+        g = gold_floor(safe_int(p.get("level"), 1), random.randint(60, 220) + safe_int(p.get("level"), 1) * 6)
+        p["gold"] = safe_int(p.get("gold", 0)) + g
+        item, mx = random.choice(_PET_SUPPLY_LOOT)
+        add_item(p, item)
+        return f"⚔️ Sparred with {oname} — 🏆 *Won!*  +{fmt_num(g)}g, *{item}*"
+    return f"⚔️ Sparred with {oname} — 💔 lost, but learned from it. +EXP"
+
 def _pet_autonomous_step(p, pet, cycles):
     """Resolve `cycles` autonomous pet cycles. Mutates pet AND grants loot/gold to
     p (caller persists both). Returns the digest text, or '' if nothing to report."""
@@ -13810,15 +13858,27 @@ def _pet_autonomous_step(p, pet, cycles):
     bond_gain = cycles * 3
     pet["bond_score"] = min(200, pet.get("bond_score", 0) + bond_gain)
 
-    # 4. Adventures + flavor events
+    # 3b. Pet Snacks (no longer needed for feeding) are auto-packed as trail food:
+    # each one the owner has fuels one BONUS adventure this run.
+    inv0 = sjl(p.get("inventory"), [])
+    snack_bonus = 0
+    if "Pet Snack" in inv0:
+        use = min(inv0.count("Pet Snack"), cycles + 2)
+        for _ in range(use):
+            inv0.remove("Pet Snack")
+        p["inventory"] = json.dumps(inv0)
+        snack_bonus = use
+
+    # 4. Adventures (+ snack-fueled bonus trips) + flavor events
     adventures = 0
     total_gold = 0
     loot = {}   # item -> qty
     flavor_lines = []
     def _drop(item, qty=1):
         loot[item] = loot.get(item, 0) + qty
-    for _ in range(cycles):
-        if random.random() < 0.80:
+    for _i in range(cycles + snack_bonus):
+        # snack-fueled bonus trips (the extra iterations) always adventure
+        if _i >= cycles or random.random() < 0.80:
             adventures += 1
             total_gold += gold_floor(owner_lvl, random.randint(40, 160) + owner_lvl * random.randint(4, 12))
             roll = random.random()
@@ -13852,6 +13912,18 @@ def _pet_autonomous_step(p, pet, cycles):
     if total_gold:
         p["gold"] = safe_int(p.get("gold", 0)) + total_gold
 
+    # 5. Auto pet battles — the pet spars on its own vs recent PvP opponents
+    #    (or a random rival pet). ~1 per 2 cycles, capped at 2 per digest.
+    skirmish_lines = []
+    n_skirm = min(2, cycles // 2) if cycles >= 2 else (1 if random.random() < 0.5 else 0)
+    for _ in range(n_skirm):
+        sl = _pet_auto_skirmish(p, pet)
+        if sl:
+            skirmish_lines.append(sl)
+    if skirmish_lines:   # skirmish EXP may have pushed a level
+        while pet["exp"] >= pet_exp_for_level(pet["level"]) and pet["level"] < cap:
+            pet["exp"] -= pet_exp_for_level(pet["level"]); pet["level"] += 1; lvl_ups.append(pet["level"])
+
     # ── Digest ──
     lines = [f"🐾 *Pet Update* — {name} (Lv {pet['level']} {emoji})",
              f"_{name} looked after themselves while you were busy:_",
@@ -13860,8 +13932,11 @@ def _pet_autonomous_step(p, pet, cycles):
     if lvl_ups:
         tr += f"   🎉 reached *Lv {lvl_ups[-1]}*!"
     lines.append(tr)
+    for sl in skirmish_lines:
+        lines.append(sl)
     if adventures:
-        lines.append(f"🗺️ Went on *{adventures}* adventure(s) and brought home:")
+        _snk = f" _(incl. {snack_bonus} snack trip{'s' if snack_bonus != 1 else ''})_" if snack_bonus else ""
+        lines.append(f"🗺️ Went on *{adventures}* adventure(s){_snk} and brought home:")
         if loot:
             for item, q in sorted(loot.items(), key=lambda kv: (-kv[1], kv[0])):
                 lines.append(f"   • *{item}*" + (f" ×{q}" if q > 1 else ""))
@@ -30932,20 +31007,19 @@ def _build_pet_home(uid, p):
         markup = _pet_main_markup()
     else:
         text = _build_pet_card(pet)
-        text += ("\n\n🤖 *Auto-Care is ON* — your pet feeds, plays, trains and "
+        text += ("\n\n🤖 *Auto-Care is ON* — your pet feeds, plays, trains, spars and "
                  "adventures on its own, and brings home loot. Watch for its *Pet Update* messages!")
         pid = pet["pet_id"]
-        # Manual feed/play/train/adventure/job are retired — pets self-manage now.
-        # What remains are the things that are still a player CHOICE.
+        # Feed / Play / Train / Adventure / Job / Battle are all automatic now —
+        # only the genuine player CHOICES remain.
         btn_rows = [
-            [InlineKeyboardButton("⚔️ Pet Battle", callback_data=f"petbattle_pick_{pid}"),
-             InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}")],
-            [InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0"),
-             InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0")],
-            [InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop"),
-             InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
-            [InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu"),
-             InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{uid}")],
+            [InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}"),
+             InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0")],
+            [InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0"),
+             InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop")],
+            [InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg"),
+             InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu")],
+            [InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{uid}")],
         ]
         markup = InlineKeyboardMarkup(btn_rows)
     return text, markup
@@ -30989,7 +31063,7 @@ def _build_petshop_menu(p):
             "🥚 *Rare Egg* — 30,000g\nUncommon to Rare pet\n\n"
             "🥚 *Dragon Egg* — 75,000g\nRare to Epic pet\n\n"
             "🥚 *Mythic Egg* — 200,000g\nEpic to Mythic pet\n\n"
-            "🍖 *Pet Snack* — 25g\nFeeds your active pet")
+            "🍖 *Pet Snack* — 25g\nTrail food: each one auto-fuels a *bonus adventure*")
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("🥚 Common Egg  10,000g",  callback_data="pbuy_Common Egg_10000"),
          InlineKeyboardButton("🥚 Rare Egg  30,000g",    callback_data="pbuy_Rare Egg_30000")],
@@ -31373,20 +31447,19 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             report = await _pet_run_autonomous(p, context.bot, dm=False)
             pet = get_active_pet_record(user.id) or pet
             text = _build_pet_card(pet)
-            text += ("\n\n🤖 *Auto-Care is ON* — your pet feeds, plays, trains and "
+            text += ("\n\n🤖 *Auto-Care is ON* — your pet feeds, plays, trains, spars and "
                      "adventures on its own, and brings home loot. Watch for its *Pet Update* messages!")
             if report:
                 text = report + "\n\n━━━━━━━━━━\n\n" + text
             pid = pet["pet_id"]
             markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("⚔️ Pet Battle", callback_data=f"petbattle_pick_{pid}"),
-                 InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}")],
-                [InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0"),
-                 InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0")],
-                [InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop"),
-                 InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
-                [InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu"),
-                 InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{user.id}")],
+                [InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}"),
+                 InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0")],
+                [InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0"),
+                 InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop")],
+                [InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg"),
+                 InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu")],
+                [InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{user.id}")],
             ])
         await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         await query.answer(); return
@@ -32114,19 +32187,15 @@ def _pethub_markup(uid, pet, page=1):
 
     if pet:
         pages = [
-            # Page 1 — Manage
+            # Page 1 — Manage  (Adventure/Jobs/Battle are automatic now)
             [
                 [InlineKeyboardButton("🐾 My Pet",     callback_data=f"petmain_{uid}"),
                  InlineKeyboardButton("📋 All Pets",   callback_data="petlist_0")],
-                [InlineKeyboardButton("⚔️ Pet Battle", callback_data=f"petduel_pick_{uid}"),
-                 InlineKeyboardButton("🤝 Trade Pet",  callback_data=f"pettrade_pick_{uid}")],
-                [InlineKeyboardButton("🗺️ Adventure",  callback_data=f"petadv_pick_{pid}"),
-                 InlineKeyboardButton("💼 Jobs",       callback_data=f"petjob_pick_{pid}")],
+                [InlineKeyboardButton("🤝 Trade Pet",  callback_data=f"pettrade_pick_{uid}"),
+                 InlineKeyboardButton("🔬 Breed",      callback_data=f"petbreed_pick_{uid}")],
             ],
-            # Page 2 — Care & Breeding
+            # Page 2 — Care & Breeding  (Daycare retired — pets self-feed)
             [
-                [InlineKeyboardButton("🔬 Breed",      callback_data=f"petbreed_pick_{uid}"),
-                 InlineKeyboardButton("🏠 Daycare",    callback_data=f"petdaycare_{pid}")],
                 [InlineKeyboardButton("🌟 Retire Pet", callback_data=f"petretire_confirm_{pid}"),
                  InlineKeyboardButton("📝 Rename",     callback_data=f"petrename_{pid}")],
                 [InlineKeyboardButton("🛒 Pet Shop",   callback_data="petshop"),
