@@ -9589,7 +9589,9 @@ def is_healing_blocked(p): return _ts_active(p, "healing_blocked_until") or safe
 def is_revival_blocked(p): return _ts_active(p, "revival_blocked_until") or safe_int(p.get("revive_blocked_turns")) > 0
 def is_silenced(p):      return _ts_active(p, "silenced_until")   or safe_int(p.get("silence_turns")) > 0
 def is_rooted(p):        return is_entangled(p) or is_frozen(p)
-def cannot_attack(p):    return is_stunned(p) or is_rooted(p) or is_vanished(p)
+def cannot_attack(p):    return is_stunned(p) or is_rooted(p)   # vanish is a DEFENSIVE
+# stealth buff (untargetable + empowered next strike), NOT a self-disable — you
+# must be able to attack FROM stealth, else Vanish softlocks you into surrendering.
 
 def _consume_cc(p) -> str | None:
     """Consume one charge-based CC turn and return the block message, or None if free to act."""
@@ -15967,8 +15969,6 @@ async def attack_picker_callback(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer("You're defeated!", show_alert=True); return
         if is_invincible(a):
             await query.answer("You're invincible!", show_alert=True); return
-        if is_vanished(a):
-            await query.answer("You're vanished — can't attack while hidden!", show_alert=True); return
         _cc = _consume_cc(a)
         if _cc:
             await query.answer(_cc, show_alert=True); return
@@ -16041,8 +16041,6 @@ async def pvp_rematch_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if is_invincible(a):
         await query.answer("🛡️ You're still under your invincibility grace period — "
                            "you can't attack until it ends.", show_alert=True); return
-    if is_vanished(a):
-        await query.answer("👻 You're vanished — you can't attack while hidden.", show_alert=True); return
     _rm_cc = _consume_cc(a)
     if _rm_cc:
         await query.answer(_rm_cc.replace("*", "")[:190], show_alert=True); return
@@ -16306,8 +16304,6 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # PvP: invincibility blocks attacking
     if is_invincible(a):
         await send_group(update, "🛡️ You're *Still Recovering*  -  you can't attack while invincible.", delay=9); return
-    if is_vanished(a):
-        await send_group(update, "👻 You're vanished  -  you can't attack while hidden.", delay=9); return
     _cc = _consume_cc(a)
     if _cc:
         await send_group(update, _cc, delay=9); return
@@ -16650,8 +16646,6 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kc = _KILL_CONDITIONS.get(line_a)
             if not kc or not _check_kill_condition(a, d):
                 await query.answer("⚡ Kill condition not met!", show_alert=True); return
-            if is_vanished(a):
-                await query.answer("You're vanished — can't use finisher while hidden!", show_alert=True); return
             try: await query.answer("⚡ FINISHER!")
             except Exception: pass
             stat_val = get_stat(a, kc["stat"])
@@ -16726,8 +16720,6 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("You're defeated — can't attack!", show_alert=True); return
         if is_invincible(a):
             await query.answer("You're invincible — can't attack!", show_alert=True); return
-        if is_vanished(a):
-            await query.answer("You're vanished — can't attack while hidden!", show_alert=True); return
         # (crowd control already handled above — it fails the action)
         if is_defeated(d):
             await query.answer(f"{d['username']} is already defeated!", show_alert=True); return
