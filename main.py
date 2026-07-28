@@ -4308,8 +4308,8 @@ def save_pet(pet):
     c.execute("""INSERT OR REPLACE INTO pets
         (pet_id,owner_id,species,nickname,level,exp,hunger,mood,last_fed,last_trained,
          is_active,created_at,bond_score,adventure_ends_at,last_battle,evolution_stage,
-         is_shiny,job_ends_at,daycare_until)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+         is_shiny,job_ends_at,daycare_until,last_auto)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (pet.get("pet_id"), pet["owner_id"], pet["species"],
          pet.get("nickname"), pet.get("level",1), pet.get("exp",0),
          pet.get("hunger",100), pet.get("mood",100),
@@ -4318,7 +4318,7 @@ def save_pet(pet):
          pet.get("bond_score",0), pet.get("adventure_ends_at"),
          pet.get("last_battle"), pet.get("evolution_stage",0),
          pet.get("is_shiny",0), pet.get("job_ends_at"),
-         pet.get("daycare_until")))
+         pet.get("daycare_until"), pet.get("last_auto")))
     conn.commit(); conn.close()
 
 
@@ -12412,7 +12412,7 @@ def init_db():
         for col, typedef in [("bond_score","INTEGER DEFAULT 0"), ("adventure_ends_at","TEXT"),
                               ("last_battle","TEXT"), ("evolution_stage","INTEGER DEFAULT 0"),
                               ("is_shiny","INTEGER DEFAULT 0"), ("job_ends_at","TEXT"),
-                              ("daycare_until","TEXT")]:
+                              ("daycare_until","TEXT"), ("last_auto","TEXT")]:
             try:
                 _pets_conn.execute(f"ALTER TABLE pets ADD COLUMN {col} {typedef}")
                 _pets_conn.commit()
@@ -13729,7 +13729,188 @@ def get_recent_attackers(p):
 # ── COMBAT CARD ───────────────────────────────────────────────────────────────
 # combat_cards removed in v14  -  using inline send+auto-delete instead
 
+# ══════════════════════════════════════════════════════════════════════════════
+# AUTONOMOUS PETS — pets look after themselves and bring home loot
+# ══════════════════════════════════════════════════════════════════════════════
+# No more manual feeding/playing/adventuring. Every PET_AUTO_HOURS of real time a
+# pet resolves one "cycle": it forages & plays (stays fed and happy on its own),
+# trains (EXP + level-ups), and usually goes adventuring — returning with gold and
+# loot (potions, shards, cores, sometimes real weapons/armor). The owner just gets
+# a tidy digest DM. Cycles are capped so a long absence yields one nice update,
+# not a spammy windfall.
+PET_AUTO_HOURS      = 4
+PET_AUTO_MAX_CYCLES = 6
+
+_PET_SUPPLY_LOOT = [
+    ("Health Potion", 3), ("Greater Health Potion", 2), ("MP Tonic", 2),
+    ("Iron Shard", 3), ("Enchanting Scroll", 2), ("Pet Snack", 3),
+]
+_PET_RARE_LOOT   = ["Fortune Coin", "Scroll of Revival", "Grand Restorative Flask", "Rare Egg"]
+_PET_CORE_ELEMS  = ["Fire", "Water", "Earth", "Wind", "Lightning", "Ice"]
+_PET_FLAVOR = [
+    ("🐾 {name} chased their tail for an hour. Zero regrets.", None),
+    ("😴 {name} took a long nap in a warm sunbeam.", None),
+    ("🦋 {name} befriended a passing butterfly.", None),
+    ("🎾 {name} invented a new game and won it decisively.", None),
+    ("🪨 {name} proudly presented you a very ordinary pebble.", None),
+    ("🌟 {name} spent a while practising heroic poses.", None),
+    ("🎶 {name} learned to hum the town song (badly).", None),
+    ("💰 {name} chased off a sneaky pickpocket and recovered the loot!", "gold"),
+    ("🕳️ {name} dug up a small buried stash!", "gold"),
+    ("🎁 {name} came trotting back with a little treasure!", "rare"),
+]
+
+def _pet_loot_rarity(owner_level):
+    """Gear rarity a pet's find scales to, by owner level."""
+    r = random.random()
+    if owner_level >= 300:
+        return "legendary" if r < 0.12 else ("epic" if r < 0.45 else "rare")
+    if owner_level >= 120:
+        return "epic" if r < 0.10 else ("rare" if r < 0.45 else "uncommon")
+    if owner_level >= 40:
+        return "rare" if r < 0.15 else ("uncommon" if r < 0.55 else "common")
+    return "uncommon" if r < 0.30 else "common"
+
+def _pet_gear_drop(p):
+    """Pick + grant a random weapon or armor at a level-appropriate rarity.
+    Returns the item name, or None if no eligible item exists."""
+    rar = _pet_loot_rarity(safe_int(p.get("level"), 1))
+    src = WEAPONS if random.random() < 0.5 else ARMORS
+    pool = [n for n, d in src.items() if d.get("rarity") == rar]
+    if not pool:
+        return None
+    item = random.choice(pool)
+    add_item(p, item)
+    return item
+
+def _pet_autonomous_step(p, pet, cycles):
+    """Resolve `cycles` autonomous pet cycles. Mutates pet AND grants loot/gold to
+    p (caller persists both). Returns the digest text, or '' if nothing to report."""
+    cycles = max(1, min(PET_AUTO_MAX_CYCLES, int(cycles)))
+    owner_lvl = safe_int(p.get("level"), 1)
+    name = _pet_display_name(pet)
+    sp = PET_SPECIES.get(pet.get("species"), {})
+    emoji = sp.get("emoji", "🐾")
+    nowiso = datetime.now().isoformat()
+
+    # 1. Self-care — the pet keeps itself fed and content
+    pet["hunger"] = 100
+    pet["mood"]   = 100
+    pet["last_fed"] = pet["last_play"] = pet["last_trained"] = nowiso
+
+    # 2. Training — EXP + level-ups (capped at the owner-scaled pet cap)
+    cap = _pet_level_cap(owner_lvl)
+    exp_gain = sum(25 + pet.get("level", 1) * 6 + random.randint(0, 20) for _ in range(cycles))
+    pet["exp"] = pet.get("exp", 0) + exp_gain
+    lvl_ups = []
+    while pet["exp"] >= pet_exp_for_level(pet["level"]) and pet["level"] < cap:
+        pet["exp"] -= pet_exp_for_level(pet["level"]); pet["level"] += 1; lvl_ups.append(pet["level"])
+
+    # 3. Bond grows just from spending the day together
+    bond_gain = cycles * 3
+    pet["bond_score"] = min(200, pet.get("bond_score", 0) + bond_gain)
+
+    # 4. Adventures + flavor events
+    adventures = 0
+    total_gold = 0
+    loot = {}   # item -> qty
+    flavor_lines = []
+    def _drop(item, qty=1):
+        loot[item] = loot.get(item, 0) + qty
+    for _ in range(cycles):
+        if random.random() < 0.80:
+            adventures += 1
+            total_gold += gold_floor(owner_lvl, random.randint(40, 160) + owner_lvl * random.randint(4, 12))
+            roll = random.random()
+            if roll < 0.55:
+                item, mx = random.choice(_PET_SUPPLY_LOOT)
+                q = random.randint(1, mx)
+                for _ in range(q): add_item(p, item)
+                _drop(item, q)
+            elif roll < 0.67:
+                g = _pet_gear_drop(p)
+                if g: _drop(g, 1)
+            elif roll < 0.72:
+                item = random.choice(_PET_RARE_LOOT)
+                add_item(p, item); _drop(item, 1)
+            if random.random() < 0.20:   # a core on top sometimes — feeds the forge
+                core = f"Monster Core ({random.choice(_PET_CORE_ELEMS)})"
+                add_item(p, core); _drop(core, 1)
+        if random.random() < 0.30:
+            txt, kind = random.choice(_PET_FLAVOR)
+            if kind == "gold":
+                g = gold_floor(owner_lvl, random.randint(50, 200) + owner_lvl * 6)
+                total_gold += g
+                flavor_lines.append(txt.format(name=name) + f" *+{fmt_num(g)}g*")
+            elif kind == "rare":
+                item = random.choice(_PET_RARE_LOOT)
+                add_item(p, item); _drop(item, 1)
+                flavor_lines.append(txt.format(name=name))
+            else:
+                flavor_lines.append(txt.format(name=name))
+
+    if total_gold:
+        p["gold"] = safe_int(p.get("gold", 0)) + total_gold
+
+    # ── Digest ──
+    lines = [f"🐾 *Pet Update* — {name} (Lv {pet['level']} {emoji})",
+             f"_{name} looked after themselves while you were busy:_",
+             "🍖 Ate well & played — full and happy."]
+    tr = f"🏋️ Trained: *+{fmt_num(exp_gain)}* EXP"
+    if lvl_ups:
+        tr += f"   🎉 reached *Lv {lvl_ups[-1]}*!"
+    lines.append(tr)
+    if adventures:
+        lines.append(f"🗺️ Went on *{adventures}* adventure(s) and brought home:")
+        if loot:
+            for item, q in sorted(loot.items(), key=lambda kv: (-kv[1], kv[0])):
+                lines.append(f"   • *{item}*" + (f" ×{q}" if q > 1 else ""))
+        else:
+            lines.append("   • _good memories (no loot this trip)_")
+    lines.append((f"💰 +{fmt_num(total_gold)} gold  ·  " if total_gold else "") + f"💞 +{bond_gain} bond")
+    if flavor_lines:
+        lines.append("")
+        lines.extend(flavor_lines[:2])
+    lines.append("\n_Pets do all this on their own now — just enjoy the gifts! 🐾_")
+    return "\n".join(lines)
+
+async def _pet_run_autonomous(p, bot, dm=True):
+    """Advance the owner's active pet if at least one cycle is due; DM the digest
+    when dm=True. Returns the digest text, or None if nothing was due."""
+    if not p: return None
+    uid = p["user_id"]
+    pet = get_active_pet_record(uid)
+    if not pet: return None
+    now = datetime.now()
+    last = pet.get("last_auto")
+    if last:
+        try:
+            hrs = (now - datetime.fromisoformat(last)).total_seconds() / 3600.0
+        except Exception:
+            hrs = PET_AUTO_HOURS
+    else:
+        hrs = PET_AUTO_HOURS   # first-ever run grants one welcome cycle
+    if int(hrs // PET_AUTO_HOURS) < 1:
+        return None
+    cycles = int(hrs // PET_AUTO_HOURS)
+    pet["last_auto"] = now.isoformat()
+    text = _pet_autonomous_step(p, pet, cycles)
+    save_pet(pet); save_player(p)
+    if dm and text:
+        try:
+            await bot.send_message(uid, text, parse_mode="Markdown")
+        except Exception:
+            pass
+    return text
+
 async def check_pet_notifications(p, bot):
+    """Autonomous-pet entry point: resolve any due cycles and DM the digest.
+    (Formerly nagged the owner to feed/play/train — pets now do all that
+    themselves.)"""
+    await _pet_run_autonomous(p, bot, dm=True)
+    return
+
+async def _legacy_check_pet_notifications(p, bot):
     """DM the owner if their active pet is hungry, sad, or ready to train. Rate-limited per condition.
     Timestamps are persisted in shadow_profiles.pet_notify_ts so restarts don't cause spam."""
     if not p: return
@@ -30751,48 +30932,21 @@ def _build_pet_home(uid, p):
         markup = _pet_main_markup()
     else:
         text = _build_pet_card(pet)
+        text += ("\n\n🤖 *Auto-Care is ON* — your pet feeds, plays, trains and "
+                 "adventures on its own, and brings home loot. Watch for its *Pet Update* messages!")
         pid = pet["pet_id"]
+        # Manual feed/play/train/adventure/job are retired — pets self-manage now.
+        # What remains are the things that are still a player CHOICE.
         btn_rows = [
-            [InlineKeyboardButton("🍖 Feed",    callback_data=f"petfeed_{pid}"),
-             InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pid}"),
-             InlineKeyboardButton("🎮 Play",    callback_data=f"petplay_{pid}")],
+            [InlineKeyboardButton("⚔️ Pet Battle", callback_data=f"petbattle_pick_{pid}"),
+             InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}")],
+            [InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0"),
+             InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0")],
+            [InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop"),
+             InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
+            [InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu"),
+             InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{uid}")],
         ]
-        # Adventure: show claim if returned, else show start/status
-        adv_end = pet.get("adventure_ends_at")
-        if adv_end:
-            try:
-                rem = (datetime.fromisoformat(adv_end) - datetime.now()).total_seconds()
-                if rem <= 0:
-                    # Adventure done — infer hours from ends_at vs creation date
-                    btn_rows.append([InlineKeyboardButton("🎉 Claim Adventure Rewards!", callback_data=f"petadv_status_{pid}")])
-                else:
-                    rm = f"{int(rem//3600)}h {int((rem%3600)//60)}m" if rem >= 3600 else f"{int(rem//60)}m"
-                    btn_rows.append([InlineKeyboardButton(f"🗺️ On Adventure ({rm})", callback_data=f"petadv_status_{pid}")])
-            except Exception:
-                btn_rows.append([InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pid}")])
-        else:
-            btn_rows.append([InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pid}")])
-        # Job button state
-        job_end = pet.get("job_ends_at")
-        if job_end:
-            try:
-                jrem = (datetime.fromisoformat(job_end) - datetime.now()).total_seconds()
-                if jrem <= 0:
-                    job_btn = InlineKeyboardButton("💼 Claim Job!", callback_data=f"petjob_claim_{pid}")
-                else:
-                    jrm = f"{int(jrem//3600)}h {int((jrem%3600)//60)}m" if jrem >= 3600 else f"{int(jrem//60)}m"
-                    job_btn = InlineKeyboardButton(f"💼 Job ({jrm})", callback_data=f"petjob_status_{pid}")
-            except Exception:
-                job_btn = InlineKeyboardButton("💼 Send on Job", callback_data=f"petjob_pick_{pid}")
-        else:
-            job_btn = InlineKeyboardButton("💼 Send on Job", callback_data=f"petjob_pick_{pid}")
-        btn_rows.append([InlineKeyboardButton("⚔️ Pet Battle", callback_data=f"petbattle_pick_{pid}"),
-                         job_btn])
-        btn_rows.append([InlineKeyboardButton("📝 Rename",   callback_data=f"petrename_{pid}"),
-                         InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")])
-        btn_rows.append([InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
-                         InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")])
-        btn_rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
         markup = InlineKeyboardMarkup(btn_rows)
     return text, markup
 
@@ -30803,7 +30957,13 @@ async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update, "🐾 Register first with /start.", delay=9); return
     try: await update.message.delete()
     except: pass
+    # Resolve any due autonomous cycles right now so the card is fresh; show the
+    # loot digest inline above the card (no separate DM for this interactive open).
+    report = await _pet_run_autonomous(p, context.bot, dm=False)
+    p = get_player(user.id) or p
     text, markup = _build_pet_home(user.id, p)
+    if report:
+        text = report + "\n\n━━━━━━━━━━\n\n" + text
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
         reply_markup=markup)
@@ -31209,49 +31369,24 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = "🐾 No active pet. Get eggs from dungeons or the Pet Shop!"
             markup = _pet_main_markup()
         else:
+            # Resolve any due autonomous cycles so the reopened card is current.
+            report = await _pet_run_autonomous(p, context.bot, dm=False)
+            pet = get_active_pet_record(user.id) or pet
             text = _build_pet_card(pet)
+            text += ("\n\n🤖 *Auto-Care is ON* — your pet feeds, plays, trains and "
+                     "adventures on its own, and brings home loot. Watch for its *Pet Update* messages!")
+            if report:
+                text = report + "\n\n━━━━━━━━━━\n\n" + text
             pid = pet["pet_id"]
-            adv_end = pet.get("adventure_ends_at")
-            adv_btn = None
-            if adv_end:
-                try:
-                    rem = (datetime.fromisoformat(adv_end) - datetime.now()).total_seconds()
-                    if rem <= 0:
-                        adv_btn = InlineKeyboardButton("🎉 Claim Adventure!", callback_data=f"petadv_status_{pid}")
-                    else:
-                        rm = f"{int(rem//3600)}h {int((rem%3600)//60)}m" if rem >= 3600 else f"{int(rem//60)}m"
-                        adv_btn = InlineKeyboardButton(f"🗺️ Adventure ({rm})", callback_data=f"petadv_status_{pid}")
-                except Exception:
-                    adv_btn = InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pid}")
-            else:
-                adv_btn = InlineKeyboardButton("🗺️ Adventure", callback_data=f"petadv_pick_{pid}")
-            # Job button state
-            job_end = pet.get("job_ends_at")
-            if job_end:
-                try:
-                    _jrem = (datetime.fromisoformat(job_end) - datetime.now()).total_seconds()
-                    if _jrem <= 0:
-                        job_btn = InlineKeyboardButton("💼 Claim Job!", callback_data=f"petjob_claim_{pid}")
-                    else:
-                        _jrm = f"{int(_jrem//3600)}h {int((_jrem%3600)//60)}m" if _jrem >= 3600 else f"{int(_jrem//60)}m"
-                        job_btn = InlineKeyboardButton(f"💼 Job ({_jrm})", callback_data=f"petjob_status_{pid}")
-                except Exception:
-                    job_btn = InlineKeyboardButton("💼 Job", callback_data=f"petjob_pick_{pid}")
-            else:
-                job_btn = InlineKeyboardButton("💼 Send on Job", callback_data=f"petjob_pick_{pid}")
             markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🍖 Feed",    callback_data=f"petfeed_{pid}"),
-                 InlineKeyboardButton("🏋️ Train",  callback_data=f"pettrain_{pid}"),
-                 InlineKeyboardButton("🎮 Play",    callback_data=f"petplay_{pid}")],
                 [InlineKeyboardButton("⚔️ Pet Battle", callback_data=f"petbattle_pick_{pid}"),
-                 adv_btn],
-                [job_btn],
-                [InlineKeyboardButton("📝 Rename",  callback_data=f"petrename_{pid}"),
-                 InlineKeyboardButton("📋 All Pets", callback_data="petlist_0")],
-                [InlineKeyboardButton("📖 Bestiary", callback_data="bestiary_0"),
-                 InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu")],
-                [InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop"),
+                 InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}")],
+                [InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0"),
+                 InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0")],
+                [InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop"),
                  InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
+                [InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu"),
+                 InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{user.id}")],
             ])
         await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         await query.answer(); return
@@ -38023,10 +38158,11 @@ async def _fire_random_world_events(bot):
         except Exception:
             continue
 
-async def _pet_care_sweep(bot, max_sends=30):
-    """Proactively DM owners whose active pet is hungry/sad/done adventuring —
-    even if they haven't messaged in days. check_pet_notifications is already
-    rate-limited per condition (4-8h, persisted), so this can run often."""
+async def _pet_care_sweep(bot, max_sends=40):
+    """Advance every active pet's autonomous life and DM owners a digest when a
+    cycle is due. _pet_run_autonomous self-gates on the PET_AUTO_HOURS cadence, so
+    each owner gets at most one pet update every few hours no matter how often
+    this runs."""
     try:
         c = _db().cursor()
         c.execute("SELECT DISTINCT owner_id FROM pets WHERE is_active=1")
@@ -38044,16 +38180,10 @@ async def _pet_care_sweep(bot, max_sends=30):
             p = get_player(uid)
             if not p:
                 continue
-            pet = get_active_pet_record(uid)
-            if not pet:
-                continue
-            _needy = (pet.get("hunger", 100) < 30 or pet.get("mood", 100) < 30
-                      or pet.get("adventure_ends_at"))
-            if not _needy:
-                continue
-            await check_pet_notifications(p, bot)
-            sent += 1
-            await asyncio.sleep(0.3)
+            report = await _pet_run_autonomous(p, bot, dm=True)
+            if report:
+                sent += 1
+                await asyncio.sleep(0.3)
         except Exception:
             continue
 
