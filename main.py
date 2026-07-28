@@ -41485,7 +41485,7 @@ def _siege_grant_rewards(p, state, wiped):
     # ── EXP — a real % of a level, growing with how deep you held ──
     exp_gain = 0
     if racks_cleared > 0:
-        exp_gain = exp_share(lvl, min(3.0, 0.12 * racks_cleared))
+        exp_gain = exp_share(lvl, min(0.75, 0.03 * racks_cleared))
         add_exp(p, exp_gain)
         lines.append(f"⭐ *{fmt_num(exp_gain)}* EXP")
 
@@ -41844,7 +41844,9 @@ def _mode_bonus_rewards(p, depth, boss_waves, mult=1.0):
     lines = []
     lvl = safe_int(p.get("level"), 1)
     if depth > 0:
-        exp_gain = round(exp_share(lvl, min(3.0, 0.12 * depth)) * mult)
+        # % of a level, in the same band as the established modes (dungeon full
+        # run ~50%, raid boss ~15%): a solid run ~0.3, a deep one caps at 0.75.
+        exp_gain = round(exp_share(lvl, min(0.75, 0.03 * depth)) * mult)
         if exp_gain > 0:
             add_exp(p, exp_gain)
             lines.append(f"⭐ *{fmt_num(exp_gain)}* EXP")
