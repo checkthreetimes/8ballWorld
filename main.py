@@ -39858,6 +39858,7 @@ _coinflips = {}  # (challenger, target) -> {"amt","expires","chat_id"}
 # roulette, roulette table) are presented with their rules and commands.
 _CASINO_BETS = [1000, 5000, 25000, 100000, 500000, 1000000]
 _SLOTS_DAILY_STOP = -2000000
+_LOTTERY_TICKET = 10000   # raised from 250 now that pots are wager-funded and large
 
 def _slots_net_today(p):
     cds = safe_cds(p)
@@ -39888,6 +39889,22 @@ def _slots_spin(p, amt):
     save_player(p)
     return reels, win, None
 
+def _slots_spin_batch(p, amt, n):
+    """Spin up to n times, stopping early on cutoff/broke. Returns
+    (spins_done, total_win, total_bet, best_reels, jackpots, status)."""
+    done = total_win = total_bet = jackpots = 0
+    best = None; best_win = -1; status = None
+    for _ in range(n):
+        reels, win, st = _slots_spin(p, amt)
+        if st:
+            status = st; break
+        done += 1; total_win += win; total_bet += amt
+        if win == amt * 20:
+            jackpots += 1
+        if win > best_win:
+            best_win = win; best = reels
+    return done, total_win, total_bet, best, jackpots, status
+
 def _lottery_state():
     today = datetime.now().strftime("%Y-%m-%d")
     lot = _ws_get("lottery") or {"date": today, "pot": 0, "tickets": []}
@@ -39906,15 +39923,16 @@ def _build_casino_home(p, uid, flash=""):
     lines.append(f"💰 Gold: *{gold:,}*\n")
     lines.append("*🎰 Slots* — solo. Match 3 to win; pair pays 1.5×, triple 6×, 🎱🎱🎱 *20×*.")
     lines.append(f"    _Today: {net:+,}g  (house stops you at {_SLOTS_DAILY_STOP:,})_")
-    lotto_label = "✅ you're in tonight's draw" if in_draw else "250g/ticket"
+    lotto_label = "✅ you're in tonight's draw" if in_draw else f"{_LOTTERY_TICKET:,}g/ticket"
     n_tickets = len(lot.get("tickets", []))
     lines.append(f"*🎟️ Lottery* — {lotto_label}. Pot: *{lot.get('pot', 0):,}g*  ({n_tickets} in)")
+    lines.append("    _Pot grows from lost PvP fight wagers — it can get huge._")
     lines.append("*🪙 Coinflip* — reply to a player: `/coinflip <gold>`. 50/50, winner takes all.")
     lines.append("*🔫 Russian Roulette* — reply to a player: `/russian <wager>`. 1v1, six chambers.")
     lines.append("*💀 Roulette Table* — `/roulette <buyin>` opens a lobby anyone can join.")
     rows = [[InlineKeyboardButton("🎰 Play Slots", callback_data=f"casslot_{uid}")]]
     if not in_draw:
-        rows.append([InlineKeyboardButton("🎟️ Buy Lottery Ticket (250g)", callback_data=f"caslotto_{uid}")])
+        rows.append([InlineKeyboardButton(f"🎟️ Buy Lottery Ticket ({_LOTTERY_TICKET:,}g)", callback_data=f"caslotto_{uid}")])
     rows.append([InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
@@ -39945,7 +39963,8 @@ def _build_slots_view(p, uid, bet, flash=""):
     elif gold < bet:
         lines.append("\n_Not enough gold for this bet — lower it._")
     else:
-        rows.append([InlineKeyboardButton(f"🎰 SPIN  ({bet:,}g)", callback_data=f"casspin_{uid}_{bet}")])
+        rows.append([InlineKeyboardButton(f"🎰 SPIN  ({bet:,}g)", callback_data=f"casspin_{uid}_{bet}"),
+                     InlineKeyboardButton(f"🎰 ×5  ({bet*5:,}g)", callback_data=f"casspinx_{uid}_{bet}")])
     rows.append([InlineKeyboardButton("🔙 Casino", callback_data=f"cashome_{uid}"),
                  InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return "\n".join(lines), InlineKeyboardMarkup(rows)
@@ -40014,7 +40033,7 @@ async def casino_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await render(_build_slots_view(p, uid, bet)); return
         row = f"[ {reels[0]} | {reels[1]} | {reels[2]} ]"
         if win > bet:
-            jackpot = " 🎱 *JACKPOT!*" if win == bet * 10 else ""
+            jackpot = " 🎱 *JACKPOT!*" if win == bet * 20 else ""
             flash = f"{row}\n🎉 *+{win - bet:,}g profit!*{jackpot}"
             await query.answer(f"+{win - bet:,}g!")
         elif win > 0:
@@ -40024,18 +40043,36 @@ async def casino_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             flash = f"{row}\n💸 House wins. -{bet:,}g"
             await query.answer(f"-{bet:,}g")
         await render(_build_slots_view(p, uid, bet, flash=flash)); return
+    if head == "casspinx":
+        try:
+            bet = int(toks[2])
+        except (IndexError, ValueError):
+            await query.answer(); return
+        done, tw, tb, best, jackpots, status = _slots_spin_batch(p, bet, 5)
+        if done == 0:
+            await query.answer("🛑 Daily loss limit reached." if status == "cutoff"
+                               else "Not enough gold for 5 spins!", show_alert=True)
+            await render(_build_slots_view(p, uid, bet)); return
+        net = tw - tb
+        brow = f"[ {best[0]} | {best[1]} | {best[2]} ]" if best else ""
+        jk = f"  🎱×{jackpots} JACKPOT!" if jackpots else ""
+        head_line = "🎉 *+" if net > 0 else ("😌 " if net == 0 else "💸 *-")
+        flash = (f"🎰 *{done} spins* · best {brow}{jk}\n"
+                 f"{head_line}{abs(net):,}g* net  _({fmt_num(tb)}g wagered)_")
+        await query.answer(f"{done} spins: {net:+,}g")
+        await render(_build_slots_view(p, uid, bet, flash=flash)); return
     if head == "caslotto":
         lot = _lottery_state()
         if uid in lot.get("tickets", []):
             await query.answer("You already have a ticket tonight!", show_alert=True)
             await render(_build_casino_home(p, uid)); return
-        if safe_int(p.get("gold", 0)) < 250:
-            await query.answer("Tickets cost 250g!", show_alert=True)
+        if safe_int(p.get("gold", 0)) < _LOTTERY_TICKET:
+            await query.answer(f"Tickets cost {_LOTTERY_TICKET:,}g!", show_alert=True)
             await render(_build_casino_home(p, uid)); return
-        p["gold"] = safe_int(p.get("gold", 0)) - 250
+        p["gold"] = safe_int(p.get("gold", 0)) - _LOTTERY_TICKET
         save_player(p)
         lot.setdefault("tickets", []).append(uid)
-        lot["pot"] = lot.get("pot", 0) + 250
+        lot["pot"] = lot.get("pot", 0) + _LOTTERY_TICKET
         _ws_set("lottery", lot)
         await query.answer("🎟️ Ticket bought — good luck!")
         flash = f"🎟️ *Ticket bought!* You're in tonight's draw for the *{lot['pot']:,}g* pot."
@@ -40113,16 +40150,16 @@ async def lottery_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_group(update,
             f"🎟️ You're in tonight's draw! Pot: *{lot['pot']:,}g* ({len(lot['tickets'])} tickets)\n"
             f"_Drawn with the evening digest._", delay=12); return
-    if p.get("gold", 0) < 250:
-        await send_group(update, "🎟️ Tickets cost 250g!", delay=9); return
-    p["gold"] -= 250
+    if p.get("gold", 0) < _LOTTERY_TICKET:
+        await send_group(update, f"🎟️ Tickets cost {_LOTTERY_TICKET:,}g!", delay=9); return
+    p["gold"] -= _LOTTERY_TICKET
     save_player(p)
     lot["tickets"].append(user.id)
-    lot["pot"] = lot.get("pot", 0) + 250
+    lot["pot"] = lot.get("pot", 0) + _LOTTERY_TICKET
     _ws_set("lottery", lot)
     await send_group(update,
         f"🎟️ *Ticket bought!* Tonight's pot: *{lot['pot']:,}g* ({len(lot['tickets'])} tickets)\n"
-        f"_Winner drawn with the evening digest. One ticket per player._", delay=12)
+        f"_Pot grows from lost PvP fight wagers too. Winner drawn with the evening digest._", delay=12)
 
 async def _lottery_draw(bot):
     """Called from the daily digest. Returns a digest line or None."""
@@ -44445,7 +44482,7 @@ def main():
     app.add_handler(CommandHandler("coinflip",     coinflip_cmd))
     app.add_handler(CommandHandler("lottery",      lottery_cmd))
     app.add_handler(CommandHandler("roulette",     roulette_cmd))
-    app.add_handler(CallbackQueryHandler(casino_callback, pattern="^cas(home|slot|bet|spin|lotto)_"))
+    app.add_handler(CallbackQueryHandler(casino_callback, pattern="^cas(home|slot|bet|spinx|spin|lotto)_"))
     app.add_handler(CommandHandler("collection",   collection_cmd))
     app.add_handler(CallbackQueryHandler(wild_catch_callback, pattern="^wild_"))
     app.add_handler(CallbackQueryHandler(heist_callback, pattern="^heist_"))
