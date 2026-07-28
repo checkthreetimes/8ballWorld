@@ -21380,6 +21380,15 @@ async def _weekly_guild_boss_sweep(bot):
     home group so the whole guild has a standing target to rally against and climb
     the /raidboard with. Tap-driven like a normal guild raid; expires if ignored."""
     wk = _iso_week()
+    # Only ONE random weekly guild boss may be live at a time. Spawning several in
+    # a single sweep hammered the send path and could stall the whole loop, so if
+    # any guild raid is still active (tapped within the idle window), wait until
+    # it clears/expires before starting the next.
+    _now = time.time()
+    if any(k.startswith("guild:") and not r.get("over")
+           and (_now - r.get("ts", 0)) < _COOP_RAID_IDLE
+           for k, r in _coop_raids.items()):
+        return
     try:
         c = _db().cursor()
         c.execute("SELECT guild_id FROM guilds")
@@ -21389,7 +21398,7 @@ async def _weekly_guild_boss_sweep(bot):
     random.shuffle(gids)
     _spawned = 0
     for gid in gids:
-        if _spawned >= 3:
+        if _spawned >= 1:          # one guild raid at a time
             break
         if _weekly_boss_done.get(gid) == wk:
             continue
