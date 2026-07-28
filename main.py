@@ -19666,6 +19666,52 @@ def _sellable_items(p):
     result.sort(key=lambda x: (rar_order.get(x[2], 0), x[0]))
     return result
 
+def _bulk_sell_by_rarity(p, rarity):
+    """Sell EVERY unequipped, unprotected gear item of `rarity` — all slot types
+    including accessories, shields, hats/gloves/boots/masks (not just weapons/
+    armor). Returns (count_sold, gold, item_names)."""
+    targets = [(it, pr, ct) for (it, pr, rar, ct) in _sellable_items(p) if rar == rarity]
+    if not targets:
+        return 0, 0, []
+    to_remove = Counter({it: ct for it, _pr, ct in targets})
+    total_count = sum(ct for _it, _pr, ct in targets)
+    total_gold  = sum(pr * ct for _it, pr, ct in targets)
+    new_inv = []
+    for x in sjl(p.get("inventory"), []):
+        if to_remove.get(x, 0) > 0:
+            to_remove[x] -= 1; continue
+        new_inv.append(x)
+    p["inventory"] = json.dumps(new_inv)
+    p["gold"] = safe_int(p.get("gold")) + total_gold
+    save_player(p)
+    return total_count, total_gold, [it for it, _pr, _ct in targets]
+
+async def sell_all_rarity_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """sellall_{uid}_{rarity} — bulk-sell every unequipped item of that rarity."""
+    query = update.callback_query; parts = query.data.split("_")
+    try:
+        uid = int(parts[1]); rarity = parts[2]
+    except (IndexError, ValueError):
+        await query.answer(); return
+    if query.from_user.id != uid:
+        await query.answer("Not your sell menu!", show_alert=True); return
+    p = get_player(uid)
+    if not p or rarity not in _SELL_RARITY_VALUES:
+        await query.answer(); return
+    cnt, gold, _names = _bulk_sell_by_rarity(p, rarity)
+    if not cnt:
+        await query.answer(f"No unequipped {rarity} gear to sell.", show_alert=True); return
+    await query.answer(f"Sold {cnt} {rarity} — +{gold:,}g!")
+    rows = [[InlineKeyboardButton("💰 Sell More", callback_data=f"sellbrowse_{uid}_0"),
+             InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")]]
+    try:
+        await _q_edit(query,
+            f"✅ *Sold {cnt} {rarity} item{'s' if cnt != 1 else ''}* for *{fmt_num(gold)}g!*\n"
+            f"💰 Balance: *{fmt_num(safe_int(p.get('gold')))}g*\n\n"
+            f"_All slots incl. accessories & shields. Equipped gear was protected._",
+            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+    except Exception: pass
+
 def _build_sell_browse(p, page=0):
     uid = p["user_id"]
     items = _sellable_items(p)
@@ -19770,10 +19816,18 @@ async def sell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("Sell Off-Class Epic",      callback_data=f"sellr_{uid}_epic")],
             [InlineKeyboardButton("💰 Sell All Off-Class Weapons/Armor", callback_data=f"sellr_{uid}_all")],
             [InlineKeyboardButton("⚔️ Sell Off-Class Items",             callback_data=f"selloffc_{uid}")],
+            # Sell ALL unequipped gear of a rarity — includes accessories & every slot
+            [InlineKeyboardButton("🗑️ Sell ALL Common",   callback_data=f"sellall_{uid}_common"),
+             InlineKeyboardButton("🗑️ Sell ALL Uncommon", callback_data=f"sellall_{uid}_uncommon")],
+            [InlineKeyboardButton("🗑️ Sell ALL Rare",     callback_data=f"sellall_{uid}_rare"),
+             InlineKeyboardButton("🗑️ Sell ALL Epic",     callback_data=f"sellall_{uid}_epic")],
+            [InlineKeyboardButton("🗑️ Sell ALL Legendary", callback_data=f"sellall_{uid}_legendary")],
             [InlineKeyboardButton("🔍 Browse & Sell Individual Items", callback_data=f"sellbrowse_{uid}_0")],
         ]
         await send_group(update,
-            "💰 *Sell Items*\n\nBulk sell by rarity, or sell gear that doesn't match your class. Equipped gear and key materials are always protected.",
+            "💰 *Sell Items*\n\n*Sell ALL [rarity]* dumps every unequipped item of that rarity — "
+            "weapons, armor, *accessories*, shields, everything. Or sell off-class gear / browse individually. "
+            "Equipped gear and key materials are always protected.",
             reply_markup=InlineKeyboardMarkup(buttons), delay=45)
         return
 
@@ -33480,16 +33534,18 @@ async def gearhub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception: pass
         else:
             sell_rows = [
-                [InlineKeyboardButton("Sell Off-Class Common",    callback_data=f"sellr_{uid}_common"),
-                 InlineKeyboardButton("Sell Off-Class Uncommon",  callback_data=f"sellr_{uid}_uncommon")],
-                [InlineKeyboardButton("Sell Off-Class Rare",      callback_data=f"sellr_{uid}_rare"),
-                 InlineKeyboardButton("Sell Off-Class Epic",      callback_data=f"sellr_{uid}_epic")],
-                [InlineKeyboardButton("💰 Sell All Off-Class Weapons/Armor", callback_data=f"sellr_{uid}_all")],
+                [InlineKeyboardButton("🗑️ Sell ALL Common",   callback_data=f"sellall_{uid}_common"),
+                 InlineKeyboardButton("🗑️ Sell ALL Uncommon", callback_data=f"sellall_{uid}_uncommon")],
+                [InlineKeyboardButton("🗑️ Sell ALL Rare",     callback_data=f"sellall_{uid}_rare"),
+                 InlineKeyboardButton("🗑️ Sell ALL Epic",     callback_data=f"sellall_{uid}_epic")],
+                [InlineKeyboardButton("🗑️ Sell ALL Legendary", callback_data=f"sellall_{uid}_legendary")],
                 [InlineKeyboardButton("⚔️ Sell Off-Class Items",             callback_data=f"selloffc_{uid}")],
+                [InlineKeyboardButton("🔍 Browse & Sell Individually", callback_data=f"sellbrowse_{uid}_0")],
                 [InlineKeyboardButton("← Back", callback_data=f"gearhub_back_1_{uid}")],
             ]
-            try: await _q_edit(query, 
-                "💰 *Sell Items*\n\nBulk-sell by rarity, or clear off-class gear.\n"
+            try: await _q_edit(query,
+                "💰 *Sell Items*\n\n*Sell ALL [rarity]* sells every unequipped item of that rarity — "
+                "weapons, armor, *accessories*, shields, all slots. Or clear off-class gear / browse.\n"
                 "_Equipped gear and key materials are always protected._",
                 parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(sell_rows))
             except Exception: pass
@@ -44912,6 +44968,7 @@ def main():
     app.add_handler(CallbackQueryHandler(settitle_callback,     pattern="^settitle_"))
     app.add_handler(CallbackQueryHandler(sell_item_callback,    pattern="^sll_"))
     app.add_handler(CallbackQueryHandler(sell_rarity_callback,  pattern="^sellr_"))
+    app.add_handler(CallbackQueryHandler(sell_all_rarity_callback, pattern="^sellall_"))
     app.add_handler(CallbackQueryHandler(sell_browse_callback,  pattern="^sellbrowse_"))
     app.add_handler(CallbackQueryHandler(sell_offclass_callback, pattern="^selloffc_"))
     app.add_handler(CallbackQueryHandler(forge_cat_callback,      pattern="^forgecat_"))
