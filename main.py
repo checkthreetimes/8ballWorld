@@ -32605,31 +32605,55 @@ async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # scaled rewards. Runs live in memory; only your furthest distance persists.
 _active_wanders = {}   # uid -> run state
 
-WANDER_W        = 20     # scene width in monospace columns
-WANDER_WALK_COL = 3      # the walker's fixed column
-WANDER_WALKER   = "@"    # you, the wanderer
+WANDER_W        = 22     # scene width in monospace columns
+WANDER_H        = 6       # scene height in rows
+WANDER_WALK_COL = 4      # the walker's centre column
 WANDER_FRAME_S  = 1.1    # seconds per walk frame (the "live" scroll speed)
 
-# Pure-ASCII scenery so it stays perfectly monospace on every client (emoji and
-# box-drawing wobble). Each field is a char POOL — spaces dominate for sparse
-# scatter; density/looks vary per area. Rendered inside a ``` code block. Rows:
-# sky (far), canopy (trees), trail (walker + litter + event), ground.
+# The wanderer — a little 3-row figure with a 2-frame walk cycle (legs alternate
+# as the world scrolls, so it reads as striding forward). Drawn on top of the
+# scenery each frame. Pure ASCII so it stays monospace-aligned on every client.
+WANDER_WALK_FRAMES = [
+    (" o ",
+     "/|\\",
+     "/ \\"),
+    (" o ",
+     "/|\\",
+     "_/>"),
+]
+# A small 2-row sprite per event type (bottom row sits on the ground). The card
+# text still names what it is; these just make the object read at a glance.
+WANDER_EVENT_SPRITE = {
+    "$": ("___", "[$]"),   # chest
+    "&": (" $ ", "(&)"),   # glint of coin
+    "?": (" o ", "/?\\"),  # hooded stranger
+    "+": (" ^ ", "[+]"),   # shrine
+    "=": ("===", "=x="),   # rope bridge
+    "!": ("/V\\", "[!]"),  # wolf
+    "^": (" ( ", "<^>"),   # campfire
+    "*": (" /\\", "<*>"),  # crystal
+    "%": (" n ", "[%]"),   # mushroom
+    "~": (" .-", "(~)"),   # small critter
+}
+
+# Per-area look. Trees are drawn as multi-row shapes (top char, body char, trunk)
+# at a chosen density & height range, over a sky pool and a grass/dirt floor.
 WANDER_THEMES = [
-    {"name": "Whispering Woods",
-     "sky": "            .    '   ", "can": "  ^    ^  ^     ^   ^",
-     "trail": "   .        ,      . ", "grd": "~~~~-~~~_~~~~-~~"},
-    {"name": "Deep Thicket",
-     "sky": "               .     ", "can": " ^ # ^  #^   ^ # ^  #",
-     "trail": " ; .     ,    ; .   ,", "grd": "====-==;======-="},
-    {"name": "Misty Grove",
-     "sky": "  ~      ~      ~    ~", "can": " ~  ^   ~  ^  ~  ^ ~ ",
-     "trail": "   .    ~     .     ~ ", "grd": "----~---~----~--"},
-    {"name": "Emberwood",
-     "sky": "         *        *  ", "can": " ^  ^ *  ^  ^ *   ^  ",
-     "trail": " .   ^     , .    ^  ", "grd": '""""^"""""""^""'},
-    {"name": "Starlit Clearing",
-     "sky": " *    .    * .   *  .", "can": "     ^      *     ^  ",
-     "trail": "    .     *     .    ", "grd": "__.___.___._____"},
+    {"name": "Whispering Woods", "sky": "           .      '       *   ",
+     "ctop": "^", "cbody": "#", "trunk": "|", "density": 0.34, "heights": [2, 3, 3, 4],
+     "grass": "  ,   '     .   \" ", "dirt": "~-~~.~~-~~~.-~"},
+    {"name": "Deep Thicket", "sky": "              .             .  ",
+     "ctop": "#", "cbody": "#", "trunk": "|", "density": 0.5, "heights": [3, 3, 4, 4],
+     "grass": " ; .   ,   ; .  , ", "dirt": "=-=;==-===;=-="},
+    {"name": "Misty Grove", "sky": "  ~       ~        ~       ~   ",
+     "ctop": "^", "cbody": "*", "trunk": ":", "density": 0.3, "heights": [2, 3, 3],
+     "grass": "  .    ~    .   ~  ", "dirt": "-.--~--.--~-.-"},
+    {"name": "Emberwood", "sky": "        *          .       *  ",
+     "ctop": "^", "cbody": "*", "trunk": "|", "density": 0.34, "heights": [2, 3, 4],
+     "grass": " .  ^    ,  .  ^  ", "dirt": '"-""^""-"""^"-'},
+    {"name": "Starlit Clearing", "sky": " *   .    *  .   * .   *  . *  ",
+     "ctop": "*", "cbody": "^", "trunk": "|", "density": 0.22, "heights": [2, 3, 4, 5],
+     "grass": "   .     *    .  * ", "dirt": "_.__._.__._._"},
 ]
 WANDER_EVENTS_PER_AREA = 4   # advance to the next area after this many events
 
@@ -32643,18 +32667,49 @@ def _wtile(state, pool, line_id, wp):
     r = random.Random(f"{state['seed']}:{line_id}:{wp}")
     return r.choice(pool)
 
+def _wtree_height(state, theme, wp):
+    """Deterministic tree height at world column `wp` (0 = no tree)."""
+    r = random.Random(f"{state['seed']}:tree:{wp}")
+    if r.random() >= theme["density"]:
+        return 0
+    return r.choice(theme["heights"])
+
 def _wander_scene(state, event_ch=None):
     theme, _ = _wander_area(state)
-    off = state["offset"]; W = WANDER_W
-    def row(pool, lid): return [_wtile(state, pool, lid, off + i) for i in range(W)]
-    sky, can, grd = row(theme["sky"], 0), row(theme["can"], 1), row(theme["grd"], 3)
-    trail = row(theme["trail"], 2)
-    trail[WANDER_WALK_COL] = state.get("walker", WANDER_WALKER)
+    off = state["offset"]; W, H = WANDER_W, WANDER_H
+    grid = [[" "] * W for _ in range(H)]
+    LEVEL = H - 2          # row things stand on (grass); H-1 is dirt below
+    def stamp(sprite, cx, top):
+        for dr, line in enumerate(sprite):
+            for dc, ch in enumerate(line):
+                x, y = cx - 1 + dc, top + dr
+                if ch != " " and 0 <= x < W and 0 <= y < H:
+                    grid[y][x] = ch
+    # sky (rows 0..1), floor (grass on LEVEL, dirt on H-1)
+    for x in range(W):
+        wp = off + x
+        grid[0][x] = _wtile(state, theme["sky"], 0, wp)
+        grid[1][x] = _wtile(state, theme["sky"], 1, wp)
+        grid[H - 1][x] = _wtile(state, theme["dirt"], 5, wp)
+        g = _wtile(state, theme["grass"], 4, wp)
+        if g != " ":
+            grid[LEVEL][x] = g
+    # trees (behind the walker): trunk on LEVEL, canopy stacked above
+    for x in range(W):
+        h = _wtree_height(state, theme, off + x)
+        if not h:
+            continue
+        toprow = max(0, LEVEL - h)
+        for y in range(toprow, LEVEL):
+            grid[y][x] = theme["cbody"]
+        grid[toprow][x] = theme["ctop"]
+        grid[LEVEL][x] = theme["trunk"]
+    # event object (in front of scenery, ahead of the walker)
     if event_ch is not None:
-        c = W - 5
-        if 0 <= c and c + 2 < W:
-            trail[c], trail[c + 1], trail[c + 2] = "[", event_ch, "]"
-    body = "\n".join("".join(r) for r in (sky, can, trail, grd))
+        stamp(WANDER_EVENT_SPRITE.get(event_ch, ("   ", "[%s]" % event_ch)), W - 4, LEVEL - 1)
+    # the walker, drawn last so nothing overlaps them
+    stamp(WANDER_WALK_FRAMES[off % 2], WANDER_WALK_COL, LEVEL - 2)
+    body = "\n".join("".join(r) for r in grid)
     return "```\n" + body + "\n```"
 
 # ── Events: each has two choices; each choice rolls a weighted outcome. Effects
@@ -32723,7 +32778,7 @@ def _wander_new(uid, p):
     state = {
         "uid": uid, "seed": random.randint(1, 10**9),
         "offset": 0, "dist": 0, "events_done": 0,
-        "walker": WANDER_WALKER, "phase": "walk", "event": None, "busy": False,
+        "phase": "walk", "event": None, "busy": False,
         "chat_id": None, "msg_id": None,
         "haul_gold": 0, "haul_xp": 0, "found": [],
         "last_area": 0,
