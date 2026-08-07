@@ -14476,7 +14476,7 @@ def _pvp_log_append(pair, entry):
 CLASS_KITS = {
     "warrior": {
         "main": {"name":"Execute","emoji":"🗡️","mp":20,"cd":2,"kind":"strike","mult":2.0,
-                 "rider":{"execute":0.30},"desc":"STR×2.0. DOUBLE damage vs foes under 30% HP."},
+                 "rider":{"execute":0.30,"bleed":2},"desc":"STR×2.0 + Bleed ×2. DOUBLE damage vs foes under 30% HP."},
         "s1":   {"name":"Bulwark","emoji":"🛡️","mp":15,"cd":3,"kind":"support",
                  "heal_pct":0.15,"effect":[("self","shield_charges","add",2)],
                  "desc":"Brace: halve the next 2 hits against you, heal 15% HP."},
@@ -14486,7 +14486,7 @@ CLASS_KITS = {
     },
     "mage": {
         "main": {"name":"Arcane Blast","emoji":"🔮","mp":22,"cd":2,"kind":"strike","mult":2.2,
-                 "rider":{"pierce":0.5},"desc":"INT×2.2. Ignores 50% of the target's defense."},
+                 "rider":{"pierce":0.5,"hex":2},"desc":"INT×2.2 + Hex ×2. Ignores 50% of the target's defense."},
         "s1":   {"name":"Mana Ward","emoji":"✨","mp":15,"cd":3,"kind":"support",
                  "effect":[("self","shield_charges","add",2),("self","regen_charges","add",2),("self","regen_amt","setmax",0.08)],
                  "desc":"Shield 2 hits + regen 8% HP for 2 turns."},
@@ -14511,15 +14511,15 @@ CLASS_KITS = {
                  "effect":[("self","vanish_turns","add",2)],
                  "desc":"Dodge the next 2 hits against you."},
         "s2":   {"name":"Cripple","emoji":"🎯","mp":15,"cd":2,"kind":"support",
-                 "effect":[("foe","weakened_hits","add",3)],
-                 "desc":"Cripple the foe: they take +25% damage for their next 3 hits."},
+                 "effect":[("foe","exposed_hits","add",3)],
+                 "desc":"Expose the foe: they take extra damage for their next 3 hits."},
     },
     "priest": {
         "main": {"name":"Smite","emoji":"🌟","mp":20,"cd":2,"kind":"strike","mult":2.0,
                  "rider":{"lifesteal":0.25},"desc":"WIS×2.0 holy. Heal 25% of damage dealt."},
         "s1":   {"name":"Divine Shield","emoji":"🛡️","mp":18,"cd":3,"kind":"support",
-                 "effect":[("self","shield_charges","add",3)],
-                 "desc":"Halve the next 3 hits against you."},
+                 "effect":[("self","shield_charges","add",3),("foe","weakened_hits","add",3)],
+                 "desc":"Halve the next 3 hits against you AND Weaken the foe ×3."},
         "s2":   {"name":"Renew","emoji":"💚","mp":18,"cd":3,"kind":"support",
                  "heal_pct":0.20,"cleanse":True,
                  "effect":[("self","regen_charges","add",3),("self","regen_amt","setmax",0.10)],
@@ -14527,7 +14527,7 @@ CLASS_KITS = {
     },
     "botanist": {
         "main": {"name":"Thorn Lash","emoji":"🌿","mp":18,"cd":2,"kind":"strike","mult":2.0,
-                 "rider":{"bleed":3},"desc":"WIS×2.0 + Bleed ×3."},
+                 "rider":{"poison":3},"desc":"WIS×2.0 + venomous Poison ×3."},
         "s1":   {"name":"Regrowth","emoji":"🍃","mp":15,"cd":3,"kind":"support",
                  "heal_pct":0.12,"effect":[("self","regen_charges","add",3),("self","regen_amt","setmax",0.10)],
                  "desc":"Heal 12% + regen 10%/turn for 3 turns."},
@@ -14537,7 +14537,7 @@ CLASS_KITS = {
     },
     "enchantress": {
         "main": {"name":"Hex Bolt","emoji":"🔯","mp":18,"cd":2,"kind":"strike","mult":2.0,
-                 "rider":{"expose":2},"desc":"INT×2.0. Exposes the foe: +damage taken for 2 hits."},
+                 "rider":{"hex":2},"desc":"INT×2.0. Hexes the foe ×2 (curse damage over time)."},
         "s1":   {"name":"Mirror Veil","emoji":"🪞","mp":18,"cd":3,"kind":"support",
                  "effect":[("self","def_reflect_hits","add",1),("self","shield_charges","add",1)],
                  "desc":"Reflect the next hit back and soften it."},
@@ -14547,7 +14547,7 @@ CLASS_KITS = {
     },
     "valkyrie": {
         "main": {"name":"Valkyrie Strike","emoji":"⚡","mp":20,"cd":2,"kind":"strike","mult":2.1,
-                 "rider":{"laststand":True},"desc":"STR×2.1. Hits harder the lower YOUR HP."},
+                 "rider":{"laststand":True,"bleed":2},"desc":"STR×2.1 + Bleed ×2. Hits harder the lower YOUR HP."},
         "s1":   {"name":"Aegis","emoji":"🛡️","mp":18,"cd":3,"kind":"support",
                  "effect":[("self","shield_charges","add",3)],
                  "desc":"Halve the next 3 hits against you."},
@@ -14557,7 +14557,7 @@ CLASS_KITS = {
     },
     "phantom_dancer": {
         "main": {"name":"Blade Waltz","emoji":"🌀","mp":18,"cd":2,"kind":"strike","mult":2.0,
-                 "rider":{"momentum":True},"desc":"AGI×2.0, +8% per Momentum (from dodges)."},
+                 "rider":{"momentum":True,"distract":1},"desc":"AGI×2.0 + Distract ×1, +8% per Momentum (from dodges)."},
         "s1":   {"name":"Phantom Step","emoji":"👻","mp":15,"cd":3,"kind":"support",
                  "effect":[("self","vanish_turns","add",2),("self","dodge_momentum","add",2)],
                  "desc":"Dodge the next 2 hits and gain Momentum."},
@@ -15060,6 +15060,12 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, kit_skill=None):
             _kit_notes.append(f"🧪 Poison ×{rider['poison']}")
         if rider.get("expose"):
             add_charges(d, "exposed_hits", rider["expose"]); _kit_notes.append(f"🎯 Exposed ×{rider['expose']}")
+        if rider.get("hex"):
+            add_charges(d, "hex_turns", rider["hex"]); _kit_notes.append(f"💀 Hexed ×{rider['hex']}")
+        if rider.get("distract"):
+            add_charges(d, "distract_turns", rider["distract"]); _kit_notes.append(f"🌀 Distracted ×{rider['distract']}")
+        if rider.get("weaken"):
+            add_charges(d, "weakened_hits", rider["weaken"]); _kit_notes.append(f"📉 Weakened ×{rider['weaken']}")
         _kit_notes.insert(0, f"{kit_skill.get('emoji','✨')} *{kit_skill['name']}!*")
     if _kit_notes:
         extra_notes.extend(_kit_notes)
@@ -15758,37 +15764,42 @@ _AUTO_AFFLICTION_CAP = {"poison_stacks":8,"bleed_stacks":8,"distract_turns":3,
                          "silence_turns":3,"hex_turns":4,"exposed_hits":5,"weakened_hits":4}
 
 # Kill condition per class line — ALL conds must be met on target simultaneously
+# Each finisher requires debuffs the class's OWN kit reliably applies (verified by
+# the coverage audit): warrior/valkyrie stack Bleed via their main, mage/ench
+# stack Hex, thief/botanist/serpent stack Poison, priest stacks Weaken, archer
+# stacks Expose (Cripple), phantom_dancer stacks Distract. Reachable in ~1-2 setup
+# casts, then the ⚡ Finisher unlocks.
 _KILL_CONDITIONS = {
-    "warrior":        {"conds":[("bleed_stacks",3),("exposed_hits",1)],
+    "warrior":        {"conds":[("bleed_stacks",3)],
                        "name":"Killing Blow","stat":"STR","mult":8.0,
-                       "desc":"STR×8 — bleed ×3 + exposed."},
-    "valkyrie":       {"conds":[("bleed_stacks",2),("weakened_hits",2)],
+                       "desc":"STR×8 — set up Bleed ×3 with Execute."},
+    "valkyrie":       {"conds":[("bleed_stacks",3)],
                        "name":"Bifrost's Descent","stat":"STR","mult":7.0,
-                       "desc":"STR×7 — bleeding ×2 + weakened ×2."},
-    "mage":           {"conds":[("hex_turns",3),("distract_turns",1)],
+                       "desc":"STR×7 — set up Bleed ×3 with Valkyrie Strike."},
+    "mage":           {"conds":[("hex_turns",3)],
                        "name":"Void Collapse","stat":"INT","mult":6.0,"drain_pct":0.50,
-                       "desc":"INT×6 + drain 50% remaining HP — hexed ×3 + dizzy."},
+                       "desc":"INT×6 + drain 50% remaining HP — Hex ×3 (Arcane Blast)."},
     "enchantress":    {"conds":[("hex_turns",4)],
                        "name":"Dread Sentence","stat":"INT","mult":7.0,
-                       "desc":"INT×7 — hex overload ×4."},
-    "thief":          {"conds":[("poison_stacks",4),("silence_turns",1)],
+                       "desc":"INT×7 — Hex overload ×4 (Hex Bolt)."},
+    "thief":          {"conds":[("poison_stacks",4)],
                        "name":"Throat Strike","stat":"AGI","mult":6.0,
-                       "desc":"AGI×6 — poisoned ×4 + silenced."},
-    "phantom_dancer": {"conds":[("distract_turns",3)],
+                       "desc":"AGI×6 — Poison ×4 (Toxin)."},
+    "phantom_dancer": {"conds":[("distract_turns",2)],
                        "name":"Phantom Finale","stat":"AGI","mult":8.0,
-                       "desc":"AGI×8 — fully blinded ×3."},
-    "archer":         {"conds":[("distract_turns",2),("exposed_hits",2)],
+                       "desc":"AGI×8 — Distract ×2 (Blade Waltz)."},
+    "archer":         {"conds":[("exposed_hits",3)],
                        "name":"Headshot","stat":"DEX","mult":10.0,
-                       "desc":"DEX×10 — pinned ×2 + distracted ×2."},
-    "priest":         {"conds":[("weakened_hits",3),("silence_turns",1)],
+                       "desc":"DEX×10 — Expose ×3 (Cripple)."},
+    "priest":         {"conds":[("weakened_hits",3)],
                        "name":"Divine Judgment","stat":"WIS","mult":7.0,
-                       "desc":"WIS×7 — weakened ×3 + silenced."},
+                       "desc":"WIS×7 — Weaken ×3 (Smite)."},
     "botanist":       {"conds":[("poison_stacks",5)],
                        "name":"Toxic Overload","stat":"WIS","mult":6.0,"dot_burst":True,
-                       "desc":"WIS×6 + all venom stacks burst — poison ×5."},
+                       "desc":"WIS×6 + all venom bursts — Poison ×5 (Thorn Lash)."},
     "serpent":        {"conds":[("poison_stacks",5)],
                        "name":"Serpent's Fang","stat":"STR","mult":7.0,
-                       "desc":"STR×7 — venom ×5 flowing."},
+                       "desc":"STR×7 — Poison ×5 (Venom Fang + Constrict)."},
 }
 
 def _check_kill_condition(attacker_p, target_p):
