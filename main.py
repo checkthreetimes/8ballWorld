@@ -39376,19 +39376,28 @@ async def _duel_finish(bot, chat_id, winner_uid, loser_uid, timeout=False, forfe
 _last_weather_announced = {"name": None}
 
 def _recent_group_players(group_id, hours=6, limit=25):
-    """(uid, name) of players recently active in a specific group."""
+    """(uid, name, tg_username) of players recently active in a specific group.
+    tg_username is the live Telegram @handle (or None) so callers can address
+    players by a real @mention instead of a display name."""
     try:
         cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
         c = _db().cursor()
         rows = c.execute(
-            """SELECT s.user_id, COALESCE(p.username, s.username) AS name
+            """SELECT s.user_id, COALESCE(p.username, s.username) AS name, p.tg_username AS tg
                FROM shadow_profiles s LEFT JOIN players p ON p.user_id = s.user_id
                WHERE s.home_group = ? AND s.last_seen >= ?
                ORDER BY s.last_seen DESC LIMIT ?""",
             (group_id, cutoff, limit)).fetchall()
-        return [(r["user_id"], r["name"] or "someone") for r in rows]
+        return [(r["user_id"], r["name"] or "someone", r["tg"]) for r in rows]
     except Exception:
         return []
+
+def _grp_mention(name, tg):
+    """Address a player publicly: prefer a live Telegram @handle (a real, tappable
+    mention), fall back to the display name only when no handle is on record."""
+    if tg:
+        return f"@{tg}"
+    return _md_escape(name) if name else "a challenger"
 
 # Gift pool for blessings/fortune drops. Each returns (apply_fn, describe).
 _GIFT_ITEMS = ["Greater Health Potion", "Grand Restorative Flask", "MP Tonic",
@@ -39451,16 +39460,16 @@ async def _weather_watch(bot):
         recent = _recent_group_players(g, hours=6)
         witness = ""
         if len(recent) >= 1:
-            names = [f"*{n}*" for _, n in recent[:2]]
+            names = [_grp_mention(n, tg) for _, n, tg in recent[:2]]
             _joined = " & ".join(names)
             witness = "\n_" + random.choice(_WEATHER_WITNESS).format(names=_joined) + "_"
-        # Blessing: ~40% of weather changes gift a random recent player, by name
+        # Blessing: ~40% of weather changes gift a random recent player, by @handle
         blessing = ""
         if recent and random.random() < 0.40:
-            _buid, _bname = random.choice(recent)
+            _buid, _bname, _btg = random.choice(recent)
             reward = _grant_gift(_buid)
             if reward:
-                blessing = f"\n\n🎁 *The {w['name']} blesses {_bname}!*  {reward}"
+                blessing = f"\n\n🎁 *The {w['name']} blesses* {_grp_mention(_bname, _btg)}!  {reward}"
                 try:
                     await bot.send_message(_buid,
                         f"🎁 *The {w['name']} smiles on you!*\nYou received {reward}. "
@@ -39480,12 +39489,12 @@ async def _weather_watch(bot):
 
 # ── FORTUNE DROPS — random surprise gifts to active players ───────────────────
 _FORTUNE_LINES = [
-    "🍀 *Fortune smiles!* A stray pouch of luck lands on *{name}*.",
-    "🎰 *The 8-Ball rolls in {name}'s favor!*",
-    "✨ *A gift from the void* finds its way to *{name}*.",
-    "🪙 *{name}* reaches into their pocket and finds something new.",
-    "🌟 *The table honors {name}* for keeping the game alive.",
-    "🎁 *A wandering merchant tosses {name} a parting gift.*",
+    "🍀 *Fortune smiles!* A stray pouch of luck lands on {name}.",
+    "🎰 *The 8-Ball rolls in* {name}'s *favor!*",
+    "✨ *A gift from the void* finds its way to {name}.",
+    "🪙 {name} *reaches into their pocket and finds something new.*",
+    "🌟 *The table honors* {name} *for keeping the game alive.*",
+    "🎁 *A wandering merchant tosses* {name} *a parting gift.*",
 ]
 _fortune_last = {}  # chat_id -> last fortune drop ts
 
@@ -39510,11 +39519,11 @@ async def _fortune_drop_scheduler(bot):
         if not recent:
             continue
         _fortune_last[g] = now_ts
-        uid, name = random.choice(recent)
+        uid, name, tg = random.choice(recent)
         reward = _grant_gift(uid)
         if not reward:
             continue
-        line = random.choice(_FORTUNE_LINES).format(name=name)
+        line = random.choice(_FORTUNE_LINES).format(name=_grp_mention(name, tg))
         try:
             await bot.send_message(g, f"{line}\n{reward}", parse_mode="Markdown")
         except Exception:
