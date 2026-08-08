@@ -4445,6 +4445,8 @@ PET_SPECIES = {
     "loren":     {"name":"Loren",     "element":"holy",      "rarity":"celestial", "base_atk":197, "base_def":47, "personality":"calm",        "emoji":"🌙", "desc":"A quietly radiant legend of the hall. Loren keeps the peace, guards the room, and shines steadiest when the night is darkest.", "def_ability":"shield"},
     "tony":      {"name":"Tony",      "element":"fire",      "rarity":"celestial", "base_atk":211, "base_def":36, "personality":"fierce",      "emoji":"🥊", "desc":"A heavyweight legend of the 8Ball hall who never ducks a challenge and hits back twice as hard as he's hit.", "def_ability":"counter"},
     "kitty":     {"name":"Kitty",     "element":"void",      "rarity":"celestial", "base_atk":199, "base_def":43, "personality":"playful",     "emoji":"😺", "desc":"A beloved legend of the hall with nine lives and a hundred tricks. Kitty plays the whole game like it's a toy — and usually wins.", "def_ability":"poison"},
+    # ── The Architect — the developer of the whole world (celestial) ──
+    "javan":     {"name":"Javan",     "element":"void",      "rarity":"celestial", "base_atk":215, "base_def":50, "personality":"calm",        "emoji":"🕹️", "desc":"The Architect of this entire world — Javan wrote the rules every creature here lives by, and can rewrite them on a whim. The rarest thing in existence, because there is only one.", "def_ability":"shield"},
 }
 
 # Defensive ability definitions
@@ -40261,7 +40263,7 @@ _wild_last = {}         # chat_id -> last spawn ts
 
 # ── 8Ball Legends — founder signature pets (celestial) get their own spawn roll ──
 _LEGEND_KEYS = ["jenna","marc","temari","james","jas","jax","saul","meye","emily",
-                "sailor","kapkau","blackstar","loren","tony","kitty"]
+                "sailor","kapkau","blackstar","loren","tony","kitty","javan"]
 _legend_last = {}   # chat_id -> ts of last founder-Legend spawn in that chat
 _legend_rot  = [0]  # global rotation so each founder gets their moment in turn
 _LEGEND_SPAWN_GAP = 40 * 3600   # guarantee a Legend roughly every ~1.5–2 active days
@@ -40358,7 +40360,14 @@ async def _announce_epic_pet(bot, chat_id, catcher, species_key, shiny=False, ho
     emoji = sp.get("emoji", "🐾")
     elem  = sp.get("element", "?").capitalize()
     shiny_tag = "✨SHINY " if shiny else ""
-    if _is_legend(species_key):
+    if species_key == "javan":
+        text = (f"🕹️✨ *THE ARCHITECT HAS BEEN {how.upper()}!* ✨🕹️\n\n"
+                f"{emoji} *{shiny_tag}{sp['name']}* — the developer of this entire world —\n"
+                f"now stands beside {catcher}!\n\n"
+                f"🌠 _Celestial · {elem}_   |   ⚔️ Base ATK *{sp['base_atk']}*\n"
+                f"_{sp['desc']}_\n\n"
+                f"🌌 _There is only one. This may never happen again._")
+    elif _is_legend(species_key):
         text = (f"🎱✨ *AN 8BALL LEGEND HAS BEEN {how.upper()}!* ✨🎱\n\n"
                 f"{emoji} *{shiny_tag}{sp['name']}* — one of the pillars of the Empire —\n"
                 f"now stands beside {catcher}!\n\n"
