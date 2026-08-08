@@ -35797,6 +35797,54 @@ def _admin_grant_exp(p, total):
         save_player(p)   # persist decremented exp + new level before the next chunk
         given += chunk; guard += 1
 
+def _lvl_stat_points(l):
+    """Stat points granted for REACHING level l (matches add_exp: 6 above 20, else 3)."""
+    return 6 if l > 20 else 3
+
+def _admin_set_level(uid, target_level):
+    """Force a player to an EXACT level (up or down). Progression saves are
+    forward-only (both save_player and save_shadow refuse to lower level/total_exp
+    to survive stale-snapshot races), so a revert must write BOTH the players and
+    shadow_profiles rows directly — otherwise sync_levels bounces the level back up.
+    EXP into the level is reset to 0 and stat points are adjusted by the level
+    delta (floored at 0 if the player already spent points from the removed levels).
+    Returns a result dict, or None if the player doesn't exist."""
+    target_level = max(1, min(LEVEL_CAP, safe_int(target_level)))
+    conn = _db(); c = conn.cursor()
+    row = c.execute("SELECT level, stat_points, total_exp FROM players WHERE user_id=?",
+                    (uid,)).fetchone()
+    if not row:
+        return None
+    old_level = safe_int(row["level"], 1)
+    old_pts   = safe_int(row["stat_points"])
+    # Cumulative total_exp to have just reached target_level with 0 progress into it.
+    new_total = min(_INT_SAFE_MAX, sum(exp_for_level(l) for l in range(1, target_level)))
+    # Adjust the unspent stat-point pool by the levels added/removed.
+    if target_level < old_level:
+        pts_delta = -sum(_lvl_stat_points(l) for l in range(target_level + 1, old_level + 1))
+    elif target_level > old_level:
+        pts_delta =  sum(_lvl_stat_points(l) for l in range(old_level + 1, target_level + 1))
+    else:
+        pts_delta = 0
+    new_pts = old_pts + pts_delta
+    floored = new_pts < 0
+    if floored:
+        new_pts = 0
+    # Recompute max HP at the target level (stats unchanged).
+    _tmp = get_player(uid)
+    _tmp["level"] = target_level
+    new_max_hp = calc_max_hp(_tmp)
+    # Direct writes bypass the forward-only guards in save_player/save_shadow.
+    c.execute("UPDATE players SET level=?, exp=0, total_exp=?, stat_points=?, max_hp=?, hp=? "
+              "WHERE user_id=?",
+              (target_level, new_total, new_pts, new_max_hp, new_max_hp, uid))
+    c.execute("UPDATE shadow_profiles SET level=?, exp=0, total_exp=? WHERE user_id=?",
+              (target_level, new_total, uid))
+    conn.commit()
+    return {"old_level": old_level, "new_level": target_level, "old_pts": old_pts,
+            "new_pts": new_pts, "pts_delta": pts_delta, "floored": floored,
+            "new_max_hp": new_max_hp}
+
 async def admingivexp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -35936,6 +35984,111 @@ async def admingivexp_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             f"New level: *{new_level}*  |  EXP: *{fmt_num(p['exp'])}*",
             parse_mode="Markdown"
         )
+    except Exception: pass
+
+
+def _admin_match_players(search):
+    """Find players by exact id / @handle / display name, then partial match.
+    Returns a list of dict rows (user_id, username, level, tg_username)."""
+    c = _db().cursor()
+    matches, seen = [], set()
+    def _add(row):
+        if row and row["user_id"] not in seen:
+            seen.add(row["user_id"]); matches.append(dict(row))
+    try:
+        row = c.execute("SELECT user_id, username, level, tg_username FROM players WHERE user_id=?",
+                        (int(search),)).fetchone()
+        _add(row)
+    except ValueError:
+        pass
+    c.execute("SELECT user_id, username, level, tg_username FROM players WHERE LOWER(tg_username)=?", (search,))
+    for row in c.fetchall(): _add(row)
+    c.execute("SELECT user_id, username, level, tg_username FROM players WHERE LOWER(username)=?", (search,))
+    for row in c.fetchall(): _add(row)
+    c.execute("""SELECT user_id, username, level, tg_username FROM players
+                 WHERE LOWER(username) LIKE ? OR LOWER(tg_username) LIKE ?
+                 ORDER BY level DESC LIMIT 20""", (f"%{search}%", f"%{search}%"))
+    for row in c.fetchall(): _add(row)
+    return matches
+
+async def adminsetlevel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: set a player to an EXACT level (revert an over-grant). Zeros
+    their progress into the level and adjusts stat points by the level delta."""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if update.effective_chat.type != "private":
+        try: await update.message.delete()
+        except: pass
+        return
+    args = context.args
+    if not args or len(args) < 2:
+        await update.message.reply_text(
+            "Usage: /adminsetlevel <name/id/@handle> <level>\n\n"
+            "Sets the player to EXACTLY that level (up or down), resets their EXP\n"
+            "progress into the level to 0, and adjusts unspent stat points by the\n"
+            "level change. Updates both the player and shadow rows so it sticks.\n\n"
+            "Examples:\n"
+            "  /adminsetlevel john 50\n"
+            "  /adminsetlevel @john 120\n"
+            "  /adminsetlevel 123456789 30")
+        return
+    try:
+        target_level = int(args[-1])
+    except ValueError:
+        await update.message.reply_text("Last argument must be the target LEVEL.\nExample: /adminsetlevel john 50")
+        return
+    if not (1 <= target_level <= LEVEL_CAP):
+        await update.message.reply_text(f"Level must be between 1 and {LEVEL_CAP}.")
+        return
+    search = " ".join(args[:-1]).strip().lower().lstrip("@")
+    matches = _admin_match_players(search)
+    if not matches:
+        await update.message.reply_text(f"No players found matching '{search}'.")
+        return
+    # Always require an explicit tap to confirm (destructive, and can lower a level).
+    rows = []
+    for m in matches[:20]:
+        handle = f"@{m['tg_username']} · " if m.get("tg_username") else ""
+        arrow  = "⬇️" if target_level < safe_int(m["level"]) else ("⬆️" if target_level > safe_int(m["level"]) else "➡️")
+        label  = f"{arrow} {m['username']} ({handle}Lv {m['level']} → {target_level}  |  id:{m['user_id']})"
+        rows.append([InlineKeyboardButton(label, callback_data=f"asetlvl_{m['user_id']}_{target_level}")])
+    rows.append([InlineKeyboardButton("❌ Cancel", callback_data="asetlvl_cancel")])
+    await update.message.reply_text(
+        f"Set which player to *Level {target_level}*?\n"
+        f"_This zeros their EXP into the level and adjusts stat points. Tap to confirm._",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+
+async def adminsetlevel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if update.effective_user.id != ADMIN_ID:
+        await query.answer("Not authorised.", show_alert=True); return
+    await query.answer()
+    data = query.data
+    if data == "asetlvl_cancel":
+        try: await _q_edit(query, "_Cancelled._", parse_mode="Markdown")
+        except: pass
+        return
+    parts = data.split("_")   # asetlvl_<uid>_<level>
+    try:
+        target_uid   = int(parts[1])
+        target_level = int(parts[2])
+    except (IndexError, ValueError):
+        await _q_edit(query, "Invalid callback data."); return
+    p = get_player(target_uid)
+    if not p:
+        await _q_edit(query, "Player not found."); return
+    res = _admin_set_level(target_uid, target_level)
+    if not res:
+        await _q_edit(query, "Player not found."); return
+    pts_line = f"Stat points: *{fmt_num(res['old_pts'])}* → *{fmt_num(res['new_pts'])}*"
+    if res["floored"]:
+        pts_line += "  ⚠️ _(floored at 0 — some had already been spent)_"
+    try:
+        await _q_edit(query,
+            f"✅ Set *{p['username']}* to *Level {res['new_level']}* "
+            f"_(was {res['old_level']})_\n"
+            f"EXP into level reset to *0*.\n{pts_line}",
+            parse_mode="Markdown")
     except Exception: pass
 
 
@@ -44763,6 +44916,8 @@ def main():
     app.add_handler(CommandHandler("adminresetclass", adminresetclass_cmd))
     app.add_handler(CommandHandler("admingivexp",    admingivexp_cmd))
     app.add_handler(CallbackQueryHandler(admingivexp_callback, pattern="^agivexp_"))
+    app.add_handler(CommandHandler("adminsetlevel",  adminsetlevel_cmd))
+    app.add_handler(CallbackQueryHandler(adminsetlevel_callback, pattern="^asetlvl_"))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(rank_callback,         pattern="^rank_p_"))
