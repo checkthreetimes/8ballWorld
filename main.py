@@ -40351,7 +40351,25 @@ async def spawncelestial_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     /spawncelestial Javan      → a specific Legend / celestial by name"""
     if update.effective_user.id != ADMIN_ID:
         return
-    chat_id = update.effective_chat.id
+    # Run in a group → spawn here. Run in DM → broadcast to the home group,
+    # same target resolution as /megaphone.
+    if update.effective_chat.type != "private":
+        chat_id = update.effective_chat.id
+    else:
+        s = get_shadow(update.effective_user.id)
+        chat_id = (s.get("home_group") if s else None) or _megaphone_state.get("group")
+        if not chat_id:
+            try:
+                c = _db().cursor()
+                c.execute("SELECT home_group FROM shadow_profiles WHERE home_group IS NOT NULL LIMIT 1")
+                row = c.fetchone()
+                if row: chat_id = row[0]
+            except Exception:
+                pass
+        if not chat_id:
+            await update.message.reply_text(
+                "Couldn't find the group. Use any command in the group first, then try again.")
+            return
     args = context.args or []
     sk = None
     if args:
@@ -40375,10 +40393,18 @@ async def spawncelestial_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         sk = random.choice(cels) if cels else None
     if not sk:
         await update.message.reply_text("No celestial species available."); return
-    # Delete the admin trigger so the celestial just "appears" out of nowhere.
-    try: await update.message.delete()
-    except Exception: pass
     await _spawn_wild_pet(context.bot, chat_id, force_species=sk)
+    if update.effective_chat.type != "private":
+        # In-group: delete the trigger so the celestial just "appears".
+        try: await update.message.delete()
+        except Exception: pass
+    else:
+        # From DM: confirm where it went.
+        try:
+            await update.message.reply_text(
+                f"📣 *{PET_SPECIES[sk]['name']}* summoned to the group — first to catch it keeps it!",
+                parse_mode="Markdown")
+        except Exception: pass
 
 async def _edit_any_card(bot, chat_id, msg_id, text, markup=None):
     """Edit a card whether it's a text message or a photo (caption) message."""
