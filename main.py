@@ -4165,22 +4165,19 @@ def get_pet_atk_bonus(pet):
     base = round(base * PERSONALITY_ATK_MOD.get(pers, 1.0))
     # Shiny bonus: +15% ATK
     if pet.get("is_shiny"): base = round(base * 1.15)
-    hunger = pet.get("hunger", 100)
-    mood   = pet.get("mood", 100)
-    # Well-fed AND happy: +25% bonus (reward for good care)
-    if hunger >= 70 and mood >= 70:
-        base = round(base * 1.25)
-    # Very hungry: severely reduced damage
-    elif hunger < 20:
-        base = round(base * 0.30)
-    # Hungry: reduced damage
-    elif hunger < 40:
-        base = round(base * 0.60)
-    # Sad (but not hungry): reduced damage
-    elif mood < 20:
-        base = round(base * 0.30)
-    elif mood < 40:
-        base = round(base * 0.60)
+    hunger = safe_int(pet.get("hunger"), 100)
+    mood   = safe_int(pet.get("mood"), 100)
+    # Power scales HARD with fullness — a fully-fed pet is a monster, a starving
+    # one is feeble. Feeding is manual (/pet -> Feed), so keeping it full is the
+    # reward loop. (Still bounded to 65% of the owner's hit in _pet_combat_atk.)
+    if   hunger >= 95: base = round(base * 1.75)   # STUFFED — peak power
+    elif hunger >= 75: base = round(base * 1.35)   # well fed
+    elif hunger >= 50: base = round(base * 1.10)   # content
+    elif hunger >= 30: base = round(base * 0.80)   # peckish
+    elif hunger >= 15: base = round(base * 0.55)   # hungry
+    else:              base = round(base * 0.30)   # starving
+    if   mood >= 80:   base = round(base * 1.10)   # happy bonus
+    elif mood < 30:    base = round(base * 0.80)   # sad penalty
     # Collector's Bond — owning more of the bestiary makes your active pet fiercer
     _owner = pet.get("owner_id")
     if _owner:
@@ -4205,6 +4202,59 @@ def _pet_combat_atk(pet, owner):
     except Exception:
         return raw
     return max(1, min(raw, round(owner_hit * _PET_DMG_CAP)))
+
+# ── ADVANCED PET FEEDING ──────────────────────────────────────────────────────
+# Feeding is manual now (no auto-feed). Different foods restore different amounts
+# of hunger/mood/bond; keeping a pet FULL makes it dramatically stronger (see the
+# hunger tiers in get_pet_atk_bonus). Foods are consumed from inventory.
+# name -> (hunger, mood, bond)
+_PET_FOODS = {
+    "Pet Snack":     (25, 10, 1),
+    "Pet Kibble":    (45,  8, 1),
+    "Juicy Steak":   (70, 15, 3),
+    "Honey Treat":   (40, 30, 4),
+    "Golden Apple":  (100, 30, 8),
+}
+
+def _pet_feed(pet, food):
+    """Apply a food to a pet. Returns (hunger_gain, mood_gain, bond_gain) actually
+    applied (hunger clamps at 100). Mutates pet; caller consumes the item + saves."""
+    h, mood, bond = _PET_FOODS.get(food, (20, 5, 0))
+    before = safe_int(pet.get("hunger"), 100)
+    pet["hunger"] = min(100, before + h)
+    pet["mood"]   = min(100, safe_int(pet.get("mood"), 100) + mood)
+    pet["bond_score"] = min(200, safe_int(pet.get("bond_score"), 0) + bond)
+    pet["last_fed"] = datetime.now().isoformat()
+    return pet["hunger"] - before, mood, bond
+
+def _pet_hunger_label(hunger):
+    h = safe_int(hunger, 100)
+    if   h >= 95: return "😻 STUFFED — peak power (×1.75 ATK)"
+    elif h >= 75: return "😺 Well fed (×1.35 ATK)"
+    elif h >= 50: return "🙂 Content (×1.10 ATK)"
+    elif h >= 30: return "😐 Peckish (×0.80 ATK)"
+    elif h >= 15: return "🙁 Hungry (×0.55 ATK)"
+    return "😿 Starving (×0.30 ATK) — feed it!"
+
+def _pet_feed_markup(pid, p):
+    """Feeding menu: one button per pet-food the owner has, plus Feast/shop/back."""
+    from collections import Counter
+    counts = Counter(f for f in sjl(p.get("inventory"), []) if f in _PET_FOODS)
+    rows = []
+    for food in _PET_FOODS:  # stable order, low->high
+        n = counts.get(food)
+        if n:
+            h = _PET_FOODS[food][0]
+            rows.append([InlineKeyboardButton(f"🍖 {food} ×{n}  (+{h} hunger)",
+                                              callback_data=f"petfeedgive_{pid}_{food}")])
+    if not rows:
+        rows.append([InlineKeyboardButton("🛒 No food — buy some (Pet Shop)", callback_data="petshop")])
+    else:
+        rows.append([InlineKeyboardButton("🍽️ Feast (fill up)", callback_data=f"petfeast_{pid}"),
+                     InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")])
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data="petmain"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{p['user_id']}")])
+    return InlineKeyboardMarkup(rows)
 
 # ── BESTIARY / COLLECTOR SYSTEM ───────────────────────────────────────────────
 _ALL_SPECIES_COUNT = len(PET_SPECIES)
@@ -4568,8 +4618,12 @@ CONSUMABLES = {
     # Crafting
     "Iron Shard":             {"desc":"Crafting material. Rare drop.","sell":100},
     "Enchanting Scroll":      {"desc":"Used to enchant gear.","sell":150},
-    # Pets
-    "Pet Snack":              {"desc":"Trail food for your pet — each one auto-packs a BONUS adventure on its next outing.","sell":20},
+    # Pets — foods (feed at /pet -> Feed; keeping a pet FULL makes it far stronger)
+    "Pet Snack":              {"desc":"A light snack. +25 hunger, +10 mood.","sell":20},
+    "Pet Kibble":             {"desc":"Hearty pet food. +45 hunger.","sell":60},
+    "Juicy Steak":            {"desc":"A rich meal. +70 hunger, +15 mood, +3 bond.","sell":200},
+    "Honey Treat":            {"desc":"A sweet treat pets adore. +40 hunger, +30 mood, +4 bond.","sell":150},
+    "Golden Apple":           {"desc":"A legendary fruit — fills your pet completely. +100 hunger, +30 mood, +8 bond.","sell":1000},
     "Common Egg":             {"desc":"A warm egg. Common or uncommon pet inside.","sell":5000},
     "Rare Egg":               {"desc":"A glowing egg. Uncommon to rare pet inside.","sell":15000},
     "Dragon Egg":             {"desc":"A heavy scaled egg. Rare to epic pet inside.","sell":37000},
@@ -13866,14 +13920,16 @@ def _pet_autonomous_step(p, pet, cycles):
     emoji = sp.get("emoji", "🐾")
     nowiso = datetime.now().isoformat()
 
-    # 1. Self-care — the pet keeps itself fed and content
-    pet["hunger"] = 100
-    pet["mood"]   = 100
-    pet["last_fed"] = pet["last_play"] = pet["last_trained"] = nowiso
+    # 1. The pet plays & trains on its own — but it does NOT feed itself anymore.
+    # Hunger decays over time (see _decay_pet); YOU feed it (/pet -> Feed), and its
+    # power scales with fullness. A hungry pet still adventures, just hauls less.
+    pet["mood"] = min(100, safe_int(pet.get("mood"), 100) + 25)
+    pet["last_play"] = pet["last_trained"] = nowiso
+    _hfrac = max(0.35, min(1.0, safe_int(pet.get("hunger"), 100) / 100.0))
 
     # 2. Training — EXP + level-ups (capped at the owner-scaled pet cap)
     cap = _pet_level_cap(owner_lvl)
-    exp_gain = sum(25 + pet.get("level", 1) * 6 + random.randint(0, 20) for _ in range(cycles))
+    exp_gain = round(sum(25 + pet.get("level", 1) * 6 + random.randint(0, 20) for _ in range(cycles)) * _hfrac)
     pet["exp"] = pet.get("exp", 0) + exp_gain
     lvl_ups = []
     while pet["exp"] >= pet_exp_for_level(pet["level"]) and pet["level"] < cap:
@@ -13883,18 +13939,10 @@ def _pet_autonomous_step(p, pet, cycles):
     bond_gain = cycles * 3
     pet["bond_score"] = min(200, pet.get("bond_score", 0) + bond_gain)
 
-    # 3b. Pet Snacks (no longer needed for feeding) are auto-packed as trail food:
-    # each one the owner has fuels one BONUS adventure this run.
-    inv0 = sjl(p.get("inventory"), [])
+    # 3b. Pet Snacks are FOOD again (feed them manually) — no longer auto-consumed.
     snack_bonus = 0
-    if "Pet Snack" in inv0:
-        use = min(inv0.count("Pet Snack"), cycles + 2)
-        for _ in range(use):
-            inv0.remove("Pet Snack")
-        p["inventory"] = json.dumps(inv0)
-        snack_bonus = use
 
-    # 4. Adventures (+ snack-fueled bonus trips) + flavor events
+    # 4. Adventures + flavor events
     adventures = 0
     total_gold = 0
     loot = {}   # item -> qty
@@ -31051,19 +31099,19 @@ def _build_pet_home(uid, p):
         markup = _pet_main_markup()
     else:
         text = _build_pet_card(pet)
-        text += ("\n\n🤖 *Auto-Care is ON* — your pet feeds, plays, trains, spars and "
-                 "adventures on its own, and brings home loot. Watch for its *Pet Update* messages!")
+        text += (f"\n\n🍖 *{_pet_hunger_label(pet.get('hunger'))}*\n"
+                 "_Feed it to keep it strong — hunger no longer refills on its own. "
+                 "It still plays, trains, adventures & spars automatically._")
         pid = pet["pet_id"]
-        # Feed / Play / Train / Adventure / Job / Battle are all automatic now —
-        # only the genuine player CHOICES remain.
         btn_rows = [
-            [InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}"),
-             InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0")],
-            [InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0"),
-             InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop")],
-            [InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg"),
-             InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu")],
-            [InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{uid}")],
+            [InlineKeyboardButton("🍖 Feed",      callback_data=f"petfeed_{pid}"),
+             InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}")],
+            [InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0"),
+             InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0")],
+            [InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop"),
+             InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
+            [InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu"),
+             InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{uid}")],
         ]
         markup = InlineKeyboardMarkup(btn_rows)
     return text, markup
@@ -31107,13 +31155,18 @@ def _build_petshop_menu(p):
             "🥚 *Rare Egg* — 30,000g\nUncommon to Rare pet\n\n"
             "🥚 *Dragon Egg* — 75,000g\nRare to Epic pet\n\n"
             "🥚 *Mythic Egg* — 200,000g\nEpic to Mythic pet\n\n"
-            "🍖 *Pet Snack* — 25g\nTrail food: each one auto-fuels a *bonus adventure*")
+            "*🍖 Pet Foods* — feed at /pet → Feed. A FULL pet is far stronger.\n"
+            "Pet Snack +25 · Kibble +45 · Steak +70 · Honey +40 · Golden Apple +100 hunger")
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("🥚 Common Egg  10,000g",  callback_data="pbuy_Common Egg_10000"),
          InlineKeyboardButton("🥚 Rare Egg  30,000g",    callback_data="pbuy_Rare Egg_30000")],
         [InlineKeyboardButton("🥚 Dragon Egg  75,000g",  callback_data="pbuy_Dragon Egg_75000"),
          InlineKeyboardButton("🥚 Mythic Egg  200,000g", callback_data="pbuy_Mythic Egg_200000")],
-        [InlineKeyboardButton("🍖 Pet Snack  25g",    callback_data="pbuy_Pet Snack_25")],
+        [InlineKeyboardButton("🍖 Pet Snack  25g",   callback_data="pbuy_Pet Snack_25"),
+         InlineKeyboardButton("🍖 Kibble  60g",       callback_data="pbuy_Pet Kibble_60")],
+        [InlineKeyboardButton("🥩 Juicy Steak  200g", callback_data="pbuy_Juicy Steak_200"),
+         InlineKeyboardButton("🍯 Honey Treat  150g", callback_data="pbuy_Honey Treat_150")],
+        [InlineKeyboardButton("🍎 Golden Apple  1,000g", callback_data="pbuy_Golden Apple_1000")],
         [InlineKeyboardButton("🔙 Back",              callback_data="petmain"),
          InlineKeyboardButton("❌ Close",             callback_data=f"close_msg_{p['user_id']}")],
     ])
@@ -31491,19 +31544,20 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             report = await _pet_run_autonomous(p, context.bot, dm=False)
             pet = get_active_pet_record(user.id) or pet
             text = _build_pet_card(pet)
-            text += ("\n\n🤖 *Auto-Care is ON* — your pet feeds, plays, trains, spars and "
-                     "adventures on its own, and brings home loot. Watch for its *Pet Update* messages!")
+            text += (f"\n\n🍖 *{_pet_hunger_label(pet.get('hunger'))}*\n"
+                     "_Feed it to keep it strong — it still plays, trains, adventures & spars on its own._")
             if report:
                 text = report + "\n\n━━━━━━━━━━\n\n" + text
             pid = pet["pet_id"]
             markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}"),
-                 InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0")],
-                [InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0"),
-                 InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop")],
-                [InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg"),
-                 InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu")],
-                [InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{user.id}")],
+                [InlineKeyboardButton("🍖 Feed",      callback_data=f"petfeed_{pid}"),
+                 InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}")],
+                [InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0"),
+                 InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0")],
+                [InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop"),
+                 InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
+                [InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu"),
+                 InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{user.id}")],
             ])
         await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         await query.answer(); return
@@ -31546,36 +31600,58 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _q_edit(query, _build_pet_card(pet), parse_mode="Markdown",
             reply_markup=_pet_view_markup(pid, True, uid=user.id, pet=pet)); return
 
-    if data.startswith("petfeed_"):
-        pid = int(data.split("_")[1])
+    # ── Feeding menu: list the pet foods you own, each restores hunger/mood/bond ──
+    if data.startswith("petfeed_") or data.startswith("petfeedgive_") or data.startswith("petfeast_"):
+        parts = data.split("_")
+        pid = int(parts[1])
         conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
         pet = dict(row); _decay_pet(pet)
-        p = get_player(user.id)
-        inv = sjl(p.get("inventory"), [])
-        sp = PET_SPECIES.get(pet["species"], {})
-        pname = _pet_display_name(pet)
-        pers  = sp.get("personality","calm")
-        if "Pet Snack" in inv:
-            inv.remove("Pet Snack"); p["inventory"] = json.dumps(inv); save_player(p)
-            cost_note = "_(used 1 Pet Snack)_"
-        elif p.get("gold",0) >= 10:
-            p["gold"] -= 10; save_player(p)
-            cost_note = "_(cost 10g)_"
-        else:
-            await query.answer("No Pet Snacks and not enough gold (need 10g).", show_alert=True); return
-        pet["hunger"] = min(100, pet.get("hunger",0) + 30)
-        pet["mood"]   = min(100, pet.get("mood",0)   + 10)
-        pet["bond_score"] = min(200, pet.get("bond_score",0) + 3)
-        pet["last_fed"] = datetime.now().isoformat()
-        save_pet(pet)
-        feed_msg = PERSONALITY_FEED.get(pers, "eats happily.")
-        await query.answer(f"🍖 Fed {pname}!")
-        await _q_edit(query, 
-            f"🍖 *{pname}* {feed_msg}\n{cost_note}\n\n" + _build_pet_card(pet),
-            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet)); return
+        p = get_player(user.id); inv = sjl(p.get("inventory"), [])
+        pname = _pet_display_name(pet); sp = PET_SPECIES.get(pet["species"], {})
+
+        if data.startswith("petfeedgive_") or data.startswith("petfeast_"):
+            feast = data.startswith("petfeast_")
+            food = None if feast else "_".join(parts[2:])
+            fed_lines = []
+            fed_any = False
+            while True:
+                # pick a food to use: the specified one, or (feast) the smallest
+                # that still helps, so we don't waste a Golden Apple topping off.
+                owned = [f for f in _PET_FOODS if f in inv]
+                if not owned:
+                    break
+                if feast:
+                    if safe_int(pet.get("hunger"), 100) >= 100:
+                        break
+                    food = sorted(owned, key=lambda f: _PET_FOODS[f][0])[0]
+                if not food or food not in inv:
+                    break
+                hg, mg, bg = _pet_feed(pet, food)
+                inv.remove(food); fed_any = True
+                fed_lines.append(f"🍖 {food}: +{hg} hunger")
+                if not feast:
+                    break
+            if not fed_any:
+                await query.answer("No pet food in your bag! Buy some from the Pet Shop." if not feast
+                                   else "Already full!", show_alert=True); return
+            p["inventory"] = json.dumps(inv); save_player(p); save_pet(pet)
+            fmsg = PERSONALITY_FEED.get(sp.get("personality","calm"), "eats happily.")
+            await query.answer(f"🍖 Fed {pname}!")
+            body = (f"🍖 *{pname}* {fmsg}\n" + "\n".join(fed_lines[:5]) +
+                    f"\n\n*{_pet_hunger_label(pet.get('hunger'))}*\n\n" + _build_pet_card(pet))
+            await _q_edit(query, body, parse_mode="Markdown",
+                          reply_markup=_pet_feed_markup(pid, p)); return
+
+        # petfeed_ : show the feeding menu
+        await _q_edit(query,
+            f"🍖 *Feed {pname}*\n{_pet_hunger_label(pet.get('hunger'))}\n"
+            f"❤️ Hunger: *{safe_int(pet.get('hunger'),100)}/100*\n\n"
+            "_Pick a food from your bag. A full pet is far stronger._",
+            parse_mode="Markdown", reply_markup=_pet_feed_markup(pid, p))
+        await query.answer(); return
 
     if data.startswith("pettrain_"):
         pid = int(data.split("_")[1])
@@ -45486,7 +45562,7 @@ def main():
     app.add_handler(CallbackQueryHandler(hatch_egg_callback,  pattern="^hatch_egg$"))
     app.add_handler(CallbackQueryHandler(petcatch_callback,   pattern="^petcatch_"))
     app.add_handler(CallbackQueryHandler(pet_main_callback,
-        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petplay_|petrelease_|petsell_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
+        pattern="^(petmain|petlist_|petview_|petactivate_|petfeedgive_|petfeast_|petfeed_|pettrain_|petplay_|petrelease_|petsell_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
     app.add_handler(CallbackQueryHandler(pethub_callback,    pattern="^pethub_"))
     app.add_handler(CallbackQueryHandler(petdaycare_callback, pattern="^petdaycare_"))
     app.add_handler(CallbackQueryHandler(petretire_callback,  pattern="^petretire_"))
