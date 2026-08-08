@@ -1167,9 +1167,11 @@ async def send_group(update: Update, text: str, parse_mode="Markdown",
                      permanent=False, delay=9, reply_markup=None):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
-    # Escape the display name — Telegram names can contain * _ ` [ which would
-    # otherwise break Markdown parsing for the entire message.
-    name_hdr = f"👤 *{_md_escape(update.effective_user.first_name)}*\n"
+    # Address the player by their live Telegram @handle (a real mention/link that
+    # pings them) when they have one; fall back to the escaped display name.
+    _eu = update.effective_user
+    name_hdr = (f"👤 @{_eu.username}\n" if getattr(_eu, "username", None)
+                else f"👤 *{_md_escape(_eu.first_name)}*\n")
     text = name_hdr + text
     key     = (chat_id, user_id)
     old_id  = last_bot_message.get(key)
@@ -1320,9 +1322,12 @@ WEATHER_TABLE = [
                 "A quiet freeze settles in. Steady hands win the day."]},
 ]
 _weather_cache = {"weather":None,"set_at":None}
+_WEATHER_TTL = 21600   # weather holds 6h before it can change (was 1h) — far fewer
+                       # weather updates/announcements. (total_seconds, not .seconds,
+                       # which wraps past 24h.)
 def get_weather():
     now = datetime.now()
-    if not _weather_cache["set_at"] or (now-_weather_cache["set_at"]).seconds > 3600:
+    if not _weather_cache["set_at"] or (now-_weather_cache["set_at"]).total_seconds() > _WEATHER_TTL:
         _weather_cache["weather"] = random.choice(WEATHER_TABLE)
         _weather_cache["set_at"]  = now
     return _weather_cache["weather"]
@@ -21622,6 +21627,35 @@ _CHAT_QUEST_TPL = [
     ("I do not trust the silence.",900,60),
     ("There is always another layer.",850,55),
     ("Stay ready. You never know.",800,50),
+    ("The felt remembers every shot ever taken.",850,55),
+    ("I counted the corners again. There are nine now.",900,60),
+    ("Whatever you buried, it did not stay buried.",850,55),
+    ("The eight-ball rolled uphill this morning.",900,60),
+    ("Do not answer the door on the third knock.",850,55),
+    ("I traded my reflection and I want it back.",900,60),
+    ("The clock in here has no hands and it is always right.",850,55),
+    ("Someone rewrote yesterday while we slept.",900,60),
+    ("The chalk lines move when you look away.",800,50),
+    ("I found a door where the wall used to be.",850,55),
+    ("The oracle blinked. I saw it.",900,60),
+    ("My shadow left early. It knows something.",850,55),
+    ("Count to eight and do not stop.",750,45),
+    ("The rack was set before any of us arrived.",850,55),
+    ("There is a thirteenth ball. I have held it.",900,60),
+    ("The break was heard in three towns.",800,50),
+    ("Everything rhymes if you wait long enough.",750,45),
+    ("The pockets go somewhere. I have proof.",850,55),
+    ("I left a message for myself and it was already answered.",900,60),
+    ("The lights flicker in the pattern of a name.",850,55),
+    ("Do not let the cue touch the floor tonight.",800,50),
+    ("We are one shot away from the truth.",850,55),
+    ("The score was settled before the game began.",800,50),
+    ("Ask the ball twice and it tells you different truths.",850,55),
+    ("The corner pocket whispered my debt back to me.",900,60),
+    ("I keep drawing the eight. Always the eight.",800,50),
+    ("The table tilts toward whoever is lying.",850,55),
+    ("Nobody racks the balls. They were always racked.",900,60),
+    ("The referee has no face and calls every foul.",900,60),
 ]
 _TARGETED_QUEST_TPL = [
     ("Do you dream of electric sheep?",400,25),
@@ -21644,6 +21678,25 @@ _TARGETED_QUEST_TPL = [
     ("Have you found any secrets in this place? Genuinely asking.",450,28),
     ("Is that your real username?",300,18),
     ("When did you first feel like you belonged here?",400,25),
+    ("The oracle dealt you a card face-down. Want to know what it is?",500,30),
+    ("You owe the table a shot. It has been waiting.",450,28),
+    ("Something followed you in from the last game. Say hi.",500,30),
+    ("I dreamt you sank the eight blindfolded. Did you?",550,35),
+    ("Your name came up in a rack I never set.",500,30),
+    ("Have you ever won a game you don't remember playing?",450,28),
+    ("The chalk says you cheat. I said prove it.",400,25),
+    ("Which pocket are you, honestly?",350,22),
+    ("You left a debt on table nine. Ring any bells?",500,30),
+    ("If the ball named a traitor, would it be you?",550,35),
+    ("Do you break, or do you wait to be broken?",450,28),
+    ("Someone bet against you tonight. Want their name?",500,30),
+    ("The oracle says you've been here before. Correct it if wrong.",500,30),
+    ("Quick — how many balls are really on the table?",350,22),
+    ("You're holding the cue wrong on purpose. Why?",400,25),
+    ("Your reflection waved first. Explain.",500,30),
+    ("The felt has your fingerprints from a game you never played.",550,35),
+    ("Rack 'em or run — which are you tonight?",400,25),
+    ("Is your luck yours, or did you borrow it?",450,28),
 ]
 
 async def _dispatch_secret_quest(uid: int, bot):
@@ -21673,7 +21726,7 @@ async def _dispatch_secret_quest(uid: int, bot):
         phrase, exp_r, inf_r = random.choice(_TARGETED_QUEST_TPL)
         quest = {"type":"targeted","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,
                  "target_id":target[0],"target_name":target[1],"expires":int(time.time())+86400}
-        _exp_preview = exp_share(p["level"], min(0.15, exp_r / 900 * 0.15))
+        _exp_preview = exp_share(p["level"], min(0.40, exp_r / 900 * 0.40))
         dm = (f"🎱 *The oracle has a task for you.*\n\n"
               f"_Say this to *{target[1]}* in the group — reply to one of their "
               f"messages, or include their name:_\n\n"
@@ -21683,7 +21736,7 @@ async def _dispatch_secret_quest(uid: int, bot):
     else:
         phrase, exp_r, inf_r = random.choice(_CHAT_QUEST_TPL)
         quest = {"type":"chat","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
-        _exp_preview = exp_share(p["level"], min(0.15, exp_r / 900 * 0.15))
+        _exp_preview = exp_share(p["level"], min(0.40, exp_r / 900 * 0.40))
         dm = (f"🎱 *The oracle has a task for you.*\n\n"
               f"_Say this in the group:_\n\n"
               f"*\"{phrase}\"*\n\n"
@@ -21730,7 +21783,7 @@ async def _try_complete_quest_phrase(p, text, reply_to_id, bot):
                 return
     if not matched: return
     inf_r = q.get("reward_inf", 50)
-    exp_r = exp_share(p["level"], min(0.15, q.get("reward_exp", 800) / 900 * 0.15))
+    exp_r = exp_share(p["level"], min(0.40, q.get("reward_exp", 800) / 900 * 0.40))
     add_exp(p, exp_r); _add_influence(p, inf_r)
     add_item(p, "Greater Health Potion")
     p["active_quest"] = None; save_player(p)
@@ -38457,7 +38510,7 @@ async def _send_random_dm_event(bot, uid, p):
                 f"{random.choice(_CHEST_FLAVORS)}\nYou find *{fmt_num(gold)} gold*.",
                 parse_mode="Markdown")
         elif kind == "quest":
-            exp = exp_share(p.get("level", 1), random.uniform(0.03, 0.08))
+            exp = exp_share(p.get("level", 1), random.uniform(0.12, 0.28))
             add_exp(p, exp)
             save_player(p)
             await bot.send_message(uid,
@@ -38785,6 +38838,23 @@ def _ws_set(key, value):
         conn.commit()
     except Exception:
         pass
+
+def _daily_budget_ok(key, max_per_day):
+    """Rate-limit an ambient event to at most `max_per_day` firings per calendar
+    day (persisted in world_state), so random encounters / guild raids happen a
+    couple of times a day instead of every loop tick. Returns True + records the
+    firing when there is budget left."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    st = _ws_get("daily_budget") or {}
+    rec = st.get(key)
+    if not isinstance(rec, dict) or rec.get("date") != today:
+        rec = {"date": today, "count": 0}
+    if rec["count"] >= max_per_day:
+        return False
+    rec["count"] += 1
+    st[key] = rec
+    _ws_set("daily_budget", st)
+    return True
 
 # ── KING OF THE TABLE ────────────────────────────────────────────────────────
 def _get_king():
@@ -41222,15 +41292,20 @@ async def _engagement_loop(bot):
                 await _chat_games_scheduler(bot)
             except Exception:
                 pass
-            if cycle % 2 == 0:
+            # Ambient encounters & guild raids are capped to ~2 firings per day
+            # (was every 30 min). Random gate + daily budget so they land at
+            # varied, unpredictable times instead of all at once.
+            if random.random() < 0.25 and _daily_budget_ok("world_events", 2):
                 try:
                     await _fire_random_world_events(bot)
                 except Exception:
                     pass
+            if random.random() < 0.25 and _daily_budget_ok("ambush", 2):
                 try:
                     await _ambush_spawner(bot)
                 except Exception:
                     pass
+            if random.random() < 0.25 and _daily_budget_ok("guild_raid", 2):
                 try:
                     await _weekly_guild_boss_sweep(bot)
                 except Exception:
@@ -41972,7 +42047,7 @@ def _siege_grant_rewards(p, state, wiped):
     # ── EXP — a real % of a level, growing with how deep you held ──
     exp_gain = 0
     if racks_cleared > 0:
-        exp_gain = exp_share(lvl, min(0.75, 0.03 * racks_cleared))
+        exp_gain = exp_share(lvl, min(1.2, 0.05 * racks_cleared))
         add_exp(p, exp_gain)
         lines.append(f"⭐ *{fmt_num(exp_gain)}* EXP")
 
@@ -42333,7 +42408,7 @@ def _mode_bonus_rewards(p, depth, boss_waves, mult=1.0):
     if depth > 0:
         # % of a level, in the same band as the established modes (dungeon full
         # run ~50%, raid boss ~15%): a solid run ~0.3, a deep one caps at 0.75.
-        exp_gain = round(exp_share(lvl, min(0.75, 0.03 * depth)) * mult)
+        exp_gain = round(exp_share(lvl, min(1.2, 0.05 * depth)) * mult)
         if exp_gain > 0:
             add_exp(p, exp_gain)
             lines.append(f"⭐ *{fmt_num(exp_gain)}* EXP")
