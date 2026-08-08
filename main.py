@@ -31081,6 +31081,11 @@ async def hatch_egg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     msg = await context.bot.send_message(
         chat_id=query.message.chat.id, text=text, parse_mode="Markdown")
     asyncio.create_task(_auto_delete(context.bot, query.message.chat.id, msg.message_id, 60))
+    # A hatched celestial (or founder Legend) is a big deal — announce it.
+    if sp.get("rarity") == "celestial":
+        _who = (f"@{user.username}" if getattr(user, "username", None) else f"*{p['username']}*")
+        await _announce_epic_pet(context.bot, query.message.chat.id, _who,
+                                 species_id, is_shiny, how="hatched")
 
 _RARITY_ORDER = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "celestial"]
 
@@ -40247,23 +40252,63 @@ async def _crate_scheduler(bot):
 _wild_spawns = {}       # chat_id -> {"species","is_shiny","msg_id","expires"}
 _wild_last = {}         # chat_id -> last spawn ts
 
+# ── 8Ball Legends — founder signature pets (celestial) get their own spawn roll ──
+_LEGEND_KEYS = ["jenna","marc","temari","james","jas","jax","saul","meye","emily"]
+_legend_last = {}   # chat_id -> ts of last founder-Legend spawn in that chat
+_legend_rot  = [0]  # global rotation so each founder gets their moment in turn
+_LEGEND_SPAWN_GAP = 40 * 3600   # guarantee a Legend roughly every ~1.5–2 active days
+
+def _is_legend(species_key):
+    return species_key in _LEGEND_KEYS
+
 async def _spawn_wild_pet(bot, chat_id):
     if chat_id in _wild_spawns:
         return
-    # Every rarity is listed so none falls back to a wrong default — previously
-    # 'mythic' was missing and defaulted to 10, spawning MORE often than epics.
+    # Rarity weights — celestial bumped 0.15→0.6 for the larger 600+ roster so the
+    # top tier actually shows up now and then (still ~0.1% of spawns).
     _rarity_w = {"common": 50, "uncommon": 30, "rare": 15, "epic": 5,
-                 "legendary": 2, "mythic": 0.8, "celestial": 0.15}
-    keys = list(PET_SPECIES.keys())
-    weights = [_rarity_w.get(PET_SPECIES[k].get("rarity", "common"), 1) for k in keys]
-    sk = random.choices(keys, weights=weights, k=1)[0]
+                 "legendary": 2, "mythic": 0.8, "celestial": 0.6}
+    now = time.time()
+    # ── Founders' roll: guarantee a Legend appears in each chat every so often,
+    #    cycling through the members so everyone gets their moment. Seed the clock
+    #    on first sight so a fresh chat doesn't immediately dump a Legend. ──
+    if chat_id not in _legend_last:
+        _legend_last[chat_id] = now
+    force_legend = False
+    if any(k in PET_SPECIES for k in _LEGEND_KEYS):
+        if now - _legend_last.get(chat_id, 0) >= _LEGEND_SPAWN_GAP:
+            force_legend = True
+        elif random.random() < 0.015:   # occasional surprise Legend
+            force_legend = True
+    if force_legend:
+        sk = _LEGEND_KEYS[_legend_rot[0] % len(_LEGEND_KEYS)]
+        _legend_rot[0] += 1
+        _legend_last[chat_id] = now
+    else:
+        keys = list(PET_SPECIES.keys())
+        weights = [_rarity_w.get(PET_SPECIES[k].get("rarity", "common"), 1) for k in keys]
+        sk = random.choices(keys, weights=weights, k=1)[0]
+        if _is_legend(sk):            # weighted roll happened to land a Legend
+            _legend_last[chat_id] = now
     sp = PET_SPECIES[sk]
     shiny = random.random() < 0.02
     name = ("✨SHINY " if shiny else "") + sp["name"]
     rar = sp.get("rarity", "common")
-    _card_text = (f"🐾 *A wild {name} appears!* {sp.get('emoji','🐾')}\n"
-                  f"{RARITY_EMOJI.get(rar,'⚪')} _{rar.capitalize()} · {sp.get('element','?').capitalize()}_\n\n"
-                  f"_First to catch it keeps it!_")
+    _elem = sp.get("element", "?").capitalize()
+    if _is_legend(sk):
+        _card_text = (f"🎱✨ *AN 8BALL LEGEND APPEARS!* ✨🎱\n\n"
+                      f"{sp.get('emoji','🐾')} *{name}* — a founding pillar of the Empire — "
+                      f"has entered the hall!\n"
+                      f"🌠 _Celestial · {_elem}_\n\n"
+                      f"⚡ *FIRST TO CATCH IT KEEPS IT — GO!*")
+    elif rar == "celestial":
+        _card_text = (f"🌠 *A CELESTIAL {name} MANIFESTS!* {sp.get('emoji','🐾')}\n"
+                      f"{RARITY_EMOJI.get(rar,'⚪')} _The rarest tier · {_elem}_\n\n"
+                      f"⚡ *First to catch it keeps it — this almost never happens!*")
+    else:
+        _card_text = (f"🐾 *A wild {name} appears!* {sp.get('emoji','🐾')}\n"
+                      f"{RARITY_EMOJI.get(rar,'⚪')} _{rar.capitalize()} · {_elem}_\n\n"
+                      f"_First to catch it keeps it!_")
     _markup = InlineKeyboardMarkup([[
         InlineKeyboardButton("🎯 CATCH!", callback_data=f"wild_{chat_id}")]])
     try:
@@ -40296,6 +40341,32 @@ async def _edit_any_card(bot, chat_id, msg_id, text, markup=None):
         except Exception:
             pass
 
+async def _announce_epic_pet(bot, chat_id, catcher, species_key, shiny=False, how="caught"):
+    """Big-deal group announcement when a celestial-tier pet (or a founder Legend)
+    is obtained. `catcher` is a ready display string (an @handle or a name)."""
+    sp = PET_SPECIES.get(species_key)
+    if not sp or sp.get("rarity") != "celestial":
+        return  # only the top tier earns the fanfare
+    emoji = sp.get("emoji", "🐾")
+    elem  = sp.get("element", "?").capitalize()
+    shiny_tag = "✨SHINY " if shiny else ""
+    if _is_legend(species_key):
+        text = (f"🎱✨ *AN 8BALL LEGEND HAS BEEN {how.upper()}!* ✨🎱\n\n"
+                f"{emoji} *{shiny_tag}{sp['name']}* — one of the founding pillars of the Empire —\n"
+                f"now stands beside {catcher}!\n\n"
+                f"🌠 _Celestial · {elem}_   |   ⚔️ Base ATK *{sp['base_atk']}*\n"
+                f"_{sp['desc']}_\n\n"
+                f"👑 _Only a handful will ever hold a Legend. The hall will remember this._")
+    else:
+        text = (f"🌠🌠 *CELESTIAL {how.upper()}!* 🌠🌠\n\n"
+                f"{emoji} *{shiny_tag}{sp['name']}* has chosen {catcher}!\n"
+                f"The rarest tier there is — _{elem}_, Base ATK *{sp['base_atk']}*.\n\n"
+                f"_{sp['desc']}_")
+    try:
+        await bot.send_message(chat_id, text, parse_mode="Markdown")
+    except Exception:
+        pass
+
 async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try:
@@ -40319,9 +40390,15 @@ async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     save_pet(pet)
     shiny_tag = "✨SHINY " if st["is_shiny"] else ""
     await query.answer(f"🎯 Caught the {shiny_tag}{sp['name']}!")
+    _catcher = (f"@{query.from_user.username}" if getattr(query.from_user, "username", None)
+                else f"*{p['username']}*")
     await _edit_any_card(context.bot, chat_id, st["msg_id"],
-        f"🎯 *{p['username']}* caught the wild *{shiny_tag}{sp['name']}!* {sp.get('emoji','🐾')}\n"
+        f"🎯 {_catcher} caught the wild *{shiny_tag}{sp['name']}!* {sp.get('emoji','🐾')}\n"
         f"_Check /pet → All Pets to meet them._")
+    # Celestials (and founder Legends) get a big group-wide announcement.
+    if sp.get("rarity") == "celestial":
+        await _announce_epic_pet(context.bot, chat_id, _catcher, st["species"],
+                                 st["is_shiny"], how="caught")
 
 # ── 2. GROUP HEISTS ───────────────────────────────────────────────────────────
 _heists = {}      # chat_id -> {"msg_id","crew":[(uid,name)],"expires"}
