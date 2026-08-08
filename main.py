@@ -4559,10 +4559,15 @@ def _pet_view_markup(pet_id, is_active, uid=0, pet=None):
     rows = []
     if not is_active:
         rows.append([InlineKeyboardButton("✅ Make Active", callback_data=f"petactivate_{pet_id}")])
-    # Feed / Train / Play / Adventure are automatic now (Auto-Care). Only the
-    # active pet self-manages, so remind the player how to switch companions.
-    elif is_active:
-        rows.append([InlineKeyboardButton("🤖 Auto-Care: ON", callback_data="noop")])
+    # Playing & adventuring are automatic (Auto-Care), but feeding and training
+    # are hands-on so you can care for and LEVEL any pet — including lower-tier
+    # ones the auto-care loop (active pet only) never touches.
+    rows.append([
+        InlineKeyboardButton("🍖 Feed",  callback_data=f"petfeed_{pet_id}"),
+        InlineKeyboardButton("🏋️ Train", callback_data=f"pettrain_{pet_id}"),
+    ])
+    if is_active:
+        rows.append([InlineKeyboardButton("🤖 Auto-Care: ON (plays & adventures on its own)", callback_data="noop")])
     # Evolve button if eligible
     if pet:
         lvl = pet.get("level", 1)
@@ -30318,17 +30323,18 @@ def _build_pet_home(uid, p):
         text = _build_pet_card(pet)
         text += (f"\n\n🍖 *{_pet_hunger_label(pet.get('hunger'))}*\n"
                  "_Feed it to keep it strong — hunger no longer refills on its own. "
-                 "It still plays, trains, adventures & spars automatically._")
+                 "It plays, adventures & spars automatically; feed and train it here._")
         pid = pet["pet_id"]
         btn_rows = [
             [InlineKeyboardButton("🍖 Feed",      callback_data=f"petfeed_{pid}"),
-             InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}")],
-            [InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0"),
-             InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0")],
-            [InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop"),
-             InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
-            [InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu"),
-             InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{uid}")],
+             InlineKeyboardButton("🏋️ Train",     callback_data=f"pettrain_{pid}")],
+            [InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}"),
+             InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0")],
+            [InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0"),
+             InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop")],
+            [InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg"),
+             InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu")],
+            [InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{uid}")],
         ]
         markup = InlineKeyboardMarkup(btn_rows)
     return text, markup
@@ -30762,19 +30768,20 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pet = get_active_pet_record(user.id) or pet
             text = _build_pet_card(pet)
             text += (f"\n\n🍖 *{_pet_hunger_label(pet.get('hunger'))}*\n"
-                     "_Feed it to keep it strong — it still plays, trains, adventures & spars on its own._")
+                     "_Feed it to keep it strong — it plays, adventures & spars on its own; feed and train it here._")
             if report:
                 text = report + "\n\n━━━━━━━━━━\n\n" + text
             pid = pet["pet_id"]
             markup = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🍖 Feed",      callback_data=f"petfeed_{pid}"),
-                 InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}")],
-                [InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0"),
-                 InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0")],
-                [InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop"),
-                 InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
-                [InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu"),
-                 InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{user.id}")],
+                 InlineKeyboardButton("🏋️ Train",     callback_data=f"pettrain_{pid}")],
+                [InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}"),
+                 InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0")],
+                [InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0"),
+                 InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop")],
+                [InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg"),
+                 InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu")],
+                [InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{user.id}")],
             ])
         await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         await query.answer(); return
