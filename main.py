@@ -38429,9 +38429,10 @@ async def allocate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 # ── RANDOM WORLD EVENTS (ambient DMs throughout the day) ──────────────────────
-async def _send_ambush_event(bot, uid, p):
+async def _send_ambush_event(bot, uid, p, oracle=False):
     """Spawns a tough, fully-interactive battle encounter directly in the player's DM,
-    using the same combat UI as /encounter, but harder and with extreme rewards."""
+    using the same combat UI as /encounter, but harder and with extreme rewards.
+    oracle=True re-brands the foe as THE ORACLE (tougher, even bigger reward)."""
     if uid in active_encounters or uid in active_dungeons:
         return  # don't stomp an existing session
     p_level = p.get("level", 1)
@@ -38442,10 +38443,14 @@ async def _send_ambush_event(bot, uid, p):
     # Scale to the player and then some — ambushes are the toughest encounter.
     n_hp, n_atk = _enc_scale_to_player(p, n_hp, n_atk, (9, 13), (0.14, 0.20))
     reward_mult = round(reward_mult * random.uniform(3.0, 4.5), 2)  # extreme EXP/gold on a win
+    if oracle:
+        n_hp = round(n_hp * 1.35); n_atk = round(n_atk * 1.2)
+        reward_mult = round(reward_mult * 1.6, 2)   # THE ORACLE pays out big
     p_mhp = calc_max_hp(p)
     p_hp  = min(p_mhp, max(1, safe_int(p.get("hp")) or p_mhp))
     p_max_mp = calc_max_mp(p); p_mp = max(0, min(p_max_mp, safe_int(p.get("mp")) or p_max_mp))
     cls_name = CLASS_TREE.get(npc[1], {}).get("name", npc[1].replace("_", " ").title())
+    _foe_name = "🎱 The Oracle" if oracle else npc[0]
     _amb_pet = get_active_pet_record(uid)
     _pet_info = None
     if _amb_pet and not _pet_is_on_adventure(_amb_pet):
@@ -38463,10 +38468,12 @@ async def _send_ambush_event(bot, uid, p):
     enc = {
         "uid": uid, "mode": "battle", "p_name": p.get("username", "You"),
         "p_hp": p_hp, "p_max_hp": p_mhp, "p_mp": p_mp, "p_max_mp": p_max_mp,
-        "e_name": npc[0], "e_class": npc[1],
+        "e_name": _foe_name, "e_class": npc[1],
         "e_hp": n_hp, "e_max_hp": n_hp, "e_atk": n_atk, "e_level": n_level,
         "e_gold_range": npc[6], "e_exp_range": npc[7], "e_loot_key": npc[8],
-        "action_log": [f"⚠️ *{npc[0]}* [{cls_name}] Lv.{n_level} ambushes you from the shadows!"],
+        "action_log": [f"🎱 *THE ORACLE turns its gaze on you!* Lv.{n_level} — survive it for a huge reward!"
+                       if oracle else
+                       f"⚠️ *{npc[0]}* [{cls_name}] Lv.{n_level} ambushes you from the shadows!"],
         "pet_info": _pet_info,
         "pet_ability_used": False,
         "reward_mult": reward_mult, "num_gear": num_gear,
@@ -38475,7 +38482,9 @@ async def _send_ambush_event(bot, uid, p):
     }
     _enc_set(uid, enc)
     _enc_sessions.setdefault(uid, {"gold": 0, "exp": 0, "wins": 0, "losses": 0, "items": []})["mode"] = "battle"
-    card = ("🚨 *AMBUSH!* A dangerous foe blocks your path — beat it for extreme rewards!\n\n"
+    card = (("🎱 *THE ORACLE ATTACKS!* It has chosen you — defeat it for a *BIG* reward!\n\n"
+             if oracle else
+             "🚨 *AMBUSH!* A dangerous foe blocks your path — beat it for extreme rewards!\n\n")
             + _encounter_battle_card(enc))
     markup = _encounter_battle_markup(enc, p)
     try:
@@ -38483,6 +38492,32 @@ async def _send_ambush_event(bot, uid, p):
     except Exception:
         active_encounters.pop(uid, None)
         _enc_sessions.pop(uid, None)
+
+async def _oracle_attack_sweep(bot):
+    """Once or twice a day THE ORACLE turns on a random active player with a tough
+    Oracle fight (DM) that pays a big reward on a win. Budgeted like the other
+    ambient events so it stays a rare, memorable event."""
+    try:
+        c = _db().cursor()
+        cutoff = (datetime.now() - timedelta(days=2)).isoformat()
+        c.execute("SELECT user_id FROM shadow_profiles WHERE last_seen >= ?", (cutoff,))
+        cands = [r[0] for r in c.fetchall()]
+    except Exception:
+        return
+    random.shuffle(cands)
+    for uid in cands:
+        try:
+            if is_banned(uid):
+                continue
+            p = get_player(uid)
+            if not p or is_defeated(p):
+                continue
+            if uid in active_encounters or uid in active_dungeons:
+                continue
+            await _send_ambush_event(bot, uid, p, oracle=True)
+            return  # one chosen target per firing
+        except Exception:
+            continue
 
 _CHEST_FLAVORS = [
     "🎁 *A mysterious chest appears in your path!*",
@@ -41308,6 +41343,11 @@ async def _engagement_loop(bot):
             if random.random() < 0.25 and _daily_budget_ok("guild_raid", 2):
                 try:
                     await _weekly_guild_boss_sweep(bot)
+                except Exception:
+                    pass
+            if random.random() < 0.20 and _daily_budget_ok("oracle_attack", 2):
+                try:
+                    await _oracle_attack_sweep(bot)
                 except Exception:
                     pass
             if cycle % 4 == 0:
