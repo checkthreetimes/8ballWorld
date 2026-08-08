@@ -4438,6 +4438,13 @@ PET_SPECIES = {
     "saul":   {"name":"Saul",   "element":"earth",     "rarity":"celestial", "base_atk":196, "base_def":50, "personality":"calm",        "emoji":"⚖️", "desc":"An 8Ball legend of unshakeable footing. Saul settles every dispute and holds the line when it matters most.", "def_ability":"intercept"},
     "meye":   {"name":"Meye",   "element":"water",     "rarity":"celestial", "base_atk":202, "base_def":44, "personality":"calm",        "emoji":"👁️", "desc":"A deep-seeing spirit of the 8Ball hall. Meye reads the whole board and always feels the current before it turns.", "def_ability":"regen"},
     "emily":  {"name":"Emily",  "element":"nature",    "rarity":"celestial", "base_atk":199, "base_def":41, "personality":"playful",     "emoji":"🌸", "desc":"A founding bloom of the 8Ball Empire. Emily brings the whole hall to life and mends it when the game turns rough.", "def_ability":"regen"},
+    # ── 8Ball Legends, wave 2 — more celebrated members of the hall (celestial) ──
+    "sailor":    {"name":"Sailor",    "element":"water",     "rarity":"celestial", "base_atk":201, "base_def":45, "personality":"loyal",       "emoji":"⚓", "desc":"A steadfast legend of the 8Ball hall who has weathered every storm the group ever sailed into — and always brought everyone home.", "def_ability":"regen"},
+    "kapkau":    {"name":"Kapkau",    "element":"lightning", "rarity":"celestial", "base_atk":208, "base_def":35, "personality":"mischievous", "emoji":"🎆", "desc":"A crackling legend of the hall, all spark and spectacle. When Kapkau shows up, the whole table lights up with them.", "def_ability":"stun"},
+    "blackstar": {"name":"Blackstar",  "element":"shadow",   "rarity":"celestial", "base_atk":213, "base_def":37, "personality":"fierce",      "emoji":"⭐", "desc":"A legend of the 8Ball hall that burns dark and bright at once. Foes never see Blackstar coming until it's already over.", "def_ability":"lifesteal"},
+    "loren":     {"name":"Loren",     "element":"holy",      "rarity":"celestial", "base_atk":197, "base_def":47, "personality":"calm",        "emoji":"🌙", "desc":"A quietly radiant legend of the hall. Loren keeps the peace, guards the room, and shines steadiest when the night is darkest.", "def_ability":"shield"},
+    "tony":      {"name":"Tony",      "element":"fire",      "rarity":"celestial", "base_atk":211, "base_def":36, "personality":"fierce",      "emoji":"🥊", "desc":"A heavyweight legend of the 8Ball hall who never ducks a challenge and hits back twice as hard as he's hit.", "def_ability":"counter"},
+    "kitty":     {"name":"Kitty",     "element":"void",      "rarity":"celestial", "base_atk":199, "base_def":43, "personality":"playful",     "emoji":"😺", "desc":"A beloved legend of the hall with nine lives and a hundred tricks. Kitty plays the whole game like it's a toy — and usually wins.", "def_ability":"poison"},
 }
 
 # Defensive ability definitions
@@ -40253,7 +40260,8 @@ _wild_spawns = {}       # chat_id -> {"species","is_shiny","msg_id","expires"}
 _wild_last = {}         # chat_id -> last spawn ts
 
 # ── 8Ball Legends — founder signature pets (celestial) get their own spawn roll ──
-_LEGEND_KEYS = ["jenna","marc","temari","james","jas","jax","saul","meye","emily"]
+_LEGEND_KEYS = ["jenna","marc","temari","james","jas","jax","saul","meye","emily",
+                "sailor","kapkau","blackstar","loren","tony","kitty"]
 _legend_last = {}   # chat_id -> ts of last founder-Legend spawn in that chat
 _legend_rot  = [0]  # global rotation so each founder gets their moment in turn
 _LEGEND_SPAWN_GAP = 40 * 3600   # guarantee a Legend roughly every ~1.5–2 active days
@@ -40297,7 +40305,7 @@ async def _spawn_wild_pet(bot, chat_id):
     _elem = sp.get("element", "?").capitalize()
     if _is_legend(sk):
         _card_text = (f"🎱✨ *AN 8BALL LEGEND APPEARS!* ✨🎱\n\n"
-                      f"{sp.get('emoji','🐾')} *{name}* — a founding pillar of the Empire — "
+                      f"{sp.get('emoji','🐾')} *{name}* — a pillar of the Empire — "
                       f"has entered the hall!\n"
                       f"🌠 _Celestial · {_elem}_\n\n"
                       f"⚡ *FIRST TO CATCH IT KEEPS IT — GO!*")
@@ -40352,7 +40360,7 @@ async def _announce_epic_pet(bot, chat_id, catcher, species_key, shiny=False, ho
     shiny_tag = "✨SHINY " if shiny else ""
     if _is_legend(species_key):
         text = (f"🎱✨ *AN 8BALL LEGEND HAS BEEN {how.upper()}!* ✨🎱\n\n"
-                f"{emoji} *{shiny_tag}{sp['name']}* — one of the founding pillars of the Empire —\n"
+                f"{emoji} *{shiny_tag}{sp['name']}* — one of the pillars of the Empire —\n"
                 f"now stands beside {catcher}!\n\n"
                 f"🌠 _Celestial · {elem}_   |   ⚔️ Base ATK *{sp['base_atk']}*\n"
                 f"_{sp['desc']}_\n\n"
