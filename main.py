@@ -1167,9 +1167,11 @@ async def send_group(update: Update, text: str, parse_mode="Markdown",
                      permanent=False, delay=9, reply_markup=None):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
-    # Escape the display name — Telegram names can contain * _ ` [ which would
-    # otherwise break Markdown parsing for the entire message.
-    name_hdr = f"👤 *{_md_escape(update.effective_user.first_name)}*\n"
+    # Address the player by their live Telegram @handle (a real mention/link that
+    # pings them) when they have one; fall back to the escaped display name.
+    _eu = update.effective_user
+    name_hdr = (f"👤 @{_eu.username}\n" if getattr(_eu, "username", None)
+                else f"👤 *{_md_escape(_eu.first_name)}*\n")
     text = name_hdr + text
     key     = (chat_id, user_id)
     old_id  = last_bot_message.get(key)
@@ -1320,9 +1322,12 @@ WEATHER_TABLE = [
                 "A quiet freeze settles in. Steady hands win the day."]},
 ]
 _weather_cache = {"weather":None,"set_at":None}
+_WEATHER_TTL = 21600   # weather holds 6h before it can change (was 1h) — far fewer
+                       # weather updates/announcements. (total_seconds, not .seconds,
+                       # which wraps past 24h.)
 def get_weather():
     now = datetime.now()
-    if not _weather_cache["set_at"] or (now-_weather_cache["set_at"]).seconds > 3600:
+    if not _weather_cache["set_at"] or (now-_weather_cache["set_at"]).total_seconds() > _WEATHER_TTL:
         _weather_cache["weather"] = random.choice(WEATHER_TABLE)
         _weather_cache["set_at"]  = now
     return _weather_cache["weather"]
@@ -4165,22 +4170,19 @@ def get_pet_atk_bonus(pet):
     base = round(base * PERSONALITY_ATK_MOD.get(pers, 1.0))
     # Shiny bonus: +15% ATK
     if pet.get("is_shiny"): base = round(base * 1.15)
-    hunger = pet.get("hunger", 100)
-    mood   = pet.get("mood", 100)
-    # Well-fed AND happy: +25% bonus (reward for good care)
-    if hunger >= 70 and mood >= 70:
-        base = round(base * 1.25)
-    # Very hungry: severely reduced damage
-    elif hunger < 20:
-        base = round(base * 0.30)
-    # Hungry: reduced damage
-    elif hunger < 40:
-        base = round(base * 0.60)
-    # Sad (but not hungry): reduced damage
-    elif mood < 20:
-        base = round(base * 0.30)
-    elif mood < 40:
-        base = round(base * 0.60)
+    hunger = safe_int(pet.get("hunger"), 100)
+    mood   = safe_int(pet.get("mood"), 100)
+    # Power scales HARD with fullness — a fully-fed pet is a monster, a starving
+    # one is feeble. Feeding is manual (/pet -> Feed), so keeping it full is the
+    # reward loop. (Still bounded to 65% of the owner's hit in _pet_combat_atk.)
+    if   hunger >= 95: base = round(base * 1.75)   # STUFFED — peak power
+    elif hunger >= 75: base = round(base * 1.35)   # well fed
+    elif hunger >= 50: base = round(base * 1.10)   # content
+    elif hunger >= 30: base = round(base * 0.80)   # peckish
+    elif hunger >= 15: base = round(base * 0.55)   # hungry
+    else:              base = round(base * 0.30)   # starving
+    if   mood >= 80:   base = round(base * 1.10)   # happy bonus
+    elif mood < 30:    base = round(base * 0.80)   # sad penalty
     # Collector's Bond — owning more of the bestiary makes your active pet fiercer
     _owner = pet.get("owner_id")
     if _owner:
@@ -4205,6 +4207,59 @@ def _pet_combat_atk(pet, owner):
     except Exception:
         return raw
     return max(1, min(raw, round(owner_hit * _PET_DMG_CAP)))
+
+# ── ADVANCED PET FEEDING ──────────────────────────────────────────────────────
+# Feeding is manual now (no auto-feed). Different foods restore different amounts
+# of hunger/mood/bond; keeping a pet FULL makes it dramatically stronger (see the
+# hunger tiers in get_pet_atk_bonus). Foods are consumed from inventory.
+# name -> (hunger, mood, bond)
+_PET_FOODS = {
+    "Pet Snack":     (25, 10, 1),
+    "Pet Kibble":    (45,  8, 1),
+    "Juicy Steak":   (70, 15, 3),
+    "Honey Treat":   (40, 30, 4),
+    "Golden Apple":  (100, 30, 8),
+}
+
+def _pet_feed(pet, food):
+    """Apply a food to a pet. Returns (hunger_gain, mood_gain, bond_gain) actually
+    applied (hunger clamps at 100). Mutates pet; caller consumes the item + saves."""
+    h, mood, bond = _PET_FOODS.get(food, (20, 5, 0))
+    before = safe_int(pet.get("hunger"), 100)
+    pet["hunger"] = min(100, before + h)
+    pet["mood"]   = min(100, safe_int(pet.get("mood"), 100) + mood)
+    pet["bond_score"] = min(200, safe_int(pet.get("bond_score"), 0) + bond)
+    pet["last_fed"] = datetime.now().isoformat()
+    return pet["hunger"] - before, mood, bond
+
+def _pet_hunger_label(hunger):
+    h = safe_int(hunger, 100)
+    if   h >= 95: return "😻 STUFFED — peak power (×1.75 ATK)"
+    elif h >= 75: return "😺 Well fed (×1.35 ATK)"
+    elif h >= 50: return "🙂 Content (×1.10 ATK)"
+    elif h >= 30: return "😐 Peckish (×0.80 ATK)"
+    elif h >= 15: return "🙁 Hungry (×0.55 ATK)"
+    return "😿 Starving (×0.30 ATK) — feed it!"
+
+def _pet_feed_markup(pid, p):
+    """Feeding menu: one button per pet-food the owner has, plus Feast/shop/back."""
+    from collections import Counter
+    counts = Counter(f for f in sjl(p.get("inventory"), []) if f in _PET_FOODS)
+    rows = []
+    for food in _PET_FOODS:  # stable order, low->high
+        n = counts.get(food)
+        if n:
+            h = _PET_FOODS[food][0]
+            rows.append([InlineKeyboardButton(f"🍖 {food} ×{n}  (+{h} hunger)",
+                                              callback_data=f"petfeedgive_{pid}_{food}")])
+    if not rows:
+        rows.append([InlineKeyboardButton("🛒 No food — buy some (Pet Shop)", callback_data="petshop")])
+    else:
+        rows.append([InlineKeyboardButton("🍽️ Feast (fill up)", callback_data=f"petfeast_{pid}"),
+                     InlineKeyboardButton("🛒 Pet Shop", callback_data="petshop")])
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data="petmain"),
+                 InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{p['user_id']}")])
+    return InlineKeyboardMarkup(rows)
 
 # ── BESTIARY / COLLECTOR SYSTEM ───────────────────────────────────────────────
 _ALL_SPECIES_COUNT = len(PET_SPECIES)
@@ -4568,8 +4623,12 @@ CONSUMABLES = {
     # Crafting
     "Iron Shard":             {"desc":"Crafting material. Rare drop.","sell":100},
     "Enchanting Scroll":      {"desc":"Used to enchant gear.","sell":150},
-    # Pets
-    "Pet Snack":              {"desc":"Trail food for your pet — each one auto-packs a BONUS adventure on its next outing.","sell":20},
+    # Pets — foods (feed at /pet -> Feed; keeping a pet FULL makes it far stronger)
+    "Pet Snack":              {"desc":"A light snack. +25 hunger, +10 mood.","sell":20},
+    "Pet Kibble":             {"desc":"Hearty pet food. +45 hunger.","sell":60},
+    "Juicy Steak":            {"desc":"A rich meal. +70 hunger, +15 mood, +3 bond.","sell":200},
+    "Honey Treat":            {"desc":"A sweet treat pets adore. +40 hunger, +30 mood, +4 bond.","sell":150},
+    "Golden Apple":           {"desc":"A legendary fruit — fills your pet completely. +100 hunger, +30 mood, +8 bond.","sell":1000},
     "Common Egg":             {"desc":"A warm egg. Common or uncommon pet inside.","sell":5000},
     "Rare Egg":               {"desc":"A glowing egg. Uncommon to rare pet inside.","sell":15000},
     "Dragon Egg":             {"desc":"A heavy scaled egg. Rare to epic pet inside.","sell":37000},
@@ -13866,14 +13925,16 @@ def _pet_autonomous_step(p, pet, cycles):
     emoji = sp.get("emoji", "🐾")
     nowiso = datetime.now().isoformat()
 
-    # 1. Self-care — the pet keeps itself fed and content
-    pet["hunger"] = 100
-    pet["mood"]   = 100
-    pet["last_fed"] = pet["last_play"] = pet["last_trained"] = nowiso
+    # 1. The pet plays & trains on its own — but it does NOT feed itself anymore.
+    # Hunger decays over time (see _decay_pet); YOU feed it (/pet -> Feed), and its
+    # power scales with fullness. A hungry pet still adventures, just hauls less.
+    pet["mood"] = min(100, safe_int(pet.get("mood"), 100) + 25)
+    pet["last_play"] = pet["last_trained"] = nowiso
+    _hfrac = max(0.35, min(1.0, safe_int(pet.get("hunger"), 100) / 100.0))
 
     # 2. Training — EXP + level-ups (capped at the owner-scaled pet cap)
     cap = _pet_level_cap(owner_lvl)
-    exp_gain = sum(25 + pet.get("level", 1) * 6 + random.randint(0, 20) for _ in range(cycles))
+    exp_gain = round(sum(25 + pet.get("level", 1) * 6 + random.randint(0, 20) for _ in range(cycles)) * _hfrac)
     pet["exp"] = pet.get("exp", 0) + exp_gain
     lvl_ups = []
     while pet["exp"] >= pet_exp_for_level(pet["level"]) and pet["level"] < cap:
@@ -13883,18 +13944,10 @@ def _pet_autonomous_step(p, pet, cycles):
     bond_gain = cycles * 3
     pet["bond_score"] = min(200, pet.get("bond_score", 0) + bond_gain)
 
-    # 3b. Pet Snacks (no longer needed for feeding) are auto-packed as trail food:
-    # each one the owner has fuels one BONUS adventure this run.
-    inv0 = sjl(p.get("inventory"), [])
+    # 3b. Pet Snacks are FOOD again (feed them manually) — no longer auto-consumed.
     snack_bonus = 0
-    if "Pet Snack" in inv0:
-        use = min(inv0.count("Pet Snack"), cycles + 2)
-        for _ in range(use):
-            inv0.remove("Pet Snack")
-        p["inventory"] = json.dumps(inv0)
-        snack_bonus = use
 
-    # 4. Adventures (+ snack-fueled bonus trips) + flavor events
+    # 4. Adventures + flavor events
     adventures = 0
     total_gold = 0
     loot = {}   # item -> qty
@@ -21574,6 +21627,35 @@ _CHAT_QUEST_TPL = [
     ("I do not trust the silence.",900,60),
     ("There is always another layer.",850,55),
     ("Stay ready. You never know.",800,50),
+    ("The felt remembers every shot ever taken.",850,55),
+    ("I counted the corners again. There are nine now.",900,60),
+    ("Whatever you buried, it did not stay buried.",850,55),
+    ("The eight-ball rolled uphill this morning.",900,60),
+    ("Do not answer the door on the third knock.",850,55),
+    ("I traded my reflection and I want it back.",900,60),
+    ("The clock in here has no hands and it is always right.",850,55),
+    ("Someone rewrote yesterday while we slept.",900,60),
+    ("The chalk lines move when you look away.",800,50),
+    ("I found a door where the wall used to be.",850,55),
+    ("The oracle blinked. I saw it.",900,60),
+    ("My shadow left early. It knows something.",850,55),
+    ("Count to eight and do not stop.",750,45),
+    ("The rack was set before any of us arrived.",850,55),
+    ("There is a thirteenth ball. I have held it.",900,60),
+    ("The break was heard in three towns.",800,50),
+    ("Everything rhymes if you wait long enough.",750,45),
+    ("The pockets go somewhere. I have proof.",850,55),
+    ("I left a message for myself and it was already answered.",900,60),
+    ("The lights flicker in the pattern of a name.",850,55),
+    ("Do not let the cue touch the floor tonight.",800,50),
+    ("We are one shot away from the truth.",850,55),
+    ("The score was settled before the game began.",800,50),
+    ("Ask the ball twice and it tells you different truths.",850,55),
+    ("The corner pocket whispered my debt back to me.",900,60),
+    ("I keep drawing the eight. Always the eight.",800,50),
+    ("The table tilts toward whoever is lying.",850,55),
+    ("Nobody racks the balls. They were always racked.",900,60),
+    ("The referee has no face and calls every foul.",900,60),
 ]
 _TARGETED_QUEST_TPL = [
     ("Do you dream of electric sheep?",400,25),
@@ -21596,6 +21678,25 @@ _TARGETED_QUEST_TPL = [
     ("Have you found any secrets in this place? Genuinely asking.",450,28),
     ("Is that your real username?",300,18),
     ("When did you first feel like you belonged here?",400,25),
+    ("The oracle dealt you a card face-down. Want to know what it is?",500,30),
+    ("You owe the table a shot. It has been waiting.",450,28),
+    ("Something followed you in from the last game. Say hi.",500,30),
+    ("I dreamt you sank the eight blindfolded. Did you?",550,35),
+    ("Your name came up in a rack I never set.",500,30),
+    ("Have you ever won a game you don't remember playing?",450,28),
+    ("The chalk says you cheat. I said prove it.",400,25),
+    ("Which pocket are you, honestly?",350,22),
+    ("You left a debt on table nine. Ring any bells?",500,30),
+    ("If the ball named a traitor, would it be you?",550,35),
+    ("Do you break, or do you wait to be broken?",450,28),
+    ("Someone bet against you tonight. Want their name?",500,30),
+    ("The oracle says you've been here before. Correct it if wrong.",500,30),
+    ("Quick — how many balls are really on the table?",350,22),
+    ("You're holding the cue wrong on purpose. Why?",400,25),
+    ("Your reflection waved first. Explain.",500,30),
+    ("The felt has your fingerprints from a game you never played.",550,35),
+    ("Rack 'em or run — which are you tonight?",400,25),
+    ("Is your luck yours, or did you borrow it?",450,28),
 ]
 
 async def _dispatch_secret_quest(uid: int, bot):
@@ -21625,7 +21726,7 @@ async def _dispatch_secret_quest(uid: int, bot):
         phrase, exp_r, inf_r = random.choice(_TARGETED_QUEST_TPL)
         quest = {"type":"targeted","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,
                  "target_id":target[0],"target_name":target[1],"expires":int(time.time())+86400}
-        _exp_preview = exp_share(p["level"], min(0.15, exp_r / 900 * 0.15))
+        _exp_preview = exp_share(p["level"], min(0.40, exp_r / 900 * 0.40))
         dm = (f"🎱 *The oracle has a task for you.*\n\n"
               f"_Say this to *{target[1]}* in the group — reply to one of their "
               f"messages, or include their name:_\n\n"
@@ -21635,7 +21736,7 @@ async def _dispatch_secret_quest(uid: int, bot):
     else:
         phrase, exp_r, inf_r = random.choice(_CHAT_QUEST_TPL)
         quest = {"type":"chat","phrase":phrase,"reward_exp":exp_r,"reward_inf":inf_r,"expires":int(time.time())+86400}
-        _exp_preview = exp_share(p["level"], min(0.15, exp_r / 900 * 0.15))
+        _exp_preview = exp_share(p["level"], min(0.40, exp_r / 900 * 0.40))
         dm = (f"🎱 *The oracle has a task for you.*\n\n"
               f"_Say this in the group:_\n\n"
               f"*\"{phrase}\"*\n\n"
@@ -21682,7 +21783,7 @@ async def _try_complete_quest_phrase(p, text, reply_to_id, bot):
                 return
     if not matched: return
     inf_r = q.get("reward_inf", 50)
-    exp_r = exp_share(p["level"], min(0.15, q.get("reward_exp", 800) / 900 * 0.15))
+    exp_r = exp_share(p["level"], min(0.40, q.get("reward_exp", 800) / 900 * 0.40))
     add_exp(p, exp_r); _add_influence(p, inf_r)
     add_item(p, "Greater Health Potion")
     p["active_quest"] = None; save_player(p)
@@ -31051,19 +31152,19 @@ def _build_pet_home(uid, p):
         markup = _pet_main_markup()
     else:
         text = _build_pet_card(pet)
-        text += ("\n\n🤖 *Auto-Care is ON* — your pet feeds, plays, trains, spars and "
-                 "adventures on its own, and brings home loot. Watch for its *Pet Update* messages!")
+        text += (f"\n\n🍖 *{_pet_hunger_label(pet.get('hunger'))}*\n"
+                 "_Feed it to keep it strong — hunger no longer refills on its own. "
+                 "It still plays, trains, adventures & spars automatically._")
         pid = pet["pet_id"]
-        # Feed / Play / Train / Adventure / Job / Battle are all automatic now —
-        # only the genuine player CHOICES remain.
         btn_rows = [
-            [InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}"),
-             InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0")],
-            [InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0"),
-             InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop")],
-            [InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg"),
-             InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu")],
-            [InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{uid}")],
+            [InlineKeyboardButton("🍖 Feed",      callback_data=f"petfeed_{pid}"),
+             InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}")],
+            [InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0"),
+             InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0")],
+            [InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop"),
+             InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
+            [InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu"),
+             InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{uid}")],
         ]
         markup = InlineKeyboardMarkup(btn_rows)
     return text, markup
@@ -31107,13 +31208,18 @@ def _build_petshop_menu(p):
             "🥚 *Rare Egg* — 30,000g\nUncommon to Rare pet\n\n"
             "🥚 *Dragon Egg* — 75,000g\nRare to Epic pet\n\n"
             "🥚 *Mythic Egg* — 200,000g\nEpic to Mythic pet\n\n"
-            "🍖 *Pet Snack* — 25g\nTrail food: each one auto-fuels a *bonus adventure*")
+            "*🍖 Pet Foods* — feed at /pet → Feed. A FULL pet is far stronger.\n"
+            "Pet Snack +25 · Kibble +45 · Steak +70 · Honey +40 · Golden Apple +100 hunger")
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("🥚 Common Egg  10,000g",  callback_data="pbuy_Common Egg_10000"),
          InlineKeyboardButton("🥚 Rare Egg  30,000g",    callback_data="pbuy_Rare Egg_30000")],
         [InlineKeyboardButton("🥚 Dragon Egg  75,000g",  callback_data="pbuy_Dragon Egg_75000"),
          InlineKeyboardButton("🥚 Mythic Egg  200,000g", callback_data="pbuy_Mythic Egg_200000")],
-        [InlineKeyboardButton("🍖 Pet Snack  25g",    callback_data="pbuy_Pet Snack_25")],
+        [InlineKeyboardButton("🍖 Pet Snack  25g",   callback_data="pbuy_Pet Snack_25"),
+         InlineKeyboardButton("🍖 Kibble  60g",       callback_data="pbuy_Pet Kibble_60")],
+        [InlineKeyboardButton("🥩 Juicy Steak  200g", callback_data="pbuy_Juicy Steak_200"),
+         InlineKeyboardButton("🍯 Honey Treat  150g", callback_data="pbuy_Honey Treat_150")],
+        [InlineKeyboardButton("🍎 Golden Apple  1,000g", callback_data="pbuy_Golden Apple_1000")],
         [InlineKeyboardButton("🔙 Back",              callback_data="petmain"),
          InlineKeyboardButton("❌ Close",             callback_data=f"close_msg_{p['user_id']}")],
     ])
@@ -31491,19 +31597,20 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             report = await _pet_run_autonomous(p, context.bot, dm=False)
             pet = get_active_pet_record(user.id) or pet
             text = _build_pet_card(pet)
-            text += ("\n\n🤖 *Auto-Care is ON* — your pet feeds, plays, trains, spars and "
-                     "adventures on its own, and brings home loot. Watch for its *Pet Update* messages!")
+            text += (f"\n\n🍖 *{_pet_hunger_label(pet.get('hunger'))}*\n"
+                     "_Feed it to keep it strong — it still plays, trains, adventures & spars on its own._")
             if report:
                 text = report + "\n\n━━━━━━━━━━\n\n" + text
             pid = pet["pet_id"]
             markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}"),
-                 InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0")],
-                [InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0"),
-                 InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop")],
-                [InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg"),
-                 InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu")],
-                [InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{user.id}")],
+                [InlineKeyboardButton("🍖 Feed",      callback_data=f"petfeed_{pid}"),
+                 InlineKeyboardButton("📝 Rename",    callback_data=f"petrename_{pid}")],
+                [InlineKeyboardButton("📋 All Pets",  callback_data="petlist_0"),
+                 InlineKeyboardButton("📖 Bestiary",  callback_data="bestiary_0")],
+                [InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop"),
+                 InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg")],
+                [InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu"),
+                 InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{user.id}")],
             ])
         await _q_edit(query, text, parse_mode="Markdown", reply_markup=markup)
         await query.answer(); return
@@ -31546,36 +31653,58 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _q_edit(query, _build_pet_card(pet), parse_mode="Markdown",
             reply_markup=_pet_view_markup(pid, True, uid=user.id, pet=pet)); return
 
-    if data.startswith("petfeed_"):
-        pid = int(data.split("_")[1])
+    # ── Feeding menu: list the pet foods you own, each restores hunger/mood/bond ──
+    if data.startswith("petfeed_") or data.startswith("petfeedgive_") or data.startswith("petfeast_"):
+        parts = data.split("_")
+        pid = int(parts[1])
         conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
         row = c.fetchone(); conn.close()
         if not row: await query.answer("Pet not found.", show_alert=True); return
         pet = dict(row); _decay_pet(pet)
-        p = get_player(user.id)
-        inv = sjl(p.get("inventory"), [])
-        sp = PET_SPECIES.get(pet["species"], {})
-        pname = _pet_display_name(pet)
-        pers  = sp.get("personality","calm")
-        if "Pet Snack" in inv:
-            inv.remove("Pet Snack"); p["inventory"] = json.dumps(inv); save_player(p)
-            cost_note = "_(used 1 Pet Snack)_"
-        elif p.get("gold",0) >= 10:
-            p["gold"] -= 10; save_player(p)
-            cost_note = "_(cost 10g)_"
-        else:
-            await query.answer("No Pet Snacks and not enough gold (need 10g).", show_alert=True); return
-        pet["hunger"] = min(100, pet.get("hunger",0) + 30)
-        pet["mood"]   = min(100, pet.get("mood",0)   + 10)
-        pet["bond_score"] = min(200, pet.get("bond_score",0) + 3)
-        pet["last_fed"] = datetime.now().isoformat()
-        save_pet(pet)
-        feed_msg = PERSONALITY_FEED.get(pers, "eats happily.")
-        await query.answer(f"🍖 Fed {pname}!")
-        await _q_edit(query, 
-            f"🍖 *{pname}* {feed_msg}\n{cost_note}\n\n" + _build_pet_card(pet),
-            parse_mode="Markdown", reply_markup=_pet_view_markup(pid, bool(pet.get("is_active")), uid=user.id, pet=pet)); return
+        p = get_player(user.id); inv = sjl(p.get("inventory"), [])
+        pname = _pet_display_name(pet); sp = PET_SPECIES.get(pet["species"], {})
+
+        if data.startswith("petfeedgive_") or data.startswith("petfeast_"):
+            feast = data.startswith("petfeast_")
+            food = None if feast else "_".join(parts[2:])
+            fed_lines = []
+            fed_any = False
+            while True:
+                # pick a food to use: the specified one, or (feast) the smallest
+                # that still helps, so we don't waste a Golden Apple topping off.
+                owned = [f for f in _PET_FOODS if f in inv]
+                if not owned:
+                    break
+                if feast:
+                    if safe_int(pet.get("hunger"), 100) >= 100:
+                        break
+                    food = sorted(owned, key=lambda f: _PET_FOODS[f][0])[0]
+                if not food or food not in inv:
+                    break
+                hg, mg, bg = _pet_feed(pet, food)
+                inv.remove(food); fed_any = True
+                fed_lines.append(f"🍖 {food}: +{hg} hunger")
+                if not feast:
+                    break
+            if not fed_any:
+                await query.answer("No pet food in your bag! Buy some from the Pet Shop." if not feast
+                                   else "Already full!", show_alert=True); return
+            p["inventory"] = json.dumps(inv); save_player(p); save_pet(pet)
+            fmsg = PERSONALITY_FEED.get(sp.get("personality","calm"), "eats happily.")
+            await query.answer(f"🍖 Fed {pname}!")
+            body = (f"🍖 *{pname}* {fmsg}\n" + "\n".join(fed_lines[:5]) +
+                    f"\n\n*{_pet_hunger_label(pet.get('hunger'))}*\n\n" + _build_pet_card(pet))
+            await _q_edit(query, body, parse_mode="Markdown",
+                          reply_markup=_pet_feed_markup(pid, p)); return
+
+        # petfeed_ : show the feeding menu
+        await _q_edit(query,
+            f"🍖 *Feed {pname}*\n{_pet_hunger_label(pet.get('hunger'))}\n"
+            f"❤️ Hunger: *{safe_int(pet.get('hunger'),100)}/100*\n\n"
+            "_Pick a food from your bag. A full pet is far stronger._",
+            parse_mode="Markdown", reply_markup=_pet_feed_markup(pid, p))
+        await query.answer(); return
 
     if data.startswith("pettrain_"):
         pid = int(data.split("_")[1])
@@ -38381,7 +38510,7 @@ async def _send_random_dm_event(bot, uid, p):
                 f"{random.choice(_CHEST_FLAVORS)}\nYou find *{fmt_num(gold)} gold*.",
                 parse_mode="Markdown")
         elif kind == "quest":
-            exp = exp_share(p.get("level", 1), random.uniform(0.03, 0.08))
+            exp = exp_share(p.get("level", 1), random.uniform(0.12, 0.28))
             add_exp(p, exp)
             save_player(p)
             await bot.send_message(uid,
@@ -38709,6 +38838,23 @@ def _ws_set(key, value):
         conn.commit()
     except Exception:
         pass
+
+def _daily_budget_ok(key, max_per_day):
+    """Rate-limit an ambient event to at most `max_per_day` firings per calendar
+    day (persisted in world_state), so random encounters / guild raids happen a
+    couple of times a day instead of every loop tick. Returns True + records the
+    firing when there is budget left."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    st = _ws_get("daily_budget") or {}
+    rec = st.get(key)
+    if not isinstance(rec, dict) or rec.get("date") != today:
+        rec = {"date": today, "count": 0}
+    if rec["count"] >= max_per_day:
+        return False
+    rec["count"] += 1
+    st[key] = rec
+    _ws_set("daily_budget", st)
+    return True
 
 # ── KING OF THE TABLE ────────────────────────────────────────────────────────
 def _get_king():
@@ -41146,15 +41292,20 @@ async def _engagement_loop(bot):
                 await _chat_games_scheduler(bot)
             except Exception:
                 pass
-            if cycle % 2 == 0:
+            # Ambient encounters & guild raids are capped to ~2 firings per day
+            # (was every 30 min). Random gate + daily budget so they land at
+            # varied, unpredictable times instead of all at once.
+            if random.random() < 0.25 and _daily_budget_ok("world_events", 2):
                 try:
                     await _fire_random_world_events(bot)
                 except Exception:
                     pass
+            if random.random() < 0.25 and _daily_budget_ok("ambush", 2):
                 try:
                     await _ambush_spawner(bot)
                 except Exception:
                     pass
+            if random.random() < 0.25 and _daily_budget_ok("guild_raid", 2):
                 try:
                     await _weekly_guild_boss_sweep(bot)
                 except Exception:
@@ -41896,7 +42047,7 @@ def _siege_grant_rewards(p, state, wiped):
     # ── EXP — a real % of a level, growing with how deep you held ──
     exp_gain = 0
     if racks_cleared > 0:
-        exp_gain = exp_share(lvl, min(0.75, 0.03 * racks_cleared))
+        exp_gain = exp_share(lvl, min(1.2, 0.05 * racks_cleared))
         add_exp(p, exp_gain)
         lines.append(f"⭐ *{fmt_num(exp_gain)}* EXP")
 
@@ -42257,7 +42408,7 @@ def _mode_bonus_rewards(p, depth, boss_waves, mult=1.0):
     if depth > 0:
         # % of a level, in the same band as the established modes (dungeon full
         # run ~50%, raid boss ~15%): a solid run ~0.3, a deep one caps at 0.75.
-        exp_gain = round(exp_share(lvl, min(0.75, 0.03 * depth)) * mult)
+        exp_gain = round(exp_share(lvl, min(1.2, 0.05 * depth)) * mult)
         if exp_gain > 0:
             add_exp(p, exp_gain)
             lines.append(f"⭐ *{fmt_num(exp_gain)}* EXP")
@@ -45486,7 +45637,7 @@ def main():
     app.add_handler(CallbackQueryHandler(hatch_egg_callback,  pattern="^hatch_egg$"))
     app.add_handler(CallbackQueryHandler(petcatch_callback,   pattern="^petcatch_"))
     app.add_handler(CallbackQueryHandler(pet_main_callback,
-        pattern="^(petmain|petlist_|petview_|petactivate_|petfeed_|pettrain_|petplay_|petrelease_|petsell_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
+        pattern="^(petmain|petlist_|petview_|petactivate_|petfeedgive_|petfeast_|petfeed_|pettrain_|petplay_|petrelease_|petsell_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
     app.add_handler(CallbackQueryHandler(pethub_callback,    pattern="^pethub_"))
     app.add_handler(CallbackQueryHandler(petdaycare_callback, pattern="^petdaycare_"))
     app.add_handler(CallbackQueryHandler(petretire_callback,  pattern="^petretire_"))
