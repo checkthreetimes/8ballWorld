@@ -40271,35 +40271,42 @@ _LEGEND_SPAWN_GAP = 40 * 3600   # guarantee a Legend roughly every ~1.5–2 acti
 def _is_legend(species_key):
     return species_key in _LEGEND_KEYS
 
-async def _spawn_wild_pet(bot, chat_id):
-    if chat_id in _wild_spawns:
-        return
-    # Rarity weights — celestial bumped 0.15→0.6 for the larger 600+ roster so the
-    # top tier actually shows up now and then (still ~0.1% of spawns).
-    _rarity_w = {"common": 50, "uncommon": 30, "rare": 15, "epic": 5,
-                 "legendary": 2, "mythic": 0.8, "celestial": 0.6}
-    now = time.time()
-    # ── Founders' roll: guarantee a Legend appears in each chat every so often,
-    #    cycling through the members so everyone gets their moment. Seed the clock
-    #    on first sight so a fresh chat doesn't immediately dump a Legend. ──
-    if chat_id not in _legend_last:
-        _legend_last[chat_id] = now
-    force_legend = False
-    if any(k in PET_SPECIES for k in _LEGEND_KEYS):
-        if now - _legend_last.get(chat_id, 0) >= _LEGEND_SPAWN_GAP:
-            force_legend = True
-        elif random.random() < 0.015:   # occasional surprise Legend
-            force_legend = True
-    if force_legend:
-        sk = _LEGEND_KEYS[_legend_rot[0] % len(_LEGEND_KEYS)]
-        _legend_rot[0] += 1
-        _legend_last[chat_id] = now
+async def _spawn_wild_pet(bot, chat_id, force_species=None):
+    # force_species (admin summon) bypasses the cooldown and the rarity roll.
+    if force_species:
+        if force_species not in PET_SPECIES:
+            return
+        _wild_spawns.pop(chat_id, None)   # clear any active spawn so the summon lands
+        sk = force_species
     else:
-        keys = list(PET_SPECIES.keys())
-        weights = [_rarity_w.get(PET_SPECIES[k].get("rarity", "common"), 1) for k in keys]
-        sk = random.choices(keys, weights=weights, k=1)[0]
-        if _is_legend(sk):            # weighted roll happened to land a Legend
+        if chat_id in _wild_spawns:
+            return
+        # Rarity weights — celestial bumped 0.15→1.5 for the larger 600+ roster so the
+        # top tier actually shows up now and then (~0.25% of spawns).
+        _rarity_w = {"common": 50, "uncommon": 30, "rare": 15, "epic": 5,
+                     "legendary": 2, "mythic": 0.8, "celestial": 1.5}
+        now = time.time()
+        # ── Founders' roll: guarantee a Legend appears in each chat every so often,
+        #    cycling through the members so everyone gets their moment. Seed the clock
+        #    on first sight so a fresh chat doesn't immediately dump a Legend. ──
+        if chat_id not in _legend_last:
             _legend_last[chat_id] = now
+        force_legend = False
+        if any(k in PET_SPECIES for k in _LEGEND_KEYS):
+            if now - _legend_last.get(chat_id, 0) >= _LEGEND_SPAWN_GAP:
+                force_legend = True
+            elif random.random() < 0.015:   # occasional surprise Legend
+                force_legend = True
+        if force_legend:
+            sk = _LEGEND_KEYS[_legend_rot[0] % len(_LEGEND_KEYS)]
+            _legend_rot[0] += 1
+            _legend_last[chat_id] = now
+        else:
+            keys = list(PET_SPECIES.keys())
+            weights = [_rarity_w.get(PET_SPECIES[k].get("rarity", "common"), 1) for k in keys]
+            sk = random.choices(keys, weights=weights, k=1)[0]
+            if _is_legend(sk):            # weighted roll happened to land a Legend
+                _legend_last[chat_id] = now
     sp = PET_SPECIES[sk]
     shiny = random.random() < 0.02
     name = ("✨SHINY " if shiny else "") + sp["name"]
@@ -40337,6 +40344,41 @@ async def _spawn_wild_pet(bot, chat_id):
                 f"💨 *The wild {PET_SPECIES[st['species']]['name']} got away...*")
     _t = asyncio.create_task(_flee())
     _bg_tasks.add(_t); _t.add_done_callback(_bg_tasks.discard)
+
+async def spawncelestial_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: drop a celestial into THIS chat to be caught right now.
+    /spawncelestial            → a random celestial
+    /spawncelestial Javan      → a specific Legend / celestial by name"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    chat_id = update.effective_chat.id
+    args = context.args or []
+    sk = None
+    if args:
+        q = " ".join(args).strip().lower().lstrip("@")
+        if q in PET_SPECIES:
+            sk = q
+        else:
+            sk = next((k for k, v in PET_SPECIES.items() if v["name"].lower() == q), None)
+        if not sk:  # partial match, prefer celestials
+            cands = [k for k, v in PET_SPECIES.items()
+                     if q in v["name"].lower() and v.get("rarity") == "celestial"] \
+                    or [k for k, v in PET_SPECIES.items() if q in v["name"].lower()]
+            sk = cands[0] if cands else None
+        if not sk:
+            await update.message.reply_text(
+                f"No species matched '{' '.join(args)}'. Use a celestial/Legend name "
+                f"(e.g. /spawncelestial Javan) or omit it for a random celestial.")
+            return
+    else:
+        cels = [k for k, v in PET_SPECIES.items() if v.get("rarity") == "celestial"]
+        sk = random.choice(cels) if cels else None
+    if not sk:
+        await update.message.reply_text("No celestial species available."); return
+    # Delete the admin trigger so the celestial just "appears" out of nowhere.
+    try: await update.message.delete()
+    except Exception: pass
+    await _spawn_wild_pet(context.bot, chat_id, force_species=sk)
 
 async def _edit_any_card(bot, chat_id, msg_id, text, markup=None):
     """Edit a card whether it's a text message or a photo (caption) message."""
@@ -45541,6 +45583,7 @@ def main():
     app.add_handler(CallbackQueryHandler(admingivexp_callback, pattern="^agivexp_"))
     app.add_handler(CommandHandler("adminsetlevel",  adminsetlevel_cmd))
     app.add_handler(CallbackQueryHandler(adminsetlevel_callback, pattern="^asetlvl_"))
+    app.add_handler(CommandHandler("spawncelestial", spawncelestial_cmd))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(rank_callback,         pattern="^rank_p_"))
