@@ -35466,6 +35466,69 @@ def _gm_name(row):
     tg = row.get("tg_username")
     return f"{n}" + (f" (@{tg})" if tg else "")
 
+def _gm_uid_name_map():
+    """uid -> display name (@handle preferred) for players and shadows."""
+    m = {}
+    try:
+        conn = _connect_db(); conn.row_factory = sqlite3.Row
+        for r in conn.execute("SELECT user_id, username, tg_username FROM players"):
+            r = dict(r)
+            m[r["user_id"]] = (f"@{r['tg_username']}" if r.get("tg_username")
+                               else (r.get("username") or str(r["user_id"])))
+        for r in conn.execute("SELECT user_id, username FROM shadow_profiles"):
+            if r["user_id"] not in m:
+                m[r["user_id"]] = r["username"] or str(r["user_id"])
+        conn.close()
+    except Exception:
+        pass
+    return m
+
+def _gm_pet_stats(limit_recent=12):
+    """Behind-the-scenes pet economy snapshot for the GM dashboard."""
+    from collections import Counter
+    out = {"total": 0, "by_rarity": Counter(), "species_seen": set(), "shinies": 0,
+           "celestials": [], "legends": [], "owner_pets": Counter(),
+           "owner_cels": Counter(), "recent": []}
+    try:
+        conn = _connect_db(); conn.row_factory = sqlite3.Row
+        rows = [dict(r) for r in conn.execute(
+            "SELECT owner_id, species, nickname, level, is_shiny, created_at FROM pets")]
+        conn.close()
+    except Exception:
+        return out
+    out["total"] = len(rows)
+    for r in rows:
+        sp = PET_SPECIES.get(r.get("species"))
+        if not sp:
+            continue
+        rar = sp.get("rarity", "common")
+        out["by_rarity"][rar] += 1
+        out["species_seen"].add(r["species"])
+        out["owner_pets"][r["owner_id"]] += 1
+        if r.get("is_shiny"):
+            out["shinies"] += 1
+        if rar == "celestial":
+            out["celestials"].append(r)
+            out["owner_cels"][r["owner_id"]] += 1
+        if r["species"] in _LEGEND_KEYS:
+            out["legends"].append(r)
+    out["recent"] = sorted(out["celestials"],
+                           key=lambda r: _gm_parse_ts(r.get("created_at")) or datetime.min,
+                           reverse=True)[:limit_recent]
+    return out
+
+def _gm_top_messagers(n=12):
+    """Top group-chat message senders, from shadow_profiles.message_count."""
+    try:
+        conn = _connect_db(); conn.row_factory = sqlite3.Row
+        rows = [dict(r) for r in conn.execute(
+            "SELECT user_id, username, message_count FROM shadow_profiles "
+            "WHERE message_count > 0 ORDER BY message_count DESC LIMIT ?", (n,))]
+        conn.close()
+        return rows
+    except Exception:
+        return []
+
 async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin-only GM vision. /gm overview, /gm <name|id> deep dive, /gm live."""
     user = update.effective_user
@@ -35493,9 +35556,11 @@ async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     args = context.args or []
+    _GM_RESERVED = {"live", "pets", "pet", "celestial", "celestials",
+                    "chat", "msgs", "messages", "activity"}
 
     # ── Per-player deep dive ────────────────────────────────────────────────
-    if args and args[0].lower() != "live":
+    if args and args[0].lower() not in _GM_RESERVED:
         q = " ".join(args).lower()
         match = None
         try:
@@ -35517,6 +35582,36 @@ async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         flags = []
         if match.get("banned"): flags.append("🚫 BANNED")
         if match.get("is_wanted"): flags.append("🎯 WANTED")
+        _muid = match["user_id"]
+        # Pets + chat data for this player
+        _sh = get_shadow(_muid) or {}
+        _msgs = safe_int(_sh.get("message_count"))
+        pet_line = "  _no pets_"
+        try:
+            pconn = _connect_db(); pconn.row_factory = sqlite3.Row
+            prows = [dict(r) for r in pconn.execute(
+                "SELECT species, nickname, level, is_shiny, is_active FROM pets WHERE owner_id=?",
+                (_muid,))]
+            pconn.close()
+            if prows:
+                from collections import Counter as _C
+                _pr = _C(); _cel = []; _sh_ct = 0; _active = None
+                for pr in prows:
+                    sp = PET_SPECIES.get(pr["species"], {})
+                    _pr[sp.get("rarity","common")] += 1
+                    if pr.get("is_shiny"): _sh_ct += 1
+                    if sp.get("rarity") == "celestial":
+                        _cel.append(sp.get("name","?") + ("✨" if pr.get("is_shiny") else ""))
+                    if pr.get("is_active"):
+                        _active = (pr.get("nickname") or sp.get("name","Pet")) + f" (Lv {pr.get('level',1)})"
+                _rar_order = ["celestial","mythic","legendary","epic","rare","uncommon","common"]
+                _rsum = " ".join(f"{RARITY_EMOJI.get(r,'')}{_pr[r]}" for r in _rar_order if _pr.get(r))
+                pet_line = (f"  {len(prows)} pets · {_rsum}"
+                            + (f"\n  ✨ {_sh_ct} shiny" if _sh_ct else "")
+                            + (f"\n  🐾 Active: {_active}" if _active else "")
+                            + (f"\n  🌠 Celestials: {', '.join(_cel)}" if _cel else ""))
+        except Exception:
+            pass
         text = (
             f"🕵️ *GM Dossier — {_gm_name(match)}*\n"
             f"`id {match['user_id']}`\n\n"
@@ -35525,9 +35620,11 @@ async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             + (("  " + " ".join(flags)) if flags else "") + "\n"
             f"❤️ {match.get('hp',0)}/{match.get('max_hp',0)}   💰 {safe_int(match.get('gold')):,}g\n"
             f"📊 EXP {safe_int(match.get('total_exp')):,}   ⚔️ {match.get('wins',0)}W/{match.get('losses',0)}L\n"
+            f"💬 Messages: {_msgs:,}\n"
             f"🟢 Now: {live}\n"
             f"🕐 Last seen: {_gm_ago(dt)}" + (f" ({lbl})" if lbl else "") + "\n"
             f"📅 Joined: {_gm_ago(joined)}\n\n"
+            f"*🐾 Pets:*\n{pet_line}\n\n"
             f"*Activity log:*\n" + ("\n".join(acts) if acts else "  _no activity recorded_")
         )
         await _dm(text); return
@@ -35547,6 +35644,64 @@ async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"• *{_gm_name(r)}* (Lv {r['level']}) — {ls}")
         await _dm("\n".join(lines)); return
 
+    # ── /gm pets — pet economy deep dive ────────────────────────────────────
+    if args and args[0].lower() in ("pets", "pet", "celestial", "celestials"):
+        ps = _gm_pet_stats(limit_recent=15)
+        nm = _gm_uid_name_map()
+        rar_order = ["common","uncommon","rare","epic","legendary","mythic","celestial"]
+        by = ps["by_rarity"]
+        lines = [
+            f"🐾 *GM — Pet Economy*",
+            f"Total pets owned: *{ps['total']:,}*",
+            f"Unique species seen: *{len(ps['species_seen'])}/{len(PET_SPECIES)}* "
+            f"({round(len(ps['species_seen'])/max(1,len(PET_SPECIES))*100)}%)",
+            f"✨ Shinies: *{ps['shinies']}*   🌠 Celestials: *{len(ps['celestials'])}*   "
+            f"🎱 Legends: *{len(ps['legends'])}*",
+            "",
+            "*By rarity:*  " + " · ".join(
+                f"{RARITY_EMOJI.get(r,'')}{by.get(r,0)}" for r in rar_order),
+            "",
+            "*🌠 Recent celestial catches:*",
+        ]
+        if ps["recent"]:
+            for r in ps["recent"]:
+                sp = PET_SPECIES.get(r["species"], {})
+                who = nm.get(r["owner_id"], str(r["owner_id"]))
+                shiny = "✨" if r.get("is_shiny") else ""
+                lg = "🎱" if r["species"] in _LEGEND_KEYS else "🌠"
+                lines.append(f"• {lg} {shiny}*{sp.get('name','?')}* → {who} "
+                             f"_(Lv {r.get('level',1)}, {_gm_ago(_gm_parse_ts(r.get('created_at')))})_")
+        else:
+            lines.append("  _none caught yet_")
+        # top celestial collectors
+        top_cel = ps["owner_cels"].most_common(5)
+        if top_cel:
+            lines.append("\n*👑 Top celestial owners:*  " +
+                         " · ".join(f"{nm.get(u,str(u))} ({c})" for u, c in top_cel))
+        top_own = ps["owner_pets"].most_common(5)
+        if top_own:
+            lines.append("*📦 Biggest kennels:*  " +
+                         " · ".join(f"{nm.get(u,str(u))} ({c})" for u, c in top_own))
+        await _dm("\n".join(lines)); return
+
+    # ── /gm chat — group message leaderboard ────────────────────────────────
+    if args and args[0].lower() in ("chat", "msgs", "messages", "activity"):
+        top = _gm_top_messagers(20)
+        total_msgs = sum(safe_int(r.get("message_count")) for r in top)
+        try:
+            _allc = _db().cursor()
+            _allc.execute("SELECT COALESCE(SUM(message_count),0), COUNT(*) FROM shadow_profiles WHERE message_count > 0")
+            _grand, _talkers = _allc.fetchone()
+        except Exception:
+            _grand, _talkers = total_msgs, len(top)
+        lines = [f"💬 *GM — Chat Activity*",
+                 f"Total messages tracked: *{safe_int(_grand):,}* from *{safe_int(_talkers)}* members",
+                 "", "*🏆 Top talkers:*"]
+        for i, r in enumerate(top, 1):
+            uname = r.get("username") or str(r["user_id"])
+            lines.append(f"{i}. *{uname}* — {safe_int(r.get('message_count')):,} msgs")
+        await _dm("\n".join(lines)); return
+
     # ── Overview ────────────────────────────────────────────────────────────
     total = len(rows)
     with_act = [(r, _gm_last_activity(r)[0], _gm_last_activity(r)[1]) for r in rows]
@@ -35555,28 +35710,65 @@ async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_1h  = sum(1 for _, dt, _ in with_act if dt and (now - dt).total_seconds() < 3600)
     total_gold = sum(safe_int(r.get("gold")) for r in rows)
     banned = sum(1 for r in rows if r.get("banned"))
+    joined_dts = [_gm_parse_ts(r.get("created_at")) for r in rows]
+    new_24h = sum(1 for d in joined_dts if d and (now - d).total_seconds() < 86400)
+    new_7d  = sum(1 for d in joined_dts if d and (now - d).total_seconds() < 604800)
 
     recent = sorted([x for x in with_act if x[1]], key=lambda x: x[1], reverse=True)[:8]
     top_lvl = sorted(rows, key=lambda r: safe_int(r.get("level")), reverse=True)[:5]
     top_gold = sorted(rows, key=lambda r: safe_int(r.get("gold")), reverse=True)[:5]
 
+    ps = _gm_pet_stats(limit_recent=5)
+    nm = _gm_uid_name_map()
+    top_msg = _gm_top_messagers(5)
+    # world state / event pulse
+    try:
+        _w = get_weather(); _weather = f"{_w.get('emoji','')} {_w.get('name','?')}"
+    except Exception:
+        _weather = "?"
+    _today = datetime.now().strftime("%Y-%m-%d")
+    _bstate = _ws_get("daily_budget") or {}
+    _budget = []
+    for _k, _lbl in [("world_events","🌍evt"), ("ambush","🗡️amb"),
+                     ("guild_raid","🏰raid"), ("oracle_attack","🎱orc")]:
+        _rec = _bstate.get(_k) if isinstance(_bstate, dict) else None
+        _used = safe_int(_rec.get("count")) if isinstance(_rec, dict) and _rec.get("date") == _today else 0
+        _budget.append(f"{_lbl}:{_used}")
+    _spawns_live = len(_wild_spawns)
+
     lines = [
         f"🕵️ *GM Vision — {WORLD_NAME}*",
-        f"👥 Players: *{total}*"
-        + (f"  ·  🚫 {banned} banned" if banned else ""),
-        f"🟢 Active: *{active_1h}* (1h) · *{active_24h}* (24h) · *{active_7d}* (7d)",
-        f"💰 Gold in the economy: *{total_gold:,}g*",
-        f"⚔️ Live now: *{len(live_players)}* mid-action",
+        f"👥 Players: *{total}*   🆕 +{new_24h} (24h) / +{new_7d} (7d)"
+        + (f"   🚫 {banned} banned" if banned else ""),
+        f"🟢 Active: *{active_1h}* (1h) · *{active_24h}* (24h) · *{active_7d}* (7d)   ⚔️ {len(live_players)} live",
+        f"💰 Economy: *{total_gold:,}g*  (avg {total_gold//max(1,total):,}g)",
+        f"🌦️ Weather: {_weather}   📅 today: " + " ".join(_budget)
+        + (f"   🎯 {_spawns_live} wild spawn(s)" if _spawns_live else ""),
         "",
-        "*🔥 Most recently active:*",
+        f"🐾 *Pets:* {ps['total']:,} owned · {len(ps['species_seen'])}/{len(PET_SPECIES)} species "
+        f"· ✨{ps['shinies']} · 🌠{len(ps['celestials'])} celestial · 🎱{len(ps['legends'])} legend",
     ]
+    if ps["recent"]:
+        lines.append("*🌠 Latest celestials:*")
+        for r in ps["recent"]:
+            sp = PET_SPECIES.get(r["species"], {})
+            who = nm.get(r["owner_id"], str(r["owner_id"]))
+            lg = "🎱" if r["species"] in _LEGEND_KEYS else "🌠"
+            shiny = "✨" if r.get("is_shiny") else ""
+            lines.append(f"  {lg} {shiny}{sp.get('name','?')} → {who} _({_gm_ago(_gm_parse_ts(r.get('created_at')))})_")
+    if top_msg:
+        lines.append("*💬 Top talkers:*  " +
+                     " · ".join(f"{r.get('username') or r['user_id']} ({safe_int(r.get('message_count')):,})"
+                                for r in top_msg))
+    lines.append("")
+    lines.append("*🔥 Most recently active:*")
     for r, dt, lbl in recent:
         live = _gm_live_state(r["user_id"])
         suffix = f" — {live}" if live else (f" — {lbl} {_gm_ago(dt)}" if lbl else "")
         lines.append(f"• *{_gm_name(r)}* (Lv {r['level']}){suffix}")
     lines.append("\n*🏆 Top level:*  " + " · ".join(f"{_gm_name(r)} ({r['level']})" for r in top_lvl))
     lines.append("*💰 Richest:*  " + " · ".join(f"{_gm_name(r)} ({safe_int(r.get('gold')):,}g)" for r in top_gold))
-    lines.append("\n_/gm <name> for a dossier · /gm live for the live feed_")
+    lines.append("\n_/gm <name> · /gm pets · /gm chat · /gm live_")
     await _dm("\n".join(lines))
 
 
