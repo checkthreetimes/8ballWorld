@@ -40314,14 +40314,6 @@ def _grant_gift(uid):
         add_item(p, item); save_player(p)
         return f"🎁 {item}"
 
-_WEATHER_WITNESS = [
-    "{names} feel the shift in the air.",
-    "{names} pause mid-shot as the world turns.",
-    "The change isn't lost on {names}.",
-    "{names} look up as the atmosphere bends.",
-    "Somewhere, {names} sense it too.",
-]
-
 async def _weather_watch(bot):
     """Announce weather CHANGES with variety: a random flavor line, a shout-out
     to recent players, and an occasional 'blessing' gift to a random active
@@ -40335,7 +40327,6 @@ async def _weather_watch(bot):
         return  # don't announce on boot — only on actual changes
     emoji = w.get("emoji", "🌦️")
     flavor = random.choice(w.get("flavors", [w.get("desc", "The world shifts.")]))
-    hint = "\n🌑 _Something ancient stirs... it can be summoned tonight._" if w.get("secret_eligible") else ""
     try:
         c = _db().cursor()
         week_ago = (datetime.now() - timedelta(days=7)).isoformat()
@@ -40345,19 +40336,13 @@ async def _weather_watch(bot):
     except Exception:
         return
     for g in groups:
+        # Blessing stays as a SILENT reward (DM only) so the group ping is clean:
+        # ~40% of weather changes still gift a random recent player.
         recent = _recent_group_players(g, hours=6)
-        witness = ""
-        if len(recent) >= 1:
-            names = [_grp_mention(n, tg) for _, n, tg in recent[:2]]
-            _joined = " & ".join(names)
-            witness = "\n_" + random.choice(_WEATHER_WITNESS).format(names=_joined) + "_"
-        # Blessing: ~40% of weather changes gift a random recent player, by @handle
-        blessing = ""
         if recent and random.random() < 0.40:
-            _buid, _bname, _btg = random.choice(recent)
+            _buid = random.choice(recent)[0]
             reward = _grant_gift(_buid)
             if reward:
-                blessing = f"\n\n🎁 *The {w['name']} blesses* {_grp_mention(_bname, _btg)}!  {reward}"
                 try:
                     await bot.send_message(_buid,
                         f"🎁 *The {w['name']} smiles on you!*\nYou received {reward}. "
@@ -40365,11 +40350,10 @@ async def _weather_watch(bot):
                         parse_mode="Markdown")
                 except Exception:
                     pass
+        # Simple weather update — emoji, name, one flavor line. Nothing else.
         try:
             await bot.send_message(g,
-                f"{emoji} *The conditions have changed: {w['name']}*\n"
-                f"_{flavor}_{witness}\n\n"
-                f"📈 EXP ×{w['exp_mod']}  |  ⚔️ DMG ×{w['dmg_mod']}{hint}{blessing}",
+                f"{emoji} *The conditions have changed: {w['name']}*\n_{flavor}_",
                 parse_mode="Markdown")
         except Exception:
             pass
