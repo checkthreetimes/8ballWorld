@@ -40634,6 +40634,36 @@ async def _announce_epic_pet(bot, chat_id, catcher, species_key, shiny=False, ho
         await bot.send_message(chat_id, text, parse_mode="Markdown")
     except Exception:
         pass
+    # Notify the real-life member behind a namesake Legend that they were caught.
+    owner_handle = _LEGEND_OWNER_HANDLES.get(species_key)
+    if owner_handle:
+        ouid = _resolve_uid_by_handle(owner_handle)
+        if ouid:
+            try:
+                await bot.send_message(ouid,
+                    f"👑 *Someone just {how} you!*\n\n"
+                    f"{catcher} added *{shiny_tag}{sp['name']}* — your namesake celestial — "
+                    f"to their team. Your legend lives on in the 8Ball Empire. 💛",
+                    parse_mode="Markdown")
+            except Exception:
+                pass
+
+# species_key -> the real member's Telegram @handle, DM'd when their pet is obtained
+_LEGEND_OWNER_HANDLES = {"jenna": "preach"}
+
+def _resolve_uid_by_handle(handle):
+    """user_id for a Telegram @handle, via the players/shadow tables (or None)."""
+    h = (handle or "").lstrip("@").lower()
+    if not h:
+        return None
+    try:
+        conn = _connect_db(); conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT user_id FROM players WHERE LOWER(tg_username)=? LIMIT 1", (h,)).fetchone() \
+              or conn.execute("SELECT user_id FROM shadow_profiles WHERE LOWER(username)=? LIMIT 1", (h,)).fetchone()
+        conn.close()
+        return row["user_id"] if row else None
+    except Exception:
+        return None
 
 async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
