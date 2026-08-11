@@ -4429,7 +4429,7 @@ PET_SPECIES = {
     "radiant_world_ender": {"name":"Radiant World Ender", "element":"holy", "rarity":"celestial", "base_atk":197, "base_def":41, "personality":"loyal", "emoji":"🌌", "desc":"A radiant being of endings that chose, for reasons of its own, to sit at your side. Celestial-tier — the rarest thing that will ever walk beside you.", "def_ability":"regen"},
     "void_anglerfish": {"name":"Void Anglerfish", "element":"void", "rarity":"celestial", "base_atk":191, "base_def":37, "personality":"lazy", "emoji":"🎣", "desc":"A void anglerfish that lures the greedy into the dark with a false little light. Celestial-tier — the rarest thing that will ever walk beside you.", "def_ability":"stun"},
     # ═══ 8BALL LEGENDS — signature pets for the founders (celestial) ═══
-    "jenna":  {"name":"Jenna",  "element":"holy",      "rarity":"celestial", "base_atk":204, "base_def":46, "personality":"loyal",       "emoji":"👑", "desc":"A founding pillar of the 8Ball Empire given legendary form. Radiant, unshakable, and the heart the whole hall is built around.", "def_ability":"shield"},
+    "jenna":  {"name":"Jenna",  "element":"holy",      "rarity":"celestial", "base_atk":215, "base_def":50, "personality":"loyal",       "emoji":"👑", "desc":"The Mother of the 8Ball Empire — top tier, above all others. Radiant and unshakable, she is the heart the whole hall is built around, and everything here answers to her.", "def_ability":"shield"},
     "marc":   {"name":"Marc",   "element":"fire",      "rarity":"celestial", "base_atk":210, "base_def":34, "personality":"fierce",      "emoji":"🔥", "desc":"An 8Ball legend forged from pure momentum. When Marc walks in, the temperature — and the stakes — go up.", "def_ability":"counter"},
     "temari": {"name":"Temari", "element":"wind",      "rarity":"celestial", "base_atk":198, "base_def":40, "personality":"playful",     "emoji":"🎐", "desc":"A whirlwind spirit of the 8Ball hall. Temari spins the whole table into motion and never loses the rhythm.", "def_ability":"stun"},
     "james":  {"name":"James",  "element":"lightning", "rarity":"celestial", "base_atk":206, "base_def":36, "personality":"loyal",       "emoji":"⚡", "desc":"A cornerstone of the group given living-current form. James arrives a half-second before the thunder and stays till the end.", "def_ability":"thorns"},
@@ -40611,6 +40611,13 @@ async def _announce_epic_pet(bot, chat_id, catcher, species_key, shiny=False, ho
                 f"🌠 _Celestial · {elem}_   |   ⚔️ Base ATK *{sp['base_atk']}*\n"
                 f"_{sp['desc']}_\n\n"
                 f"🌌 _There is only one. This may never happen again._")
+    elif species_key == "jenna":
+        text = (f"👑✨ *THE MOTHER OF THE 8BALL EMPIRE HAS BEEN {how.upper()}!* ✨👑\n\n"
+                f"{emoji} *{shiny_tag}{sp['name']}* — top tier, above all others —\n"
+                f"now stands beside {catcher}!\n\n"
+                f"🌠 _Celestial · {elem}_   |   ⚔️ Base ATK *{sp['base_atk']}*\n"
+                f"_{sp['desc']}_\n\n"
+                f"👑 _The hall bows. There is no higher honor._")
     elif _is_legend(species_key):
         text = (f"🎱✨ *AN 8BALL LEGEND HAS BEEN {how.upper()}!* ✨🎱\n\n"
                 f"{emoji} *{shiny_tag}{sp['name']}* — one of the pillars of the Empire —\n"
