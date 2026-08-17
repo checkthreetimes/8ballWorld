@@ -3732,10 +3732,6 @@ RARITY_EMOJI = {
 }
 
 # ── PET SYSTEM ────────────────────────────────────────────────────────────────
-ELEMENT_EMOJI = {
-    "fire":"🔥","water":"💧","earth":"🌿","wind":"🌪️",
-    "shadow":"🌑","holy":"✨","void":"🌀","lightning":"⚡","nature":"🍃",
-}
 PERSONALITY_EMOJI = {
     "playful":"🎉","fierce":"😤","calm":"😌","mischievous":"😈",
     "loyal":"💛","lazy":"💤","greedy":"🤑","timid":"🫢",
@@ -6296,8 +6292,11 @@ ENCOUNTER_MONSTERS = [
 MONSTER_BY_KEY   = {m[0]: m for m in ENCOUNTER_MONSTERS}
 
 ELEMENT_EMOJI = {
+    # Pet elements
     "fire":"🔥","water":"💧","earth":"🪨","wind":"🌪️","lightning":"⚡",
-    "dark":"🌑","holy":"✨","void":"🌀","physical":"💪","ice":"❄️","poison":"☠️",
+    "shadow":"🌑","holy":"✨","void":"🌀","nature":"🍃",
+    # Encounter/monster elements
+    "dark":"🌑","physical":"💪","ice":"❄️","poison":"☠️",
 }
 
 def _enc_hp_bar(current, maximum, length=10):
@@ -8041,28 +8040,6 @@ _DNG_ROOM_WEIGHTS = {
     9: [("monster",15),("trap",8),("treasure",8),("rest",2),("shrine",5),("elite",16),("shop",6),("event",9),("ambush",10),("multi",16),("trap",5)],
     10:[("monster",12),("trap",7),("treasure",8),("rest",2),("shrine",5),("elite",15),("shop",5),("event",9),("ambush",11),("multi",18),("trap",8)],
 }
-
-_DNG_SHRINE_BUFFS = [
-    {"key":"atk_boost",     "name":"War Blessing",     "desc":"ATK +35% for this floor",         "emoji":"⚔️"},
-    {"key":"iron_skin",     "name":"Iron Skin",         "desc":"Take 35% less damage",             "emoji":"🛡️"},
-    {"key":"sacred_heal",   "name":"Sacred Healing",    "desc":"Restore 40% max HP now",           "emoji":"💚"},
-    {"key":"exp_boost",     "name":"Scholar's Blessing","desc":"+60% EXP this floor",              "emoji":"📖"},
-    {"key":"double_strike", "name":"Twin Blades",        "desc":"25% chance to attack twice",       "emoji":"⚡"},
-    {"key":"arcane_surge",  "name":"Arcane Surge",       "desc":"+60% skill damage",                "emoji":"✨"},
-    {"key":"regen",         "name":"Regeneration",       "desc":"Recover 3% HP after each room",    "emoji":"🌿"},
-    {"key":"mp_surge",      "name":"Mana Spring",        "desc":"MP costs halved this floor",       "emoji":"💙"},
-    {"key":"confusion_aura","name":"Confusion Aura",     "desc":"Enemies miss 25% of attacks",      "emoji":"💫"},
-    {"key":"sharpened",     "name":"Sharpened Instincts","desc":"Crit chance +20% this floor",      "emoji":"🎯"},
-]
-
-_DNG_FLOOR_MODIFIERS = [
-    {"key":"scorched",  "name":"Scorched Ground", "desc":"Lose 3% HP after each room",       "emoji":"🔥"},
-    {"key":"cursed",    "name":"Cursed Dungeon",   "desc":"Healing 40% less effective",       "emoji":"💀"},
-    {"key":"dark_fog",  "name":"Dark Fog",          "desc":"25% miss chance on basic attacks", "emoji":"🌫️"},
-    {"key":"miasma",    "name":"Miasma",             "desc":"Enemies start each fight enraged", "emoji":"☠️"},
-    {"key":"silence",   "name":"Null Zone",          "desc":"Skills cost +50% more MP",         "emoji":"🔇"},
-    {"key":"decay",     "name":"Decay Aura",         "desc":"Max HP reduced 15% this floor",    "emoji":"🍂"},
-]
 
 _DNG_SHRINE_BUFFS = [
     {"key":"atk_boost",      "name":"War Blessing",      "desc":"ATK +35% for this floor",    "emoji":"⚔️"},
@@ -13376,8 +13353,6 @@ _ITEM_RENAME = {
     "Ferrule Dart":        "Bloodsteel Shuriken",
     "Twin Tip Blades":     "Shadow Death Star",
     "The Ball Return":     "Death's Whisper",
-    "Chalk Beads":         "Wooden Prayer Beads",
-    "Iron Chalk Ring":     "Silver Prayer Beads",
     "The Spot Marker":     "Holy Judge's Cross",
     "The Crossed Cues":    "Grand Inquisitor's Cross",
     "The Diamond Staff":   "The Final Judgment",
@@ -13419,7 +13394,6 @@ _ITEM_RENAME = {
     #  with an unusable inventory entry)
     "Rack Cloth Vest":     "Rusty Iron Vest",
     "Reinforced Chalk Coat": "Iron Chain Mail",
-    "Ferrule Dart":        "Bloodsteel Shuriken",
     "Toughened Rail Coat": "Soldier's Plating",
     "Iron Rail Guard":     "Iron Heater Shield",
     "The Chalk Wall":      "Steel Tower Shield",
@@ -24928,6 +24902,18 @@ async def _skill_pick_callback_inner(update: Update, context: ContextTypes.DEFAU
             out.append(f"✨ *{sk['name']}!* Cleansed: {', '.join(cleansed) or 'self'} — Blessed ×8 (next 8 attacks)!")
             save_player(p)
             await send_result("\n".join(out)); return
+        # Target-applied support (revive/heal/buff) only ever aids an ALLY
+        # (self, guild, party, marriage, hand-hold). Aiming one at an enemy
+        # self-casts instead of reviving/healing/buffing them — you can no
+        # longer hand an opponent HP, a revive + invincibility, or a stat buff.
+        if stype in ("revive_heal", "regen", "full_revive", "dmg_reduction_buff",
+                     "heal_shield"):
+            try:
+                _ally = _are_allies(p, tp)
+            except Exception:
+                _ally = (p.get("user_id") == tp.get("user_id"))  # conservative: self only
+            if not _ally:
+                tp = p
         out = [f"⚡ *{p['username']}* uses *{sk['name']}* on *{tp['username']}*!"]
         # ── Healing skills on target ──
         if stype == "revive_heal":
