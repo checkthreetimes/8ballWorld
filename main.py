@@ -13353,8 +13353,6 @@ _ITEM_RENAME = {
     "Ferrule Dart":        "Bloodsteel Shuriken",
     "Twin Tip Blades":     "Shadow Death Star",
     "The Ball Return":     "Death's Whisper",
-    "Chalk Beads":         "Wooden Prayer Beads",
-    "Iron Chalk Ring":     "Silver Prayer Beads",
     "The Spot Marker":     "Holy Judge's Cross",
     "The Crossed Cues":    "Grand Inquisitor's Cross",
     "The Diamond Staff":   "The Final Judgment",
@@ -13396,7 +13394,6 @@ _ITEM_RENAME = {
     #  with an unusable inventory entry)
     "Rack Cloth Vest":     "Rusty Iron Vest",
     "Reinforced Chalk Coat": "Iron Chain Mail",
-    "Ferrule Dart":        "Bloodsteel Shuriken",
     "Toughened Rail Coat": "Soldier's Plating",
     "Iron Rail Guard":     "Iron Heater Shield",
     "The Chalk Wall":      "Steel Tower Shield",
