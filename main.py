@@ -8015,6 +8015,7 @@ _DNG_FLOOR_MODIFIERS = [
     {"key":"dark_fog", "name":"Dark Fog",       "desc":"20% chance to miss attacks",  "emoji":"🌫️"},
     {"key":"miasma",   "name":"Miasma",         "desc":"Enemy attacks 20% faster",    "emoji":"☠️"},
     {"key":"silence",  "name":"Null Zone",      "desc":"Skill MP costs +50%",         "emoji":"🔇"},
+    {"key":"decay",    "name":"Decay Aura",     "desc":"Max HP reduced 15% this floor","emoji":"🍂"},
 ]
 
 def _dng_roll_floor_modifier(floor, diff="hard"):
@@ -9722,7 +9723,18 @@ async def _dungeon_callback_inner(update: Update, context: ContextTypes.DEFAULT_
         state["floor"] += 1
         state["room"] = 1
         state.pop("floor_buff", None)
+        # Decay Aura: restore any previous floor's max-HP reduction, then apply
+        # this floor's if rolled. p_max_hp is ephemeral dungeon state (never
+        # written back to the player's real HP), so this only affects the run.
+        _dec_prev = state.pop("decay_reduction", 0)
+        if _dec_prev:
+            state["p_max_hp"] = state.get("p_max_hp", 1) + _dec_prev
         state["floor_modifier"] = _dng_roll_floor_modifier(state["floor"], diff)
+        if (state.get("floor_modifier") or {}).get("key") == "decay":
+            _dec = round(state["p_max_hp"] * 0.15)
+            state["p_max_hp"] = max(1, state["p_max_hp"] - _dec)
+            state["decay_reduction"] = _dec
+            state["p_hp"] = min(state["p_hp"], state["p_max_hp"])
         narr = _dng_roll_narration("floor_deeper", floor=state["floor"])
         # Bulletproof theme lookup: fall back to DNG_THEMES if state's theme
         # list is missing/empty, and clamp the index so it can never go
