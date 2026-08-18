@@ -213,8 +213,6 @@ _enc_sessions      = {}   # uid -> {"gold":0,"exp":0,"wins":0,"losses":0,"items"
 _dng_timers        = {}   # user_id -> asyncio.Task (real-time combat ticker)
 _pvp_cards         = {}   # (attacker_uid, defender_uid) -> message_id — used to clean up stale cards
 _pvp_card_tasks    = {}   # (attacker_uid, defender_uid) -> asyncio.Task for auto-delete timer
-_pvp_grace         = {}   # pair -> {"until": ts, "protected": uid} — opening grace so a fresh
-                          # defender can't be spam-killed before they jump into the chat
 _pvp_battle_logs   = {}   # pair -> list[str], one entry per round (chronological)
 _pvp_cur_page      = {}   # pair -> int, current page index (0 = oldest)
 _pvp_player_cards  = {}   # uid -> (chat_id, message_id) — each player's own battle card
@@ -619,14 +617,6 @@ def _pvp_fight_card(viewer_p, opp_p, action_text, pair=None):
     _notes = []
     if is_invincible(viewer_p):
         _notes.append("🛡️ _You're recovering — you can't start an attack until your invincibility ends._")
-    _grace = _pvp_grace_active(pair) if pair is not None else None
-    if _grace:
-        _gs = max(1, int(_grace.get("until", 0) - time.time()) + 1)
-        if _grace.get("protected") == _vu:
-            _notes.append(f"⏳ _Opening grace — you're shielded for ~{_gs}s. Strike back any time to end it early._")
-        else:
-            _notes.append(f"⏳ _Opening grace (~{_gs}s): your first strike is held so "
-                          f"{str(opp_p.get('username','?'))[:16]} can respond — no instant spam-kills at the start._")
     if _notes:
         lines.append("")
         lines.extend(_notes)
@@ -884,7 +874,6 @@ async def _finalize_pvp(pair, result_text, bot, winner_id=None):
     _pvp_cur_page.pop(pair, None)
     _pvp_origin_chat.pop(pair, None)
     _pvp_last_action.pop(pair, None)
-    _pvp_grace.pop(pair, None)
     _pvp_stam_reset(pair)
     _pvp_last_actor.pop(pair, None)
     _cancel_card_timer(pair)  # cancel, don't just drop — or the pending
@@ -1028,40 +1017,6 @@ def _pvp_attack_allowed(a, d):
         return (False, "⚔️ You're mid-encounter — finish it before starting PvP.")
     return (True, "")
 
-
-_PVP_OPENING_GRACE = 0    # deprecated: strict turn order now prevents spam-kills
-                          # entirely (the aggressor gets ONE opening move, then the
-                          # defender has the turn), so no opening shield is needed.
-
-def _pvp_start_grace(pair, protected_uid, secs=_PVP_OPENING_GRACE):
-    """At the start of a fresh fight, shield the just-attacked player: the
-    aggressor can't land hits for `secs` seconds, giving the defender time to
-    open their card and jump in. The moment the protected player acts, the
-    shield lifts (see _pvp_grace_remaining)."""
-    _pvp_grace[pair] = {"until": time.time() + secs, "protected": safe_int(protected_uid)}
-
-def _pvp_grace_remaining(pair, attacker_uid):
-    """Seconds the aggressor is still locked out, or 0. The protected defender is
-    never blocked, and their first action lifts the shield for everyone."""
-    g = _pvp_grace.get(pair)
-    if not g:
-        return 0
-    if safe_int(attacker_uid) == g.get("protected"):
-        _pvp_grace.pop(pair, None)   # the defender jumped in — grace no longer needed
-        return 0
-    rem = g["until"] - time.time()
-    if rem <= 0:
-        _pvp_grace.pop(pair, None)
-        return 0
-    return rem
-
-def _pvp_grace_active(pair):
-    """Read-only peek at an active opening grace (no side effects, safe to call
-    while rendering a card). Returns the grace dict or None."""
-    g = _pvp_grace.get(pair)
-    if not g or g.get("until", 0) - time.time() <= 0:
-        return None
-    return g
 
 def _cancel_card_timer(pair):
     old = _pvp_card_tasks.pop(pair, None)
@@ -8050,6 +8005,8 @@ _DNG_SHRINE_BUFFS = [
     {"key":"arcane_surge",   "name":"Arcane Surge",       "desc":"+60% skill damage",           "emoji":"✨"},
     {"key":"regen",          "name":"Regeneration",       "desc":"Recover 2% HP per tick",      "emoji":"🌿"},
     {"key":"confusion_aura", "name":"Confusion Aura",     "desc":"Enemies miss 30% of attacks", "emoji":"💫"},
+    {"key":"mp_surge",       "name":"Mana Spring",        "desc":"Skill MP costs halved",       "emoji":"💙"},
+    {"key":"sharpened",      "name":"Sharpened Instincts","desc":"Crit chance +20% this floor", "emoji":"🎯"},
 ]
 
 _DNG_FLOOR_MODIFIERS = [
@@ -8057,6 +8014,7 @@ _DNG_FLOOR_MODIFIERS = [
     {"key":"cursed",   "name":"Cursed Dungeon", "desc":"Potions heal 40% less",       "emoji":"💀"},
     {"key":"dark_fog", "name":"Dark Fog",       "desc":"20% chance to miss attacks",  "emoji":"🌫️"},
     {"key":"miasma",   "name":"Miasma",         "desc":"Enemy attacks 20% faster",    "emoji":"☠️"},
+    {"key":"silence",  "name":"Null Zone",      "desc":"Skill MP costs +50%",         "emoji":"🔇"},
 ]
 
 def _dng_roll_floor_modifier(floor, diff="hard"):
@@ -16530,8 +16488,6 @@ async def pvp_rematch_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         _pvp_battle_logs.pop(pair, None)
         _pk_grp = _resolve_pvp_group_chat(uid, query.message.chat_id if query.message else uid)
         _pvp_origin_chat[pair] = _pk_grp
-        # Opening grace protects the challenged player at the rematch's start.
-        _pvp_start_grace(pair, opp_uid)
         # Fresh battle state for per-fight items/companions
         _dng_pvp_init(uid, a); _dng_pvp_init(opp_uid, d)
         try:
@@ -16883,9 +16839,6 @@ async def attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # aggressor is marked as the last actor (opening the fight counts).
         _pvp_stam_reset(pair)
         _pvp_mark_actor(pair, au.id)
-        # Opening grace: shield the just-attacked player so the aggressor can't
-        # burst them down before they've even opened their card.
-        _pvp_start_grace(pair, du_id)
         asyncio.create_task(announce(bot, _grp_chat, _pvp_fight_start_line(a["username"], d["username"]), permanent=True))
     start_txt = "⚔️ *" + a["username"] + "* vs *" + d["username"] + "* — fight started!"
     _pvp_log_append(pair, start_txt)
@@ -17277,12 +17230,6 @@ async def kit_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("You don't have that skill."); return
         if is_defeated(a) or is_invincible(a):
             await query.answer("You can't act right now!", show_alert=True); return
-        if sk.get("kind") == "strike":
-            _g_rem = _pvp_grace_remaining(pair, uid)
-            if _g_rem > 0:
-                await query.answer(f"⏳ Hold — your first strike lands in {int(_g_rem) + 1}s. "
-                                   f"Opening grace lets {d['username']} respond first (no more instant spam-kills).",
-                                   show_alert=True); return
         if is_silenced(a):
             await query.answer(f"🤐 Silenced — can't use {sk['name']}!", show_alert=True); return
         if _kit_on_cd(uid, slot):
