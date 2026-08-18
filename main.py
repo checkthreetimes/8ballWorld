@@ -15178,6 +15178,36 @@ async def pvp_yield_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 
+def _ensure_pvp_results():
+    """Lazily create the PvP results log (used by /gm balance). Same on-demand
+    pattern as world_state, so it needs no init_db change."""
+    _db().execute("""CREATE TABLE IF NOT EXISTS pvp_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        winner_class TEXT, loser_class TEXT,
+        winner_level INTEGER, loser_level INTEGER,
+        turns INTEGER, ts TEXT)""")
+
+def _log_pvp_result(winner, loser):
+    """Record one PvP kill for live balance analysis. Classes are stored by LINE
+    (warrior/mage/…) so evolutions collapse to their family. Best-effort: any
+    error is swallowed so combat is never affected."""
+    try:
+        wl = get_class_line(winner) or "classless"
+        ll = get_class_line(loser) or "classless"
+        try:
+            pk = _pvp_pair_key(winner.get("user_id"), loser.get("user_id"))
+            turns = len(_pvp_battle_logs.get(pk, []))
+        except Exception:
+            turns = 0
+        _ensure_pvp_results()
+        _db().execute(
+            "INSERT INTO pvp_results (winner_class,loser_class,winner_level,loser_level,turns,ts) "
+            "VALUES (?,?,?,?,?,?)",
+            (wl, ll, safe_int(winner.get("level"), 1), safe_int(loser.get("level"), 1),
+             turns, datetime.now().isoformat()))
+    except Exception:
+        pass
+
 def _pvp_kill_exp(a, d):
     """PvP kill EXP: 6% of a level, based on the LOWER of the two levels so
     farming low-level players pays little. Each repeat kill of the same victim
@@ -15345,6 +15375,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, kit_skill=None):
             _exp_penalty(d, exp_loss)
             d["losses"] = d.get("losses", 0) + 1
             a["wins"] = a.get("wins", 0) + 1
+            _log_pvp_result(a, d)
             a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
             if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
                 a["max_kill_streak"] = a["kill_streak"]
@@ -16025,6 +16056,7 @@ async def _execute_pvp_hit(a, d, au_id, du_id, w, chat_id, bot, kit_skill=None):
         _exp_penalty(d, exp_loss)
         d["losses"] = d.get("losses", 0) + 1
         a["wins"] = a.get("wins", 0) + 1
+        _log_pvp_result(a, d)
         a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
         if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
             a["max_kill_streak"] = a["kill_streak"]
@@ -17092,6 +17124,7 @@ async def pvp_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if d["hp"] <= 0:
                 apply_pvp_death(d, a["username"], kc["name"], killer_id=uid)
                 a["wins"] = a.get("wins", 0) + 1
+                _log_pvp_result(a, d)
                 a["kill_streak"] = safe_int(a.get("kill_streak")) + 1
                 if a["kill_streak"] > safe_int(a.get("max_kill_streak")):
                     a["max_kill_streak"] = a["kill_streak"]
@@ -35490,7 +35523,7 @@ async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     args = context.args or []
     _GM_RESERVED = {"live", "pets", "pet", "celestial", "celestials",
-                    "chat", "msgs", "messages", "activity"}
+                    "chat", "msgs", "messages", "activity", "balance", "bal", "pvp"}
 
     # ── Per-player deep dive ────────────────────────────────────────────────
     if args and args[0].lower() not in _GM_RESERVED:
@@ -35615,6 +35648,53 @@ async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if top_own:
             lines.append("*📦 Biggest kennels:*  " +
                          " · ".join(f"{nm.get(u,str(u))} ({c})" for u, c in top_own))
+        await _dm("\n".join(lines)); return
+
+    # ── /gm balance — REAL PvP win rates by class (from live fight logs) ─────
+    if args and args[0].lower() in ("balance", "bal", "pvp"):
+        try:
+            _ensure_pvp_results()
+            conn = _connect_db(); conn.row_factory = sqlite3.Row
+            prows = [dict(r) for r in conn.execute(
+                "SELECT winner_class, loser_class, turns FROM pvp_results")]
+            conn.close()
+        except Exception:
+            prows = []
+        from collections import Counter
+        w = Counter(); fights = Counter(); ttk = []; matchup = Counter(); mfights = Counter()
+        for r in prows:
+            wc, lc = r.get("winner_class") or "classless", r.get("loser_class") or "classless"
+            w[wc] += 1; fights[wc] += 1; fights[lc] += 1
+            if r.get("turns"): ttk.append(safe_int(r["turns"]))
+            if wc != lc:
+                matchup[(wc, lc)] += 1; mfights[frozenset((wc, lc))] += 1
+        total = len(prows)
+        lines = [f"⚖️ *GM — PvP Balance* ({total} recorded kills)"]
+        if total < 30:
+            lines.append("_Small sample — rates stabilise as more fights are logged._")
+        lines.append("")
+        lines.append("*Win rate by class* (W/L · fights):")
+        for c in sorted(fights, key=lambda c: (w[c]/fights[c] if fights[c] else 0), reverse=True):
+            wr = w[c]/fights[c]*100 if fights[c] else 0
+            flag = "  ⚠️" if fights[c] >= 10 and (wr > 60 or wr < 40) else ""
+            lines.append(f"  {c:14} *{wr:3.0f}%*  ({w[c]}W/{fights[c]-w[c]}L · {fights[c]}){flag}")
+        if ttk:
+            _s = sorted(ttk); _m = _s[len(_s)//2]
+            lines.append(f"\n⏱️ Median fight length: *{int(_m)}* actions (n={len(ttk)})")
+        # most lopsided head-to-heads with a decent sample
+        h2h = []
+        for key, n in mfights.items():
+            if n < 6: continue
+            a2, b2 = tuple(key)
+            aw = matchup.get((a2, b2), 0)
+            h2h.append((abs(aw/n - 0.5), a2, b2, aw, n))
+        h2h.sort(reverse=True)
+        if h2h:
+            lines.append("\n*Most lopsided matchups* (≥6 fights):")
+            for _, a2, b2, aw, n in h2h[:6]:
+                lines.append(f"  {a2} {round(aw/n*100)}% vs {b2}  ({aw}/{n})")
+        if total == 0:
+            lines.append("\n_No fights logged yet — come back after some PvP happens._")
         await _dm("\n".join(lines)); return
 
     # ── /gm chat — group message leaderboard ────────────────────────────────
