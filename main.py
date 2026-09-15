@@ -15236,6 +15236,58 @@ def _log_pvp_result(winner, loser):
     except Exception:
         pass
 
+def _build_pvp_balance_report(since_iso=None, header="⚖️ *GM — PvP Balance*"):
+    """Build the PvP balance report text from the live pvp_results log. If
+    since_iso is given, only fights logged at/after that timestamp are counted
+    (used for the weekly snapshot). Shared by /gm balance and the weekly digest."""
+    try:
+        _ensure_pvp_results()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row
+        if since_iso:
+            prows = [dict(r) for r in conn.execute(
+                "SELECT winner_class, loser_class, turns FROM pvp_results WHERE ts >= ?", (since_iso,))]
+        else:
+            prows = [dict(r) for r in conn.execute(
+                "SELECT winner_class, loser_class, turns FROM pvp_results")]
+        conn.close()
+    except Exception:
+        prows = []
+    from collections import Counter
+    w = Counter(); fights = Counter(); ttk = []; matchup = Counter(); mfights = Counter()
+    for r in prows:
+        wc, lc = r.get("winner_class") or "classless", r.get("loser_class") or "classless"
+        w[wc] += 1; fights[wc] += 1; fights[lc] += 1
+        if r.get("turns"): ttk.append(safe_int(r["turns"]))
+        if wc != lc:
+            matchup[(wc, lc)] += 1; mfights[frozenset((wc, lc))] += 1
+    total = len(prows)
+    lines = [f"{header} ({total} recorded kills)"]
+    if 0 < total < 30:
+        lines.append("_Small sample — rates stabilise as more fights are logged._")
+    if total == 0:
+        lines.append("\n_No fights logged in this window yet._")
+        return "\n".join(lines)
+    lines.append("")
+    lines.append("*Win rate by class* (W/L · fights):")
+    for c in sorted(fights, key=lambda c: (w[c]/fights[c] if fights[c] else 0), reverse=True):
+        wr = w[c]/fights[c]*100 if fights[c] else 0
+        flag = "  ⚠️" if fights[c] >= 10 and (wr > 60 or wr < 40) else ""
+        lines.append(f"  {c:14} *{wr:3.0f}%*  ({w[c]}W/{fights[c]-w[c]}L · {fights[c]}){flag}")
+    if ttk:
+        _s = sorted(ttk); _m = _s[len(_s)//2]
+        lines.append(f"\n⏱️ Median fight length: *{int(_m)}* actions (n={len(ttk)})")
+    h2h = []
+    for key, n in mfights.items():
+        if n < 6: continue
+        a2, b2 = tuple(key); aw = matchup.get((a2, b2), 0)
+        h2h.append((abs(aw/n - 0.5), a2, b2, aw, n))
+    h2h.sort(reverse=True)
+    if h2h:
+        lines.append("\n*Most lopsided matchups* (≥6 fights):")
+        for _, a2, b2, aw, n in h2h[:6]:
+            lines.append(f"  {a2} {round(aw/n*100)}% vs {b2}  ({aw}/{n})")
+    return "\n".join(lines)
+
 def _pvp_kill_exp(a, d):
     """PvP kill EXP: 6% of a level, based on the LOWER of the two levels so
     farming low-level players pays little. Each repeat kill of the same victim
@@ -35680,50 +35732,7 @@ async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── /gm balance — REAL PvP win rates by class (from live fight logs) ─────
     if args and args[0].lower() in ("balance", "bal", "pvp"):
-        try:
-            _ensure_pvp_results()
-            conn = _connect_db(); conn.row_factory = sqlite3.Row
-            prows = [dict(r) for r in conn.execute(
-                "SELECT winner_class, loser_class, turns FROM pvp_results")]
-            conn.close()
-        except Exception:
-            prows = []
-        from collections import Counter
-        w = Counter(); fights = Counter(); ttk = []; matchup = Counter(); mfights = Counter()
-        for r in prows:
-            wc, lc = r.get("winner_class") or "classless", r.get("loser_class") or "classless"
-            w[wc] += 1; fights[wc] += 1; fights[lc] += 1
-            if r.get("turns"): ttk.append(safe_int(r["turns"]))
-            if wc != lc:
-                matchup[(wc, lc)] += 1; mfights[frozenset((wc, lc))] += 1
-        total = len(prows)
-        lines = [f"⚖️ *GM — PvP Balance* ({total} recorded kills)"]
-        if total < 30:
-            lines.append("_Small sample — rates stabilise as more fights are logged._")
-        lines.append("")
-        lines.append("*Win rate by class* (W/L · fights):")
-        for c in sorted(fights, key=lambda c: (w[c]/fights[c] if fights[c] else 0), reverse=True):
-            wr = w[c]/fights[c]*100 if fights[c] else 0
-            flag = "  ⚠️" if fights[c] >= 10 and (wr > 60 or wr < 40) else ""
-            lines.append(f"  {c:14} *{wr:3.0f}%*  ({w[c]}W/{fights[c]-w[c]}L · {fights[c]}){flag}")
-        if ttk:
-            _s = sorted(ttk); _m = _s[len(_s)//2]
-            lines.append(f"\n⏱️ Median fight length: *{int(_m)}* actions (n={len(ttk)})")
-        # most lopsided head-to-heads with a decent sample
-        h2h = []
-        for key, n in mfights.items():
-            if n < 6: continue
-            a2, b2 = tuple(key)
-            aw = matchup.get((a2, b2), 0)
-            h2h.append((abs(aw/n - 0.5), a2, b2, aw, n))
-        h2h.sort(reverse=True)
-        if h2h:
-            lines.append("\n*Most lopsided matchups* (≥6 fights):")
-            for _, a2, b2, aw, n in h2h[:6]:
-                lines.append(f"  {a2} {round(aw/n*100)}% vs {b2}  ({aw}/{n})")
-        if total == 0:
-            lines.append("\n_No fights logged yet — come back after some PvP happens._")
-        await _dm("\n".join(lines)); return
+        await _dm(_build_pvp_balance_report()); return
 
     # ── /gm chat — group message leaderboard ────────────────────────────────
     if args and args[0].lower() in ("chat", "msgs", "messages", "activity"):
@@ -38909,6 +38918,23 @@ async def _post_daily_digest(bot):
         except Exception:
             pass
         await asyncio.sleep(0.5)
+    # ── WEEKLY BALANCE SNAPSHOT (admin only, once every 7 days) ──────────────
+    # DMs the GM a PvP balance readout for the trailing week so you can tune
+    # classes off real data without having to run /gm balance manually.
+    try:
+        _last_bal = _ws_get("balance_snapshot_ts", 0)
+        if time.time() - safe_int(_last_bal) >= 7 * 86400:
+            _week_iso = (datetime.now() - timedelta(days=7)).isoformat()
+            _rep = _build_pvp_balance_report(
+                since_iso=_week_iso, header="📊 *Weekly PvP Balance Snapshot*")
+            _rep += "\n\n_This week's fights. Full history: /gm balance_"
+            try:
+                await bot.send_message(ADMIN_ID, _rep, parse_mode="Markdown")
+            except Exception:
+                pass
+            _ws_set("balance_snapshot_ts", time.time())
+    except Exception:
+        pass
     # Refresh the snapshot so tomorrow's digest measures the next 24h
     try:
         conn.execute("DELETE FROM digest_snap")
