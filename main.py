@@ -4424,7 +4424,9 @@ PERSONALITY_DEFEND = {
 }
 
 # EXP needed per pet level
-def pet_exp_for_level(lvl): return lvl * 50 + (lvl * lvl * 5)
+# EXP needed per pet level. Steeper cubic-forward curve (v2): with the bounded
+# grants below, an ACTIVE player reaches ~L50 in about a month instead of days.
+def pet_exp_for_level(lvl): return 20 + 8 * lvl + round(0.6 * lvl * lvl)
 
 PET_LEVEL_HARD_CAP = LEVEL_CAP   # absolute ceiling — matches the player level cap (999)
 
@@ -13089,6 +13091,16 @@ def init_db():
             """)
             _mig_conn.execute("INSERT INTO _migrations (name, ran_at) VALUES ('pet_level_cap_v2', ?)",
                               (datetime.now().isoformat(),))
+
+        # pet_exp_curve_v2: the per-level EXP curve was recalibrated (smaller,
+        # steeper) alongside bounded grants. Existing pets banked partial EXP on
+        # the OLD (larger) scale, which would instantly multi-level them under the
+        # new thresholds — so zero out partial progress once. Levels are kept.
+        _mig_cur.execute("SELECT 1 FROM _migrations WHERE name='pet_exp_curve_v2'")
+        if not _mig_cur.fetchone():
+            _mig_conn.execute("UPDATE pets SET exp=0 WHERE exp > 0")
+            _mig_conn.execute("INSERT INTO _migrations (name, ran_at) VALUES ('pet_exp_curve_v2', ?)",
+                              (datetime.now().isoformat(),))
             _mig_conn.commit()
             logger.info(f"Migration pet_level_cap_v2: hard-capped {_over} over-cap pet level(s)")
 
@@ -14038,7 +14050,11 @@ def give_pet_exp(owner_id, raw_amount):
     _p_level = _p["level"] if _p else 1
     _pet_cap = _pet_level_cap(_p_level)
     if pet.get("level", 1) >= _pet_cap: return ""
-    amount = max(1, round(raw_amount * 0.15))
+    # Bounded, level-appropriate grant: decoupled from the owner's (enormous)
+    # EXP economy so a high-level owner can't dump millions into a pet in one
+    # fight. Cap each grant to ~one small chunk of the pet's current level.
+    _petlvl = safe_int(pet.get("level"), 1)
+    amount = min(max(1, round(raw_amount * 0.15)), 25 + _petlvl * 3)
     pet["exp"] = pet.get("exp", 0) + amount
     leveled = False
     msg = ""
@@ -14386,7 +14402,7 @@ def _pet_autonomous_step(p, pet, cycles):
 
     # 2. Training — EXP + level-ups (capped at the owner-scaled pet cap)
     cap = _pet_level_cap(owner_lvl)
-    exp_gain = round(sum(25 + pet.get("level", 1) * 6 + random.randint(0, 20) for _ in range(cycles)) * _hfrac)
+    exp_gain = round(sum(18 + pet.get("level", 1) * 1 + random.randint(0, 10) for _ in range(cycles)) * _hfrac)
     pet["exp"] = pet.get("exp", 0) + exp_gain
     lvl_ups = []
     while pet["exp"] >= pet_exp_for_level(pet["level"]) and pet["level"] < cap:
@@ -31412,7 +31428,7 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception: pass
         if pet.get("hunger", 100) < 20:
             await query.answer(f"😫 {pname} is too hungry to train! Feed them first.", show_alert=True); return
-        gain = 30 + pet.get("level",1) * 5
+        gain = 25 + pet.get("level",1) * 3
         pet["exp"] += gain
         pet["mood"] = min(100, pet.get("mood",100) + 5)
         pet["bond_score"] = min(200, pet.get("bond_score",0) + 5)
@@ -40534,7 +40550,7 @@ async def _spawn_wild_pet(bot, chat_id, force_species=None):
                                      reply_markup=_markup)
     except Exception:
         return
-    _wild_spawns[chat_id] = {"species": sk, "is_shiny": shiny,
+    _wild_spawns[chat_id] = {"species": sk, "is_shiny": shiny, "tried": set(),
                              "msg_id": msg.message_id, "expires": time.time() + 120}
     async def _flee(cid=chat_id, mid=msg.message_id):
         await asyncio.sleep(125)
@@ -40690,6 +40706,9 @@ def _resolve_uid_by_handle(handle):
     except Exception:
         return None
 
+_CATCH_CHANCE = {"common":0.92, "uncommon":0.85, "rare":0.72, "epic":0.60,
+                 "legendary":0.48, "mythic":0.38, "celestial":0.30}
+
 async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try:
@@ -40703,8 +40722,20 @@ async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     p = get_player(uid)
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
-    _wild_spawns.pop(chat_id, None)  # claimed — race is over
+    # One attempt per player per spawn: if your throw misses, others get a shot —
+    # so it isn't purely whoever taps first.
+    tried = st.setdefault("tried", set())
+    if uid in tried:
+        await query.answer("🙅 You already tried this one — let someone else have a go!", show_alert=True)
+        return
+    tried.add(uid)
     sp = PET_SPECIES[st["species"]]
+    catch_ch = _CATCH_CHANCE.get(sp.get("rarity", "common"), 0.8)
+    if random.random() > catch_ch:
+        await query.answer(f"💨 It dodged your throw! ({int(catch_ch*100)}% catch — someone else can try)",
+                           show_alert=True)
+        return
+    _wild_spawns.pop(chat_id, None)  # caught — race is over
     pet = {"pet_id": None, "owner_id": uid, "species": st["species"],
            "level": 1, "exp": 0, "hunger": 100, "mood": 100,
            "is_active": 0 if get_active_pet_record(uid) else 1,
