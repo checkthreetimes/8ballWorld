@@ -32765,18 +32765,18 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sub   = parts[1] if len(parts) > 1 else ""
 
     if sub == "pick":
-        pets = get_all_pets(uid)
+        pets = [pt for pt in get_all_pets(uid) if not pt.get("is_active")]
         if not pets:
-            await query.answer("No pets to trade.", show_alert=True); return
+            await query.answer("No tradeable pets — your active pet can't be traded (switch it first).", show_alert=True); return
         rows = []
-        for pt in pets[:8]:
+        for pt in pets[:10]:
             pn = _pet_display_name(pt)
             rows.append([InlineKeyboardButton(
-                f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']}",
+                f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']} · IV{_pet_iv_pct(pt)}%",
                 callback_data=f"pettrade_offer_{pt['pet_id']}")])
         rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
-        await _q_edit(query, 
-            "🤝 *Pet Trade*\nSelect a pet to offer for trade.\n"
+        await _q_edit(query,
+            "🤝 *Pet Trade*\nSelect a pet to offer for trade _(your active pet is protected)_.\n"
             "Your offer will be visible to the group for 5 minutes.",
             parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
         return
@@ -32786,20 +32786,24 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pet = next((p for p in get_all_pets(uid) if p.get("pet_id") == pid), None)
         if not pet:
             await query.answer("Pet not found.", show_alert=True); return
+        if pet.get("is_active"):
+            await query.answer("That's your active pet — switch companions before trading it.", show_alert=True); return
         _pet_trade_offers[uid] = {"pet_id": pid, "target_uid": None, "expires": time.time() + 300}
         sp   = PET_SPECIES.get(pet.get("species"),{})
         pname = _pet_display_name(pet)
-        markup = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ Cancel Offer", callback_data=f"pettrade_cancel_{uid}")]])
+        _mk = _pet_mark_label(pet)
         # Send offer visible to others
         try:
-            await _q_edit(query, 
+            await _q_edit(query,
                 f"🤝 *Trade Offer!*\n\n"
                 f"*{query.from_user.first_name}* is offering:\n"
                 f"{sp.get('emoji','🐾')} *{pname}* | Lv {pet.get('level',1)} | "
-                f"{sp.get('rarity','?').capitalize()}\n\n"
-                f"Tap below to accept this trade (offer expires in 5 min).\n"
-                f"You must offer one of your own pets back.",
+                f"{sp.get('rarity','?').capitalize()}\n"
+                f"🧬 IV *{_pet_iv_pct(pet)}%*"
+                + (f" · 🏷️ *{_mk}*" if _mk else "")
+                + (" · ✨SHINY" if pet.get('is_shiny') else "") + "\n\n"
+                f"Tap below to accept — you'll pick one of your own pets to give back "
+                f"(offer expires in 5 min).",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🤝 Accept Trade", callback_data=f"pettrade_accept_{uid}_{pid}"),
@@ -32819,17 +32823,17 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if offer.get("pet_id") != offered_pid:
             await query.answer("Offer changed.", show_alert=True); return
         # Acceptor picks their pet to offer back
-        my_pets = get_all_pets(uid)
+        my_pets = [pt for pt in get_all_pets(uid) if not pt.get("is_active")]
         if not my_pets:
-            await query.answer("You have no pets to offer.", show_alert=True); return
+            await query.answer("You have no tradeable pets (active pet is protected).", show_alert=True); return
         rows = []
-        for pt in my_pets[:8]:
+        for pt in my_pets[:10]:
             pn = _pet_display_name(pt)
             rows.append([InlineKeyboardButton(
-                f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']}",
+                f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']} · IV{_pet_iv_pct(pt)}%",
                 callback_data=f"pettrade_complete_{offeror_uid}_{offered_pid}_{pt['pet_id']}")])
         rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
-        await _q_edit(query, "Choose a pet to offer back:",
+        await _q_edit(query, "🤝 *Choose a pet to give in return:*",
                                       parse_mode="Markdown",
                                       reply_markup=InlineKeyboardMarkup(rows))
         return
@@ -32848,19 +32852,24 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         acceptor_pet = next((p for p in get_all_pets(uid) if p.get("pet_id") == acceptor_pid), None)
         if not offeror_pet or not acceptor_pet:
             await query.answer("Pet not found.", show_alert=True); return
+        if offeror_pet.get("is_active") or acceptor_pet.get("is_active"):
+            await query.answer("An active pet can't be traded — the offer is void.", show_alert=True); return
+        # Credit each new owner's bestiary with the species they're receiving.
+        _op = get_player(offeror_uid); _ap = get_player(uid)
+        if _ap and _record_dex(_ap, offeror_pet["species"]): save_player(_ap)
+        if _op and _record_dex(_op, acceptor_pet["species"]): save_player(_op)
         # Swap ownership
         offeror_pet["owner_id"]  = uid;          offeror_pet["is_active"]  = 0
         acceptor_pet["owner_id"] = offeror_uid;  acceptor_pet["is_active"] = 0
         save_pet(offeror_pet); save_pet(acceptor_pet)
         sp1 = PET_SPECIES.get(offeror_pet["species"],{})
         sp2 = PET_SPECIES.get(acceptor_pet["species"],{})
-        await _q_edit(query, 
+        _g1 = _pet_gene_tag(offeror_pet); _g2 = _pet_gene_tag(acceptor_pet)
+        await _q_edit(query,
             f"🤝 *Trade Complete!*\n\n"
-            f"{sp1.get('emoji','🐾')} *{_pet_display_name(offeror_pet)}* → "
-            f"*{query.from_user.first_name}*\n"
-            f"{sp2.get('emoji','🐾')} *{_pet_display_name(acceptor_pet)}* → "
-            f"*trade partner*\n\n"
-            f"Both pets moved to their new owners' collection!",
+            f"{sp1.get('emoji','🐾')} *{_pet_display_name(offeror_pet)}* _(Lv{offeror_pet.get('level',1)} · {_g1})_ → *{query.from_user.first_name}*\n"
+            f"{sp2.get('emoji','🐾')} *{_pet_display_name(acceptor_pet)}* _(Lv{acceptor_pet.get('level',1)} · {_g2})_ → *trade partner*\n\n"
+            f"Both pets moved to their new owners — check /pet → All Pets!",
             parse_mode="Markdown")
         return
 
