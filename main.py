@@ -30703,6 +30703,9 @@ GUIDE_PAGES = [
         "/encounter  -  Battle NPC / Hunt monster / Enter Dungeon\n"
         "/dungeon  -  Real-time 6-floor dungeon directly\n"
         "/pet  -  Manage your active pet\n"
+        "/pethelp  -  Full pet guide (genetics, duels, breeding, fusion…)\n"
+        "/petduel [@user]  -  Battle your pet vs another player's\n"
+        "/petladder  -  Pet-duel rankings (monthly seasons)\n"
         "/petshop  -  Buy eggs and snacks\n"
         "/hatch  -  Hatch an egg from your inventory\n"
         "/petrename [name]  -  Rename your active pet"
@@ -31272,7 +31275,8 @@ def _build_pet_home(uid, p):
              InlineKeyboardButton("🛒 Pet Shop",  callback_data="petshop")],
             [InlineKeyboardButton("🥚 Hatch Egg", callback_data="hatch_egg"),
              InlineKeyboardButton("💰 Bulk Sell", callback_data="petbulk_menu")],
-            [InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{uid}")],
+            [InlineKeyboardButton("📖 Pet Guide", callback_data="petguide_show"),
+             InlineKeyboardButton("❌ Close",     callback_data=f"close_msg_{uid}")],
         ]
         markup = InlineKeyboardMarkup(btn_rows)
     return text, markup
@@ -31710,6 +31714,14 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user  = query.from_user
     data  = query.data
+
+    if data == "petguide_show":
+        await query.answer()
+        await _q_edit(query, _pet_guide_text(), parse_mode="Markdown",
+                      reply_markup=InlineKeyboardMarkup([[
+                          InlineKeyboardButton("🔙 Back", callback_data="petmain"),
+                          InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{user.id}")]]))
+        return
 
     if data == "petmain":
         p = get_player(user.id)
@@ -32500,6 +32512,33 @@ def _pethub_markup(uid, pet, page=1):
     rows.append([InlineKeyboardButton("🏠 Home", callback_data=f"empire_home_{uid}"),
                  InlineKeyboardButton("❌ Close", callback_data=f"close_msg_{uid}")])
     return InlineKeyboardMarkup(rows)
+
+def _pet_guide_text():
+    return (
+        "🐾 *THE PET SYSTEM — Full Guide*\n"
+        "_Everything below is live. Pets are a full progression game._\n\n"
+        "*🎯 Getting pets*\n"
+        "• Wild pets appear in the group — tap *CATCH!* (rarer pets can *dodge*, so everyone gets a shot).\n"
+        "• Buy & hatch eggs at */pet → 🛒 Pet Shop*.\n\n"
+        "*🧬 Genetics (what makes each pet unique)*\n"
+        "• Every pet rolls hidden *IVs* (⚔️/🛡️/❤️, 0–31) → an overall *IV %*, and a *Mark* (Keen→Ancient) that leans its power. Higher IVs = stronger pet.\n\n"
+        "*🍖 Care & growth*\n"
+        "• *Feed* (a full pet is far stronger) and *Train* any pet. Reaching Lv50 takes ~a month of active play.\n"
+        "• 🌟 *Mastery* — spend points (from level + bond) on Ferocity/Vitality/Fortitude/Instinct/Fortune.\n"
+        "• 🎒 *Held Item* — equip one accessory (Ember Charm, Power Gem…) for a permanent boost.\n\n"
+        "*⚔️ Battle & compete*\n"
+        "• `/petduel @user` — battle pets (IVs, Marks, held items & element type all matter).\n"
+        "• `/petladder` — ELO leaderboard. Monthly *Seasons* pay out gold + a *Pet Season Champion* title; weekly *Pet Champion* in the digest.\n\n"
+        "*🔬 Endgame*\n"
+        "• *Breed* two pets → a baby that *inherits IVs* (breed toward perfection; consumes both parents).\n"
+        "• ⚗️ *Fuse* — sacrifice a fodder pet to raise a keeper's IVs in place.\n"
+        "• 🤝 *Trade* pets with other players (genetics shown).\n\n"
+        "*📖 Collect them all* — the */pet → Bestiary* tracks all 600+ species for collector bonuses.\n\n"
+        "_Commands: /pet · /pethub · /petduel · /petladder · /pethelp_"
+    )
+
+async def pethelp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_group(update, _pet_guide_text(), permanent=True)
 
 async def pethub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -46465,6 +46504,8 @@ def main():
     app.add_handler(CommandHandler("pettop",       pettop_cmd))
     app.add_handler(CommandHandler("petdex",       petdex_cmd))
     app.add_handler(CommandHandler("pethub",      pethub_cmd))
+    app.add_handler(CommandHandler("pethelp",     pethelp_cmd))
+    app.add_handler(CommandHandler("petguide",    pethelp_cmd))
     app.add_handler(CommandHandler("combat",      combat_hub_cmd))
     app.add_handler(CommandHandler("weather",      weather_cmd))
     app.add_handler(CommandHandler("ascend",       ascend_cmd))
@@ -46752,7 +46793,7 @@ def main():
     app.add_handler(CallbackQueryHandler(hatch_egg_callback,  pattern="^hatch_egg$"))
     app.add_handler(CallbackQueryHandler(petcatch_callback,   pattern="^petcatch_"))
     app.add_handler(CallbackQueryHandler(pet_main_callback,
-        pattern="^(petmain|petlist_|petview_|petactivate_|petfeedgive_|petfeast_|petfeed_|pettrain_|petitemequip_|petitemremove_|petitem_|pettreeup_|pettreereset_|pettree_|petplay_|petrelease_|petsell_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
+        pattern="^(petmain|petguide_show|petlist_|petview_|petactivate_|petfeedgive_|petfeast_|petfeed_|pettrain_|petitemequip_|petitemremove_|petitem_|pettreeup_|pettreereset_|pettree_|petplay_|petrelease_|petsell_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
     app.add_handler(CallbackQueryHandler(pethub_callback,    pattern="^pethub_"))
     app.add_handler(CallbackQueryHandler(petdaycare_callback, pattern="^petdaycare_"))
     app.add_handler(CallbackQueryHandler(petretire_callback,  pattern="^petretire_"))
