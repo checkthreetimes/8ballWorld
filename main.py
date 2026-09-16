@@ -32457,6 +32457,7 @@ def _pethub_markup(uid, pet, page=1):
                  InlineKeyboardButton("📋 All Pets",   callback_data="petlist_0")],
                 [InlineKeyboardButton("🤝 Trade Pet",  callback_data=f"pettrade_pick_{uid}"),
                  InlineKeyboardButton("🔬 Breed",      callback_data=f"petbreed_pick_{uid}")],
+                [InlineKeyboardButton("⚗️ Fuse",       callback_data=f"petfuse_pick_{uid}")],
             ],
             # Page 2 — Care & Breeding  (Daycare retired — pets self-feed)
             [
@@ -32847,6 +32848,124 @@ async def petbreed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚔️{child_ivs['atk']} 🛡️{child_ivs['def']} ❤️{child_ivs['hp']}/31\n\n"
             f"_Both parents were consumed. Raise your new companion via /pet → All Pets._\n"
             f"_(Breeding cooldown: 12 hours)_",
+            parse_mode="Markdown")
+        return
+
+# ── PET FUSION ──────────────────────────────────────────────────────────────
+# Sacrifice a fodder pet to permanently improve a KEEPER's IVs (and bond). Unlike
+# breeding (a new baby of a parent's species), fusion upgrades an existing pet in
+# place — keeping its species, level and held item. Each fuse pulls the target's
+# IVs a quarter of the way toward a higher-IV fodder, so grinding dupes slowly
+# perfects a pet you love.
+_FUSE_COST = 3000
+
+def _fuse_apply(target, fodder):
+    tiv = _pet_ivs(target); fiv = _pet_ivs(fodder); gains = {}
+    for s in ("atk", "def", "hp"):
+        tv, fv = safe_int(tiv.get(s, 0)), safe_int(fiv.get(s, 0))
+        gap = max(0, fv - tv)
+        add = (gap + 3) // 4 if gap > 0 else 0     # ~25% of the gap, rounded up
+        tiv[s] = min(31, tv + add); gains[s] = tiv[s] - tv
+    if target.get("species") == fodder.get("species"):   # same-species affinity
+        s = random.choice(["atk", "def", "hp"])
+        if tiv[s] < 31: tiv[s] += 1; gains[s] = gains.get(s, 0) + 1
+    target["ivs"] = json.dumps(tiv)
+    target["bond_score"] = min(200, safe_int(target.get("bond_score")) + 15)
+    mark_up = False
+    fm = _PET_MARKS.get(fodder.get("mark") or "none", ("", 0, 0))[1]
+    tm = _PET_MARKS.get(target.get("mark") or "none", ("", 0, 0))[1]
+    if fm > tm and random.random() < 0.5:
+        target["mark"] = fodder.get("mark"); mark_up = True
+    return gains, mark_up
+
+async def petfuse_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    parts = query.data.split("_")
+    sub = parts[1] if len(parts) > 1 else ""
+
+    if sub == "pick":
+        pets = get_all_pets(uid)
+        if len(pets) < 2:
+            await query.answer("Need at least 2 pets to fuse.", show_alert=True); return
+        rows = []
+        for pt in sorted(pets, key=lambda x: -_pet_iv_pct(x))[:10]:
+            rows.append([InlineKeyboardButton(
+                f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {_pet_display_name(pt)} "
+                f"Lv{pt['level']} · IV{_pet_iv_pct(pt)}%",
+                callback_data=f"petfuse_t_{pt['pet_id']}")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
+        await _q_edit(query, "⚗️ *Pet Fusion*\nPick the pet to *KEEP and improve* (it gains IVs):",
+                      parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if sub == "t":
+        tid = int(parts[2])
+        fodder = [p for p in get_all_pets(uid) if p.get("pet_id") != tid and not p.get("is_active")]
+        if not fodder:
+            await query.answer("No eligible fodder (can't use your active pet).", show_alert=True); return
+        rows = []
+        for pt in sorted(fodder, key=lambda x: -_pet_iv_pct(x))[:10]:
+            rows.append([InlineKeyboardButton(
+                f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {_pet_display_name(pt)} "
+                f"Lv{pt['level']} · IV{_pet_iv_pct(pt)}%",
+                callback_data=f"petfuse_c_{tid}_{pt['pet_id']}")])
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
+        await _q_edit(query, "⚗️ *Pet Fusion*\nPick the pet to *SACRIFICE* (consumed — its "
+                      "high IVs pull the keeper up):", parse_mode="Markdown",
+                      reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if sub == "c":
+        tid, fid = int(parts[2]), int(parts[3])
+        allp = get_all_pets(uid)
+        t = next((p for p in allp if p.get("pet_id") == tid), None)
+        f = next((p for p in allp if p.get("pet_id") == fid), None)
+        if not t or not f:
+            await query.answer("Pet not found.", show_alert=True); return
+        tsp = PET_SPECIES.get(t["species"], {}); fsp = PET_SPECIES.get(f["species"], {})
+        await _q_edit(query,
+            f"⚗️ *Confirm Fusion*\n\n"
+            f"Keep: {tsp.get('emoji','🐾')} *{_pet_display_name(t)}* (IV {_pet_iv_pct(t)}%)\n"
+            f"Sacrifice: {fsp.get('emoji','🐾')} *{_pet_display_name(f)}* (IV {_pet_iv_pct(f)}%)\n\n"
+            f"The keeper's IVs move ~25% toward the fodder's (more if the fodder is higher). "
+            f"Same-species fusion gives a bonus. +15 bond.\n\n"
+            f"💰 Cost: *{_FUSE_COST:,}g*  ·  ⚠️ the sacrificed pet is consumed.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚗️ Fuse", callback_data=f"petfuse_do_{tid}_{fid}")],
+                [InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")]]))
+        return
+
+    if sub == "do":
+        tid, fid = int(parts[2]), int(parts[3])
+        allp = get_all_pets(uid)
+        t = next((p for p in allp if p.get("pet_id") == tid), None)
+        f = next((p for p in allp if p.get("pet_id") == fid), None)
+        if not t or not f or tid == fid:
+            await query.answer("Fusion no longer valid.", show_alert=True); return
+        if f.get("is_active"):
+            await query.answer("Can't sacrifice your active pet.", show_alert=True); return
+        p = get_player(uid)
+        if not p or safe_int(p.get("gold")) < _FUSE_COST:
+            await query.answer(f"Need {_FUSE_COST:,}g to fuse.", show_alert=True); return
+        _iv_before = _pet_iv_pct(t)
+        gains, mark_up = _fuse_apply(t, f)
+        p["gold"] = safe_int(p.get("gold")) - _FUSE_COST; save_player(p)
+        conn = _connect_db(); c = conn.cursor()
+        c.execute("DELETE FROM pets WHERE pet_id=? AND owner_id=?", (fid, uid))
+        conn.commit(); conn.close()
+        save_pet(t)
+        _tiv = _pet_ivs(t)
+        await _q_edit(query,
+            f"⚗️ *Fusion Complete!*\n\n"
+            f"{PET_SPECIES.get(t['species'],{}).get('emoji','🐾')} *{_pet_display_name(t)}* absorbed "
+            f"{_pet_display_name(f)}!\n"
+            f"🧬 IV *{_iv_before}% → {_pet_iv_pct(t)}%*  "
+            f"(⚔️+{gains.get('atk',0)} 🛡️+{gains.get('def',0)} ❤️+{gains.get('hp',0)})\n"
+            + (f"🏷️ Mark upgraded to *{_pet_mark_label(t)}*!\n" if mark_up else "")
+            + f"💞 +15 bond  ·  the fodder was consumed.",
             parse_mode="Markdown")
         return
 
@@ -46537,6 +46656,7 @@ def main():
     app.add_handler(CallbackQueryHandler(petdaycare_callback, pattern="^petdaycare_"))
     app.add_handler(CallbackQueryHandler(petretire_callback,  pattern="^petretire_"))
     app.add_handler(CallbackQueryHandler(petbreed_callback,   pattern="^petbreed_"))
+    app.add_handler(CallbackQueryHandler(petfuse_callback,    pattern="^petfuse_"))
     app.add_handler(CallbackQueryHandler(pettrade_callback,   pattern="^pettrade_"))
     app.add_handler(CallbackQueryHandler(petduel_callback,    pattern="^petduel_"))
     app.add_handler(CallbackQueryHandler(combat_hub_callback, pattern="^combathub_"))
