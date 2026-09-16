@@ -30667,8 +30667,11 @@ GUIDE_PAGES = [
         "Retirements stack — retire multiple pets for cumulative bonuses.\n"
         "\n"
         "*Breeding — /pethub → Breed*\n"
-        "Breed two pets (both Lv 15+) to produce offspring. Offspring inherits traits and element from parents.\n"
-        "5% shiny chance (+5% if either parent is shiny). 12-hour breeding cooldown.\n"
+        "Breed two non-active pets (both Lv 15+) into one offspring. It takes one "
+        "parent's species and *inherits their IVs* (biased toward the better parent), "
+        "so higher-IV parents make a stronger baby — breed toward a perfect pet.\n"
+        "Costs 5,000g and *consumes both parents* (a use for duplicates). Shiny chance "
+        "rises if a parent is shiny. 12-hour cooldown.\n"
         "\n"
         "*Pet Daycare — /pethub → Daycare*\n"
         "Drop your pet off for up to 8 hours — hunger and mood won't decay while they're there.\n"
@@ -32537,6 +32540,29 @@ async def petretire_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             parse_mode="Markdown")
 
 # ── PET BREEDING ───────────────────────────────────────────────────────────────
+_BREED_COST = 5000
+
+def _breed_offspring_genetics(pa, pb):
+    """Roll a bred offspring: species (one parent, 50/50), IVs (biased UP toward
+    the better parent so breeding trends to perfection), Mark, and shiny."""
+    species = random.choice([pa["species"], pb["species"]])
+    iva, ivb = _pet_ivs(pa), _pet_ivs(pb)
+    child = {}
+    for s in ("atk", "def", "hp"):
+        va, vb = safe_int(iva.get(s, 0)), safe_int(ivb.get(s, 0))
+        r = random.random()
+        if r < 0.55:   base = max(va, vb)              # bias to the better parent
+        elif r < 0.85: base = random.choice([va, vb])  # a random parent's
+        else:          base = random.randint(0, 31)    # fresh roll
+        base += random.randint(-2, 4)                  # gentle upward drift
+        child[s] = max(0, min(31, base))
+    if random.random() < 0.75:
+        mark = random.choice([pa.get("mark") or "none", pb.get("mark") or "none"])
+    else:
+        _, mark = _roll_pet_genetics()                 # chance at a fresh (rarer) Mark
+    shiny = 1 if random.random() < (0.05 * (3 if (pa.get("is_shiny") or pb.get("is_shiny")) else 1)) else 0
+    return species, child, mark, shiny
+
 async def petbreed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Breed two pets to produce a new egg with mixed traits."""
     query = update.callback_query
@@ -32546,9 +32572,9 @@ async def petbreed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sub   = parts[1] if len(parts) > 1 else ""
 
     if sub == "pick":
-        pets = [p for p in get_all_pets(uid) if p.get("level",1) >= 15]
+        pets = [p for p in get_all_pets(uid) if p.get("level",1) >= 15 and not p.get("is_active")]
         if len(pets) < 2:
-            await query.answer("Need at least 2 pets at Level 15+ to breed.", show_alert=True); return
+            await query.answer("Need 2 non-active pets at Lv 15+ to breed (your active pet is safe from breeding).", show_alert=True); return
         rows = []
         for pt in pets[:8]:
             pn = _pet_display_name(pt)
@@ -32563,7 +32589,7 @@ async def petbreed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if sub == "sel1":
         pid1 = int(parts[2])
-        pets = [p for p in get_all_pets(uid) if p.get("level",1) >= 15 and p.get("pet_id") != pid1]
+        pets = [p for p in get_all_pets(uid) if p.get("level",1) >= 15 and not p.get("is_active") and p.get("pet_id") != pid1]
         if not pets:
             await query.answer("Need another Lv 15+ pet.", show_alert=True); return
         rows = []
@@ -32585,51 +32611,77 @@ async def petbreed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pet2 = next((p for p in all_pets if p.get("pet_id") == pid2), None)
         if not pet1 or not pet2:
             await query.answer("Pet not found.", show_alert=True); return
-        # Breeding cooldown via module state
         session = _pet_breed_sessions.get(uid)
         if session and time.time() - session.get("started",0) < 43200:
             rem = 43200 - (time.time() - session["started"])
-            rms = f"{int(rem//3600)}h {int((rem%3600)//60)}m"
-            await query.answer(f"Breeding on cooldown — {rms} left.", show_alert=True); return
-        _pet_breed_sessions[uid] = {"pet1_id": pid1, "pet2_id": pid2, "started": time.time()}
-        # Drain hunger from parents
-        pet1["hunger"] = max(0, pet1.get("hunger",100) - 20)
-        pet2["hunger"] = max(0, pet2.get("hunger",100) - 20)
-        save_pet(pet1); save_pet(pet2)
+            await query.answer(f"Breeding on cooldown — {int(rem//3600)}h {int((rem%3600)//60)}m left.", show_alert=True); return
         sp1 = PET_SPECIES.get(pet1["species"],{}); sp2 = PET_SPECIES.get(pet2["species"],{})
-        pn1 = _pet_display_name(pet1); pn2 = _pet_display_name(pet2)
-        # Produce offspring: random species biased toward parents, chance of shiny
-        # inherit element from either parent
-        species_pool = [pet1["species"], pet2["species"]]
-        # Add 1-2 species that share element with either parent
-        parent_elems = {sp1.get("element",""), sp2.get("element","")}
-        for sid, sp in PET_SPECIES.items():
-            if sp.get("element","") in parent_elems:
-                species_pool.append(sid)
-        offspring_species = random.choice(species_pool)
-        offs_sp = PET_SPECIES.get(offspring_species, {})
-        # Shiny: 5% base + 5% if either parent is shiny
-        shiny_chance = 0.05 + (0.05 if pet1.get("is_shiny") or pet2.get("is_shiny") else 0)
-        is_shiny = random.random() < shiny_chance
-        # Starting level = avg of parents // 3
-        start_lvl = max(1, (pet1.get("level",1) + pet2.get("level",1)) // 6)
+        pn1, pn2 = _pet_display_name(pet1), _pet_display_name(pet2)
+        await _q_edit(query,
+            f"🔬 *Confirm Breeding*\n\n"
+            f"{sp1.get('emoji','🐾')} *{pn1}*  (IV {_pet_iv_pct(pet1)}%"
+            + (f" · {_pet_mark_label(pet1)}" if _pet_mark_label(pet1) else "") + ")\n"
+            f"        ✖️\n"
+            f"{sp2.get('emoji','🐾')} *{pn2}*  (IV {_pet_iv_pct(pet2)}%"
+            + (f" · {_pet_mark_label(pet2)}" if _pet_mark_label(pet2) else "") + ")\n\n"
+            f"➡️ Offspring is one parent's species with *inherited IVs* (biased toward the "
+            f"better parent) + a Mark. Higher-IV parents → a better baby.\n\n"
+            f"💰 Cost: *{_BREED_COST:,}g*\n"
+            f"⚠️ *Both parents are consumed.* Your active pet is never eligible.\n"
+            f"_(12-hour cooldown after breeding.)_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔬 Breed (consume both)", callback_data=f"petbreed_go_{pid1}_{pid2}")],
+                [InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")]]))
+        return
+
+    if sub == "go":
+        pid1, pid2 = int(parts[2]), int(parts[3])
+        all_pets = get_all_pets(uid)
+        pet1 = next((p for p in all_pets if p.get("pet_id") == pid1), None)
+        pet2 = next((p for p in all_pets if p.get("pet_id") == pid2), None)
+        if not pet1 or not pet2:
+            await query.answer("One of the parents is no longer available.", show_alert=True); return
+        if pet1.get("is_active") or pet2.get("is_active"):
+            await query.answer("Can't breed your active pet.", show_alert=True); return
+        session = _pet_breed_sessions.get(uid)
+        if session and time.time() - session.get("started",0) < 43200:
+            await query.answer("Breeding is on cooldown.", show_alert=True); return
+        p = get_player(uid)
+        if not p or safe_int(p.get("gold")) < _BREED_COST:
+            await query.answer(f"Need {_BREED_COST:,}g to breed.", show_alert=True); return
+        # Charge, consume both parents, roll the inherited offspring.
+        p["gold"] = safe_int(p.get("gold")) - _BREED_COST; save_player(p)
+        conn = _connect_db(); c = conn.cursor()
+        c.execute("DELETE FROM pets WHERE pet_id=? AND owner_id=?", (pid1, uid))
+        c.execute("DELETE FROM pets WHERE pet_id=? AND owner_id=?", (pid2, uid))
+        conn.commit(); conn.close()
+        _pet_breed_sessions[uid] = {"pet1_id": pid1, "pet2_id": pid2, "started": time.time()}
+        species, child_ivs, mark, shiny = _breed_offspring_genetics(pet1, pet2)
+        offs_sp = PET_SPECIES.get(species, {})
+        start_lvl = max(1, (safe_int(pet1.get("level",1)) + safe_int(pet2.get("level",1))) // 6)
         new_pet = {
-            "owner_id": uid, "species": offspring_species,
-            "nickname": None, "level": start_lvl, "exp": 0,
-            "hunger": 80, "mood": 80, "last_fed": None, "last_trained": None,
-            "is_active": 0, "created_at": datetime.now().isoformat(),
-            "bond_score": 0, "is_shiny": 1 if is_shiny else 0,
+            "owner_id": uid, "species": species, "nickname": None,
+            "level": start_lvl, "exp": 0, "hunger": 80, "mood": 80,
+            "last_fed": None, "last_trained": None, "is_active": 0,
+            "created_at": datetime.now().isoformat(), "bond_score": 0,
+            "is_shiny": shiny, "ivs": json.dumps(child_ivs), "mark": mark,
         }
         save_pet(new_pet)
-        shiny_tag = " ✨ *SHINY!*" if is_shiny else ""
-        await _q_edit(query, 
+        shiny_tag = " ✨ *SHINY!*" if shiny else ""
+        _mk_lbl = _PET_MARKS.get(mark, ("",0,0))[0]
+        _ivp = round(sum(child_ivs.values()) / (31*3) * 100)
+        await _q_edit(query,
             f"🔬 *Breeding Complete!*{shiny_tag}\n\n"
-            f"Parents: {pn1} × {pn2}\n\n"
+            f"{_pet_display_name(pet1)} ✖️ {_pet_display_name(pet2)} → \n"
             f"{offs_sp.get('emoji','🐾')} *{offs_sp.get('name','?')}* was born!\n"
-            f"Lv {start_lvl} | {offs_sp.get('element','?').capitalize()} | {offs_sp.get('rarity','?').capitalize()}\n\n"
-            f"_{offs_sp.get('desc','A new companion joins your team.')}_\n\n"
+            f"Lv {start_lvl} · {offs_sp.get('rarity','?').capitalize()} · "
+            f"🧬 IV *{_ivp}%*" + (f" · 🏷️ *{_mk_lbl}*" if _mk_lbl else "") + "\n"
+            f"⚔️{child_ivs['atk']} 🛡️{child_ivs['def']} ❤️{child_ivs['hp']}/31\n\n"
+            f"_Both parents were consumed. Raise your new companion via /pet → All Pets._\n"
             f"_(Breeding cooldown: 12 hours)_",
             parse_mode="Markdown")
+        return
 
 # ── PET TRADING ────────────────────────────────────────────────────────────────
 async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
