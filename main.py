@@ -12857,6 +12857,18 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Per-period message-count bases for /gm weekly & /gm monthly (message_count
+    # minus the base = messages this period). Seeded to message_count once so the
+    # first period isn't inflated by lifetime totals; reset at period rollover.
+    for _mcol in ("msg_week_base", "msg_month_base"):
+        try:
+            conn.execute(f"ALTER TABLE shadow_profiles ADD COLUMN {_mcol} INTEGER DEFAULT 0")
+            conn.commit()
+            conn.execute(f"UPDATE shadow_profiles SET {_mcol} = COALESCE(message_count,0)")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
     # ── v25 Charge-based status effects (replaces time-based _until fields) ──
     _charge_cols = [
         ("players", "stun_turns",         "INTEGER DEFAULT 0"),
@@ -36177,13 +36189,22 @@ def _gm_pet_stats(limit_recent=12):
                            reverse=True)[:limit_recent]
     return out
 
-def _gm_top_messagers(n=12):
-    """Top group-chat message senders, from shadow_profiles.message_count."""
+def _gm_top_messagers(n=12, window="all"):
+    """Top group-chat message senders. window: 'all' (lifetime), 'month', 'week'
+    (messages since the last period reset, via the msg_*_base snapshots).
+    Returns rows with a 'count' field for the chosen window."""
+    base = {"month": "msg_month_base", "week": "msg_week_base"}.get(window)
     try:
         conn = _connect_db(); conn.row_factory = sqlite3.Row
-        rows = [dict(r) for r in conn.execute(
-            "SELECT user_id, username, message_count FROM shadow_profiles "
-            "WHERE message_count > 0 ORDER BY message_count DESC LIMIT ?", (n,))]
+        if base:
+            rows = [dict(r) for r in conn.execute(
+                f"SELECT user_id, username, (message_count - COALESCE({base},0)) AS count "
+                f"FROM shadow_profiles WHERE (message_count - COALESCE({base},0)) > 0 "
+                f"ORDER BY count DESC LIMIT ?", (n,))]
+        else:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT user_id, username, message_count AS count FROM shadow_profiles "
+                "WHERE message_count > 0 ORDER BY count DESC LIMIT ?", (n,))]
         conn.close()
         return rows
     except Exception:
@@ -36217,7 +36238,8 @@ async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     args = context.args or []
     _GM_RESERVED = {"live", "pets", "pet", "celestial", "celestials",
-                    "chat", "msgs", "messages", "activity", "balance", "bal", "pvp"}
+                    "chat", "msgs", "messages", "activity", "balance", "bal", "pvp",
+                    "weekly", "week", "monthly", "month"}
 
     # ── Per-player deep dive ────────────────────────────────────────────────
     if args and args[0].lower() not in _GM_RESERVED:
@@ -36348,22 +36370,33 @@ async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if args and args[0].lower() in ("balance", "bal", "pvp"):
         await _dm(_build_pvp_balance_report()); return
 
-    # ── /gm chat — group message leaderboard ────────────────────────────────
-    if args and args[0].lower() in ("chat", "msgs", "messages", "activity"):
-        top = _gm_top_messagers(20)
-        total_msgs = sum(safe_int(r.get("message_count")) for r in top)
+    # ── /gm chat|weekly|monthly — group message leaderboard (windowed) ───────
+    _chat_windows = {"chat": ("all", "All-time"), "msgs": ("all", "All-time"),
+                     "messages": ("all", "All-time"), "activity": ("all", "All-time"),
+                     "weekly": ("week", "This Week"), "week": ("week", "This Week"),
+                     "monthly": ("month", "This Month"), "month": ("month", "This Month")}
+    if args and args[0].lower() in _chat_windows:
+        window, label = _chat_windows[args[0].lower()]
+        top = _gm_top_messagers(20, window=window)
+        _base = {"month": "msg_month_base", "week": "msg_week_base"}.get(window)
         try:
             _allc = _db().cursor()
-            _allc.execute("SELECT COALESCE(SUM(message_count),0), COUNT(*) FROM shadow_profiles WHERE message_count > 0")
+            if _base:
+                _allc.execute(f"SELECT COALESCE(SUM(message_count - COALESCE({_base},0)),0), "
+                              f"COUNT(*) FROM shadow_profiles WHERE (message_count - COALESCE({_base},0)) > 0")
+            else:
+                _allc.execute("SELECT COALESCE(SUM(message_count),0), COUNT(*) FROM shadow_profiles WHERE message_count > 0")
             _grand, _talkers = _allc.fetchone()
         except Exception:
-            _grand, _talkers = total_msgs, len(top)
-        lines = [f"💬 *GM — Chat Activity*",
-                 f"Total messages tracked: *{safe_int(_grand):,}* from *{safe_int(_talkers)}* members",
+            _grand, _talkers = sum(safe_int(r.get("count")) for r in top), len(top)
+        lines = [f"💬 *GM — Chat Activity ({label})*",
+                 f"Messages: *{safe_int(_grand):,}* from *{safe_int(_talkers)}* members",
                  "", "*🏆 Top talkers:*"]
         for i, r in enumerate(top, 1):
             uname = r.get("username") or str(r["user_id"])
-            lines.append(f"{i}. *{uname}* — {safe_int(r.get('message_count')):,} msgs")
+            lines.append(f"{i}. *{uname}* — {safe_int(r.get('count')):,} msgs")
+        if window == "all":
+            lines.append("\n_Also: /gm weekly · /gm monthly_")
         await _dm("\n".join(lines)); return
 
     # ── Overview ────────────────────────────────────────────────────────────
@@ -36422,7 +36455,7 @@ async def gm_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"  {lg} {shiny}{sp.get('name','?')} → {who} _({_gm_ago(_gm_parse_ts(r.get('created_at')))})_")
     if top_msg:
         lines.append("*💬 Top talkers:*  " +
-                     " · ".join(f"{r.get('username') or r['user_id']} ({safe_int(r.get('message_count')):,})"
+                     " · ".join(f"{r.get('username') or r['user_id']} ({safe_int(r.get('count')):,})"
                                 for r in top_msg))
     lines.append("")
     lines.append("*🔥 Most recently active:*")
@@ -39570,6 +39603,23 @@ async def _post_daily_digest(bot):
                                 + f"\n_Ratings soft-reset — Season {_snum+1} is live. /petladder_")
     except Exception:
         logger.error("pet season rollover failed", exc_info=True)
+    # ── MESSAGE-COUNT PERIOD ROLLOVER (for /gm weekly & /gm monthly) ─────────
+    # At a new ISO week / calendar month, snapshot each member's base = their
+    # lifetime count, so the windowed leaderboards measure the new period.
+    try:
+        _now_dt = datetime.now()
+        _wk_key = f"{_now_dt.isocalendar()[0]}-W{_now_dt.isocalendar()[1]}"
+        _mo_key = _now_dt.strftime("%Y-%m")
+        if _ws_get("msg_week_key") is None: _ws_set("msg_week_key", _wk_key)
+        elif _ws_get("msg_week_key") != _wk_key:
+            _db().execute("UPDATE shadow_profiles SET msg_week_base = COALESCE(message_count,0)")
+            _ws_set("msg_week_key", _wk_key)
+        if _ws_get("msg_month_key") is None: _ws_set("msg_month_key", _mo_key)
+        elif _ws_get("msg_month_key") != _mo_key:
+            _db().execute("UPDATE shadow_profiles SET msg_month_base = COALESCE(message_count,0)")
+            _ws_set("msg_month_key", _mo_key)
+    except Exception:
+        logger.error("message period rollover failed", exc_info=True)
     for g in groups:
         entries = per_group.get(g, [])
         gainers  = sorted([e for e in entries if e[1] > 0], key=lambda e: -e[1])[:3]
