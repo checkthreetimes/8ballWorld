@@ -14646,7 +14646,7 @@ async def petladder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await send_group(update, "🐾🏆 *Pet Duel Ladder* — no duels yet! Challenge someone with /petduel @user.",
                          permanent=True); return
-    lines = ["🐾🏆 *Pet Duel Ladder*", ""]
+    lines = [f"🐾🏆 *Pet Duel Ladder* — Season {safe_int(_ws_get('pet_season_num', 1))}", ""]
     for i, r in enumerate(rows[:15], 1):
         medal = ["🥇","🥈","🥉"][i-1] if i <= 3 else f"{i}."
         lines.append(f"{medal} *{r['name']}* — {safe_int(r['rating'])}  "
@@ -39521,6 +39521,55 @@ async def _post_daily_digest(bot):
                         pass
     except Exception:
         logger.error("weekly pet champion crown failed", exc_info=True)
+    # ── MONTHLY PET-DUEL SEASON ROLLOVER (rewards + soft rating reset) ───────
+    _pet_season_line = ""
+    try:
+        _season_ts = safe_int(_ws_get("pet_season_ts", 0))
+        if _season_ts == 0:
+            _ws_set("pet_season_ts", time.time())          # seed on first run
+            _ws_set("pet_season_num", 1)
+        elif time.time() - _season_ts >= 30 * 86400:
+            _snum = safe_int(_ws_get("pet_season_num", 1))
+            try:
+                _sconn = _connect_db(); _sconn.row_factory = sqlite3.Row
+                _sconn.execute("""CREATE TABLE IF NOT EXISTS pet_ladder (
+                    user_id INTEGER PRIMARY KEY, name TEXT, rating INTEGER DEFAULT 1000,
+                    wins INTEGER DEFAULT 0, losses INTEGER DEFAULT 0, updated TEXT)""")
+                _top3 = _sconn.execute("SELECT user_id,name,rating,wins,losses FROM pet_ladder "
+                                       "WHERE (wins+losses) >= 5 ORDER BY rating DESC LIMIT 3").fetchall()
+                _sconn.close()
+            except Exception:
+                _top3 = []
+            _rewards = [("🥇", 150000, "Pet Season Champion"), ("🥈", 75000, None), ("🥉", 50000, None)]
+            _podium = []
+            for i, r in enumerate(_top3):
+                em, prize, title = _rewards[i]
+                _rp = get_player(r["user_id"])
+                if not _rp: continue
+                _rp["gold"] = safe_int(_rp.get("gold")) + prize
+                if title: award_title(_rp, title)
+                save_player(_rp)
+                _podium.append(f"{em} *{r['name']}* — {safe_int(r['rating'])} (+{fmt_num(prize)}g"
+                               + (f", *{title}*" if title else "") + ")")
+                try:
+                    await bot.send_message(r["user_id"],
+                        f"{em} *Pet Duel Season {_snum} — you placed!*\nPrize: *{fmt_num(prize)}g*"
+                        + (f" + the *{title}* title!" if title else "!"), parse_mode="Markdown")
+                except Exception:
+                    pass
+            # Soft reset: compress ratings halfway to 1000, clear W/L for the new season.
+            try:
+                _rc = _db()
+                _rc.execute("UPDATE pet_ladder SET rating = 1000 + (rating-1000)/2, wins=0, losses=0")
+            except Exception:
+                pass
+            _ws_set("pet_season_ts", time.time())
+            _ws_set("pet_season_num", _snum + 1)
+            _pet_season_line = (f"🐾🏁 *PET DUEL SEASON {_snum} COMPLETE!*\n"
+                                + ("\n".join(_podium) if _podium else "_No ranked duelists this season._")
+                                + f"\n_Ratings soft-reset — Season {_snum+1} is live. /petladder_")
+    except Exception:
+        logger.error("pet season rollover failed", exc_info=True)
     for g in groups:
         entries = per_group.get(g, [])
         gainers  = sorted([e for e in entries if e[1] > 0], key=lambda e: -e[1])[:3]
@@ -39548,6 +39597,8 @@ async def _post_daily_digest(bot):
             lines.append(_champ_line)
         if _pet_champ_line:
             lines.append(_pet_champ_line)
+        if _pet_season_line:
+            lines.append(_pet_season_line)
             lines.append("")
         _king = _get_king()
         if _king:
