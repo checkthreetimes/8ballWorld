@@ -14524,6 +14524,9 @@ async def petduel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     my_sp, opp_sp = PET_SPECIES.get(my_pet.get("species"),{}), PET_SPECIES.get(opp_pet.get("species"),{})
     won = (winner == "a")
     win_pet, win_owner = (my_pet, p) if won else (opp_pet, tp)
+    lose_owner = tp if won else p
+    # Ladder: ELO rating + W/L for both players
+    _rd = _pet_ladder_record(win_owner, lose_owner)
     # Rewards to the winner's pet/owner
     win_pet["bond_score"] = min(200, safe_int(win_pet.get("bond_score")) + 8)
     save_pet(win_pet)
@@ -14545,8 +14548,76 @@ async def petduel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         + "\n".join(_hl) + "\n\n"
         f"🏆 *{_pet_display_name(win_pet)}* wins for *{win_owner['username']}!*  "
         f"+8 bond · +{_gold}g" + (f"\n{_lvlmsg}" if _lvlmsg else "")
+        + (f"\n📈 Pet rating: *{win_owner['username']}* {_rd['wr']} (+{_rd['wd']})  ·  "
+           f"*{lose_owner['username']}* {_rd['lr']} ({_rd['ld']})" if _rd else "")
     )
     await send_group(update, body, permanent=True)
+
+# ── PET DUEL LADDER — ELO rating + W/L, lazily-created table ──────────────────
+def _pet_ladder_ensure():
+    _db().execute("""CREATE TABLE IF NOT EXISTS pet_ladder (
+        user_id INTEGER PRIMARY KEY, name TEXT,
+        rating INTEGER DEFAULT 1000, wins INTEGER DEFAULT 0,
+        losses INTEGER DEFAULT 0, updated TEXT)""")
+
+def _pet_ladder_get(uid):
+    try:
+        _pet_ladder_ensure()
+        r = _db().execute("SELECT rating,wins,losses FROM pet_ladder WHERE user_id=?", (uid,)).fetchone()
+        if r: return {"rating": safe_int(r[0], 1000), "wins": safe_int(r[1]), "losses": safe_int(r[2])}
+    except Exception:
+        pass
+    return {"rating": 1000, "wins": 0, "losses": 0}
+
+def _pet_ladder_record(winner_p, loser_p):
+    """Apply an ELO update (K=32) + W/L for a completed duel. Returns rating info."""
+    try:
+        _pet_ladder_ensure()
+        wid, lid = winner_p["user_id"], loser_p["user_id"]
+        wr = _pet_ladder_get(wid)["rating"]; lr = _pet_ladder_get(lid)["rating"]
+        exp_w = 1.0 / (1.0 + 10 ** ((lr - wr) / 400.0))
+        wd = round(32 * (1 - exp_w)); ld = round(32 * (0 - (1 - exp_w)))
+        nwr, nlr = wr + wd, max(100, lr + ld)
+        now = datetime.now().isoformat()
+        conn = _db()
+        conn.execute("""INSERT INTO pet_ladder (user_id,name,rating,wins,losses,updated)
+                        VALUES (?,?,?,1,0,?)
+                        ON CONFLICT(user_id) DO UPDATE SET rating=?, wins=wins+1, name=?, updated=?""",
+                     (wid, winner_p.get("username","?"), nwr, now, nwr, winner_p.get("username","?"), now))
+        conn.execute("""INSERT INTO pet_ladder (user_id,name,rating,wins,losses,updated)
+                        VALUES (?,?,?,0,1,?)
+                        ON CONFLICT(user_id) DO UPDATE SET rating=?, losses=losses+1, name=?, updated=?""",
+                     (lid, loser_p.get("username","?"), nlr, now, nlr, loser_p.get("username","?"), now))
+        return {"wr": nwr, "lr": nlr, "wd": wd, "ld": nlr - lr}
+    except Exception:
+        return None
+
+async def petladder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the pet-duel rating leaderboard + your own standing."""
+    user = update.effective_user
+    try:
+        _pet_ladder_ensure()
+        conn = _connect_db(); conn.row_factory = sqlite3.Row
+        rows = [dict(r) for r in conn.execute(
+            "SELECT user_id,name,rating,wins,losses FROM pet_ladder "
+            "WHERE (wins+losses) > 0 ORDER BY rating DESC")]
+        conn.close()
+    except Exception:
+        rows = []
+    if not rows:
+        await send_group(update, "🐾🏆 *Pet Duel Ladder* — no duels yet! Challenge someone with /petduel @user.",
+                         permanent=True); return
+    lines = ["🐾🏆 *Pet Duel Ladder*", ""]
+    for i, r in enumerate(rows[:15], 1):
+        medal = ["🥇","🥈","🥉"][i-1] if i <= 3 else f"{i}."
+        lines.append(f"{medal} *{r['name']}* — {safe_int(r['rating'])}  "
+                     f"({safe_int(r['wins'])}W/{safe_int(r['losses'])}L)")
+    _mine = next((i for i, r in enumerate(rows, 1) if r["user_id"] == user.id), None)
+    if _mine and _mine > 15:
+        me = rows[_mine-1]
+        lines.append(f"\n… your rank: *#{_mine}* — {safe_int(me['rating'])} "
+                     f"({safe_int(me['wins'])}W/{safe_int(me['losses'])}L)")
+    await send_group(update, "\n".join(lines), permanent=True)
 
 def _pet_battle_score(pet):
     """Raw sparring score for a pet (pre element/shiny/RNG mods)."""
@@ -39187,6 +39258,45 @@ async def _post_daily_digest(bot):
                         pass
     except Exception:
         logger.error("weekly champion crown failed", exc_info=True)
+    # ── WEEKLY PET CHAMPION ─────────────────────────────────────────────────
+    _pet_champ_line = ""
+    try:
+        if time.time() - safe_int(_ws_get("pet_champion_ts", 0)) >= 7 * 86400:
+            _pl = _pet_ladder_get  # noqa
+            _ple = None
+            try:
+                _pconn = _connect_db(); _pconn.row_factory = sqlite3.Row
+                _pconn.execute("""CREATE TABLE IF NOT EXISTS pet_ladder (
+                    user_id INTEGER PRIMARY KEY, name TEXT, rating INTEGER DEFAULT 1000,
+                    wins INTEGER DEFAULT 0, losses INTEGER DEFAULT 0, updated TEXT)""")
+                _ple = _pconn.execute("SELECT user_id,name,rating,wins,losses FROM pet_ladder "
+                                      "WHERE (wins+losses) >= 3 ORDER BY rating DESC LIMIT 1").fetchone()
+                _pconn.close()
+            except Exception:
+                _ple = None
+            if _ple:
+                _pc_p = get_player(_ple["user_id"])
+                if _pc_p:
+                    _pc_prize = 75000
+                    _pc_p["gold"] = safe_int(_pc_p.get("gold")) + _pc_prize
+                    award_title(_pc_p, "Pet Champion")
+                    save_player(_pc_p)
+                    _ws_set("pet_champion", {"uid": _ple["user_id"], "name": _ple["name"],
+                                             "rating": safe_int(_ple["rating"]), "ts": time.time()})
+                    _ws_set("pet_champion_ts", time.time())
+                    _pet_champ_line = (f"🐾👑 *WEEKLY PET CHAMPION: {_ple['name']}!*\n"
+                                       f"Pet rating {safe_int(_ple['rating'])} "
+                                       f"({safe_int(_ple['wins'])}W/{safe_int(_ple['losses'])}L) "
+                                       f"— *Pet Champion* title + {fmt_num(_pc_prize)}g!")
+                    try:
+                        await bot.send_message(_ple["user_id"],
+                            f"🐾👑 *You are this week's Pet Champion!*\nTop pet-duel rating "
+                            f"*{safe_int(_ple['rating'])}*. Prize: *{fmt_num(_pc_prize)}g* + the title!",
+                            parse_mode="Markdown")
+                    except Exception:
+                        pass
+    except Exception:
+        logger.error("weekly pet champion crown failed", exc_info=True)
     for g in groups:
         entries = per_group.get(g, [])
         gainers  = sorted([e for e in entries if e[1] > 0], key=lambda e: -e[1])[:3]
@@ -39212,6 +39322,8 @@ async def _post_daily_digest(bot):
             lines.append("")
         if _champ_line:
             lines.append(_champ_line)
+        if _pet_champ_line:
+            lines.append(_pet_champ_line)
             lines.append("")
         _king = _get_king()
         if _king:
@@ -46020,6 +46132,7 @@ def main():
     # ── Pets ──────────────────────────────────────────────────────────────────
     app.add_handler(CommandHandler("pet",          pet_cmd))
     app.add_handler(CommandHandler("petduel",      petduel_cmd))
+    app.add_handler(CommandHandler("petladder",    petladder_cmd))
     app.add_handler(CommandHandler("pets",         pet_cmd))
     app.add_handler(CommandHandler("petshop",      petshop_cmd))
     app.add_handler(CommandHandler("hatch",        hatch_cmd))
