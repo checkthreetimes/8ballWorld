@@ -4691,6 +4691,9 @@ def get_pet_atk_bonus(pet):
     base = round(base * _pet_atk_iv_mult(pet))
     # Mastery tree: Ferocity
     base = round(base * _tree_atk_mult(pet))
+    # Held item ATK
+    if _pet_held_effect(pet, "atk_pct"):
+        base = round(base * (1 + _pet_held_effect(pet, "atk_pct")))
     hunger = safe_int(pet.get("hunger"), 100)
     mood   = safe_int(pet.get("mood"), 100)
     # Power scales HARD with fullness — a fully-fed pet is a monster, a starving
@@ -4896,8 +4899,8 @@ def save_pet(pet):
     c.execute("""INSERT OR REPLACE INTO pets
         (pet_id,owner_id,species,nickname,level,exp,hunger,mood,last_fed,last_trained,
          is_active,created_at,bond_score,adventure_ends_at,last_battle,evolution_stage,
-         is_shiny,job_ends_at,daycare_until,last_auto,ivs,mark,bond_tree)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+         is_shiny,job_ends_at,daycare_until,last_auto,ivs,mark,bond_tree,held_item)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (pet.get("pet_id"), pet["owner_id"], pet["species"],
          pet.get("nickname"), pet.get("level",1), pet.get("exp",0),
          pet.get("hunger",100), pet.get("mood",100),
@@ -4907,7 +4910,7 @@ def save_pet(pet):
          pet.get("last_battle"), pet.get("evolution_stage",0),
          pet.get("is_shiny",0), pet.get("job_ends_at"),
          pet.get("daycare_until"), pet.get("last_auto"),
-         pet.get("ivs"), pet.get("mark"), pet.get("bond_tree")))
+         pet.get("ivs"), pet.get("mark"), pet.get("bond_tree"), pet.get("held_item")))
     conn.commit(); conn.close()
 
 
@@ -5004,6 +5007,10 @@ def _build_pet_card(pet):
         _mk_txt = f"  ·  🏷️ *{_mk}*" if _mk else ""
         lines.append(f"🧬 IV: *{_ivp}%* {_grade}  (⚔️{safe_int(_ivs.get('atk',0))} "
                      f"🛡️{safe_int(_ivs.get('def',0))} ❤️{safe_int(_ivs.get('hp',0))}/31){_mk_txt}")
+    _held = _pet_held_label(pet)
+    if _held:
+        _hd = _PET_HELD_ITEMS.get(pet.get("held_item"), ("",{}, ""))[2]
+        lines.append(f"🎒 Held: *{_held}* — _{_hd}_")
     if passives:
         plines = []
         if passives.get("crit_bonus"):  plines.append(f"+{round(passives['crit_bonus']*100)}% crit")
@@ -5125,6 +5132,23 @@ def _tree_atk_mult(pet):
 def _tree_gold_mult(pet):
     return 1.0 + 0.04 * _tree_rank(pet, "luck")
 
+# ── PET HELD ITEMS — one equippable accessory per pet (tradeable inventory items) ──
+_PET_HELD_ITEMS = {
+    "Ember Charm":   ("🔴", {"atk_pct": 0.08}, "+8% pet ATK"),
+    "Iron Collar":   ("🛡️", {"mit": 0.05}, "+5% duel damage reduction"),
+    "Vitality Band": ("❤️", {"hp_pct": 0.10}, "+10% duel HP"),
+    "Keen Bell":     ("⚡", {"crit": 0.06}, "+6% duel crit"),
+    "Lucky Coin":    ("🍀", {"gold_pct": 0.12}, "+12% pet gold"),
+    "Scholar Tag":   ("📖", {"exp_pct": 0.15}, "+15% pet EXP"),
+    "Power Gem":     ("🌟", {"atk_pct": 0.06, "crit": 0.04}, "+6% ATK & +4% crit"),
+}
+def _pet_held_effect(pet, key):
+    itm = _PET_HELD_ITEMS.get(pet.get("held_item"))
+    return itm[1].get(key, 0.0) if itm else 0.0
+def _pet_held_label(pet):
+    itm = _PET_HELD_ITEMS.get(pet.get("held_item"))
+    return f"{itm[0]} {pet['held_item']}" if itm else ""
+
 def _build_pet_tree_card(pet):
     """(text, markup) for a pet's Mastery tree screen."""
     pid = pet.get("pet_id")
@@ -5159,6 +5183,7 @@ def _pet_view_markup(pet_id, is_active, uid=0, pet=None):
         InlineKeyboardButton("🏋️ Train", callback_data=f"pettrain_{pet_id}"),
         InlineKeyboardButton("🌟 Mastery", callback_data=f"pettree_{pet_id}"),
     ])
+    rows.append([InlineKeyboardButton("🎒 Held Item", callback_data=f"petitem_{pet_id}")])
     if is_active:
         rows.append([InlineKeyboardButton("🤖 Auto-Care: ON (plays & adventures on its own)", callback_data="noop")])
     # Evolve button if eligible
@@ -5201,6 +5226,15 @@ def _pet_main_markup():
 
 # Items that can be found in game
 CONSUMABLES = {
+    # Pet held items — equip one on a pet (see /pet → Item). Inventory items:
+    # tradeable, sellable, buyable from the Pet Shop.
+    "Ember Charm":   {"desc":"Pet held item: +8% ATK.","sell":1500},
+    "Iron Collar":   {"desc":"Pet held item: +5% duel damage reduction.","sell":1500},
+    "Vitality Band": {"desc":"Pet held item: +10% duel HP.","sell":1500},
+    "Keen Bell":     {"desc":"Pet held item: +6% duel crit.","sell":1500},
+    "Lucky Coin":    {"desc":"Pet held item: +12% pet gold.","sell":1200},
+    "Scholar Tag":   {"desc":"Pet held item: +15% pet EXP.","sell":1200},
+    "Power Gem":     {"desc":"Pet held item: +6% ATK & +4% duel crit.","sell":4000},
     # Healing — PERCENTAGE of max HP, so potions stay meaningful at every level
     "Health Potion":          {"desc":"Restores 25% of your max HP.","sell":75},
     "Greater Health Potion":  {"desc":"Restores 50% of your max HP.","sell":200},
@@ -13041,7 +13075,8 @@ def init_db():
                               ("last_battle","TEXT"), ("evolution_stage","INTEGER DEFAULT 0"),
                               ("is_shiny","INTEGER DEFAULT 0"), ("job_ends_at","TEXT"),
                               ("daycare_until","TEXT"), ("last_auto","TEXT"),
-                              ("ivs","TEXT"), ("mark","TEXT"), ("bond_tree","TEXT")]:
+                              ("ivs","TEXT"), ("mark","TEXT"), ("bond_tree","TEXT"),
+                              ("held_item","TEXT")]:
             try:
                 _pets_conn.execute(f"ALTER TABLE pets ADD COLUMN {col} {typedef}")
                 _pets_conn.commit()
@@ -14181,6 +14216,8 @@ def give_pet_exp(owner_id, raw_amount):
     # fight. Cap each grant to ~one small chunk of the pet's current level.
     _petlvl = safe_int(pet.get("level"), 1)
     amount = min(max(1, round(raw_amount * 0.15)), 25 + _petlvl * 3)
+    if _pet_held_effect(pet, "exp_pct"):
+        amount = round(amount * (1 + _pet_held_effect(pet, "exp_pct")))
     pet["exp"] = pet.get("exp", 0) + amount
     leveled = False
     msg = ""
@@ -14447,14 +14484,15 @@ def _pet_duel_hp(pet):
     sp = PET_SPECIES.get(pet.get("species"), {})
     ivs = _pet_ivs(pet)
     base = 120 + _pet_eff_level(pet) * 10 + sp.get("base_def", 3) * 4 + safe_int(ivs.get("hp", 0)) * 3
-    return round(base * (1 + 0.05 * _tree_rank(pet, "vita")))   # Vitality
+    base = base * (1 + 0.05 * _tree_rank(pet, "vita")) * (1 + _pet_held_effect(pet, "hp_pct"))
+    return round(base)   # Vitality + held item
 
 def _pet_duel_mitigation(pet):
-    """Incoming-damage reduction from base_def + DEF IV + Fortitude (capped 55%)."""
+    """Incoming-damage reduction from base_def + DEF IV + Fortitude + held item (capped 55%)."""
     sp = PET_SPECIES.get(pet.get("species"), {})
     ivs = _pet_ivs(pet)
     return min(0.55, sp.get("base_def", 3) * 0.006 + safe_int(ivs.get("def", 0)) * 0.008
-              + 0.02 * _tree_rank(pet, "fort"))
+              + 0.02 * _tree_rank(pet, "fort") + _pet_held_effect(pet, "mit"))
 
 def _pet_duel_sim(pa, pb):
     """Turn-by-turn pet duel. Returns (winner 'a'/'b', highlight_lines, rounds)."""
@@ -14466,7 +14504,8 @@ def _pet_duel_sim(pa, pb):
     em   = {"a": PET_SPECIES.get(pa.get("species"),{}).get("emoji","🐾"),
             "b": PET_SPECIES.get(pb.get("species"),{}).get("emoji","🐾")}
     order = ["a","b"] if atk["a"] >= atk["b"] else ["b","a"]  # higher ATK strikes first
-    crit_ch = {"a": 0.12 + 0.02 * _tree_rank(pa, "inst"), "b": 0.12 + 0.02 * _tree_rank(pb, "inst")}
+    crit_ch = {"a": 0.12 + 0.02 * _tree_rank(pa, "inst") + _pet_held_effect(pa, "crit"),
+               "b": 0.12 + 0.02 * _tree_rank(pb, "inst") + _pet_held_effect(pb, "crit")}
     log = []
     for rnd in range(1, 13):
         for me in order:
@@ -14762,7 +14801,7 @@ def _pet_autonomous_step(p, pet, cycles):
                 flavor_lines.append(txt.format(name=name))
 
     if total_gold:
-        total_gold = round(total_gold * _tree_gold_mult(pet))   # Mastery: Fortune
+        total_gold = round(total_gold * _tree_gold_mult(pet) * (1 + _pet_held_effect(pet, "gold_pct")))
         p["gold"] = safe_int(p.get("gold", 0)) + total_gold
 
     # 5. Auto pet battles — the pet spars on its own vs recent PvP opponents
@@ -31266,7 +31305,8 @@ def _build_petshop_menu(p):
             "🥚 *Dragon Egg* — 75,000g\nRare to Epic pet\n\n"
             "🥚 *Mythic Egg* — 200,000g\nEpic to Mythic pet\n\n"
             "*🍖 Pet Foods* — feed at /pet → Feed. A FULL pet is far stronger.\n"
-            "Pet Snack +25 · Kibble +45 · Steak +70 · Honey +40 · Golden Apple +100 hunger")
+            "Pet Snack +25 · Kibble +45 · Steak +70 · Honey +40 · Golden Apple +100 hunger\n\n"
+            "*🎒 Held Items* — equip one on a pet at /pet → 🎒 Item for a permanent boost.")
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("🥚 Common Egg  10,000g",  callback_data="pbuy_Common Egg_10000"),
          InlineKeyboardButton("🥚 Rare Egg  30,000g",    callback_data="pbuy_Rare Egg_30000")],
@@ -31277,6 +31317,13 @@ def _build_petshop_menu(p):
         [InlineKeyboardButton("🥩 Juicy Steak  200g", callback_data="pbuy_Juicy Steak_200"),
          InlineKeyboardButton("🍯 Honey Treat  150g", callback_data="pbuy_Honey Treat_150")],
         [InlineKeyboardButton("🍎 Golden Apple  1,000g", callback_data="pbuy_Golden Apple_1000")],
+        [InlineKeyboardButton("🔴 Ember Charm 3k", callback_data="pbuy_Ember Charm_3000"),
+         InlineKeyboardButton("🛡️ Iron Collar 3k", callback_data="pbuy_Iron Collar_3000")],
+        [InlineKeyboardButton("❤️ Vitality Band 3k", callback_data="pbuy_Vitality Band_3000"),
+         InlineKeyboardButton("⚡ Keen Bell 3k", callback_data="pbuy_Keen Bell_3000")],
+        [InlineKeyboardButton("🍀 Lucky Coin 2.5k", callback_data="pbuy_Lucky Coin_2500"),
+         InlineKeyboardButton("📖 Scholar Tag 2.5k", callback_data="pbuy_Scholar Tag_2500")],
+        [InlineKeyboardButton("🌟 Power Gem 8k", callback_data="pbuy_Power Gem_8000")],
         [InlineKeyboardButton("🔙 Back",              callback_data="petmain"),
          InlineKeyboardButton("❌ Close",             callback_data=f"close_msg_{p['user_id']}")],
     ])
@@ -31772,6 +31819,55 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "_Pick a food from your bag. A full pet is far stronger._",
             parse_mode="Markdown", reply_markup=_pet_feed_markup(pid, p))
         await query.answer(); return
+
+    if data.startswith("petitem_") or data.startswith("petitemequip_") or data.startswith("petitemremove_"):
+        parts = data.split("_")
+        pid = int(parts[1])
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row)
+        p = get_player(user.id); inv = sjl(p.get("inventory"), [])
+        if data.startswith("petitemequip_"):
+            key = "_".join(parts[2:])
+            if key not in _PET_HELD_ITEMS or key not in inv:
+                await query.answer("You don't have that item.", show_alert=True); return
+            inv.remove(key)
+            if pet.get("held_item"):            # return the previously-held item
+                inv.append(pet["held_item"])
+            pet["held_item"] = key
+            p["inventory"] = json.dumps(inv); save_player(p); save_pet(pet)
+            await query.answer(f"🎒 Equipped {key}!")
+        elif data.startswith("petitemremove_"):
+            if pet.get("held_item"):
+                inv.append(pet["held_item"]); pet["held_item"] = None
+                p["inventory"] = json.dumps(inv); save_player(p); save_pet(pet)
+                await query.answer("🎒 Unequipped — item returned to your bag.")
+            else:
+                await query.answer("No held item to remove.")
+        else:
+            await query.answer()
+        # Render the item menu
+        from collections import Counter as _C
+        owned = _C(i for i in inv if i in _PET_HELD_ITEMS)
+        cur = _pet_held_label(pet)
+        lines = [f"🎒 *{_pet_display_name(pet)} — Held Item*",
+                 f"Equipped: {cur if cur else '_none_'}", ""]
+        rows = []
+        if pet.get("held_item"):
+            rows.append([InlineKeyboardButton("➖ Unequip", callback_data=f"petitemremove_{pid}")])
+        if owned:
+            lines.append("_Tap an item to equip it (swaps out the current one):_")
+            for k, n in owned.items():
+                em, _eff, desc = _PET_HELD_ITEMS[k]
+                lines.append(f"{em} *{k}* ×{n} — _{desc}_")
+                rows.append([InlineKeyboardButton(f"{em} Equip {k}", callback_data=f"petitemequip_{pid}_{k}")])
+        else:
+            lines.append("_You own no held items — buy some at the 🛒 Pet Shop._")
+        rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"petview_{pid}")])
+        await _q_edit(query, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+        return
 
     if data.startswith("pettree_") or data.startswith("pettreeup_") or data.startswith("pettreereset_"):
         parts = data.split("_")
@@ -46436,7 +46532,7 @@ def main():
     app.add_handler(CallbackQueryHandler(hatch_egg_callback,  pattern="^hatch_egg$"))
     app.add_handler(CallbackQueryHandler(petcatch_callback,   pattern="^petcatch_"))
     app.add_handler(CallbackQueryHandler(pet_main_callback,
-        pattern="^(petmain|petlist_|petview_|petactivate_|petfeedgive_|petfeast_|petfeed_|pettrain_|pettreeup_|pettreereset_|pettree_|petplay_|petrelease_|petsell_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
+        pattern="^(petmain|petlist_|petview_|petactivate_|petfeedgive_|petfeast_|petfeed_|pettrain_|petitemequip_|petitemremove_|petitem_|pettreeup_|pettreereset_|pettree_|petplay_|petrelease_|petsell_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
     app.add_handler(CallbackQueryHandler(pethub_callback,    pattern="^pethub_"))
     app.add_handler(CallbackQueryHandler(petdaycare_callback, pattern="^petdaycare_"))
     app.add_handler(CallbackQueryHandler(petretire_callback,  pattern="^petretire_"))
