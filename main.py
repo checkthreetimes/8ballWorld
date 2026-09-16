@@ -4626,6 +4626,46 @@ def _hatch_species(egg_name):
     candidates = [sid for sid, sd in PET_SPECIES.items() if sd["rarity"] == target_rarity]
     return random.choice(candidates) if candidates else None
 
+# ── PET GENETICS: hidden IVs (0–31 per stat) + a rarity-weighted Mark ────────
+# Makes every catch/hatch individual: two of the same species differ in raw
+# potential (IVs) and carry a flavour Mark that leans their combat ATK.
+_PET_MARKS = {   # key: (label, atk_mult_delta, spawn_weight)
+    "none":    ("",          0.00, 46),
+    "keen":    ("Keen",      0.05, 12),
+    "brave":   ("Brave",     0.08, 10),
+    "rugged":  ("Rugged",    0.08,  9),
+    "fierce":  ("Fierce",    0.12,  7),
+    "cunning": ("Cunning",   0.12,  6),
+    "savage":  ("Savage",    0.16,  4),
+    "storied": ("Storied",   0.16,  3),
+    "ancient": ("Ancient",   0.22,  2),   # rarest — a genuine chase
+}
+
+def _roll_pet_genetics():
+    """Return (ivs_dict, mark_key) for a freshly obtained pet."""
+    ivs = {"atk": random.randint(0, 31), "def": random.randint(0, 31), "hp": random.randint(0, 31)}
+    keys = list(_PET_MARKS); weights = [_PET_MARKS[k][2] for k in keys]
+    return ivs, random.choices(keys, weights=weights, k=1)[0]
+
+def _pet_ivs(pet):
+    d = sjl(pet.get("ivs"), None)
+    return d if isinstance(d, dict) else {}
+
+def _pet_iv_pct(pet):
+    ivs = _pet_ivs(pet)
+    if not ivs: return 0
+    return round(sum(safe_int(ivs.get(s, 0)) for s in ("atk", "def", "hp")) / (31 * 3) * 100)
+
+def _pet_mark_label(pet):
+    return _PET_MARKS.get(pet.get("mark") or "none", ("", 0, 0))[0]
+
+def _pet_atk_iv_mult(pet):
+    """Combined ATK multiplier from the ATK IV (up to +15%) and the Mark."""
+    ivs = _pet_ivs(pet)
+    iv_bonus = (safe_int(ivs.get("atk", 0)) / 31.0) * 0.15
+    mark_bonus = _PET_MARKS.get(pet.get("mark") or "none", ("", 0, 0))[1]
+    return 1.0 + iv_bonus + mark_bonus
+
 def get_pet_atk_bonus(pet):
     """Raw ATK a pet contributes per attack. Bonus when well-fed and happy;
     penalty when neglected. This is the pet's POTENTIAL — in combat it's
@@ -4647,6 +4687,8 @@ def get_pet_atk_bonus(pet):
     base = round(base * PERSONALITY_ATK_MOD.get(pers, 1.0))
     # Shiny bonus: +15% ATK
     if pet.get("is_shiny"): base = round(base * 1.15)
+    # Genetics: ATK IV (up to +15%) and Mark lean
+    base = round(base * _pet_atk_iv_mult(pet))
     hunger = safe_int(pet.get("hunger"), 100)
     mood   = safe_int(pet.get("mood"), 100)
     # Power scales HARD with fullness — a fully-fed pet is a monster, a starving
@@ -4844,12 +4886,16 @@ def save_pet(pet):
         _dex_owner = get_player(pet.get("owner_id"))
         if _dex_owner and _record_dex(_dex_owner, pet["species"]):
             save_player(_dex_owner)
+    # Roll genetics (IVs + Mark) once, at creation, if not already set.
+    if not pet.get("ivs"):
+        _iv, _mk = _roll_pet_genetics()
+        pet["ivs"] = json.dumps(_iv); pet["mark"] = _mk
     conn = _connect_db(); c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO pets
         (pet_id,owner_id,species,nickname,level,exp,hunger,mood,last_fed,last_trained,
          is_active,created_at,bond_score,adventure_ends_at,last_battle,evolution_stage,
-         is_shiny,job_ends_at,daycare_until,last_auto)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+         is_shiny,job_ends_at,daycare_until,last_auto,ivs,mark)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (pet.get("pet_id"), pet["owner_id"], pet["species"],
          pet.get("nickname"), pet.get("level",1), pet.get("exp",0),
          pet.get("hunger",100), pet.get("mood",100),
@@ -4858,7 +4904,8 @@ def save_pet(pet):
          pet.get("bond_score",0), pet.get("adventure_ends_at"),
          pet.get("last_battle"), pet.get("evolution_stage",0),
          pet.get("is_shiny",0), pet.get("job_ends_at"),
-         pet.get("daycare_until"), pet.get("last_auto")))
+         pet.get("daycare_until"), pet.get("last_auto"),
+         pet.get("ivs"), pet.get("mark")))
     conn.commit(); conn.close()
 
 
@@ -4945,6 +4992,16 @@ def _build_pet_card(pet):
         "",
         f"⚔️ Combat ATK: +*{atk_bon}* per attack",
     ]
+    # Genetics line: overall IV%, per-stat IVs, and the Mark
+    _ivs = _pet_ivs(pet)
+    if _ivs:
+        _ivp = _pet_iv_pct(pet)
+        _grade = ("💎 Perfect" if _ivp >= 97 else "🌟 Stellar" if _ivp >= 85 else
+                  "✅ Great" if _ivp >= 70 else "👍 Good" if _ivp >= 50 else "· Average")
+        _mk = _pet_mark_label(pet)
+        _mk_txt = f"  ·  🏷️ *{_mk}*" if _mk else ""
+        lines.append(f"🧬 IV: *{_ivp}%* {_grade}  (⚔️{safe_int(_ivs.get('atk',0))} "
+                     f"🛡️{safe_int(_ivs.get('def',0))} ❤️{safe_int(_ivs.get('hp',0))}/31){_mk_txt}")
     if passives:
         plines = []
         if passives.get("crit_bonus"):  plines.append(f"+{round(passives['crit_bonus']*100)}% crit")
@@ -12931,7 +12988,8 @@ def init_db():
         for col, typedef in [("bond_score","INTEGER DEFAULT 0"), ("adventure_ends_at","TEXT"),
                               ("last_battle","TEXT"), ("evolution_stage","INTEGER DEFAULT 0"),
                               ("is_shiny","INTEGER DEFAULT 0"), ("job_ends_at","TEXT"),
-                              ("daycare_until","TEXT"), ("last_auto","TEXT")]:
+                              ("daycare_until","TEXT"), ("last_auto","TEXT"),
+                              ("ivs","TEXT"), ("mark","TEXT")]:
             try:
                 _pets_conn.execute(f"ALTER TABLE pets ADD COLUMN {col} {typedef}")
                 _pets_conn.commit()
@@ -13100,6 +13158,22 @@ def init_db():
         if not _mig_cur.fetchone():
             _mig_conn.execute("UPDATE pets SET exp=0 WHERE exp > 0")
             _mig_conn.execute("INSERT INTO _migrations (name, ran_at) VALUES ('pet_exp_curve_v2', ?)",
+                              (datetime.now().isoformat(),))
+
+        # pet_genetics_v1: give every EXISTING pet hidden IVs + a Mark so the new
+        # individuality applies retroactively (new pets roll theirs in save_pet).
+        _mig_cur.execute("SELECT 1 FROM _migrations WHERE name='pet_genetics_v1'")
+        if not _mig_cur.fetchone():
+            try:
+                _gc = _mig_conn.execute("SELECT pet_id FROM pets WHERE ivs IS NULL OR ivs=''").fetchall()
+                for _row in _gc:
+                    _iv, _mk = _roll_pet_genetics()
+                    _mig_conn.execute("UPDATE pets SET ivs=?, mark=? WHERE pet_id=?",
+                                      (json.dumps(_iv), _mk, _row[0]))
+                logger.info(f"Migration pet_genetics_v1: seeded IVs/Mark for {len(_gc)} pet(s)")
+            except Exception as _ge:
+                logger.warning(f"pet_genetics_v1 backfill skipped: {_ge}")
+            _mig_conn.execute("INSERT INTO _migrations (name, ran_at) VALUES ('pet_genetics_v1', ?)",
                               (datetime.now().isoformat(),))
             _mig_conn.commit()
             logger.info(f"Migration pet_level_cap_v2: hard-capped {_over} over-cap pet level(s)")
@@ -31083,7 +31157,9 @@ async def hatch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{rar_e} {sp['rarity'].capitalize()}  |  {elem_e} {sp['element'].capitalize()}\n\n"
             f"_{sp['desc']}_\n\n"
             f"Base ATK: +{sp['base_atk']}  |  Base DEF: +{sp['base_def']}\n"
-            f"Personality: {PERSONALITY_EMOJI.get(sp['personality'],'')} {sp['personality'].capitalize()}\n\n"
+            f"Personality: {PERSONALITY_EMOJI.get(sp['personality'],'')} {sp['personality'].capitalize()}\n"
+            f"🧬 IV: *{_pet_iv_pct(new_pet)}%*"
+            + (f"  ·  🏷️ *{_pet_mark_label(new_pet)}*" if _pet_mark_label(new_pet) else "") + "\n\n"
             + active_note)
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown")
@@ -31131,7 +31207,9 @@ async def hatch_egg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"{rar_e} {sp['rarity'].capitalize()}  |  {elem_e} {sp['element'].capitalize()}\n\n"
             f"_{sp['desc']}_\n\n"
             f"Base ATK: +{sp['base_atk']}  |  Base DEF: +{sp['base_def']}\n"
-            f"Personality: {PERSONALITY_EMOJI.get(sp['personality'],'')} {sp['personality'].capitalize()}\n\n"
+            f"Personality: {PERSONALITY_EMOJI.get(sp['personality'],'')} {sp['personality'].capitalize()}\n"
+            f"🧬 IV: *{_pet_iv_pct(new_pet)}%*"
+            + (f"  ·  🏷️ *{_pet_mark_label(new_pet)}*" if _pet_mark_label(new_pet) else "") + "\n\n"
             + active_note)
     msg = await context.bot.send_message(
         chat_id=query.message.chat.id, text=text, parse_mode="Markdown")
@@ -40774,7 +40852,9 @@ async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 else f"*{p['username']}*")
     await _edit_any_card(context.bot, chat_id, st["msg_id"],
         f"🎯 {_catcher} caught the wild *{shiny_tag}{sp['name']}!* {sp.get('emoji','🐾')}\n"
-        f"_Check /pet → All Pets to meet them._")
+        f"🧬 IV *{_pet_iv_pct(pet)}%*"
+        + (f"  ·  🏷️ *{_pet_mark_label(pet)}*" if _pet_mark_label(pet) else "")
+        + "\n_Check /pet → All Pets to meet them._")
     # Celestials (and founder Legends) get a big group-wide announcement.
     if sp.get("rarity") == "celestial":
         await _announce_epic_pet(context.bot, chat_id, _catcher, st["species"],
