@@ -14387,6 +14387,112 @@ def _pet_gear_drop(p):
     add_item(p, item)
     return item
 
+# ── PET DUELS — opt-in player-vs-player pet battles (uses IVs + Marks + type) ──
+_petduel_last = {}   # uid -> ts (in-memory cooldown)
+_PETDUEL_CD = 8 * 60
+
+def _pet_duel_hp(pet):
+    sp = PET_SPECIES.get(pet.get("species"), {})
+    ivs = _pet_ivs(pet)
+    return 120 + _pet_eff_level(pet) * 10 + sp.get("base_def", 3) * 4 + safe_int(ivs.get("hp", 0)) * 3
+
+def _pet_duel_mitigation(pet):
+    """Incoming-damage reduction from base_def + DEF IV (capped 45%)."""
+    sp = PET_SPECIES.get(pet.get("species"), {})
+    ivs = _pet_ivs(pet)
+    return min(0.45, sp.get("base_def", 3) * 0.006 + safe_int(ivs.get("def", 0)) * 0.008)
+
+def _pet_duel_sim(pa, pb):
+    """Turn-by-turn pet duel. Returns (winner 'a'/'b', highlight_lines, rounds)."""
+    hp   = {"a": _pet_duel_hp(pa), "b": _pet_duel_hp(pb)}; mhp = dict(hp)
+    atk  = {"a": max(1, get_pet_atk_bonus(pa)), "b": max(1, get_pet_atk_bonus(pb))}
+    mit  = {"a": _pet_duel_mitigation(pa), "b": _pet_duel_mitigation(pb)}
+    emul = {"a": _get_pet_element_mult(pa, pb), "b": _get_pet_element_mult(pb, pa)}
+    nm   = {"a": _pet_display_name(pa), "b": _pet_display_name(pb)}
+    em   = {"a": PET_SPECIES.get(pa.get("species"),{}).get("emoji","🐾"),
+            "b": PET_SPECIES.get(pb.get("species"),{}).get("emoji","🐾")}
+    order = ["a","b"] if atk["a"] >= atk["b"] else ["b","a"]  # higher ATK strikes first
+    log = []
+    for rnd in range(1, 13):
+        for me in order:
+            foe = "b" if me == "a" else "a"
+            raw = atk[me] * emul[me] * random.uniform(0.85, 1.15)
+            crit = random.random() < 0.12
+            if crit: raw *= 1.6
+            dmg = max(1, round(raw * (1 - mit[foe])))
+            hp[foe] -= dmg
+            tag = " 💥" if crit else ("  ⚡" if emul[me] > 1 else ("  🛡️" if emul[me] < 1 else ""))
+            log.append(f"{em[me]} *{nm[me]}* → *{dmg}*{tag}")
+            if hp[foe] <= 0:
+                log.append(f"💀 *{nm[foe]}* is knocked out!")
+                return me, log, rnd
+    win = "a" if hp["a"]/mhp["a"] >= hp["b"]/mhp["b"] else "b"
+    log.append(f"⏱️ Time! *{nm[win]}* stands with more HP.")
+    return win, log, 12
+
+def _pet_gene_tag(pet):
+    _mk = _pet_mark_label(pet)
+    return f"IV {_pet_iv_pct(pet)}%" + (f" · {_mk}" if _mk else "")
+
+async def petduel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/petduel @user (or reply) — battle your active pet against theirs."""
+    user = update.effective_user
+    p = get_player(user.id)
+    if not p:
+        await send_group(update, "🐾 Use /ascend first!", delay=9); return
+    my_pet = get_active_pet_record(user.id)
+    if not my_pet:
+        await send_group(update, "🐾 You have no active pet! Adopt/hatch one, then /petduel.", delay=12); return
+    # Resolve opponent: reply-to takes priority, else @username/name arg
+    tp = None
+    if update.message and update.message.reply_to_message:
+        _tu = update.message.reply_to_message.from_user
+        if not _tu.is_bot: tp = get_player(_tu.id)
+    elif context.args:
+        tp = get_player_by_username(context.args[0])
+    if not tp:
+        await send_group(update, "🐾 *Pet Duel* — reply to someone or `/petduel @user`.\n"
+                                 "_Both need an active pet._", delay=15); return
+    if tp["user_id"] == user.id:
+        await send_group(update, "🐾 You can't duel your own pet!", delay=9); return
+    opp_pet = get_active_pet_record(tp["user_id"])
+    if not opp_pet:
+        await send_group(update, f"🐾 *{tp['username']}* has no active pet to duel.", delay=10); return
+    # Cooldown
+    _now = time.time()
+    if _now - _petduel_last.get(user.id, 0) < _PETDUEL_CD:
+        _rem = round((_PETDUEL_CD - (_now - _petduel_last.get(user.id, 0))) / 60)
+        await send_group(update, f"🐾 Your pet needs to rest — try again in ~{_rem} min.", delay=9); return
+    _petduel_last[user.id] = _now
+
+    winner, log, rounds = _pet_duel_sim(my_pet, opp_pet)
+    my_sp, opp_sp = PET_SPECIES.get(my_pet.get("species"),{}), PET_SPECIES.get(opp_pet.get("species"),{})
+    won = (winner == "a")
+    win_pet, win_owner = (my_pet, p) if won else (opp_pet, tp)
+    # Rewards to the winner's pet/owner
+    win_pet["bond_score"] = min(200, safe_int(win_pet.get("bond_score")) + 8)
+    save_pet(win_pet)
+    _lvlmsg = give_pet_exp(win_owner["user_id"], pet_exp_for_level(safe_int(win_pet.get("level"),1)))
+    _gold = 150 + safe_int(win_owner.get("level"),1) * 5
+    win_owner["gold"] = safe_int(win_owner.get("gold")) + _gold
+    save_player(win_owner)
+    # Loser consolation bond
+    lose_pet = opp_pet if won else my_pet
+    lose_pet["bond_score"] = min(200, safe_int(lose_pet.get("bond_score")) + 3)
+    save_pet(lose_pet)
+
+    _hl = log[:3] + (["…"] if len(log) > 4 else []) + log[-1:]
+    body = (
+        f"🐾⚔️ *PET DUEL*\n"
+        f"{my_sp.get('emoji','🐾')} *{_pet_display_name(my_pet)}* (Lv{my_pet.get('level',1)} · {_pet_gene_tag(my_pet)})\n"
+        f"        🆚\n"
+        f"{opp_sp.get('emoji','🐾')} *{_pet_display_name(opp_pet)}* (Lv{opp_pet.get('level',1)} · {_pet_gene_tag(opp_pet)})\n\n"
+        + "\n".join(_hl) + "\n\n"
+        f"🏆 *{_pet_display_name(win_pet)}* wins for *{win_owner['username']}!*  "
+        f"+8 bond · +{_gold}g" + (f"\n{_lvlmsg}" if _lvlmsg else "")
+    )
+    await send_group(update, body, permanent=True)
+
 def _pet_battle_score(pet):
     """Raw sparring score for a pet (pre element/shiny/RNG mods)."""
     sp = PET_SPECIES.get(pet.get("species"), {})
@@ -45778,6 +45884,7 @@ def main():
     app.add_handler(CommandHandler("help",         guide_cmd))
     # ── Pets ──────────────────────────────────────────────────────────────────
     app.add_handler(CommandHandler("pet",          pet_cmd))
+    app.add_handler(CommandHandler("petduel",      petduel_cmd))
     app.add_handler(CommandHandler("pets",         pet_cmd))
     app.add_handler(CommandHandler("petshop",      petshop_cmd))
     app.add_handler(CommandHandler("hatch",        hatch_cmd))
