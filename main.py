@@ -4689,6 +4689,8 @@ def get_pet_atk_bonus(pet):
     if pet.get("is_shiny"): base = round(base * 1.15)
     # Genetics: ATK IV (up to +15%) and Mark lean
     base = round(base * _pet_atk_iv_mult(pet))
+    # Mastery tree: Ferocity
+    base = round(base * _tree_atk_mult(pet))
     hunger = safe_int(pet.get("hunger"), 100)
     mood   = safe_int(pet.get("mood"), 100)
     # Power scales HARD with fullness — a fully-fed pet is a monster, a starving
@@ -4894,8 +4896,8 @@ def save_pet(pet):
     c.execute("""INSERT OR REPLACE INTO pets
         (pet_id,owner_id,species,nickname,level,exp,hunger,mood,last_fed,last_trained,
          is_active,created_at,bond_score,adventure_ends_at,last_battle,evolution_stage,
-         is_shiny,job_ends_at,daycare_until,last_auto,ivs,mark)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+         is_shiny,job_ends_at,daycare_until,last_auto,ivs,mark,bond_tree)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (pet.get("pet_id"), pet["owner_id"], pet["species"],
          pet.get("nickname"), pet.get("level",1), pet.get("exp",0),
          pet.get("hunger",100), pet.get("mood",100),
@@ -4905,7 +4907,7 @@ def save_pet(pet):
          pet.get("last_battle"), pet.get("evolution_stage",0),
          pet.get("is_shiny",0), pet.get("job_ends_at"),
          pet.get("daycare_until"), pet.get("last_auto"),
-         pet.get("ivs"), pet.get("mark")))
+         pet.get("ivs"), pet.get("mark"), pet.get("bond_tree")))
     conn.commit(); conn.close()
 
 
@@ -5096,6 +5098,55 @@ def _pet_list_markup(pets, page=0, page_size=5, uid=0):
                  InlineKeyboardButton("❌ Close", callback_data=close_cb)])
     return InlineKeyboardMarkup(rows)
 
+# ── PET MASTERY (Bond) TREE — points earned from leveling + bond, spent on
+#    permanent per-pet upgrades. Points are DERIVED (level//5 + bond tier), so
+#    a Reset simply clears allocations — no currency is ever lost. ──
+_PET_TREE = {   # node: (emoji, label, max_rank, per_rank_desc)
+    "fero": ("🗡️", "Ferocity",  8, "+3% ATK"),
+    "vita": ("❤️", "Vitality",  8, "+5% duel HP"),
+    "fort": ("🛡️", "Fortitude", 6, "+2% duel mitigation"),
+    "inst": ("⚡", "Instinct",  5, "+2% duel crit"),
+    "luck": ("🍀", "Fortune",   5, "+4% pet gold"),
+}
+def _pet_tree(pet):
+    d = sjl(pet.get("bond_tree"), None)
+    return d if isinstance(d, dict) else {}
+def _tree_rank(pet, node):
+    return max(0, min(_PET_TREE[node][2], safe_int(_pet_tree(pet).get(node, 0))))
+def _tree_points_total(pet):
+    return _pet_eff_level(pet) // 5 + _get_bond_tier(safe_int(pet.get("bond_score")))[0]
+def _tree_points_spent(pet):
+    t = _pet_tree(pet)
+    return sum(max(0, safe_int(t.get(n, 0))) for n in _PET_TREE)
+def _tree_points_free(pet):
+    return max(0, _tree_points_total(pet) - _tree_points_spent(pet))
+def _tree_atk_mult(pet):
+    return 1.0 + 0.03 * _tree_rank(pet, "fero")
+def _tree_gold_mult(pet):
+    return 1.0 + 0.04 * _tree_rank(pet, "luck")
+
+def _build_pet_tree_card(pet):
+    """(text, markup) for a pet's Mastery tree screen."""
+    pid = pet.get("pet_id")
+    free = _tree_points_free(pet); total = _tree_points_total(pet)
+    name = _pet_display_name(pet)
+    lines = [f"🌟 *{name} — Mastery*",
+             f"Points: *{free} free* / {total} earned  _(level ÷ 5 + bond tier)_", ""]
+    rows = []
+    for node, (em, label, mx, desc) in _PET_TREE.items():
+        rk = _tree_rank(pet, node)
+        pips = "▰" * rk + "▱" * (mx - rk)
+        lines.append(f"{em} *{label}* {pips} `{rk}/{mx}`  _{desc}/rank_")
+        if free > 0 and rk < mx:
+            rows.append([InlineKeyboardButton(f"➕ {label} ({rk}→{rk+1})",
+                                              callback_data=f"pettreeup_{pid}_{node}")])
+    if _tree_points_spent(pet) > 0:
+        rows.append([InlineKeyboardButton("♻️ Reset (free)", callback_data=f"pettreereset_{pid}")])
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"petview_{pid}")])
+    if free == 0:
+        lines.append("\n_No free points — level up or deepen your bond to earn more._")
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
 def _pet_view_markup(pet_id, is_active, uid=0, pet=None):
     rows = []
     if not is_active:
@@ -5106,6 +5157,7 @@ def _pet_view_markup(pet_id, is_active, uid=0, pet=None):
     rows.append([
         InlineKeyboardButton("🍖 Feed",  callback_data=f"petfeed_{pet_id}"),
         InlineKeyboardButton("🏋️ Train", callback_data=f"pettrain_{pet_id}"),
+        InlineKeyboardButton("🌟 Mastery", callback_data=f"pettree_{pet_id}"),
     ])
     if is_active:
         rows.append([InlineKeyboardButton("🤖 Auto-Care: ON (plays & adventures on its own)", callback_data="noop")])
@@ -12989,7 +13041,7 @@ def init_db():
                               ("last_battle","TEXT"), ("evolution_stage","INTEGER DEFAULT 0"),
                               ("is_shiny","INTEGER DEFAULT 0"), ("job_ends_at","TEXT"),
                               ("daycare_until","TEXT"), ("last_auto","TEXT"),
-                              ("ivs","TEXT"), ("mark","TEXT")]:
+                              ("ivs","TEXT"), ("mark","TEXT"), ("bond_tree","TEXT")]:
             try:
                 _pets_conn.execute(f"ALTER TABLE pets ADD COLUMN {col} {typedef}")
                 _pets_conn.commit()
@@ -14394,13 +14446,15 @@ _PETDUEL_CD = 8 * 60
 def _pet_duel_hp(pet):
     sp = PET_SPECIES.get(pet.get("species"), {})
     ivs = _pet_ivs(pet)
-    return 120 + _pet_eff_level(pet) * 10 + sp.get("base_def", 3) * 4 + safe_int(ivs.get("hp", 0)) * 3
+    base = 120 + _pet_eff_level(pet) * 10 + sp.get("base_def", 3) * 4 + safe_int(ivs.get("hp", 0)) * 3
+    return round(base * (1 + 0.05 * _tree_rank(pet, "vita")))   # Vitality
 
 def _pet_duel_mitigation(pet):
-    """Incoming-damage reduction from base_def + DEF IV (capped 45%)."""
+    """Incoming-damage reduction from base_def + DEF IV + Fortitude (capped 55%)."""
     sp = PET_SPECIES.get(pet.get("species"), {})
     ivs = _pet_ivs(pet)
-    return min(0.45, sp.get("base_def", 3) * 0.006 + safe_int(ivs.get("def", 0)) * 0.008)
+    return min(0.55, sp.get("base_def", 3) * 0.006 + safe_int(ivs.get("def", 0)) * 0.008
+              + 0.02 * _tree_rank(pet, "fort"))
 
 def _pet_duel_sim(pa, pb):
     """Turn-by-turn pet duel. Returns (winner 'a'/'b', highlight_lines, rounds)."""
@@ -14412,12 +14466,13 @@ def _pet_duel_sim(pa, pb):
     em   = {"a": PET_SPECIES.get(pa.get("species"),{}).get("emoji","🐾"),
             "b": PET_SPECIES.get(pb.get("species"),{}).get("emoji","🐾")}
     order = ["a","b"] if atk["a"] >= atk["b"] else ["b","a"]  # higher ATK strikes first
+    crit_ch = {"a": 0.12 + 0.02 * _tree_rank(pa, "inst"), "b": 0.12 + 0.02 * _tree_rank(pb, "inst")}
     log = []
     for rnd in range(1, 13):
         for me in order:
             foe = "b" if me == "a" else "a"
             raw = atk[me] * emul[me] * random.uniform(0.85, 1.15)
-            crit = random.random() < 0.12
+            crit = random.random() < crit_ch[me]
             if crit: raw *= 1.6
             dmg = max(1, round(raw * (1 - mit[foe])))
             hp[foe] -= dmg
@@ -14636,6 +14691,7 @@ def _pet_autonomous_step(p, pet, cycles):
                 flavor_lines.append(txt.format(name=name))
 
     if total_gold:
+        total_gold = round(total_gold * _tree_gold_mult(pet))   # Mastery: Fortune
         p["gold"] = safe_int(p.get("gold", 0)) + total_gold
 
     # 5. Auto pet battles — the pet spars on its own vs recent PvP opponents
@@ -31643,6 +31699,33 @@ async def pet_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown", reply_markup=_pet_feed_markup(pid, p))
         await query.answer(); return
 
+    if data.startswith("pettree_") or data.startswith("pettreeup_") or data.startswith("pettreereset_"):
+        parts = data.split("_")
+        pid = int(parts[1])
+        conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
+        c.execute("SELECT * FROM pets WHERE pet_id=? AND owner_id=?", (pid, user.id))
+        row = c.fetchone(); conn.close()
+        if not row: await query.answer("Pet not found.", show_alert=True); return
+        pet = dict(row)
+        if data.startswith("pettreeup_"):
+            node = parts[2] if len(parts) > 2 else ""
+            if node not in _PET_TREE:
+                await query.answer("Unknown node."); return
+            if _tree_points_free(pet) <= 0:
+                await query.answer("No free points — level up or bond more!", show_alert=True); return
+            if _tree_rank(pet, node) >= _PET_TREE[node][2]:
+                await query.answer(f"{_PET_TREE[node][1]} is maxed."); return
+            t = _pet_tree(pet); t[node] = _tree_rank(pet, node) + 1
+            pet["bond_tree"] = json.dumps(t); save_pet(pet)
+            await query.answer(f"➕ {_PET_TREE[node][1]} → {t[node]}")
+        elif data.startswith("pettreereset_"):
+            pet["bond_tree"] = json.dumps({}); save_pet(pet)
+            await query.answer("♻️ Mastery reset — points refunded.")
+        else:
+            await query.answer()
+        txt, markup = _build_pet_tree_card(pet)
+        await _q_edit(query, txt, parse_mode="Markdown", reply_markup=markup); return
+
     if data.startswith("pettrain_"):
         pid = int(data.split("_")[1])
         conn = _connect_db(); conn.row_factory = sqlite3.Row; c = conn.cursor()
@@ -46179,7 +46262,7 @@ def main():
     app.add_handler(CallbackQueryHandler(hatch_egg_callback,  pattern="^hatch_egg$"))
     app.add_handler(CallbackQueryHandler(petcatch_callback,   pattern="^petcatch_"))
     app.add_handler(CallbackQueryHandler(pet_main_callback,
-        pattern="^(petmain|petlist_|petview_|petactivate_|petfeedgive_|petfeast_|petfeed_|pettrain_|petplay_|petrelease_|petsell_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
+        pattern="^(petmain|petlist_|petview_|petactivate_|petfeedgive_|petfeast_|petfeed_|pettrain_|pettreeup_|pettreereset_|pettree_|petplay_|petrelease_|petsell_|petrename_|petadv_|petevolve_|petbattle_|petjob_)"))
     app.add_handler(CallbackQueryHandler(pethub_callback,    pattern="^pethub_"))
     app.add_handler(CallbackQueryHandler(petdaycare_callback, pattern="^petdaycare_"))
     app.add_handler(CallbackQueryHandler(petretire_callback,  pattern="^petretire_"))
