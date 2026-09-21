@@ -41371,7 +41371,7 @@ async def _spawn_wild_pet(bot, chat_id, force_species=None):
                                      reply_markup=_markup)
     except Exception:
         return
-    _wild_spawns[chat_id] = {"species": sk, "is_shiny": shiny, "tried": set(),
+    _wild_spawns[chat_id] = {"species": sk, "is_shiny": shiny,
                              "msg_id": msg.message_id, "expires": time.time() + 120}
     async def _flee(cid=chat_id, mid=msg.message_id):
         await asyncio.sleep(125)
@@ -41543,17 +41543,12 @@ async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     p = get_player(uid)
     if not p:
         await query.answer("Use /ascend first!", show_alert=True); return
-    # One attempt per player per spawn: if your throw misses, others get a shot —
-    # so it isn't purely whoever taps first.
-    tried = st.setdefault("tried", set())
-    if uid in tried:
-        await query.answer("🙅 You already tried this one — let someone else have a go!", show_alert=True)
-        return
-    tried.add(uid)
     sp = PET_SPECIES[st["species"]]
+    # Rarity-based catch chance — a miss just means "try again" (no per-player
+    # limit), so a fast tapper who whiffs doesn't lock everyone else out.
     catch_ch = _CATCH_CHANCE.get(sp.get("rarity", "common"), 0.8)
     if random.random() > catch_ch:
-        await query.answer(f"💨 It dodged your throw! ({int(catch_ch*100)}% catch — someone else can try)",
+        await query.answer(f"💨 It dodged your throw! ({int(catch_ch*100)}% catch — tap again!)",
                            show_alert=True)
         return
     _wild_spawns.pop(chat_id, None)  # caught — race is over
