@@ -30706,6 +30706,7 @@ GUIDE_PAGES = [
         "/pethelp  -  Full pet guide (genetics, duels, breeding, fusion…)\n"
         "/petduel [@user]  -  Battle your pet vs another player's\n"
         "/petladder  -  Pet-duel rankings (monthly seasons)\n"
+        "/catchboard  -  Top catchers, collectors & rarest catches\n"
         "/petshop  -  Buy eggs and snacks\n"
         "/hatch  -  Hatch an egg from your inventory\n"
         "/petrename [name]  -  Rename your active pet"
@@ -32528,13 +32529,14 @@ def _pet_guide_text():
         "• 🎒 *Held Item* — equip one accessory (Ember Charm, Power Gem…) for a permanent boost.\n\n"
         "*⚔️ Battle & compete*\n"
         "• `/petduel @user` — battle pets (IVs, Marks, held items & element type all matter).\n"
-        "• `/petladder` — ELO leaderboard. Monthly *Seasons* pay out gold + a *Pet Season Champion* title; weekly *Pet Champion* in the digest.\n\n"
+        "• `/petladder` — ELO leaderboard. Monthly *Seasons* pay out gold + a *Pet Season Champion* title; weekly *Pet Champion* in the digest.\n"
+        "• `/catchboard` — top catchers (week + all-time), top collectors & the rarest-catch hall of fame. Catch milestones earn *Pet Hunter / Pet Master / Shiny Hunter / Celestial Tamer* titles, and the weekly *Top Catcher* is crowned in the digest.\n\n"
         "*🔬 Endgame*\n"
         "• *Breed* two pets → a baby that *inherits IVs* (breed toward perfection; consumes both parents).\n"
         "• ⚗️ *Fuse* — sacrifice a fodder pet to raise a keeper's IVs in place.\n"
         "• 🤝 *Trade* pets with other players (genetics shown).\n\n"
         "*📖 Collect them all* — the */pet → Bestiary* tracks all 600+ species for collector bonuses.\n\n"
-        "_Commands: /pet · /pethub · /petduel · /petladder · /pethelp_"
+        "_Commands: /pet · /pethub · /petduel · /petladder · /catchboard · /pethelp_"
     )
 
 async def pethelp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -39593,6 +39595,45 @@ async def _post_daily_digest(bot):
                         pass
     except Exception:
         logger.error("weekly pet champion crown failed", exc_info=True)
+    # ── WEEKLY TOP CATCHER CROWN ─────────────────────────────────────────────
+    # Most wild pets caught over the trailing 7 days: title + gold, announced in
+    # every group's digest. Rewards hunting VOLUME (the duel crown rewards skill).
+    _catcher_champ_line = ""
+    try:
+        if time.time() - safe_int(_ws_get("catch_champion_ts", 0)) >= 7 * 86400:
+            _cc_since = (datetime.now() - timedelta(days=7)).isoformat()
+            _cconn = _catch_log_conn()
+            _cc_top = _cconn.execute(
+                "SELECT user_id, MAX(username) uname, COUNT(*) c FROM pet_catches "
+                "WHERE caught_at>=? GROUP BY user_id ORDER BY c DESC LIMIT 1",
+                (_cc_since,)).fetchone()
+            if _cc_top and safe_int(_cc_top["c"]) >= 3:
+                _cc_p = get_player(_cc_top["user_id"])
+                if _cc_p:
+                    _cc_prize = 60000
+                    _cc_p["gold"] = safe_int(_cc_p.get("gold")) + _cc_prize
+                    award_title(_cc_p, "Top Catcher")
+                    save_player(_cc_p)
+                    _ws_set("catch_champion", {"uid": _cc_top["user_id"], "name": _cc_top["uname"],
+                                               "count": safe_int(_cc_top["c"]), "ts": time.time()})
+                    _ws_set("catch_champion_ts", time.time())
+                    _catcher_champ_line = (
+                        f"🐾🎯 *WEEKLY TOP CATCHER: {_cc_top['uname']}!*\n"
+                        f"Bagged *{safe_int(_cc_top['c'])}* wild pets this week — "
+                        f"awarded the *Top Catcher* title + {fmt_num(_cc_prize)}g!")
+                    try:
+                        await bot.send_message(_cc_top["user_id"],
+                            f"🐾🎯 *You're this week's Top Catcher!*\nMost wild catches at "
+                            f"*{safe_int(_cc_top['c'])}*. Prize: *{fmt_num(_cc_prize)}g* + the title!",
+                            parse_mode="Markdown")
+                    except Exception:
+                        pass
+            elif _cc_top is None or safe_int(_cc_top["c"]) < 3:
+                # No qualifying hunter — advance the clock so it re-checks next week.
+                if safe_int(_ws_get("catch_champion_ts", 0)) == 0:
+                    _ws_set("catch_champion_ts", time.time())
+    except Exception:
+        logger.error("weekly top catcher crown failed", exc_info=True)
     # ── MONTHLY PET-DUEL SEASON ROLLOVER (rewards + soft rating reset) ───────
     _pet_season_line = ""
     try:
@@ -39686,9 +39727,46 @@ async def _post_daily_digest(bot):
             lines.append(_champ_line)
         if _pet_champ_line:
             lines.append(_pet_champ_line)
+        if _catcher_champ_line:
+            lines.append(_catcher_champ_line)
         if _pet_season_line:
             lines.append(_pet_season_line)
             lines.append("")
+        # ── TODAY'S HUNT: who caught what in THIS group over the last 24h ──────
+        try:
+            _hsince = (datetime.now() - timedelta(days=1)).isoformat()
+            _hc = _catch_log_conn().execute(
+                "SELECT user_id, username, species, rarity, is_shiny, was_new "
+                "FROM pet_catches WHERE chat_id=? AND caught_at>=?",
+                (g, _hsince)).fetchall()
+            if _hc:
+                _hlines = [f"🐾 *Today's Hunt* — {len(_hc)} wild pet"
+                           f"{'s' if len(_hc) != 1 else ''} caught!"]
+                _by_user = {}
+                for r in _hc:
+                    cur = _by_user.setdefault(r["user_id"], [r["username"], 0])
+                    cur[1] += 1
+                _top_catchers = sorted(_by_user.values(), key=lambda x: -x[1])[:3]
+                _medals = ["🥇", "🥈", "🥉"]
+                for i, (uname, n) in enumerate(_top_catchers):
+                    _hlines.append(f"{_medals[i]} *{uname or '?'}* — {n}")
+                # Catch of the Day: rarest, shiny breaks ties, then most recent.
+                _cod = sorted(_hc, key=lambda r: (
+                    _RARITY_ORDER.index(r["rarity"]) if r["rarity"] in _RARITY_ORDER else 0,
+                    safe_int(r["is_shiny"])), reverse=True)[0]
+                _cod_sp = PET_SPECIES.get(_cod["species"], {})
+                _cod_tag = ("✨SHINY " if _cod["is_shiny"] else "") + (_cod["rarity"] or "").capitalize()
+                _hlines.append(f"🌟 *Catch of the Day:* {_cod_sp.get('emoji','🐾')} "
+                               f"*{_cod_sp.get('name', _cod['species'])}* ({_cod_tag}) "
+                               f"— {_cod['username'] or '?'}")
+                _nnew = sum(1 for r in _hc if safe_int(r["was_new"]))
+                if _nnew:
+                    _hlines.append(f"🆕 *{_nnew}* new species discovered today!")
+                _hlines.append("_Full board: /catchboard_")
+                lines.append("\n".join(_hlines))
+                lines.append("")
+        except Exception:
+            logger.error("today's hunt digest block failed", exc_info=True)
         _king = _get_king()
         if _king:
             lines.append(f"👑 *King of the Table:* {_king['name']} — dethrone them in PvP!")
@@ -41530,6 +41608,51 @@ def _resolve_uid_by_handle(handle):
 _CATCH_CHANCE = {"common":0.92, "uncommon":0.85, "rare":0.72, "epic":0.60,
                  "legendary":0.48, "mythic":0.38, "celestial":0.30}
 
+# ── CATCH GLORY ─────────────────────────────────────────────────────────────
+# Every wild catch is logged so catching VOLUME and RARE catches finally get
+# rewarded + spotlighted: /catchboard, the digest "Today's Hunt" wrap-up, the
+# weekly Top Catcher crown, and milestone titles all read from this one table.
+def _catch_log_conn():
+    conn = _db()
+    conn.execute("""CREATE TABLE IF NOT EXISTS pet_catches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER, username TEXT, chat_id INTEGER,
+        species TEXT, rarity TEXT, is_shiny INTEGER DEFAULT 0,
+        was_new INTEGER DEFAULT 0, caught_at TEXT)""")
+    conn.commit()
+    return conn
+
+def _log_pet_catch(uid, username, chat_id, species, rarity, is_shiny, was_new):
+    try:
+        conn = _catch_log_conn()
+        conn.execute("INSERT INTO pet_catches "
+                     "(user_id,username,chat_id,species,rarity,is_shiny,was_new,caught_at) "
+                     "VALUES (?,?,?,?,?,?,?,?)",
+                     (uid, username, chat_id, species, rarity,
+                      1 if is_shiny else 0, 1 if was_new else 0, datetime.now().isoformat()))
+        conn.commit()
+    except Exception:
+        logger.error("pet catch log failed", exc_info=True)
+
+def _catch_count(uid):
+    try:
+        return _catch_log_conn().execute(
+            "SELECT COUNT(*) FROM pet_catches WHERE user_id=?", (uid,)).fetchone()[0]
+    except Exception:
+        return 0
+
+def _check_catch_titles(p, rarity, is_shiny):
+    """Award catch-milestone titles. Returns newly-earned title names (the caller
+    saves the player when this is non-empty)."""
+    earned = []
+    total = _catch_count(p["user_id"])
+    if total >= 250 and award_title(p, "Pet Master"):      earned.append("Pet Master")
+    elif total >= 50 and award_title(p, "Pet Hunter"):     earned.append("Pet Hunter")
+    if is_shiny and award_title(p, "Shiny Hunter"):         earned.append("Shiny Hunter")
+    if rarity == "celestial" and award_title(p, "Celestial Tamer"):
+        earned.append("Celestial Tamer")
+    return earned
+
 async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try:
@@ -41552,12 +41675,28 @@ async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                            show_alert=True)
         return
     _wild_spawns.pop(chat_id, None)  # caught — race is over
+    _rarity = sp.get("rarity", "common")
+    _was_new = st["species"] not in _pet_dex(p)   # brand-new dex entry? (before save_pet records it)
     pet = {"pet_id": None, "owner_id": uid, "species": st["species"],
            "level": 1, "exp": 0, "hunger": 100, "mood": 100,
            "is_active": 0 if get_active_pet_record(uid) else 1,
            "is_shiny": 1 if st["is_shiny"] else 0,
            "created_at": datetime.now().isoformat()}
     save_pet(pet)
+    # Log the catch (powers /catchboard, the digest wrap-up, the weekly crown).
+    _log_pet_catch(uid, p.get("username"), chat_id, st["species"], _rarity,
+                   st["is_shiny"], _was_new)
+    # Milestone titles for the catcher.
+    _newtitles = _check_catch_titles(p, _rarity, st["is_shiny"])
+    if _newtitles:
+        save_player(p)
+        try:
+            await context.bot.send_message(uid,
+                "🏅 *New title" + ("s" if len(_newtitles) > 1 else "") + " unlocked:* "
+                + ", ".join(f"*{t}*" for t in _newtitles)
+                + "\n_See them on your /profile._", parse_mode="Markdown")
+        except Exception:
+            pass
     shiny_tag = "✨SHINY " if st["is_shiny"] else ""
     await query.answer(f"🎯 Caught the {shiny_tag}{sp['name']}!")
     _catcher = (f"@{query.from_user.username}" if getattr(query.from_user, "username", None)
@@ -41566,11 +41705,100 @@ async def wild_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"🎯 {_catcher} caught the wild *{shiny_tag}{sp['name']}!* {sp.get('emoji','🐾')}\n"
         f"🧬 IV *{_pet_iv_pct(pet)}%*"
         + (f"  ·  🏷️ *{_pet_mark_label(pet)}*" if _pet_mark_label(pet) else "")
+        + (f"  ·  🆕 *New species!*" if _was_new else "")
         + "\n_Check /pet → All Pets to meet them._")
-    # Celestials (and founder Legends) get a big group-wide announcement.
-    if sp.get("rarity") == "celestial":
+    # Celestials (and founder Legends) get the big group-wide fanfare.
+    if _rarity == "celestial":
         await _announce_epic_pet(context.bot, chat_id, _catcher, st["species"],
                                  st["is_shiny"], how="caught")
+    # Shiny / epic+ catches get a live hype ping — a FRESH message pushed into the
+    # feed (the card above is just an edit, so it won't re-notify). This is the
+    # "I want to go catch too" driver. Celestials already got their fanfare.
+    elif st["is_shiny"] or _rarity in ("epic", "legendary", "mythic"):
+        _rar_em = {"epic": "🟣", "legendary": "🟠", "mythic": "🔴"}.get(_rarity, "")
+        _label = ("✨SHINY " if st["is_shiny"] else "") + _rarity.upper()
+        try:
+            await context.bot.send_message(chat_id,
+                f"🌟 {_rar_em} *{_catcher} just caught a {_label} {sp['name']}!* {sp.get('emoji','🐾')}\n"
+                f"_Wild pets spawn right here in chat — tap fast. /catchboard_",
+                parse_mode="Markdown")
+        except Exception:
+            pass
+
+async def catchboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """The pet catch scoreboard: top catchers (week + all-time), top Pokédex
+    collectors, and the rarest-catch hall of fame."""
+    user = update.effective_user
+    conn = _catch_log_conn()
+    week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+    try:
+        wk = conn.execute(
+            "SELECT user_id, MAX(username) uname, COUNT(*) c FROM pet_catches "
+            "WHERE caught_at>=? GROUP BY user_id ORDER BY c DESC LIMIT 5", (week_ago,)).fetchall()
+        allt = conn.execute(
+            "SELECT user_id, MAX(username) uname, COUNT(*) c FROM pet_catches "
+            "GROUP BY user_id ORDER BY c DESC LIMIT 5").fetchall()
+        rare_rows = conn.execute(
+            "SELECT username, species, rarity, is_shiny, caught_at FROM pet_catches "
+            "WHERE rarity IN ('legendary','mythic','celestial') OR is_shiny=1 "
+            "ORDER BY caught_at DESC LIMIT 300").fetchall()
+    except Exception:
+        wk = allt = rare_rows = []
+    medals = ["🥇", "🥈", "🥉", "4.", "5."]
+    lines = ["🐾🏆 *CATCH BOARD*", ""]
+    if wk:
+        lines.append("🔥 *Top catchers this week:*")
+        for i, r in enumerate(wk):
+            lines.append(f"{medals[i]} *{r['uname'] or '?'}* — {r['c']} caught")
+        lines.append("")
+    if allt:
+        lines.append("👑 *All-time catchers:*")
+        for i, r in enumerate(allt):
+            lines.append(f"{medals[i]} *{r['uname'] or '?'}* — {fmt_num(r['c'])} caught")
+        lines.append("")
+    # Top collectors by Pokédex completion.
+    try:
+        total_species = len(PET_SPECIES)
+        pc = _db().execute(
+            "SELECT username, pet_dex FROM players WHERE pet_dex IS NOT NULL").fetchall()
+        coll = sorted(((row[0], len(sjl(row[1], []))) for row in pc),
+                      key=lambda x: -x[1])
+        coll = [c for c in coll if c[1] > 0][:5]
+    except Exception:
+        coll = []; total_species = len(PET_SPECIES)
+    if coll:
+        lines.append(f"📖 *Top collectors* (of {total_species} species):")
+        for i, (uname, n) in enumerate(coll):
+            lines.append(f"{medals[i]} *{uname or '?'}* — {n} ({round(n*100/total_species)}%)")
+        lines.append("")
+    # Rarest-catch hall of fame: sort the pulled rows by rarity rank, shiny, recency.
+    if rare_rows:
+        _rr = sorted(rare_rows,
+                     key=lambda r: (_RARITY_ORDER.index(r["rarity"]) if r["rarity"] in _RARITY_ORDER else 0,
+                                    safe_int(r["is_shiny"]), r["caught_at"]),
+                     reverse=True)[:5]
+        lines.append("🌟 *Rarest catches:*")
+        for r in _rr:
+            sp = PET_SPECIES.get(r["species"], {})
+            nm = sp.get("name", r["species"])
+            em = sp.get("emoji", "🐾")
+            tag = ("✨" if r["is_shiny"] else "") + r["rarity"].capitalize()
+            lines.append(f"{em} *{nm}* ({tag}) — {r['username'] or '?'}")
+        lines.append("")
+    if len(lines) <= 2:
+        await send_group(update,
+            "🐾🏆 *CATCH BOARD*\n\nNo wild catches logged yet — a wild pet spawns in "
+            "chat every so often. Be the first to tap *CATCH*!", permanent=True)
+        return
+    try:
+        _mine = _catch_count(user.id)
+        if _mine:
+            lines.append(f"_You've caught *{fmt_num(_mine)}* — keep hunting. /pet_")
+        else:
+            lines.append("_You haven't caught one yet — jump on the next spawn! /pet_")
+    except Exception:
+        pass
+    await send_group(update, "\n".join(lines), permanent=True)
 
 # ── 2. GROUP HEISTS ───────────────────────────────────────────────────────────
 _heists = {}      # chat_id -> {"msg_id","crew":[(uid,name)],"expires"}
@@ -46498,6 +46726,8 @@ def main():
     app.add_handler(CommandHandler("petrename",    petrename_cmd))
     app.add_handler(CommandHandler("pettop",       pettop_cmd))
     app.add_handler(CommandHandler("petdex",       petdex_cmd))
+    app.add_handler(CommandHandler("catchboard",   catchboard_cmd))
+    app.add_handler(CommandHandler("catchrank",    catchboard_cmd))
     app.add_handler(CommandHandler("pethub",      pethub_cmd))
     app.add_handler(CommandHandler("pethelp",     pethelp_cmd))
     app.add_handler(CommandHandler("petguide",    pethelp_cmd))
