@@ -30707,6 +30707,7 @@ GUIDE_PAGES = [
         "/petduel [@user]  -  Battle your pet vs another player's\n"
         "/petladder  -  Pet-duel rankings (monthly seasons)\n"
         "/catchboard  -  Top catchers, collectors & rarest catches\n"
+        "/giftpet  -  Reply to a player to gift them one of your pets\n"
         "/petshop  -  Buy eggs and snacks\n"
         "/hatch  -  Hatch an egg from your inventory\n"
         "/petrename [name]  -  Rename your active pet"
@@ -32534,9 +32535,10 @@ def _pet_guide_text():
         "*🔬 Endgame*\n"
         "• *Breed* two pets → a baby that *inherits IVs* (breed toward perfection; consumes both parents).\n"
         "• ⚗️ *Fuse* — sacrifice a fodder pet to raise a keeper's IVs in place.\n"
-        "• 🤝 *Trade* pets with other players (genetics shown).\n\n"
+        "• 🤝 *Trade* pets (/pethub → Trade) — a 1-for-1 swap, both players give a pet; genetics shown.\n"
+        "• 🎁 *Gift* a pet (/giftpet) — reply to a player to hand one over outright, nothing in return.\n\n"
         "*📖 Collect them all* — the */pet → Bestiary* tracks all 600+ species for collector bonuses.\n\n"
-        "_Commands: /pet · /pethub · /petduel · /petladder · /catchboard · /pethelp_"
+        "_Commands: /pet · /pethub · /petduel · /petladder · /catchboard · /giftpet · /pethelp_"
     )
 
 async def pethelp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -33023,6 +33025,30 @@ async def petfuse_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 # ── PET TRADING ────────────────────────────────────────────────────────────────
+_PET_PICKER_PER_PAGE = 8
+
+def _pet_picker_rows(pets, page, make_cb, nav_prefix):
+    """Build a paginated pet-picker keyboard. Returns (rows, page, total_pages).
+    make_cb(pt) -> the button's callback_data; nav_prefix is a template holding
+    a literal '{page}' for the ◀/▶ buttons. Clamps page into range."""
+    per = _PET_PICKER_PER_PAGE
+    total_pages = max(1, (len(pets) + per - 1) // per)
+    page = max(0, min(page, total_pages - 1))
+    rows = []
+    for pt in pets[page*per:(page+1)*per]:
+        sp = PET_SPECIES.get(pt.get("species"), {})
+        rows.append([InlineKeyboardButton(
+            f"{sp.get('emoji','🐾')} {_pet_display_name(pt)} Lv{pt.get('level',1)} · IV{_pet_iv_pct(pt)}%",
+            callback_data=make_cb(pt))])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀ Prev", callback_data=nav_prefix.format(page=page-1)))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next ▶", callback_data=nav_prefix.format(page=page+1)))
+    if nav:
+        rows.append(nav)
+    return rows, page, total_pages
+
 async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle pet trade offer flow."""
     query = update.callback_query
@@ -33033,18 +33059,18 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sub   = parts[1] if len(parts) > 1 else ""
 
     if sub == "pick":
+        page = int(parts[3]) if len(parts) > 3 else 0
         pets = [pt for pt in get_all_pets(uid) if not pt.get("is_active")]
         if not pets:
             await query.answer("No tradeable pets — your active pet can't be traded (switch it first).", show_alert=True); return
-        rows = []
-        for pt in pets[:10]:
-            pn = _pet_display_name(pt)
-            rows.append([InlineKeyboardButton(
-                f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']} · IV{_pet_iv_pct(pt)}%",
-                callback_data=f"pettrade_offer_{pt['pet_id']}")])
+        rows, page, tp = _pet_picker_rows(
+            pets, page,
+            lambda pt: f"pettrade_offer_{pt['pet_id']}",
+            f"pettrade_pick_{uid}_{{page}}")
         rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
         await _q_edit(query,
-            "🤝 *Pet Trade*\nSelect a pet to offer for trade _(your active pet is protected)_.\n"
+            f"🤝 *Pet Trade* _(page {page+1}/{tp} · {len(pets)} tradeable)_\n"
+            "Select a pet to offer for trade _(your active pet is protected)_.\n"
             "Your offer will be visible to the group for 5 minutes.",
             parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
         return
@@ -33083,6 +33109,7 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if sub == "accept":
         offeror_uid = int(parts[2])
         offered_pid = int(parts[3])
+        page = int(parts[4]) if len(parts) > 4 else 0
         if uid == offeror_uid:
             await query.answer("Can't accept your own trade.", show_alert=True); return
         offer = _pet_trade_offers.get(offeror_uid)
@@ -33094,16 +33121,15 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         my_pets = [pt for pt in get_all_pets(uid) if not pt.get("is_active")]
         if not my_pets:
             await query.answer("You have no tradeable pets (active pet is protected).", show_alert=True); return
-        rows = []
-        for pt in my_pets[:10]:
-            pn = _pet_display_name(pt)
-            rows.append([InlineKeyboardButton(
-                f"{PET_SPECIES.get(pt['species'],{}).get('emoji','🐾')} {pn} Lv{pt['level']} · IV{_pet_iv_pct(pt)}%",
-                callback_data=f"pettrade_complete_{offeror_uid}_{offered_pid}_{pt['pet_id']}")])
+        rows, page, tp = _pet_picker_rows(
+            my_pets, page,
+            lambda pt: f"pettrade_complete_{offeror_uid}_{offered_pid}_{pt['pet_id']}",
+            f"pettrade_accept_{offeror_uid}_{offered_pid}_{{page}}")
         rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{uid}")])
-        await _q_edit(query, "🤝 *Choose a pet to give in return:*",
-                                      parse_mode="Markdown",
-                                      reply_markup=InlineKeyboardMarkup(rows))
+        await _q_edit(query,
+            f"🤝 *Choose a pet to give in return:* _(page {page+1}/{tp})_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(rows))
         return
 
     if sub == "complete":
@@ -33145,6 +33171,104 @@ async def pettrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cancel_uid = int(parts[2]) if len(parts) > 2 else uid
         _pet_trade_offers.pop(cancel_uid, None)
         await _q_edit(query, "🤝 Trade offer cancelled.")
+
+# ── PET GIFTING — one-way hand-off, no return pet required ──────────────────────
+async def giftpet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/giftpet (reply to a player) → paginated menu to hand them one of your
+    pets outright. Unlike /pethub Trade, nothing is asked in return."""
+    msg = update.message
+    gifter = update.effective_user
+    if not msg or not msg.reply_to_message:
+        await send_group(update,
+            "🎁 *Gift a pet* — reply to the player you want to gift to, with /giftpet.",
+            permanent=True); return
+    recipient = msg.reply_to_message.from_user
+    if recipient is None or getattr(recipient, "is_bot", False) or recipient.id == gifter.id:
+        await send_group(update,
+            "🎁 Reply to another *player* (not yourself or a bot) to gift them a pet.",
+            permanent=True); return
+    if not get_player(recipient.id):
+        await send_group(update,
+            "🎁 They haven't started playing yet — they need to /ascend first.",
+            permanent=True); return
+    pets = [pt for pt in get_all_pets(gifter.id) if not pt.get("is_active")]
+    if not pets:
+        await send_group(update,
+            "🎁 You have no giftable pets — your *active* pet is protected. "
+            "Switch companions first in /pet, then gift the other one.",
+            permanent=True); return
+    rows, page, tp = _pet_picker_rows(
+        pets, 0,
+        lambda pt: f"petgift_give_{gifter.id}_{recipient.id}_{pt['pet_id']}",
+        f"petgift_pick_{gifter.id}_{recipient.id}_{{page}}")
+    rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{gifter.id}")])
+    _rname = recipient.first_name or "them"
+    await send_group(update,
+        f"🎁 *Gift a pet to {_md_escape(_rname)}* _(page {page+1}/{tp} · {len(pets)} giftable)_\n"
+        "Choose which pet to hand over — _one-way gift, nothing asked in return._",
+        permanent=True, reply_markup=InlineKeyboardMarkup(rows))
+
+async def petgift_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid   = query.from_user.id
+    parts = query.data.split("_")
+    sub   = parts[1] if len(parts) > 1 else ""
+
+    if sub == "pick":
+        gifter_uid = int(parts[2]); recipient_uid = int(parts[3])
+        page = int(parts[4]) if len(parts) > 4 else 0
+        if uid != gifter_uid:
+            await query.answer("This isn't your gift menu.", show_alert=True); return
+        pets = [pt for pt in get_all_pets(gifter_uid) if not pt.get("is_active")]
+        if not pets:
+            await query.answer("You have no giftable pets (active pet is protected).", show_alert=True); return
+        _rec = get_player(recipient_uid)
+        _rname = (_rec.get("username") if _rec else None) or "them"
+        rows, page, tp = _pet_picker_rows(
+            pets, page,
+            lambda pt: f"petgift_give_{gifter_uid}_{recipient_uid}_{pt['pet_id']}",
+            f"petgift_pick_{gifter_uid}_{recipient_uid}_{{page}}")
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"close_msg_{gifter_uid}")])
+        await _q_edit(query,
+            f"🎁 *Gift a pet to {_md_escape(_rname)}* _(page {page+1}/{tp})_\n"
+            "Choose which pet to hand over — _one-way gift, nothing in return._",
+            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if sub == "give":
+        gifter_uid = int(parts[2]); recipient_uid = int(parts[3]); pid = int(parts[4])
+        if uid != gifter_uid:
+            await query.answer("Only the pet's owner can send this gift.", show_alert=True); return
+        pet = next((p for p in get_all_pets(gifter_uid) if p.get("pet_id") == pid), None)
+        if not pet:
+            await query.answer("Pet not found.", show_alert=True); return
+        if pet.get("is_active"):
+            await query.answer("That's your active pet — switch companions before gifting it.", show_alert=True); return
+        rec = get_player(recipient_uid)
+        if not rec:
+            await query.answer("That player isn't in the game anymore.", show_alert=True); return
+        # Credit the recipient's bestiary, then hand the pet over.
+        if _record_dex(rec, pet["species"]): save_player(rec)
+        pet["owner_id"] = recipient_uid; pet["is_active"] = 0
+        save_pet(pet)
+        sp = PET_SPECIES.get(pet["species"], {})
+        gtag = _pet_gene_tag(pet)
+        await _q_edit(query,
+            f"🎁 *Gift sent!*\n\n"
+            f"{sp.get('emoji','🐾')} *{_pet_display_name(pet)}* _(Lv{pet.get('level',1)} · {gtag})_\n"
+            f"→ *{_md_escape(rec.get('username') or 'your friend')}*\n\n"
+            f"_A generous hand-off. They can find it in /pet → All Pets._",
+            parse_mode="Markdown")
+        try:
+            await context.bot.send_message(recipient_uid,
+                f"🎁 *You were gifted a pet!*\n"
+                f"{sp.get('emoji','🐾')} *{_pet_display_name(pet)}* _(Lv{pet.get('level',1)} · {gtag})_ "
+                f"is now yours — see it in /pet → All Pets.",
+                parse_mode="Markdown")
+        except Exception:
+            pass
+        return
 
 # ── PET DUEL ──────────────────────────────────────────────────────────────────
 async def petduel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -46728,6 +46852,8 @@ def main():
     app.add_handler(CommandHandler("petdex",       petdex_cmd))
     app.add_handler(CommandHandler("catchboard",   catchboard_cmd))
     app.add_handler(CommandHandler("catchrank",    catchboard_cmd))
+    app.add_handler(CommandHandler("giftpet",      giftpet_cmd))
+    app.add_handler(CommandHandler("gift",         giftpet_cmd))
     app.add_handler(CommandHandler("pethub",      pethub_cmd))
     app.add_handler(CommandHandler("pethelp",     pethelp_cmd))
     app.add_handler(CommandHandler("petguide",    pethelp_cmd))
@@ -47025,6 +47151,7 @@ def main():
     app.add_handler(CallbackQueryHandler(petbreed_callback,   pattern="^petbreed_"))
     app.add_handler(CallbackQueryHandler(petfuse_callback,    pattern="^petfuse_"))
     app.add_handler(CallbackQueryHandler(pettrade_callback,   pattern="^pettrade_"))
+    app.add_handler(CallbackQueryHandler(petgift_callback,    pattern="^petgift_"))
     app.add_handler(CallbackQueryHandler(petduel_callback,    pattern="^petduel_"))
     app.add_handler(CallbackQueryHandler(combat_hub_callback, pattern="^combathub_"))
 
