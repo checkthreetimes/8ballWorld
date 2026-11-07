@@ -30467,7 +30467,7 @@ GUIDE_PAGES = [
         "\n"
         "💡 /hustle runs all ready cooldowns at once — daily, train, quest, pool, claim, and explore. Use it every time you're in the group.\n"
         "\n"
-        "💡 *Idle Rewards* — When you come back after being away for 30 minutes or more, the bot announces your time away and idle EXP in the group chat.\n"
+        "💡 *Idle Rewards* — When you come back after being away for 30 minutes or more, the bot welcomes you back with your time away in the group chat. Idle EXP is awarded automatically.\n"
         "\n"
         "*Random Events*\n"
         "As the group chats, random events appear automatically — travelers with tips, bandits to fight, merchants with discounts, legendary craftsmen, hidden caches, and more.\n"
@@ -37908,12 +37908,6 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str, group_chat_id=None
                 add_exp(p, idle_exp)
         if p:
             save_player(p)
-        emp_line = ""
-        if empire_notes:
-            emp_line = "\n\n🏰 *Empire production waiting:*\n" + "\n".join(f"  {n}" for n in empire_notes[:6])
-        exp_line = (f"💫 Idle reward: *+{fmt_num(idle_exp)} EXP*\n"
-                    f"_(Scales with your level — the higher your level, the more you earn)_"
-                    if idle_exp > 0 else "")
         destination = group_chat_id or (s.get("home_group") if s else None)
         if not destination:
             return  # Rewards still apply when the player has no known group.
@@ -37921,10 +37915,7 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str, group_chat_id=None
         try:
             await bot.send_message(
                 destination,
-                f"🎱 *Welcome back, {name}!*\n\n"
-                f"[{name}](tg://user?id={uid}) was away for *{away_str}*.\n"
-                f"{exp_line}"
-                f"{emp_line}",
+                f"🎱 Welcome back, {name}! You were away for *{away_str}*.",
                 parse_mode="Markdown")
         except Exception:
             pass
