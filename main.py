@@ -38241,7 +38241,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _stk_exp = exp_share(p["level"], 0.10)
                 rpg_exp += _stk_exp
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🔥 *{user.first_name}* hit a *50 message streak!* +{fmt_num(_stk_exp)} EXP!",
+                f"🔥 *{user.first_name}* hit a *50 message streak!*",
                 delay=8))
         if dm >= 100 and not cds_s.get("streak_100"):
             cds_s["streak_100"] = True; rpg_gold += 100
@@ -38251,7 +38251,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _stk_exp = exp_share(p["level"], 0.25)
                 rpg_exp += _stk_exp
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🔥 *{user.first_name}* hit a *100 message streak!* +{fmt_num(_stk_exp)} EXP!",
+                f"🔥 *{user.first_name}* hit a *100 message streak!*",
                 delay=8))
         if dm >= 500 and not cds_s.get("streak_500"):
             cds_s["streak_500"] = True
@@ -38261,7 +38261,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _stk_exp = exp_share(p["level"], 1.00)
                 rpg_exp += _stk_exp
             asyncio.create_task(announce(context.bot, chat_id,
-                f"🏆 *{user.first_name}* hit a *500 message streak!* +{fmt_num(_stk_exp)} EXP! 🎱",
+                f"🏆 *{user.first_name}* hit a *500 message streak!* 🎱",
                 delay=8))
 
     # Apply shadow EXP
