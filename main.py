@@ -5083,7 +5083,11 @@ def _pet_is_on_adventure(pet):
     try: return datetime.fromisoformat(adv) > datetime.now()
     except Exception: return False
 
-def _pet_list_markup(pets, page=0, page_size=5, uid=0):
+_PET_BROWSE_TIMEOUT = 30 * 60  # Allow time to browse in groups and DMs.
+
+def _pet_list_markup(pets, page=0, page_size=20, uid=0):
+    total_pages = max(1, (len(pets) + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
     start = page * page_size
     chunk = pets[start:start+page_size]
     rows = []
@@ -31301,7 +31305,7 @@ async def pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
         reply_markup=markup)
-    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, 120))
+    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, _PET_BROWSE_TIMEOUT))
 
 async def petshop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await update.message.delete()
@@ -32575,7 +32579,7 @@ async def pethub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="Markdown",
         reply_markup=markup)
-    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, 120))
+    asyncio.create_task(_auto_delete(context.bot, update.effective_chat.id, msg.message_id, _PET_BROWSE_TIMEOUT))
 
 async def pethub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -33026,7 +33030,7 @@ async def petfuse_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 # ── PET TRADING ────────────────────────────────────────────────────────────────
-_PET_PICKER_PER_PAGE = 8
+_PET_PICKER_PER_PAGE = 20
 
 def _pet_picker_rows(pets, page, make_cb, nav_prefix):
     """Build a paginated pet-picker keyboard. Returns (rows, page, total_pages).
