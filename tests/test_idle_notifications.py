@@ -1,7 +1,7 @@
 """Exercise idle reward delivery without Telegram or a live database."""
 import ast
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import time
 import unittest
@@ -35,20 +35,30 @@ class IdleNotificationTests(unittest.TestCase):
         self.assertEqual(self.bot.send_message.call_args.kwargs['parse_mode'], 'Markdown')
         self.env['add_shadow_exp'].assert_called_once_with(self.shadow, 50)
 
-    def test_dm_return_announces_to_home_group(self):
+    def test_dm_return_does_not_announce_or_award(self):
         self.run_reward()
-        self.assertEqual(self.bot.send_message.call_args.args[0], -100123)
+        self.bot.send_message.assert_not_called()
+        self.env['add_shadow_exp'].assert_not_called()
 
-    def test_no_known_group_still_awards_without_dm(self):
+    def test_no_group_does_not_award(self):
         self.shadow['home_group'] = None
         self.run_reward()
         self.bot.send_message.assert_not_called()
-        self.env['add_shadow_exp'].assert_called_once_with(self.shadow, 50)
+        self.env['add_shadow_exp'].assert_not_called()
 
     def test_short_absence_is_silent(self):
         self.run_reward(-100999, minutes=10)
         self.bot.send_message.assert_not_called()
         self.env['add_shadow_exp'].assert_not_called()
+
+    def test_message_timestamps_ignore_processing_delay(self):
+        previous = datetime(2026, 11, 7, 10, tzinfo=timezone.utc)
+        returned = previous + timedelta(hours=5, minutes=38, seconds=59)
+        asyncio.run(self.env['_try_idle_reward'](
+            42, self.bot, previous.isoformat(), -100123,
+            returned_at=returned, display_name='Jesse'))
+        self.assertEqual(self.bot.send_message.call_args.args[1],
+                         '🎱 Welcome back, Jesse!\nYou were away for *5h 38m*.')
 
     def test_rapid_repeat_does_not_announce_or_award_twice(self):
         self.run_reward(-100999)

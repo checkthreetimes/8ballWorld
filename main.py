@@ -4,7 +4,7 @@ The 8Ball Empire  -  RPG Bot v13
 """
 
 import os, json, random, logging, sqlite3, re, asyncio, time, threading, math, types as _pytypes
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, RetryAfter
@@ -202,7 +202,7 @@ message_counters   = {}   # chat_id -> int
 pending_trades     = {}   # user_id -> trade dict
 pending_guild_reqs = {}   # guild_id -> [requests]
 explore_timers     = {}   # user_id -> asyncio task
-_idle_last_awarded = {}   # user_id -> timestamp — prevents double-awarding on rapid messages
+_idle_last_awarded = {}   # (user_id, group_id) -> timestamp — prevents double-awarding on rapid messages
 active_dungeons    = {}   # user_id -> dungeon state dict
 _wipe_confirm      = {}   # admin_id -> timestamp
 pending_marriages       = {}   # proposer_id -> {target_id, chat_id, expires}
@@ -12554,6 +12554,15 @@ def init_db():
         passive_cooldowns TEXT DEFAULT '{}',
         ascended INTEGER DEFAULT 0,
         last_seen TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+
+    # Independent of profile saves: only messages actually sent in this group
+    # advance this clock. Keep separate clocks for users in multiple groups.
+    c.execute("""CREATE TABLE IF NOT EXISTS group_message_activity (
+        user_id INTEGER NOT NULL,
+        chat_id INTEGER NOT NULL,
+        last_message_ts REAL NOT NULL,
+        PRIMARY KEY (user_id, chat_id)
     )""")
 
     c.execute("""CREATE TABLE IF NOT EXISTS players (
@@ -30471,7 +30480,7 @@ GUIDE_PAGES = [
         "\n"
         "💡 /hustle runs all ready cooldowns at once — daily, train, quest, pool, claim, and explore. Use it every time you're in the group.\n"
         "\n"
-        "💡 *Idle Rewards* — When you come back after being away for 30 minutes or more, the bot welcomes you back with your time away in the group chat. Idle EXP is awarded automatically.\n"
+        "💡 *Idle Rewards* — When you send a group message after 30 minutes or more without posting in that group, the bot welcomes you back with your time away. DMs and button taps do not reset this timer. Idle EXP is awarded automatically.\n"
         "\n"
         "*Random Events*\n"
         "As the group chats, random events appear automatically — travelers with tips, bandits to fight, merchants with discounts, legendary craftsmen, hidden caches, and more.\n"
@@ -37871,14 +37880,62 @@ def _calc_idle_exp(idle_secs: float, player_level: int = 1) -> int:
     exp = int(exp_exponential + exp_overflow)
     return max(50, exp)
 
-async def _try_idle_reward(uid: int, bot, prev_seen_iso: str, group_chat_id=None):
-    """Award idle EXP and announce the return in the player's group. Call before updating last_seen."""
+def _record_group_message(uid: int, chat_id: int, message_ts: float):
+    """Persist the Telegram sent time atomically; return the previous sent time.
+    Old or duplicate updates never move the clock back or trigger a return.
+    """
+    conn = _connect_db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT last_message_ts FROM group_message_activity WHERE user_id=? AND chat_id=?",
+            (uid, chat_id)).fetchone()
+        previous = row[0] if row else None
+        if previous is not None and message_ts <= previous:
+            conn.commit()
+            return None
+        conn.execute(
+            "INSERT INTO group_message_activity (user_id, chat_id, last_message_ts) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id, chat_id) DO UPDATE SET last_message_ts=excluded.last_message_ts",
+            (uid, chat_id, message_ts))
+        conn.commit()
+        return previous
+    finally:
+        conn.close()
+
+
+async def _group_activity_pre_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Track real group messages before command/rate-limit handlers can return."""
+    message, user, chat = update.message, update.effective_user, update.effective_chat
+    if not message or not user or user.is_bot or not chat or chat.type not in ("group", "supergroup"):
+        return
+    if is_banned(user.id):
+        return
+    try:
+        previous = _record_group_message(user.id, chat.id, message.date.timestamp())
+        if previous is not None and message.date.timestamp() - previous >= 1800:
+            get_or_create_shadow(user.id, user.first_name)
+            asyncio.create_task(_try_idle_reward(
+                user.id, context.bot, datetime.fromtimestamp(previous, timezone.utc).isoformat(),
+                chat.id, returned_at=message.date, display_name=user.first_name))
+    except Exception:
+        logger.exception("Could not track group message activity for user %s", user.id)
+
+
+async def _try_idle_reward(uid: int, bot, prev_seen_iso: str, group_chat_id=None,
+                           returned_at=None, display_name=None):
+    """Award idle EXP for the gap between two messages sent in the same group."""
+    if group_chat_id is None:
+        return
     global _idle_last_awarded
     now_ts = time.time()
-    if _idle_last_awarded.get(uid, 0) > now_ts - 60:
+    award_key = (uid, group_chat_id)
+    if _idle_last_awarded.get(award_key, 0) > now_ts - 60:
         return  # already awarded within last 60 s (rapid messages)
     try:
-        idle_secs = (datetime.now() - datetime.fromisoformat(prev_seen_iso)).total_seconds()
+        previous = datetime.fromisoformat(prev_seen_iso)
+        returned_at = returned_at or datetime.now(previous.tzinfo)
+        idle_secs = (returned_at - previous).total_seconds()
         p = get_player(uid)
         plvl = p["level"] if p else 1
         idle_exp = _calc_idle_exp(idle_secs, plvl)
@@ -37899,7 +37956,7 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str, group_chat_id=None
                 empire_notes = [f"{_pend_str}\n  _Tap Collect in /empire to claim!_"]
         if idle_exp <= 0:
             return  # welcome-back only fires when the idle reward itself fires
-        _idle_last_awarded[uid] = now_ts
+        _idle_last_awarded[award_key] = now_ts
         ih = idle_secs / 3600
         away_str = (f"{int(ih)}h {int((idle_secs % 3600) / 60)}m"
                     if ih >= 1 else f"{int(idle_secs / 60)}m")
@@ -37912,10 +37969,8 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str, group_chat_id=None
                 add_exp(p, idle_exp)
         if p:
             save_player(p)
-        destination = group_chat_id or (s.get("home_group") if s else None)
-        if not destination:
-            return  # Rewards still apply when the player has no known group.
-        name = escape_markdown(str((s or {}).get("username") or (p or {}).get("username") or uid))
+        destination = group_chat_id
+        name = escape_markdown(str(display_name or (s or {}).get("username") or (p or {}).get("username") or uid))
         try:
             await bot.send_message(
                 destination,
@@ -38127,14 +38182,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_player(user.id) if s.get("ascended") else None
     asyncio.create_task(check_pet_notifications(p, context.bot))
 
-    # Idle reward — fire before updating last_seen. Not gated to group context:
-    # last_seen advances in DMs too, so DM-only players must be able to collect.
-    _prev_seen = s.get("last_seen")
-    if _prev_seen:
-        asyncio.create_task(_try_idle_reward(
-            user.id, context.bot, _prev_seen, chat_id if _is_group else None))
-
-    # Update last_seen regardless of context so DM-only players build and consume the timer
+    # General activity remains separate from the group-message away timer.
     s["message_count"] = s.get("message_count",0) + 1
     s["last_seen"] = datetime.now().isoformat()
 
@@ -47156,6 +47204,12 @@ def main():
     app.add_handler(CallbackQueryHandler(petduel_callback,    pattern="^petduel_"))
     app.add_handler(CallbackQueryHandler(combat_hub_callback, pattern="^combathub_"))
 
+    # Track group messages (text, commands, photos, stickers, etc.) before any
+    # other handler; service updates, edits, DMs, and button taps don't count.
+    app.add_handler(MessageHandler(
+        filters.UpdateType.MESSAGE & ~filters.StatusUpdate.ALL,
+        _group_activity_pre_filter), group=-2)
+
     # Passive
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
     async def _cmd_pre_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -47181,12 +47235,6 @@ def main():
         _is_grp = update.effective_chat and update.effective_chat.type in ("group", "supergroup")
         try:
             _lc = _connect_db(); _lc.row_factory = sqlite3.Row
-            _row = _lc.execute(
-                "SELECT last_seen FROM shadow_profiles WHERE user_id=?", (u.id,)).fetchone()
-            if _row and _row["last_seen"]:
-                asyncio.create_task(_try_idle_reward(
-                    u.id, context.bot, _row["last_seen"],
-                    update.effective_chat.id if _is_grp else None))
             if _is_grp:
                 _megaphone_state["group"] = update.effective_chat.id
                 _lc.execute("UPDATE shadow_profiles SET last_seen=?, home_group=? WHERE user_id=?",
