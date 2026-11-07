@@ -1,0 +1,61 @@
+"""Exercise idle reward delivery without Telegram or a live database."""
+import ast
+import asyncio
+from datetime import datetime, timedelta
+from pathlib import Path
+import time
+import unittest
+from unittest.mock import AsyncMock, Mock
+
+
+class IdleNotificationTests(unittest.TestCase):
+    def setUp(self):
+        source = ast.parse((Path(__file__).resolve().parents[1] / 'main.py').read_text())
+        function = next(n for n in source.body if isinstance(n, ast.AsyncFunctionDef)
+                        and n.name == '_try_idle_reward')
+        self.shadow = {'username': 'Alice', 'home_group': -100123}
+        self.env = dict(time=time, datetime=datetime, timedelta=timedelta,
+                        _idle_last_awarded={}, get_player=lambda uid: None,
+                        _calc_idle_exp=lambda secs, level: 50 if secs >= 1800 else 0,
+                        get_shadow=lambda uid: self.shadow,
+                        add_shadow_exp=Mock(), save_shadow=Mock(),
+                        fmt_num=str, escape_markdown=lambda name: name)
+        exec(compile(ast.Module(body=[function], type_ignores=[]), 'main.py', 'exec'), self.env)
+        self.bot = Mock(send_message=AsyncMock())
+
+    def run_reward(self, group=None, minutes=65):
+        asyncio.run(self.env['_try_idle_reward'](
+            42, self.bot, (datetime.now() - timedelta(minutes=minutes)).isoformat(), group))
+
+    def test_current_group_takes_priority(self):
+        self.run_reward(-100999)
+        args = self.bot.send_message.call_args.args
+        self.assertEqual(args[0], -100999)
+        self.assertIn('Alice', args[1])
+        self.assertIn('1h 5m', args[1])
+        self.env['add_shadow_exp'].assert_called_once_with(self.shadow, 50)
+
+    def test_dm_return_announces_to_home_group(self):
+        self.run_reward()
+        self.assertEqual(self.bot.send_message.call_args.args[0], -100123)
+
+    def test_no_known_group_still_awards_without_dm(self):
+        self.shadow['home_group'] = None
+        self.run_reward()
+        self.bot.send_message.assert_not_called()
+        self.env['add_shadow_exp'].assert_called_once_with(self.shadow, 50)
+
+    def test_short_absence_is_silent(self):
+        self.run_reward(-100999, minutes=10)
+        self.bot.send_message.assert_not_called()
+        self.env['add_shadow_exp'].assert_not_called()
+
+    def test_rapid_repeat_does_not_announce_or_award_twice(self):
+        self.run_reward(-100999)
+        self.run_reward(-100999)
+        self.bot.send_message.assert_called_once()
+        self.env['add_shadow_exp'].assert_called_once()
+
+
+if __name__ == '__main__':
+    unittest.main()

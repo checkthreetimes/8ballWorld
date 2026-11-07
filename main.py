@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, RetryAfter
+from telegram.helpers import escape_markdown
 from telegram.ext import (
     Application, CommandHandler, ContextTypes,
     MessageHandler, filters, CallbackQueryHandler,
@@ -30466,7 +30467,7 @@ GUIDE_PAGES = [
         "\n"
         "💡 /hustle runs all ready cooldowns at once — daily, train, quest, pool, claim, and explore. Use it every time you're in the group.\n"
         "\n"
-        "💡 *Idle Rewards* — When you come back after being away for an hour or more, the bot sends your return gold + EXP + possible item drop as a *private DM* so the group stays clean.\n"
+        "💡 *Idle Rewards* — When you come back after being away for 30 minutes or more, the bot announces your time away and idle EXP in the group chat.\n"
         "\n"
         "*Random Events*\n"
         "As the group chats, random events appear automatically — travelers with tips, bandits to fight, merchants with discounts, legendary craftsmen, hidden caches, and more.\n"
@@ -37866,8 +37867,8 @@ def _calc_idle_exp(idle_secs: float, player_level: int = 1) -> int:
     exp = int(exp_exponential + exp_overflow)
     return max(50, exp)
 
-async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
-    """Award idle EXP to shadow + RPG player, send DM. Call before updating last_seen."""
+async def _try_idle_reward(uid: int, bot, prev_seen_iso: str, group_chat_id=None):
+    """Award idle EXP and announce the return in the player's group. Call before updating last_seen."""
     global _idle_last_awarded
     now_ts = time.time()
     if _idle_last_awarded.get(uid, 0) > now_ts - 60:
@@ -37898,8 +37899,8 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
         ih = idle_secs / 3600
         away_str = (f"{int(ih)}h {int((idle_secs % 3600) / 60)}m"
                     if ih >= 1 else f"{int(idle_secs / 60)}m")
+        s = get_shadow(uid)
         if idle_exp > 0:
-            s = get_shadow(uid)
             if s:
                 add_shadow_exp(s, idle_exp)
                 save_shadow(s)
@@ -37913,11 +37914,15 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str):
         exp_line = (f"💫 Idle reward: *+{fmt_num(idle_exp)} EXP*\n"
                     f"_(Scales with your level — the higher your level, the more you earn)_"
                     if idle_exp > 0 else "")
+        destination = group_chat_id or (s.get("home_group") if s else None)
+        if not destination:
+            return  # Rewards still apply when the player has no known group.
+        name = escape_markdown(str((s or {}).get("username") or (p or {}).get("username") or uid))
         try:
             await bot.send_message(
-                uid,
-                f"🎱 *Welcome back!*\n\n"
-                f"You were away for *{away_str}*.\n"
+                destination,
+                f"🎱 *Welcome back, {name}!*\n\n"
+                f"[{name}](tg://user?id={uid}) was away for *{away_str}*.\n"
                 f"{exp_line}"
                 f"{emp_line}",
                 parse_mode="Markdown")
@@ -38131,7 +38136,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # last_seen advances in DMs too, so DM-only players must be able to collect.
     _prev_seen = s.get("last_seen")
     if _prev_seen:
-        asyncio.create_task(_try_idle_reward(user.id, context.bot, _prev_seen))
+        asyncio.create_task(_try_idle_reward(
+            user.id, context.bot, _prev_seen, chat_id if _is_group else None))
 
     # Update last_seen regardless of context so DM-only players build and consume the timer
     s["message_count"] = s.get("message_count",0) + 1
@@ -47183,7 +47189,9 @@ def main():
             _row = _lc.execute(
                 "SELECT last_seen FROM shadow_profiles WHERE user_id=?", (u.id,)).fetchone()
             if _row and _row["last_seen"]:
-                asyncio.create_task(_try_idle_reward(u.id, context.bot, _row["last_seen"]))
+                asyncio.create_task(_try_idle_reward(
+                    u.id, context.bot, _row["last_seen"],
+                    update.effective_chat.id if _is_grp else None))
             if _is_grp:
                 _megaphone_state["group"] = update.effective_chat.id
                 _lc.execute("UPDATE shadow_profiles SET last_seen=?, home_group=? WHERE user_id=?",
