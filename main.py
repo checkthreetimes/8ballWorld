@@ -37919,7 +37919,7 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str, group_chat_id=None
         try:
             await bot.send_message(
                 destination,
-                f"🎱 Welcome back, {name}! You were away for *{away_str}*.",
+                f"🎱 Welcome back, {name}!\nYou were away for *{away_str}*.",
                 parse_mode="Markdown")
         except Exception:
             pass

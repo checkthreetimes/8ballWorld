@@ -31,7 +31,7 @@ class IdleNotificationTests(unittest.TestCase):
         self.run_reward(-100999)
         args = self.bot.send_message.call_args.args
         self.assertEqual(args[0], -100999)
-        self.assertEqual(args[1], '🎱 Welcome back, Alice! You were away for *1h 5m*.')
+        self.assertEqual(args[1], '🎱 Welcome back, Alice!\nYou were away for *1h 5m*.')
         self.assertEqual(self.bot.send_message.call_args.kwargs['parse_mode'], 'Markdown')
         self.env['add_shadow_exp'].assert_called_once_with(self.shadow, 50)
 
