@@ -54,9 +54,10 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(holder, (1, 2, 3, 4))
         message = self.bot.send_message.call_args.kwargs['text']
         self.assertIn(f'tg://user?id={holder}', message)
-        self.assertIn('<b>Tag 0/10</b>', message)
+        self.assertIn("<b>you're it! (0/10)</b>", message)
         self.assertIn(f'@user{holder}</a>', message)
-        self.assertIn('🎯 <b>Pass it on!</b>', message)
+        self.assertEqual(len(message.splitlines()), 2)
+        self.assertIn('Reply <code>/tag</code> or send <code>tag @username</code>. Tag 10 loses!', message)
         self.assertNotIn('Admins', message)
         self.assertNotIn('No self-tags', message)
         self.assertNotIn('—', message)
@@ -149,7 +150,7 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
     async def test_concurrent_starts_only_create_one_round(self):
         await asyncio.gather(*(self.game.command(self.update(i), self.context) for i in (1, 2, 3)))
         messages = [c.kwargs['text'] for c in self.bot.send_message.call_args_list]
-        self.assertEqual(sum('tag, you\'re it!' in m for m in messages), 1)
+        self.assertEqual(sum("you're it! (0/10)" in m for m in messages), 1)
 
     async def test_duplicate_concurrent_pass_only_counts_once(self):
         holder = await self.start()
@@ -273,7 +274,7 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
         await self.game.command(self.update(holder, reply_uid=target), self.context)
         self.assertEqual(self.game.state(-100)['holder'], target)
         self.assertEqual(self.game.state(-100)['passes'], 1)
-        self.assertIn('Tag 1/10', self.bot.send_message.call_args.kwargs['text'])
+        self.assertIn("you're it! (1/10)", self.bot.send_message.call_args.kwargs['text'])
 
     async def test_tag_reply_can_tag_round_starter_on_first_pass(self):
         await self.game.command(self.update(1, reply_uid=2), self.context)
@@ -326,7 +327,7 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
         await self.game.observe(self.update(holder, 'tag', reply_uid=target), self.context)
         message = self.bot.send_message.call_args.kwargs['text']
         self.assertIn(f'<a href="tg://user?id={target}">@user{target}</a>', message)
-        self.assertIn('<b>Tag 1/10</b>', message)
+        self.assertIn("<b>you're it! (1/10)</b>", message)
         self.assertEqual(self.bot.send_message.call_args.kwargs['parse_mode'], 'HTML')
         self.assertNotIn('—', message)
 

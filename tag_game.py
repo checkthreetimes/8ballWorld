@@ -76,12 +76,8 @@ class TagGame:
 
     def _round_text(self, member, passes):
         return (
-            f'🏃💨 {self._mention(member)}, <b>tag, you\'re it!</b>\n\n'
-            '🎯 <b>Pass it on!</b>\n'
-            'Send <code>tag @username</code>\n'
-            'or reply <code>tag</code> or <code>/tag</code> to someone\'s message.\n\n'
-            f'🔢 <b>Tag {passes}/{TAG_LIMIT}</b>\n'
-            f'💥 Whoever gets tagged on pass {TAG_LIMIT} loses!'
+            f'🏃💨 {self._mention(member)}, <b>you\'re it! ({passes}/{TAG_LIMIT})</b>\n'
+            f'Reply <code>/tag</code> or send <code>tag @username</code>. Tag {TAG_LIMIT} loses!'
         )
 
     @staticmethod
