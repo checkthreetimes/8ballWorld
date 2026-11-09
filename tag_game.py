@@ -79,7 +79,7 @@ class TagGame:
             f'🏃💨 {self._mention(member)}, <b>tag, you\'re it!</b>\n\n'
             '🎯 <b>Pass it on!</b>\n'
             'Send <code>tag @username</code>\n'
-            'or reply <code>tag</code> to someone\'s message.\n\n'
+            'or reply <code>tag</code> or <code>/tag</code> to someone\'s message.\n\n'
             f'🔢 <b>Tag {passes}/{TAG_LIMIT}</b>\n'
             f'💥 Whoever gets tagged on pass {TAG_LIMIT} loses!'
         )
@@ -158,6 +158,9 @@ class TagGame:
             return
         async with self._lock(chat_id):
             state = self.state(chat_id)
+            if update.message.reply_to_message and state and state['holder'] is not None:
+                await self._pass_locked(update, context, '')
+                return
             initial_target = None
             if update.message.reply_to_message and (not state or state['holder'] is None):
                 initial_target, error = await self._target(update, '', context.bot)
@@ -203,42 +206,47 @@ class TagGame:
         return None, 'Send tag @username, or reply tag to someone\'s message.'
 
     async def _pass(self, update, context, argument):
+        async with self._lock(update.effective_chat.id):
+            await self._pass_locked(update, context, argument)
+
+    async def _pass_locked(self, update, context, argument):
+        """Shared pass logic. Caller holds the group lock for the whole operation."""
         chat_id, uid = update.effective_chat.id, update.effective_user.id
-        async with self._lock(chat_id):
-            state = self.state(chat_id)
-            if not state or state['holder'] is None:
-                # Plain conversation saying "tag" should not create noise.
-                if (update.message.text or '').startswith('/'):
-                    await self._say(context.bot, chat_id, '🏃 No round is running. Use /tag to start one.')
-                return
-            if state['holder'] != uid:
-                await self._say(context.bot, chat_id, '🏃 Only the person who is it can tag someone.')
-                return
-            target, error = await self._target(update, argument, context.bot)
-            if error:
-                await self._say(context.bot, chat_id, error)
-                return
-            target_uid = target['user_id']
-            if target_uid == uid:
-                await self._say(context.bot, chat_id, '🏃 You cannot tag yourself.')
-                return
-            if target_uid == state['previous']:
-                await self._say(context.bot, chat_id, '🏃 No immediate tag-backs. Pick someone else.')
-                return
-            if not await self._eligible_member(context.bot, chat_id, target_uid):
-                await self._say(context.bot, chat_id, '🏃 Pick a current group member who can play.')
-                return
-            passes = state['passes'] + 1
-            if passes == TAG_LIMIT:
-                text = (f'💥 <b>CAUGHT!</b>\n'
-                        f'{self._mention(target)} got caught holding the tag!\n\n'
-                        f'🏁 <b>Tag {passes}/{TAG_LIMIT}. Round over!</b>\n'
-                        '🔄 Use /tag to play again.')
-            else:
-                text = self._round_text(target, passes)
-            await self._say(context.bot, chat_id, text)
-            self._query('UPDATE tag_rounds SET holder=?, previous=?, passes=? WHERE chat_id=?',
-                (None if passes == TAG_LIMIT else target_uid, uid, passes, chat_id), write=True)
+        state = self.state(chat_id)
+        if not state or state['holder'] is None:
+            # Plain conversation saying "tag" should not create noise.
+            if (update.message.text or '').startswith('/'):
+                await self._say(context.bot, chat_id, '🏃 No round is running. Use /tag to start one.')
+            return
+        if state['holder'] != uid:
+            await self._say(context.bot, chat_id, '🏃 Only the person who is it can tag someone.')
+            return
+        target, error = await self._target(update, argument, context.bot)
+        if error:
+            await self._say(context.bot, chat_id, error)
+            return
+        target_uid = target['user_id']
+        if target_uid == uid:
+            await self._say(context.bot, chat_id, '🏃 You cannot tag yourself.')
+            return
+        if target_uid == state['previous']:
+            await self._say(context.bot, chat_id, '🏃 No immediate tag-backs. Pick someone else.')
+            return
+        if not await self._eligible_member(context.bot, chat_id, target_uid):
+            await self._say(context.bot, chat_id, '🏃 Pick a current group member who can play.')
+            return
+        passes = state['passes'] + 1
+        if passes == TAG_LIMIT:
+            text = (f'💥 <b>CAUGHT!</b>\n'
+                    f'{self._mention(target)} got caught holding the tag!\n\n'
+                    f'🏁 <b>Tag {passes}/{TAG_LIMIT}. Round over!</b>\n'
+                    '🔄 Use /tag to play again.')
+        else:
+            text = self._round_text(target, passes)
+        await self._say(context.bot, chat_id, text)
+        self._query('UPDATE tag_rounds SET holder=?, previous=?, passes=? WHERE chat_id=?',
+            (None if passes == TAG_LIMIT else target_uid, uid, passes, chat_id), write=True)
+
 
     async def end_command(self, update, context):
         if not self._group_update(update):

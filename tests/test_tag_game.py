@@ -267,12 +267,41 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
         await self.game.observe(self.update(holder, f'tag @user{target}', reply_uid=holder), self.context)
         self.assertEqual(self.game.state(-100)['holder'], target)
 
-    async def test_reply_start_does_not_replace_active_round(self):
+    async def test_tag_reply_passes_in_active_round(self):
         holder = await self.start()
-        target = next(i for i in (2, 3, 4) if i != holder)
-        await self.game.command(self.update(reply_uid=target), self.context)
-        self.assertEqual(self.game.state(-100)['holder'], holder)
-        self.assertIn('already running', self.bot.send_message.call_args.kwargs['text'])
+        target = next(i for i in (1, 2, 3, 4) if i != holder)
+        await self.game.command(self.update(holder, reply_uid=target), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], target)
+        self.assertEqual(self.game.state(-100)['passes'], 1)
+        self.assertIn('Tag 1/10', self.bot.send_message.call_args.kwargs['text'])
+
+    async def test_tag_reply_can_tag_round_starter_on_first_pass(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        await self.game.command(self.update(2, reply_uid=1), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 1)
+        self.assertEqual(self.game.state(-100)['passes'], 1)
+
+    async def test_tag_reply_rejects_immediate_tagback(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        await self.game.command(self.update(2, reply_uid=3), self.context)
+        await self.game.command(self.update(3, reply_uid=2), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 3)
+        self.assertEqual(self.game.state(-100)['passes'], 1)
+        self.assertIn('No immediate tag-backs', self.bot.send_message.call_args.kwargs['text'])
+
+    async def test_non_holder_tag_reply_does_not_replace_active_round(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        await self.game.command(self.update(3, reply_uid=4), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 2)
+        self.assertEqual(self.game.state(-100)['passes'], 0)
+        self.assertIn('Only the person', self.bot.send_message.call_args.kwargs['text'])
+
+    async def test_concurrent_tag_replies_only_count_once(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        await asyncio.gather(*(self.game.command(self.update(2, reply_uid=3), self.context)
+                               for _ in range(2)))
+        self.assertEqual(self.game.state(-100)['holder'], 3)
+        self.assertEqual(self.game.state(-100)['passes'], 1)
 
     async def test_reply_start_rejects_self_bot_banned_and_departed(self):
         self.users[6].is_bot = True

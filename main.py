@@ -31073,7 +31073,7 @@ GUIDE_PAGES = [
         "\n"
         "*Group Tag:*\n"
         "🏃 /tag starts a round if none is running. Reply /tag to a message to make its author it, or use plain /tag for a random pick. The bot also starts up to one random round daily.\n"
-        "Whoever is it sends `tag @username`, or replies `tag` to someone's message. "
+        "Whoever is it sends `tag @username`, or replies `tag` or `/tag` to someone's message. "
         "The 10th tag ends the round and the final person loses. "
         "No self-tags, bot tags, or immediate tag-backs. "
         "Group admins can use /endtag to close a stalled round.\n"
