@@ -2,6 +2,7 @@
 import ast
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from pathlib import Path
 import time
 import unittest
@@ -15,13 +16,14 @@ class IdleNotificationTests(unittest.TestCase):
                         and n.name == '_try_idle_reward')
         self.shadow = {'username': 'Alice', 'home_group': -100123}
         self.env = dict(time=time, datetime=datetime, timedelta=timedelta,
+                        asyncio=asyncio, _auto_delete=AsyncMock(),
                         _idle_last_awarded={}, get_player=lambda uid: None,
                         _calc_idle_exp=lambda secs, level: 50 if secs >= 1800 else 0,
                         get_shadow=lambda uid: self.shadow,
                         add_shadow_exp=Mock(), save_shadow=Mock(),
                         fmt_num=str, escape_markdown=lambda name: name)
         exec(compile(ast.Module(body=[function], type_ignores=[]), 'main.py', 'exec'), self.env)
-        self.bot = Mock(send_message=AsyncMock())
+        self.bot = Mock(send_message=AsyncMock(return_value=SimpleNamespace(message_id=7)))
 
     def run_reward(self, group=None, minutes=65):
         asyncio.run(self.env['_try_idle_reward'](
@@ -59,6 +61,21 @@ class IdleNotificationTests(unittest.TestCase):
             returned_at=returned, display_name='Jesse'))
         self.assertEqual(self.bot.send_message.call_args.args[1],
                          '🎱 Welcome back, Jesse!\nYou were away for *5h 38m*.')
+
+    def test_sub_hour_absence_awards_silently(self):
+        self.run_reward(-100999, minutes=45)
+        self.bot.send_message.assert_not_called()
+        self.env['add_shadow_exp'].assert_called_once_with(self.shadow, 50)
+        self.env['_auto_delete'].assert_not_called()
+
+    def test_exact_hour_announces_and_expires_after_thirty_seconds(self):
+        previous = datetime(2026, 11, 7, 10, tzinfo=timezone.utc)
+        asyncio.run(self.env['_try_idle_reward'](
+            42, self.bot, previous.isoformat(), -100123,
+            returned_at=previous + timedelta(hours=1)))
+        self.assertEqual(self.bot.send_message.call_args.args[1],
+                         '🎱 Welcome back, Alice!\nYou were away for *1h 0m*.')
+        self.env['_auto_delete'].assert_awaited_once_with(self.bot, -100123, 7, 30)
 
     def test_rapid_repeat_does_not_announce_or_award_twice(self):
         self.run_reward(-100999)

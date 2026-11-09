@@ -30480,7 +30480,7 @@ GUIDE_PAGES = [
         "\n"
         "💡 /hustle runs all ready cooldowns at once — daily, train, quest, pool, claim, and explore. Use it every time you're in the group.\n"
         "\n"
-        "💡 *Idle Rewards* — When you send a group message after 30 minutes or more without posting in that group, the bot welcomes you back with your time away. DMs and button taps do not reset this timer. Idle EXP is awarded automatically.\n"
+        "💡 *Idle Rewards* — After an hour without posting in the group, your next message gets a welcome-back showing your time away. It disappears after 30 seconds. DMs and button taps do not reset this timer. Idle EXP is awarded automatically after 30 minutes away.\n"
         "\n"
         "*Random Events*\n"
         "As the group chats, random events appear automatically — travelers with tips, bandits to fight, merchants with discounts, legendary craftsmen, hidden caches, and more.\n"
@@ -37969,13 +37969,16 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str, group_chat_id=None
                 add_exp(p, idle_exp)
         if p:
             save_player(p)
+        if idle_secs < 3600:
+            return  # Keep 30-minute rewards silent; announce only hour-long absences.
         destination = group_chat_id
         name = escape_markdown(str(display_name or (s or {}).get("username") or (p or {}).get("username") or uid))
         try:
-            await bot.send_message(
+            msg = await bot.send_message(
                 destination,
                 f"🎱 Welcome back, {name}!\nYou were away for *{away_str}*.",
                 parse_mode="Markdown")
+            asyncio.create_task(_auto_delete(bot, destination, msg.message_id, 30))
         except Exception:
             pass
     except Exception:
