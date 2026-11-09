@@ -71,7 +71,18 @@ class TagGame:
 
     @staticmethod
     def _mention(member):
-        return f'<a href="tg://user?id={int(member["user_id"])}">{escape(member["name"])}</a>'
+        label = f"@{member['username']}" if member.get('username') else member['name']
+        return f'<a href="tg://user?id={int(member["user_id"])}">{escape(label)}</a>'
+
+    def _round_text(self, member, passes):
+        return (
+            f'🏃💨 {self._mention(member)}, <b>tag, you\'re it!</b>\n\n'
+            '🎯 <b>Pass it on!</b>\n'
+            'Send <code>tag @username</code>\n'
+            'or reply <code>tag</code> to someone\'s message.\n\n'
+            f'🔢 <b>Tag {passes}/{TAG_LIMIT}</b>\n'
+            f'💥 Whoever gets tagged on pass {TAG_LIMIT} loses!'
+        )
 
     @staticmethod
     def _group_update(update):
@@ -125,11 +136,7 @@ class TagGame:
                 await self._say(bot, chat_id, '🏃 Tag needs at least 3 people who posted in this group in the last 24 hours.')
             return False
         holder = initial_target or eligible[0]  # Plain /tag and daily starts stay random.
-        await self._say(bot, chat_id,
-            f'🏃 {self._mention(holder)}, tag, you\'re it!\n\n'
-            'Send <code>tag @username</code>, or reply <code>tag</code> to someone\'s message.\n'
-            f'Tag 0/{TAG_LIMIT}. Whoever gets tagged on pass {TAG_LIMIT} loses!\n'
-            'No self-tags, bot tags, or immediate tag-backs. Admins can use /endtag if the round stalls.')
+        await self._say(bot, chat_id, self._round_text(holder, 0))
         today = datetime.fromtimestamp(self.now(), timezone.utc).date().isoformat()
         self._query('''INSERT INTO tag_rounds (chat_id, holder, previous, passes, auto_day)
             VALUES (?, ?, NULL, 0, ?) ON CONFLICT(chat_id) DO UPDATE SET
@@ -191,7 +198,8 @@ class TagGame:
             if user.is_bot:
                 return None, 'You cannot tag a bot.'
             self._remember(update.effective_chat.id, user, reply.date.timestamp())
-            return {'user_id': user.id, 'name': user.first_name or str(user.id)}, None
+            return {'user_id': user.id, 'name': user.first_name or str(user.id),
+                    'username': user.username}, None
         return None, 'Send tag @username, or reply tag to someone\'s message.'
 
     async def _pass(self, update, context, argument):
@@ -222,11 +230,12 @@ class TagGame:
                 return
             passes = state['passes'] + 1
             if passes == TAG_LIMIT:
-                text = (f'💥 {self._mention(target)} got caught holding the tag!\n'
-                        f'Tag {passes}/{TAG_LIMIT}. Round over! Use /tag to play again.')
+                text = (f'💥 <b>CAUGHT!</b>\n'
+                        f'{self._mention(target)} got caught holding the tag!\n\n'
+                        f'🏁 <b>Tag {passes}/{TAG_LIMIT}. Round over!</b>\n'
+                        '🔄 Use /tag to play again.')
             else:
-                text = (f'👉 {self._mention(target)}, you\'re it! Tag {passes}/{TAG_LIMIT}.\n'
-                        'Send <code>tag @username</code>, or reply <code>tag</code> to someone\'s message.')
+                text = self._round_text(target, passes)
             await self._say(context.bot, chat_id, text)
             self._query('UPDATE tag_rounds SET holder=?, previous=?, passes=? WHERE chat_id=?',
                 (None if passes == TAG_LIMIT else target_uid, uid, passes, chat_id), write=True)

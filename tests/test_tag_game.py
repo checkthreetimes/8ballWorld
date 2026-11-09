@@ -54,7 +54,11 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(holder, (1, 2, 3, 4))
         message = self.bot.send_message.call_args.kwargs['text']
         self.assertIn(f'tg://user?id={holder}', message)
-        self.assertIn('Tag 0/10', message)
+        self.assertIn('<b>Tag 0/10</b>', message)
+        self.assertIn(f'@user{holder}</a>', message)
+        self.assertIn('🎯 <b>Pass it on!</b>', message)
+        self.assertNotIn('Admins', message)
+        self.assertNotIn('No self-tags', message)
         self.assertNotIn('—', message)
 
     async def test_command_does_not_replace_existing_round(self):
@@ -285,8 +289,19 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
         await self.game.command(self.update(reply_uid=2), self.context)
         self.assertEqual(self.game.state(-100)['holder'], 2)
 
+    async def test_reply_pass_mentions_username_as_account_link(self):
+        holder = await self.start()
+        target = next(i for i in (1, 2, 3, 4) if i != holder)
+        await self.game.observe(self.update(holder, 'tag', reply_uid=target), self.context)
+        message = self.bot.send_message.call_args.kwargs['text']
+        self.assertIn(f'<a href="tg://user?id={target}">@user{target}</a>', message)
+        self.assertIn('<b>Tag 1/10</b>', message)
+        self.assertEqual(self.bot.send_message.call_args.kwargs['parse_mode'], 'HTML')
+        self.assertNotIn('—', message)
+
     async def test_mentions_escape_display_names(self):
         self.users[1].first_name = '<b>A & B</b>'
+        self.users[1].username = None
         self.game._remember(-100, self.users[1], self.now)
         mention = self.game._mention(self.game._member(-100, 1))
         self.assertIn('&lt;b&gt;A &amp; B&lt;/b&gt;', mention)
