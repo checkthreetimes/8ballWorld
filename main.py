@@ -6,6 +6,7 @@ The 8Ball Empire  -  RPG Bot v13
 import os, json, random, logging, sqlite3, re, asyncio, time, threading, math, types as _pytypes
 from datetime import datetime, timedelta, timezone
 from collections import Counter
+from tag_game import TagGame
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, RetryAfter
 from telegram.helpers import escape_markdown
@@ -202,6 +203,7 @@ message_counters   = {}   # chat_id -> int
 pending_trades     = {}   # user_id -> trade dict
 pending_guild_reqs = {}   # guild_id -> [requests]
 explore_timers     = {}   # user_id -> asyncio task
+_tag_game = None
 _idle_last_awarded = {}   # (user_id, group_id) -> timestamp — prevents double-awarding on rapid messages
 active_dungeons    = {}   # user_id -> dungeon state dict
 _wipe_confirm      = {}   # admin_id -> timestamp
@@ -31069,6 +31071,13 @@ GUIDE_PAGES = [
         "Cards have ⚔️ Attack, 🛡️ Defend, ✨ Skills, 🧪 Potion, 💙 MP and 🏳️ Surrender buttons.\n"
         "⚡ FINISHER appears when your class kill-condition is met on the target.\n"
         "\n"
+        "*Group Tag:*\n"
+        "🏃 /tag starts a round if none is running. The bot also starts up to one random round daily.\n"
+        "Whoever is it sends `tag @username`, or replies `tag` to someone's message. "
+        "The 10th tag ends the round and the final person loses. "
+        "No self-tags, bot tags, or immediate tag-backs. "
+        "Group admins can use /endtag to close a stalled round.\n"
+        "\n"
         "*Wager Game Modes (all consensual — reply to challenge):*\n"
         "⚔️ /royale — group Battle Royale! 100g entry, 60s to join, narrated eliminations, "
         "winner takes the WHOLE pot. Level & stats give a small survival edge.\n"
@@ -43136,11 +43145,14 @@ async def _post_init(application):
     asyncio.create_task(_engagement_loop(application.bot))
     asyncio.create_task(_revive_watch_loop(application.bot))
     asyncio.create_task(_daily_digest_loop(application.bot))
+    asyncio.create_task(_tag_game.daily_loop(application.bot))
     asyncio.create_task(_pvp_idle_watch_loop(application.bot))
     # Telegram "/" command menu — discoverability for every command that matters
     try:
         from telegram import BotCommand
         await application.bot.set_my_commands([
+            BotCommand("tag",       "🏃 Start a game of tag"),
+            BotCommand("endtag",    "🏁 End a stalled tag round (admins)"),
             BotCommand("menu",      "🏠 Main menu — everything in one place"),
             BotCommand("firststeps","🚀 New player? Start here"),
             BotCommand("stats",     "👤 Your profile & stats"),
@@ -46834,7 +46846,10 @@ async def throne_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
+    global _tag_game
     init_db()
+    _tag_game = TagGame(_connect_db, is_banned, ADMIN_ID)
+    _tag_game.init_db()
     # concurrent_updates: PTB's default processes ONE update at a time for the
     # whole bot — any handler that awaits (PvP card pacing, dungeon turns, a
     # slow Telegram call) stalls EVERY other player's commands, and during
@@ -46845,6 +46860,11 @@ def main():
     app = (Application.builder().token(BOT_TOKEN).post_init(_post_init)
            .concurrent_updates(32).build())
     app.add_error_handler(_global_error_handler)
+
+    app.add_handler(CommandHandler("tag", _tag_game.command))
+    app.add_handler(CommandHandler("endtag", _tag_game.end_command))
+    app.add_handler(MessageHandler(
+        filters.UpdateType.MESSAGE & ~filters.StatusUpdate.ALL, _tag_game.observe), group=-3)
 
     # Universal
     app.add_handler(CommandHandler("ping",         ping_cmd))
