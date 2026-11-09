@@ -215,9 +215,11 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.game.state(-100)['passes'], 0)
         self.assertIn('username has changed', self.bot.send_message.call_args.kwargs['text'])
 
-    async def test_tag_command_starts_even_when_replying(self):
+    async def test_tag_command_reply_selects_that_person(self):
         await self.game.command(self.update(reply_uid=2), self.context)
-        self.assertIsNotNone(self.game.state(-100)['holder'])
+        self.assertEqual(self.game.state(-100)['holder'], 2)
+        self.assertEqual(self.game.state(-100)['passes'], 0)
+        self.assertIn('tg://user?id=2', self.bot.send_message.call_args.kwargs['text'])
 
     async def test_separate_group_has_independent_round(self):
         holder = await self.start()
@@ -260,6 +262,28 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
         target = next(i for i in (1, 2, 3, 4) if i != holder)
         await self.game.observe(self.update(holder, f'tag @user{target}', reply_uid=holder), self.context)
         self.assertEqual(self.game.state(-100)['holder'], target)
+
+    async def test_reply_start_does_not_replace_active_round(self):
+        holder = await self.start()
+        target = next(i for i in (2, 3, 4) if i != holder)
+        await self.game.command(self.update(reply_uid=target), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], holder)
+        self.assertIn('already running', self.bot.send_message.call_args.kwargs['text'])
+
+    async def test_reply_start_rejects_self_bot_banned_and_departed(self):
+        self.users[6].is_bot = True
+        self.banned.add(5)
+        self.status[4] = 'left'
+        for uid in (1, 6, 5, 4):
+            with self.subTest(uid=uid):
+                await self.game.command(self.update(reply_uid=uid), self.context)
+                state = self.game.state(-100)
+                self.assertTrue(state is None or state['holder'] is None)
+
+    async def test_reply_start_accepts_member_without_username(self):
+        self.users[2].username = None
+        await self.game.command(self.update(reply_uid=2), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 2)
 
     async def test_mentions_escape_display_names(self):
         self.users[1].first_name = '<b>A & B</b>'

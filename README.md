@@ -3,7 +3,7 @@ A fun 8Ball game
 
 ## Group tag
 
-- `/tag` starts a round when the group has no active game and at least three eligible people have posted in the last 24 hours. The starting player is chosen randomly.
+- `/tag` starts a round when the group has no active game and at least three eligible people have posted in the last 24 hours. Replying `/tag` to someone's message makes that person it. Plain `/tag` picks the starting player randomly.
 - Whoever is it sends `tag @username` or replies `tag` to another member's message. An exact `@username` message also works. Username tags require the bot to have seen that user in the group.
 - The initial pick is tag 0. The tenth successful pass ends the round; its recipient loses. No self-tags, bot tags, or immediate tag-backs. There are no gameplay timers or rewards.
 - Group admins or the bot admin can use `/endtag` to close a stalled round.

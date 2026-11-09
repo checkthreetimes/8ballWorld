@@ -100,13 +100,16 @@ class TagGame:
     async def _say(self, bot, chat_id, text):
         await bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML')
 
-    async def _start_locked(self, bot, chat_id, *, automatic=False):
+    async def _start_locked(self, bot, chat_id, *, automatic=False, initial_target=None):
         state = self.state(chat_id)
         if state and state['holder'] is not None:
             if not automatic:
                 await self._say(bot, chat_id,
                     f'🏃 A round is already running. {self._mention(self._member(chat_id, state["holder"]))} '
                     f'is it! Tag {state["passes"]}/{TAG_LIMIT}.')
+            return False
+        if initial_target is not None and not await self._eligible_member(bot, chat_id, initial_target['user_id']):
+            await self._say(bot, chat_id, '🏃 Pick a current group member who can play.')
             return False
         candidates = self._query('''SELECT * FROM tag_members
             WHERE chat_id=? AND last_message_ts>=?''', (chat_id, self.now() - RECENT_SECONDS))
@@ -121,7 +124,7 @@ class TagGame:
             if not automatic:
                 await self._say(bot, chat_id, '🏃 Tag needs at least 3 people who posted in this group in the last 24 hours.')
             return False
-        holder = eligible[0]  # Candidates were shuffled before membership checks.
+        holder = initial_target or eligible[0]  # Plain /tag and daily starts stay random.
         await self._say(bot, chat_id,
             f'🏃 {self._mention(holder)}, tag, you\'re it!\n\n'
             'Send <code>tag @username</code>, or reply <code>tag</code> to someone\'s message.\n'
@@ -147,7 +150,16 @@ class TagGame:
             await self._pass(update, context, ' '.join(context.args))
             return
         async with self._lock(chat_id):
-            await self._start_locked(context.bot, chat_id)
+            state = self.state(chat_id)
+            initial_target = None
+            if update.message.reply_to_message and (not state or state['holder'] is None):
+                initial_target, error = await self._target(update, '', context.bot)
+                if not error and initial_target['user_id'] == update.effective_user.id:
+                    error = '🏃 You cannot tag yourself.'
+                if error:
+                    await self._say(context.bot, chat_id, error)
+                    return
+            await self._start_locked(context.bot, chat_id, initial_target=initial_target)
 
     async def observe(self, update, context):
         if not self._group_update(update) or self.is_banned(update.effective_user.id):
