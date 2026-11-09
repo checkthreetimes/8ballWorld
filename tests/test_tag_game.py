@@ -295,6 +295,8 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.game.state(-100)['holder'], 2)
         self.assertEqual(self.game.state(-100)['passes'], 0)
         self.assertIn('Only the person', self.bot.send_message.call_args.kwargs['text'])
+        self.assertIn('<a href="tg://user?id=2">@user2</a> is it!',
+                      self.bot.send_message.call_args.kwargs['text'])
 
     async def test_concurrent_tag_replies_only_count_once(self):
         await self.game.command(self.update(1, reply_uid=2), self.context)

@@ -219,7 +219,9 @@ class TagGame:
                 await self._say(context.bot, chat_id, '🏃 No round is running. Use /tag to start one.')
             return
         if state['holder'] != uid:
-            await self._say(context.bot, chat_id, '🏃 Only the person who is it can tag someone.')
+            await self._say(context.bot, chat_id,
+                f'🏃 {self._mention(self._member(chat_id, state["holder"]))} is it! '
+                'Only the person who is it can tag someone.')
             return
         target, error = await self._target(update, argument, context.bot)
         if error:
