@@ -9,7 +9,6 @@ from collections import Counter
 from tag_game import TagGame
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, RetryAfter
-from telegram.helpers import escape_markdown
 from telegram.ext import (
     Application, CommandHandler, ContextTypes,
     MessageHandler, filters, CallbackQueryHandler,
@@ -30482,7 +30481,7 @@ GUIDE_PAGES = [
         "\n"
         "💡 /hustle runs all ready cooldowns at once — daily, train, quest, pool, claim, and explore. Use it every time you're in the group.\n"
         "\n"
-        "💡 *Idle Rewards* — After an hour without posting in the group, your next message gets a welcome-back showing your time away. It disappears after 30 seconds. DMs and button taps do not reset this timer. Idle EXP is awarded automatically after 30 minutes away.\n"
+        "💡 *Idle Rewards* — Idle EXP is awarded silently after 30 minutes without posting in the group. Welcome-back notifications are disabled. DMs and button taps do not reset this timer.\n"
         "\n"
         "*Random Events*\n"
         "As the group chats, random events appear automatically — travelers with tips, bandits to fight, merchants with discounts, legendary craftsmen, hidden caches, and more.\n"
@@ -37933,7 +37932,7 @@ async def _group_activity_pre_filter(update: Update, context: ContextTypes.DEFAU
 
 async def _try_idle_reward(uid: int, bot, prev_seen_iso: str, group_chat_id=None,
                            returned_at=None, display_name=None):
-    """Award idle EXP for the gap between two messages sent in the same group."""
+    """Silently award idle EXP for the gap between messages in the same group."""
     if group_chat_id is None:
         return
     global _idle_last_awarded
@@ -37964,11 +37963,8 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str, group_chat_id=None
                                       else f"{_EMPIRE_RES_EMOJI.get(r,'📦')} +{v:,}" for r, v in _pend.items())
                 empire_notes = [f"{_pend_str}\n  _Tap Collect in /empire to claim!_"]
         if idle_exp <= 0:
-            return  # welcome-back only fires when the idle reward itself fires
+            return  # No reward for short gaps.
         _idle_last_awarded[award_key] = now_ts
-        ih = idle_secs / 3600
-        away_str = (f"{int(ih)}h {int((idle_secs % 3600) / 60)}m"
-                    if ih >= 1 else f"{int(idle_secs / 60)}m")
         s = get_shadow(uid)
         if idle_exp > 0:
             if s:
@@ -37978,18 +37974,6 @@ async def _try_idle_reward(uid: int, bot, prev_seen_iso: str, group_chat_id=None
                 add_exp(p, idle_exp)
         if p:
             save_player(p)
-        if idle_secs < 3600:
-            return  # Keep 30-minute rewards silent; announce only hour-long absences.
-        destination = group_chat_id
-        name = escape_markdown(str(display_name or (s or {}).get("username") or (p or {}).get("username") or uid))
-        try:
-            msg = await bot.send_message(
-                destination,
-                f"🎱 Welcome back, {name}!\nYou were away for *{away_str}*.",
-                parse_mode="Markdown")
-            asyncio.create_task(_auto_delete(bot, destination, msg.message_id, 30))
-        except Exception:
-            pass
     except Exception:
         pass
 
