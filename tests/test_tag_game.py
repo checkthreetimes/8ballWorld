@@ -331,6 +331,233 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.bot.send_message.call_args.kwargs['parse_mode'], 'HTML')
         self.assertNotIn('—', message)
 
+    async def test_stats_count_successful_passes_not_initial_assignments(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.now += 75
+        await self.game.command(self.update(2, reply_uid=3), self.context)
+        self.now += 30
+        await self.game.command(self.update(3, reply_uid=4), self.context)
+        totals, leaders = self.game.statistics(-100, 3)
+        self.assertEqual(totals, dict(tags=2, finished=0, sent=1, received=1, caught=0, points=2, week_points=2))
+        self.assertEqual(leaders['fastest'][0], dict(user_id=3, value=30))
+        self.assertEqual(leaders['fastest'][1], dict(user_id=2, value=75))
+        received = {r['user_id']: r['value'] for r in leaders['received']}
+        self.assertEqual(received, {3: 1, 4: 1})
+
+    async def test_stats_tenth_tag_records_loser_and_finisher(self):
+        await self.start()
+        last_actor = last_target = None
+        for _ in range(10):
+            state = self.game.state(-100)
+            target = next(i for i in (1, 2, 3, 4) if i not in (state['holder'], state['previous']))
+            last_actor, last_target = state['holder'], target
+            self.now += 10
+            await self.game.command(self.update(last_actor, reply_uid=target), self.context)
+        totals, leaders = self.game.statistics(-100, last_target)
+        self.assertEqual(totals['tags'], 10)
+        self.assertEqual(totals['finished'], 1)
+        self.assertEqual(totals['caught'], 1)
+        self.assertEqual(leaders['caught'], [dict(user_id=last_target, value=1)])
+        self.assertGreater(self.game.statistics(-100, last_actor)[0]['sent'], 0)
+
+    async def test_stats_page_shows_current_holder_elapsed_and_personal_counts(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.now += 3900
+        await self.game.stats_command(self.update(2, '/tagstats'), self.context)
+        message = self.bot.send_message.call_args.kwargs['text']
+        self.assertIn('It: <b>user2</b> (0/10)', message)
+        self.assertIn('Holding for 1h 5m', message)
+        self.assertIn('No records yet.', message)
+        self.assertIn('0 tags sent', message)
+        self.assertIn('Earlier tags are not included', message)
+        self.assertNotIn('tg://', message)
+        self.assertNotIn(chr(92)+'n', message)
+
+    async def test_stats_rejected_tags_and_failed_sends_are_not_counted(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        await self.game.command(self.update(2, reply_uid=2), self.context)
+        await self.game.command(self.update(3, reply_uid=4), self.context)
+        self.bot.send_message.side_effect = RuntimeError('offline')
+        with self.assertRaises(RuntimeError):
+            await self.game.command(self.update(2, reply_uid=3), self.context)
+        self.assertEqual(self.game.statistics(-100, 2)[0]['tags'], 0)
+        self.assertEqual(len(self.game._query('SELECT * FROM tag_events')), 1)
+
+    async def test_stats_duplicate_pass_only_counted_once(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        await asyncio.gather(*(self.game.command(self.update(2, reply_uid=3), self.context) for _ in range(2)))
+        self.assertEqual(self.game.statistics(-100, 2)[0]['sent'], 1)
+
+    async def test_stats_persist_and_remain_group_scoped(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.now += 100
+        await self.game.command(self.update(2, reply_uid=3), self.context)
+        game = self.new_game()
+        self.assertEqual(game.statistics(-100, 2)[0]['sent'], 1)
+        self.assertEqual(game.statistics(-200, 2)[0]['sent'], 0)
+        self.assertEqual(game.state(-100)['holder_since'], self.now)
+
+    async def test_admin_end_is_not_a_loss(self):
+        await self.start()
+        self.status[1] = 'administrator'
+        await self.game.end_command(self.update(1), self.context)
+        totals, leaders = self.game.statistics(-100, 1)
+        self.assertEqual(totals['finished'], 0)
+        self.assertEqual(leaders['caught'], [])
+
+    async def test_existing_active_round_migrates_without_inventing_stats(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('DROP TABLE tag_rounds')
+        conn.execute("""CREATE TABLE tag_rounds (chat_id INTEGER PRIMARY KEY, holder,
+            previous, passes DEFAULT 0, schedule_day, auto_due, auto_day)""")
+        conn.execute('INSERT INTO tag_rounds (chat_id, holder, passes) VALUES (-100, 2, 5)')
+        conn.commit()
+        conn.close()
+        game = self.new_game()
+        self.assertEqual(game.state(-100)['holder'], 2)
+        self.assertIsNone(game.state(-100)['holder_since'])
+        await game.stats_command(self.update(1, '/tagstats'), self.context)
+        self.assertIn('before stats tracking', self.bot.send_message.call_args.kwargs['text'])
+        await game.command(self.update(2, reply_uid=3), self.context)
+        self.assertEqual(game.statistics(-100, 2)[0]['sent'], 1)
+        self.assertEqual(game.statistics(-100, 2)[1]['fastest'], [])
+
+    async def test_transition_rolls_back_state_if_event_cannot_be_saved(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.game._query("""CREATE TRIGGER reject_tag_events BEFORE INSERT ON tag_events
+            BEGIN SELECT RAISE(FAIL, 'test failure'); END""", write=True)
+        with self.assertRaises(sqlite3.IntegrityError):
+            await self.game.command(self.update(2, reply_uid=3), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 2)
+        self.assertEqual(self.game.statistics(-100, 2)[0]['sent'], 0)
+
+    async def test_points_base_quick_and_final_bonuses(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.now += 300
+        await self.game.command(self.update(2, reply_uid=3), self.context)
+        self.assertEqual(self.game.statistics(-100, 2)[0]['points'], 2)
+        self.now += 301
+        await self.game.command(self.update(3, reply_uid=4), self.context)
+        self.assertEqual(self.game.statistics(-100, 3)[0]['points'], 1)
+        self.game._query('UPDATE tag_rounds SET passes=9 WHERE chat_id=-100', write=True)
+        self.now += 10
+        await self.game.command(self.update(4, reply_uid=1), self.context)
+        self.assertEqual(self.game.statistics(-100, 4)[0]['points'], 5)
+        self.assertEqual(self.game.statistics(-100, 4)[1]['weekly'][0], dict(user_id=4, value=5))
+
+    async def test_weekly_points_reset_monday_without_losing_history(self):
+        self.now = datetime(2026, 11, 15, 23, 58, tzinfo=timezone.utc).timestamp()
+        for uid in (1, 2, 3, 4):
+            self.game._remember(-100, self.users[uid], self.now)
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.now += 10
+        await self.game.command(self.update(2, reply_uid=3), self.context)
+        self.assertEqual(self.game.statistics(-100, 2)[0]['week_points'], 2)
+        self.now = datetime(2026, 11, 16, 0, 1, tzinfo=timezone.utc).timestamp()
+        totals, leaders = self.game.statistics(-100, 2)
+        self.assertEqual(totals['week_points'], 0)
+        self.assertEqual(totals['points'], 2)
+        self.assertEqual(leaders['weekly'], [])
+
+    async def test_one_reminder_per_turn_and_restart(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.bot.send_message.reset_mock()
+        self.now += 7199
+        await self.game.recovery_tick(self.bot)
+        self.bot.send_message.assert_not_called()
+        self.now += 1
+        await self.game.recovery_tick(self.bot)
+        self.assertIn('still it', self.bot.send_message.call_args.kwargs['text'])
+        self.bot.send_message.reset_mock()
+        game = self.new_game()
+        await game.recovery_tick(self.bot)
+        self.bot.send_message.assert_not_called()
+        self.assertEqual(game.state(-100)['holder'], 2)
+        self.assertEqual(game.state(-100)['passes'], 0)
+        self.assertEqual(game.statistics(-100, 2)[0]['points'], 0)
+
+    async def test_takeover_unlocks_at_four_hours_and_does_not_count_as_tag(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.now += 14399
+        await self.game.takeover_command(self.update(3, '/takeit'), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 2)
+        self.now += 1
+        await self.game.takeover_command(self.update(3, '/takeit'), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 3)
+        self.assertEqual(self.game.state(-100)['passes'], 0)
+        self.assertEqual(self.game.statistics(-100, 3)[0]['points'], 0)
+        await self.game.command(self.update(3, reply_uid=2), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 3)
+        self.assertEqual(self.game.state(-100)['passes'], 0)
+        await self.game.command(self.update(3, reply_uid=4), self.context)
+        self.assertEqual(self.game.statistics(-100, 3)[0]['sent'], 1)
+
+    async def test_takeover_rejects_self_and_banned_players(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.now += 14400
+        self.banned.add(3)
+        await self.game.takeover_command(self.update(2, '/takeit'), self.context)
+        await self.game.takeover_command(self.update(3, '/takeit'), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 2)
+
+    async def test_open_tag_after_six_hours_allows_another_player_to_tag(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.now += 21600
+        await self.game.recovery_tick(self.bot)
+        self.assertEqual(self.game.state(-100)['opened'], 1)
+        self.bot.send_message.reset_mock()
+        await self.game.recovery_tick(self.bot)
+        self.bot.send_message.assert_not_called()
+        await self.game.command(self.update(3, reply_uid=4), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 4)
+        self.assertEqual(self.game.state(-100)['passes'], 1)
+        self.assertEqual(self.game.state(-100)['opened'], 0)
+        self.assertEqual(self.game.state(-100)['reminded'], 0)
+        self.assertEqual(self.game.statistics(-100, 3)[0]['points'], 1)
+        self.assertEqual(self.game.statistics(-100, 3)[1]['fastest'], [])
+
+    async def test_open_tag_works_even_before_next_scheduler_tick(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.now += 21600
+        await self.game.command(self.update(3, reply_uid=4), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 4)
+        self.assertEqual(self.game.state(-100)['passes'], 1)
+
+    async def test_no_open_tag_before_six_hours_or_retagging_current_holder(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.now += 21599
+        await self.game.command(self.update(3, reply_uid=4), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 2)
+        self.now += 1
+        await self.game.command(self.update(3, reply_uid=2), self.context)
+        self.assertEqual(self.game.state(-100)['holder'], 2)
+        self.assertEqual(self.game.state(-100)['passes'], 0)
+
+    async def test_returning_holder_passes_without_redundant_reminder(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.now += 10800
+        self.bot.send_message.reset_mock()
+        await self.game.command(self.update(2, reply_uid=3), self.context)
+        self.bot.send_message.assert_awaited_once()
+        self.assertNotIn('still it', self.bot.send_message.call_args.kwargs['text'])
+
+    async def test_danger_zone_messages_remain_condensed(self):
+        for count, wording in [(8, 'Danger zone!'), (9, 'Last escape!')]:
+            text = self.game._round_text(self.game._member(-100, 2), count)
+            self.assertIn(wording, text)
+            self.assertEqual(len(text.splitlines()), 2)
+
+    async def test_failed_recovery_notification_retries_without_advancing_flags(self):
+        await self.game.command(self.update(1, reply_uid=2), self.context)
+        self.now += 21600
+        self.bot.send_message.side_effect = RuntimeError('offline')
+        with self.assertLogs('tag_game', level='ERROR'):
+            await self.game.recovery_tick(self.bot)
+        self.assertEqual(self.game.state(-100)['opened'], 0)
+        self.bot.send_message.side_effect = None
+        await self.game.recovery_tick(self.bot)
+        self.assertEqual(self.game.state(-100)['opened'], 1)
+
     async def test_mentions_escape_display_names(self):
         self.users[1].first_name = '<b>A & B</b>'
         self.users[1].username = None

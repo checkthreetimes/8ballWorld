@@ -31076,7 +31076,7 @@ GUIDE_PAGES = [
         "Whoever is it sends `tag @username`, or replies `tag` or `/tag` to someone's message. "
         "The 10th tag ends the round and the final person loses. "
         "No self-tags, bot tags, or immediate tag-backs. "
-        "Group admins can use /endtag to close a stalled round.\n"
+        "Use /tagstats for weekly points, leaderboards and the current holder. +1 per pass, +1 within 5 minutes, +3 for the final pass. One reminder after 2h, /takeit after 4h, open tag after 6h. Group admins can use /endtag to close a stalled round.\n"
         "\n"
         "*Wager Game Modes (all consensual — reply to challenge):*\n"
         "⚔️ /royale — group Battle Royale! 100g entry, 60s to join, narrated eliminations, "
@@ -39675,10 +39675,9 @@ async def _winback_sweep(bot, max_sends=20):
         except Exception:
             continue
 
-async def _post_daily_digest(bot):
-    """Evening group digest: top EXP grinders, PvP standout, kill-streak
-    leader, weather — social proof that pulls lurkers back into the game.
-    Gains are measured against the digest_snap table refreshed each post."""
+async def _post_daily_digest(bot, post_to_groups=False):
+    """Run daily settlements and snapshots without automatic group leaderboards.
+    A digest can still be rendered explicitly with post_to_groups=True."""
     c = _db().cursor()
     week_ago = (datetime.now() - timedelta(days=7)).isoformat()
     try:
@@ -39971,11 +39970,12 @@ async def _post_daily_digest(bot):
         lines.append(f"🌍 *{w['name']}* — EXP ×{w['exp_mod']} | DMG ×{w['dmg_mod']}")
         lines.append("")
         lines.append("_Think you can top tomorrow's board? /daily · /dungeon · /attack_")
-        try:
-            await bot.send_message(g, "\n".join(lines), parse_mode="Markdown")
-        except Exception:
-            pass
-        await asyncio.sleep(0.5)
+        if post_to_groups:
+            try:
+                await bot.send_message(g, "\n".join(lines), parse_mode="Markdown")
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
     # ── WEEKLY BALANCE SNAPSHOT (admin only, once every 7 days) ──────────────
     # DMs the GM a PvP balance readout for the trailing week so you can tune
     # classes off real data without having to run /gm balance manually.
@@ -40015,7 +40015,7 @@ async def _post_daily_digest(bot):
         pass
 
 async def _daily_digest_loop(bot):
-    """Posts the digest every evening at 20:00 server time."""
+    """Runs silent daily settlements every evening at 20:00 server time."""
     while True:
         try:
             now = datetime.now()
@@ -42844,7 +42844,7 @@ async def _engagement_loop(bot):
                 await _chat_games_scheduler(bot)
             except Exception:
                 pass
-            # Ambient encounters & guild raids are capped to ~2 firings per day
+            # Ambient encounters are capped to ~2 firings per day
             # (was every 30 min). Random gate + daily budget so they land at
             # varied, unpredictable times instead of all at once.
             if random.random() < 0.25 and _daily_budget_ok("world_events", 2):
@@ -42857,11 +42857,7 @@ async def _engagement_loop(bot):
                     await _ambush_spawner(bot)
                 except Exception:
                     pass
-            if random.random() < 0.25 and _daily_budget_ok("guild_raid", 2):
-                try:
-                    await _weekly_guild_boss_sweep(bot)
-                except Exception:
-                    pass
+            # Guild raids are now started through commands, not automatic group posts.
             if random.random() < 0.20 and _daily_budget_ok("oracle_attack", 2):
                 try:
                     await _oracle_attack_sweep(bot)
@@ -43151,6 +43147,8 @@ async def _post_init(application):
     try:
         from telegram import BotCommand
         await application.bot.set_my_commands([
+            BotCommand("takeit",    "🙋 Take over a stalled tag turn"),
+            BotCommand("tagstats",  "🏆 Tag stats and current player"),
             BotCommand("tag",       "🏃 Start a game of tag"),
             BotCommand("endtag",    "🏁 End a stalled tag round (admins)"),
             BotCommand("menu",      "🏠 Main menu — everything in one place"),
@@ -46862,6 +46860,8 @@ def main():
     app.add_error_handler(_global_error_handler)
 
     app.add_handler(CommandHandler("tag", _tag_game.command))
+    app.add_handler(CommandHandler("tagstats", _tag_game.stats_command))
+    app.add_handler(CommandHandler("takeit", _tag_game.takeover_command))
     app.add_handler(CommandHandler("endtag", _tag_game.end_command))
     app.add_handler(MessageHandler(
         filters.UpdateType.MESSAGE & ~filters.StatusUpdate.ALL, _tag_game.observe), group=-3)
