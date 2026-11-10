@@ -31075,7 +31075,7 @@ GUIDE_PAGES = [
         "Whoever is it sends `tag @username`, or replies `tag` or `/tag` to someone's message. "
         "The 10th tag ends the round and the final person loses. "
         "No self-tags, bot tags, or immediate tag-backs. "
-        "Use /tagstats for weekly points, leaderboards and the current holder. +1 per pass, +1 within 5 minutes, +3 for the final pass. One reminder after 2h, /takeit after 4h, open tag after 6h. Group admins can use /endtag to close a stalled round.\n"
+        "Use /tagstats for weekly points, leaderboards and the current holder. +1 per pass, +1 within 5 minutes, +3 for the final pass. One reminder after 30m, /takeit after 30m, open tag after 1h. Group admins can use /endtag to close a stalled round.\n"
         "\n"
         "*Wager Game Modes (all consensual — reply to challenge):*\n"
         "⚔️ /royale — group Battle Royale! 100g entry, 60s to join, narrated eliminations, "

@@ -462,12 +462,14 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
     async def test_one_reminder_per_turn_and_restart(self):
         await self.game.command(self.update(1, reply_uid=2), self.context)
         self.bot.send_message.reset_mock()
-        self.now += 7199
+        self.now += 1799
         await self.game.recovery_tick(self.bot)
         self.bot.send_message.assert_not_called()
         self.now += 1
         await self.game.recovery_tick(self.bot)
         self.assertIn('still it', self.bot.send_message.call_args.kwargs['text'])
+        self.assertIn('now volunteer with /takeit', self.bot.send_message.call_args.kwargs['text'])
+        self.assertIn('After 1h', self.bot.send_message.call_args.kwargs['text'])
         self.bot.send_message.reset_mock()
         game = self.new_game()
         await game.recovery_tick(self.bot)
@@ -476,9 +478,9 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(game.state(-100)['passes'], 0)
         self.assertEqual(game.statistics(-100, 2)[0]['points'], 0)
 
-    async def test_takeover_unlocks_at_four_hours_and_does_not_count_as_tag(self):
+    async def test_takeover_unlocks_at_thirty_minutes_and_does_not_count_as_tag(self):
         await self.game.command(self.update(1, reply_uid=2), self.context)
-        self.now += 14399
+        self.now += 1799
         await self.game.takeover_command(self.update(3, '/takeit'), self.context)
         self.assertEqual(self.game.state(-100)['holder'], 2)
         self.now += 1
@@ -494,15 +496,15 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_takeover_rejects_self_and_banned_players(self):
         await self.game.command(self.update(1, reply_uid=2), self.context)
-        self.now += 14400
+        self.now += 1800
         self.banned.add(3)
         await self.game.takeover_command(self.update(2, '/takeit'), self.context)
         await self.game.takeover_command(self.update(3, '/takeit'), self.context)
         self.assertEqual(self.game.state(-100)['holder'], 2)
 
-    async def test_open_tag_after_six_hours_allows_another_player_to_tag(self):
+    async def test_open_tag_after_one_hour_allows_another_player_to_tag(self):
         await self.game.command(self.update(1, reply_uid=2), self.context)
-        self.now += 21600
+        self.now += 3600
         await self.game.recovery_tick(self.bot)
         self.assertEqual(self.game.state(-100)['opened'], 1)
         self.bot.send_message.reset_mock()
@@ -518,14 +520,14 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_open_tag_works_even_before_next_scheduler_tick(self):
         await self.game.command(self.update(1, reply_uid=2), self.context)
-        self.now += 21600
+        self.now += 3600
         await self.game.command(self.update(3, reply_uid=4), self.context)
         self.assertEqual(self.game.state(-100)['holder'], 4)
         self.assertEqual(self.game.state(-100)['passes'], 1)
 
-    async def test_no_open_tag_before_six_hours_or_retagging_current_holder(self):
+    async def test_no_open_tag_before_one_hour_or_retagging_current_holder(self):
         await self.game.command(self.update(1, reply_uid=2), self.context)
-        self.now += 21599
+        self.now += 3599
         await self.game.command(self.update(3, reply_uid=4), self.context)
         self.assertEqual(self.game.state(-100)['holder'], 2)
         self.now += 1
@@ -535,7 +537,7 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_returning_holder_passes_without_redundant_reminder(self):
         await self.game.command(self.update(1, reply_uid=2), self.context)
-        self.now += 10800
+        self.now += 2100
         self.bot.send_message.reset_mock()
         await self.game.command(self.update(2, reply_uid=3), self.context)
         self.bot.send_message.assert_awaited_once()
@@ -549,7 +551,7 @@ class TagGameTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_recovery_notification_retries_without_advancing_flags(self):
         await self.game.command(self.update(1, reply_uid=2), self.context)
-        self.now += 21600
+        self.now += 3600
         self.bot.send_message.side_effect = RuntimeError('offline')
         with self.assertLogs('tag_game', level='ERROR'):
             await self.game.recovery_tick(self.bot)

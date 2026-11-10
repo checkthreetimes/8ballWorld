@@ -20,7 +20,7 @@ Tracking begins when this update is deployed. Earlier tags cannot be reconstruct
 
 - Each successful pass earns 1 point. Escaping within 5 minutes adds 1, and the tenth/final pass adds 3. Weekly leaderboards reset each Monday at 00:00 UTC; all-time totals remain. Initial assignments, reminders, and takeovers award no points.
 - Tags 8 and 9 show danger-zone messages.
-- After 2 hours holding the tag, the holder gets one reminder. After 4 hours, another eligible group member can volunteer with `/takeit`. This keeps the same tag count and starts a fresh turn; the volunteer cannot immediately give it back to the stalled holder.
-- After 6 hours, open tag lets anyone tag another eligible group member and continue the same round. The rescuing tag counts normally, but a player who was not it receives no speed bonus or fastest-escape record for that pass.
+- After 30 minutes holding the tag, the holder gets one reminder. After 30 minutes, another eligible group member can volunteer with `/takeit`. This keeps the same tag count and starts a fresh turn; the volunteer cannot immediately give it back to the stalled holder.
+- After 1 hour, open tag lets anyone tag another eligible group member and continue the same round. The rescuing tag counts normally, but a player who was not it receives no speed bonus or fastest-escape record for that pass.
 - Recovery state and reminders persist across restarts. Existing turns start their recovery clock at deployment because their prior hold time was not recorded.
 - Statistics and leaderboards appear on demand with `/tagstats`; they are not automatically posted. Automatic guild-raid starts and daily group leaderboard digests are disabled. Manual commands and daily settlements continue.

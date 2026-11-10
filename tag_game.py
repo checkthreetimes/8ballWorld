@@ -10,9 +10,9 @@ import time
 logger = logging.getLogger(__name__)
 RECENT_SECONDS = 24 * 60 * 60
 TAG_LIMIT = 10
-REMINDER_AFTER = 2 * 3600
-TAKEOVER_AFTER = 4 * 3600
-OPEN_AFTER = 6 * 3600
+REMINDER_AFTER = 30 * 60
+TAKEOVER_AFTER = 30 * 60
+OPEN_AFTER = 3600
 
 
 class TagGame:
@@ -410,7 +410,7 @@ class TagGame:
         elif age >= REMINDER_AFTER and not state['reminded']:
             await self._say(bot, chat_id,
                 f'👀 {self._mention(self._member(chat_id, state["holder"]))}, still it! '
-                'Pass it on. After 4h, someone can volunteer with /takeit; after 6h, anyone can tag.')
+                'Pass it on! Someone can now volunteer with /takeit. After 1h, anyone can tag.')
             self._transition('UPDATE tag_rounds SET reminded=1 WHERE chat_id=?',
                 (chat_id,), chat_id=chat_id, kind='reminder', target=state['holder'], passes=state['passes'])
 
